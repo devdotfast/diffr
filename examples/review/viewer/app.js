@@ -107,12 +107,6 @@ function visibleRows(domain, layout, showAll) {
       lines.forEach((_, row) => selected[side].add(row)),
     );
   }
-  for (const context of domain.hunks.flatMap((hunk) => hunk.context)) {
-    [context.lhs, context.rhs].forEach((range, side) => {
-      if (!range) return;
-      for (const row of rowsOf(range)) selected[side].add(row);
-    });
-  }
   domain.folds.forEach((fold, index) => {
     if (!expanded.has(index)) return;
     regions(fold.regions).forEach((range, side) => {

@@ -962,6 +962,14 @@ fn print_diff_result(display_options: &DisplayOptions, summary: &DiffResult) {
 
             match display_options.display_mode {
                 DisplayMode::Inline => {
+                    let context = display::inline::prepare(
+                        lhs_src,
+                        rhs_src,
+                        &summary.lhs_positions,
+                        &summary.rhs_positions,
+                        hunks,
+                        display_options.num_context_lines as usize,
+                    );
                     display::inline::print(
                         lhs_src,
                         rhs_src,
@@ -969,14 +977,24 @@ fn print_diff_result(display_options: &DisplayOptions, summary: &DiffResult) {
                         &summary.lhs_positions,
                         &summary.rhs_positions,
                         hunks,
+                        &context,
                         &summary.display_path,
                         &summary.extra_info,
                         &summary.file_format,
                     );
                 }
                 DisplayMode::SideBySide | DisplayMode::SideBySideShowBoth => {
+                    let prepared = display::side_by_side::prepare(
+                        lhs_src,
+                        rhs_src,
+                        &summary.lhs_positions,
+                        &summary.rhs_positions,
+                        hunks,
+                        display_options.num_context_lines as usize,
+                    );
                     display::side_by_side::print(
                         hunks,
+                        &prepared,
                         display_options,
                         &summary.display_path,
                         summary.extra_info.as_ref(),

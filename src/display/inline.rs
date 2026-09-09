@@ -11,6 +11,49 @@ use crate::options::DisplayOptions;
 use crate::parse::syntax::MatchedPos;
 use crate::summary::FileFormat;
 
+pub(crate) struct HunkContext {
+    before: Vec<(
+        Option<line_numbers::LineNumber>,
+        Option<line_numbers::LineNumber>,
+    )>,
+    after: Vec<(
+        Option<line_numbers::LineNumber>,
+        Option<line_numbers::LineNumber>,
+    )>,
+}
+
+pub(crate) fn prepare(
+    lhs_src: &str,
+    rhs_src: &str,
+    lhs_mps: &[MatchedPos],
+    rhs_mps: &[MatchedPos],
+    hunks: &[Hunk],
+    num_context_lines: usize,
+) -> Vec<HunkContext> {
+    let opposite_to_lhs = opposite_positions(lhs_mps);
+    let opposite_to_rhs = opposite_positions(rhs_mps);
+    hunks
+        .iter()
+        .map(|hunk| {
+            let before = calculate_before_context(
+                &hunk.lines,
+                &opposite_to_lhs,
+                &opposite_to_rhs,
+                num_context_lines,
+            );
+            let after = calculate_after_context(
+                &[&before[..], &hunk.lines[..]].concat(),
+                &opposite_to_lhs,
+                &opposite_to_rhs,
+                lhs_src.max_line(),
+                rhs_src.max_line(),
+                num_context_lines,
+            );
+            HunkContext { before, after }
+        })
+        .collect()
+}
+
 pub(crate) fn print(
     lhs_src: &str,
     rhs_src: &str,
@@ -18,6 +61,7 @@ pub(crate) fn print(
     lhs_mps: &[MatchedPos],
     rhs_mps: &[MatchedPos],
     hunks: &[Hunk],
+    context: &[HunkContext],
     display_path: &str,
     extra_info: &Option<String>,
     file_format: &FileFormat,
@@ -61,9 +105,6 @@ pub(crate) fn print(
         .map(|line| style::replace_tabs(&line, display_options.tab_width))
         .collect();
 
-    let opposite_to_lhs = opposite_positions(lhs_mps);
-    let opposite_to_rhs = opposite_positions(rhs_mps);
-
     // Calculate the maximum line number width for alignment
     let lhs_line_nums_width = format_line_num(lhs_src.max_line()).len();
     let rhs_line_nums_width = format_line_num(rhs_src.max_line()).len();
@@ -83,28 +124,15 @@ pub(crate) fn print(
 
         let hunk_lines = hunk.lines.clone();
 
-        let before_lines = calculate_before_context(
-            &hunk_lines,
-            &opposite_to_lhs,
-            &opposite_to_rhs,
-            display_options.num_context_lines as usize,
-        );
-        let after_lines = calculate_after_context(
-            &[&before_lines[..], &hunk_lines[..]].concat(),
-            &opposite_to_lhs,
-            &opposite_to_rhs,
-            // TODO: repeatedly calculating the maximum is wasteful.
-            lhs_src.max_line(),
-            rhs_src.max_line(),
-            display_options.num_context_lines as usize,
-        );
+        let before_lines = &context[i].before;
+        let after_lines = &context[i].after;
 
         for (lhs_line, _) in before_lines {
             if let Some(lhs_line) = lhs_line {
                 print!(
                     "{}   {}",
                     apply_line_number_color(
-                        &format_line_num_padded(lhs_line, lhs_line_nums_width),
+                        &format_line_num_padded(*lhs_line, lhs_line_nums_width),
                         false,
                         Side::Left,
                         display_options,
@@ -143,7 +171,7 @@ pub(crate) fn print(
             }
         }
 
-        for (_, rhs_line) in &after_lines {
+        for (_, rhs_line) in after_lines {
             if let Some(rhs_line) = rhs_line {
                 print!(
                     "   {}{}",

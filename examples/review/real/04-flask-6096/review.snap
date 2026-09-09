@@ -9,8 +9,17 @@
   16   17   import click
   17   18   from werkzeug.datastructures import Headers
           | ...
+ 106  107       return update_wrapper(wrapper, f)  # type: ignore[return-value]
+ 107  108   
+ 108  109   
  109  110   class Flask(App):
+ 110  111       """The flask object implements a WSGI application and acts as the central
+ 111  112       object.  It is passed the name of the module or package of the
+ 112  113       application.  Once it is created it will act as a central registry for
           | ...
+ 629  630               rv.update(processor())
+ 630  631           return rv
+ 631  632   
  632  633       def run(
  633  634           self,
  634  635           host: str | None = None,
@@ -19,6 +28,9 @@
  637  638           load_dotenv: bool = True,
  638  639           **options: t.Any,
  639  640       ) -> None:
+ 640  641           """Runs the application on a local development server.
+ 641  642   
+ 642  643           Do not use ``run()`` in a production setting. It is not intended to
           | ...
  721  722           sn_host = sn_port = None
  722  723   

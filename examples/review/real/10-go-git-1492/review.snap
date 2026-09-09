@@ -1,11 +1,26 @@
 --- a/utils/merkletrie/difftree.go
 +++ b/utils/merkletrie/difftree.go
           | ...
+ 274  274   // uses the provided hashEqual callback to compare noders.
+ 275  275   // Error will be returned if context expires
+ 276  276   // Provided context must be non nil
  277  277   func DiffTreeContext(ctx context.Context, fromTree, toTree noder.Noder,
  278  278   	hashEqual noder.Equal) (Changes, error) {
+ 279  279   	ret := NewChanges()
+ 280  280   
+ 281  281   	ii, err := newDoubleIter(fromTree, toTree, hashEqual)
           | ...
+ 283  283   		return nil, err
+ 284  284   	}
+ 285  285   
  286  286   	for {
+ 287  287   		select {
+ 288  288   		case <-ctx.Done():
+ 289  289   			return nil, ErrCanceled
           | ...
+ 293  293   		from := ii.from.current
+ 294  294   		to := ii.to.current
+ 295  295   
  296  296   		switch r := ii.remaining(); r {
  297  297   		case noMoreNoders:
  298  298   			return ret, nil
@@ -77,8 +92,11 @@
  340  337   				return nil, err
  341  338   			}
  342  339   		default:
-          | ...
+ 343  340   			panic(fmt.Sprintf("unknown remaining value: %d", r))
  344  341   		}
  345  342   	}
  346  343   }
+ 347  344   
+ 348  345   func diffNodes(changes *Changes, ii *doubleIter) error {
+ 349  346   	from := ii.from.current
           | ...

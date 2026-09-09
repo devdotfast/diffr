@@ -1,13 +1,7 @@
 --- a/src/requests/utils.py
 +++ b/src/requests/utils.py
           | ...
- 204  204       return max(0, total_length - current_position)
- 205  205   
- 206  206   
  207  207   def get_netrc_auth(url, raise_errors=False):
- 208  208       """Returns the Requests tuple auth for a given url from netrc."""
- 209  209   
- 210  210       netrc_file = os.environ.get("NETRC")
           | ...
  237  237   
  238  238           ri = urlparse(url)

@@ -1,12 +1,8 @@
 --- a/internal/config/config.go
 +++ b/internal/config/config.go
           | ...
- 228  228   // ActiveToken will retrieve the active auth token for the given hostname,
- 229  229   // searching environment variables, plain text config, and
- 230  230   // lastly encrypted storage.
  231  231   func (c *AuthConfig) ActiveToken(hostname string) (string, string) {
- 232  232   	if c.tokenOverride != nil {
- 233  233   		return c.tokenOverride(hostname)
+          | ...
  234  234   	}
  235  235   	token, source := ghauth.TokenFromEnvOrConfig(hostname)
  236  236   	if token == "" {
@@ -26,10 +22,6 @@
  239  249   		if err == nil {
  240  250   			source = "keyring"
  241  251   		}
- 242  252   	}
- 243  253   	return token, source
+          | ...
  244  254   }
- 245  255   
- 246  256   // HasActiveToken returns true when a token for the hostname is present.
- 247  257   func (c *AuthConfig) HasActiveToken(hostname string) bool {
           | ...

@@ -1,13 +1,7 @@
 --- a/src/flask/sansio/scaffold.py
 +++ b/src/flask/sansio/scaffold.py
           | ...
-  49   49       return t.cast(F, update_wrapper(wrapper_func, f))
-  50   50   
-  51   51   
   52   52   class Scaffold:
-  53   53       """Common behavior shared between :class:`~flask.Flask` and
-  54   54       :class:`~flask.blueprints.Blueprint`.
-  55   55   
           | ...
  300  300           """
  301  301           return self._method_route("GET", rule, options)

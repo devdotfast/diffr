@@ -36,6 +36,10 @@ pub(crate) fn prepare(
                     .copied(),
             );
         }
+        let mut selected = BTreeSet::new();
+        for index in seeds {
+            selected.extend(index.saturating_sub(padding)..(index + padding + 1).min(rows.len()));
+        }
         let context = annotations.context_for_changes(&hunk.novel_lhs, &hunk.novel_rhs);
         let context_indexes = context
             .lhs
@@ -47,12 +51,8 @@ pub(crate) fn prepare(
                 continue;
             };
             if !lhs_novel.contains(&lhs) && !rhs_novel.contains(&rhs) {
-                seeds.insert(index);
+                selected.insert(index);
             }
-        }
-        let mut selected = BTreeSet::new();
-        for index in seeds {
-            selected.extend(index.saturating_sub(padding)..(index + padding + 1).min(rows.len()));
         }
         selections.push(selected);
     }

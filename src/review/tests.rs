@@ -330,6 +330,21 @@ mod syntax_tests {
     }
 
     #[test]
+    fn signature_context_does_not_expose_neighboring_statements() {
+        let lhs = include_str!("../../examples/review/real/02-review-175/before.ts");
+        let rhs = include_str!("../../examples/review/real/02-review-175/after.ts");
+        let diff = DiffResult::from_sources("a.ts", lhs, rhs);
+        let output = diff.snapshot();
+        assert!(output.contains("function parseReviewDiffFile("));
+        assert!(!output.contains("return sections.filter("));
+        assert!(!output.contains("const lines = section.split("));
+        assert!(
+            output.contains("let additions = 0;"),
+            "changes retain ordinary context"
+        );
+    }
+
+    #[test]
     fn unrelated_tail_return_is_not_extra_context() {
         let lhs = include_str!("../../examples/review/real/07-ripgrep-3487/before.rs");
         let rhs = include_str!("../../examples/review/real/07-ripgrep-3487/after.rs");
@@ -343,8 +358,7 @@ mod syntax_tests {
             !selected.rhs.contains(&return_line),
             "the unrelated return is not syntax context"
         );
-        // Padding around the function's closing brace can expose this nearby return.
-        assert!(review.snapshot().contains("Ok(if matched"));
+        assert!(!review.snapshot().contains("Ok(if matched"));
         assert!(review.snapshot().contains("fn run("));
     }
 

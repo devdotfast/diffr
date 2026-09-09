@@ -92,9 +92,6 @@
  201  207     documentRoute,
  202  208     softwareMapEnabled = false,
           | ...
- 223  229     );
- 224  230   }
- 225  231   
  226  232   function ReviewCoordinator({
  227  233     documentRoute,
  228  234     softwareMapEnabled,
@@ -110,9 +107,6 @@
  238  244     }) => void;
  239  245     children: ReactNode;
  240  246   }) {
- 241  247     const session = useReviewSession();
- 242  248     const reviewFetch = session.fetch;
- 243  249     const [commentStore, commentSnapshot] = useComments();
           | ...
  262  268     const [historicalRevision, setHistoricalRevision] = useState<string | null>(
  263  269       null,
@@ -132,7 +126,6 @@
  273  283       () => buildThreadTargetIndex(commentThreads.values()),
  274  284       [commentThreads],
           | ...
- 385  395     );
  386  396   
  387  397     const saveComment = useCallback(
  388  398       async (input: CreateReviewCommentInput) => {
@@ -141,7 +134,7 @@
  390  400         await commentStore.saveComment(input);
  391  401         if (input.body.trim()) {
  392  402           captureUiEvent(session, "comment_created", {
- 393  403             is_reply: Boolean(existing?.messages.length),
+          | ...
  394  404           });
  395  405         }
  396  406       },
@@ -318,8 +311,6 @@
  666  692     );
  667  693   }
  668  694   
- 669  695   function commentDraftPlacementFromActiveElement(): CommentDraftPlacement {
- 670  696     const activeElement =
           | ...
  915  941     console.error(cause instanceof Error ? cause : new Error(String(cause)));
  916  942   }

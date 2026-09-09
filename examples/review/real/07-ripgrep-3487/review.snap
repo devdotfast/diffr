@@ -9,9 +9,6 @@
   17   18   mod search;
   18   19   
           | ...
-  65   66       }
-  66   67   }
-  67   68   
   68   69   /// The main entry point for ripgrep.
   69   70   ///
   70   71   /// The given parse result determines ripgrep's behavior. The parse
@@ -22,12 +19,7 @@
   75   76   /// as a `Vec<String>` (as in the low level representation), the globs are
   76   77   /// converted into a single matcher.
   77   78   fn run(result: crate::flags::ParseResult<HiArgs>) -> anyhow::Result<ExitCode> {
-  78   79       use crate::flags::{Mode, ParseResult};
-  79   80   
-  80   81       let args = match result {
           | ...
-  82   83           ParseResult::Special(mode) => return special(mode),
-  83   84           ParseResult::Ok(args) => args,
   84   85       };
   85   86       let matched = match args.mode() {
   86   87           Mode::Search(_) if !args.matches_possible() => false,
@@ -42,17 +34,8 @@
   90   95           Mode::Files if args.threads() == 1 => files(&args)?,
   91   96           Mode::Files => files_parallel(&args)?,
   92   97           Mode::Types => return types(&args),
-  93   98           Mode::Generate(mode) => return generate(mode),
-  94   99       };
-  95  100       Ok(if matched && (args.quiet() || !messages::errored()) {
-  96  101           ExitCode::from(0)
-  97  102       } else if messages::errored() {
           | ...
-  99  104       } else {
- 100  105           ExitCode::from(1)
- 101  106       })
+  94   99       };
+          | ...
  102  107   }
- 103  108   
- 104  109   /// The top-level entry point for single-threaded search.
- 105  110   ///
           | ...

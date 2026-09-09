@@ -1,28 +1,13 @@
 --- a/crates/ignore/src/walk.rs
 +++ b/crates/ignore/src/walk.rs
           | ...
- 542  542       }
- 543  543   }
- 544  544   
  545  545   impl WalkBuilder {
- 546  546       /// Create a new builder for a recursive directory iterator for the
- 547  547       /// directory given.
- 548  548       ///
           | ...
- 589  589           builder
- 590  590       }
- 591  591   
  592  592       /// Build a new `Walk` iterator.
  593  593       pub fn build(&self) -> Walk {
- 594  594           let follow_links = self.follow_links;
- 595  595           let max_depth = self.max_depth;
- 596  596           let min_depth = self.min_depth;
           | ...
- 631  631               .collect::<Vec<_>>()
- 632  632               .into_iter();
- 633  633           let ig_root = self.build_ignore();
  634  634           Walk {
- 635  635               its,
+          | ...
  636  636               it: None,
  637  637               ig_root: ig_root.clone(),
  638  638               ig: ig_root.clone(),
@@ -32,15 +17,9 @@
  641  642               filter: self.filter.clone(),
  642  643           }
  643  644       }
- 644  645   
- 645  646       /// Build matchers for checking paths against ignore files without
- 646  647       /// recursively walking the configured roots.
           | ...
-1105 1106               .map(|cwd| self.ig_builder.build_with_cwd(Some(cwd.to_path_buf())))
-1106 1107               .unwrap_or_else(|| self.ig_builder.build())
-1107 1108       }
 1108 1109   }
-1109 1110   
+          | ...
 1110 1111   /// Walk is a recursive directory iterator over file paths in one or more
 1111 1112   /// directories.
 1112 1113   ///
@@ -48,7 +27,7 @@
 1114 1115   /// ignore files like `.gitignore` are respected. The precise matching rules
 1115 1116   /// and precedence is explained in the documentation for `WalkBuilder`.
 1116 1117   pub struct Walk {
-1117 1118       its: std::vec::IntoIter<(PathBuf, Option<WalkEventIter>)>,
+          | ...
 1118 1119       it: Option<WalkEventIter>,
 1119 1120       ig_root: Ignore,
 1120 1121       ig: Ignore,
@@ -57,30 +36,14 @@
 1122 1124       skip: Option<Arc<Handle>>,
 1123 1125       filter: Option<Filter>,
 1124 1126   }
-1125 1127   
-1126 1128   impl Walk {
-1127 1129       /// Creates a new recursive directory iterator for the file path given.
           | ...
-1181 1183       }
-1182 1184   }
-1183 1185   
 1184 1186   impl Iterator for Walk {
-1185 1187       type Item = Result<DirEntry, Error>;
-1186 1188   
+          | ...
 1187 1189       #[inline(always)]
 1188 1190       fn next(&mut self) -> Option<Result<DirEntry, Error>> {
 1189 1191           loop {
-1190 1192               let ev = match self.it.as_mut().and_then(|it| it.next()) {
-1191 1193                   Some(ev) => ev,
-1192 1194                   None => {
           | ...
-1211 1213                       continue;
-1212 1214                   }
-1213 1215               };
 1214 1216               match ev {
-1215 1217                   Err(err) => {
-1216 1218                       return Some(Err(Error::from_walkdir(err)));
-1217 1219                   }
           | ...
 1228 1230                           self.it.as_mut().unwrap().it.skip_current_dir();
 1229 1231                           // Still need to push this on the stack because
@@ -103,25 +66,13 @@
 1238 1245                       ent.err = err;
 1239 1246                       return Some(Ok(ent));
           | ...
-1249 1256                       }
-1250 1257                       return Some(Ok(ent));
-1251 1258                   }
 1252 1259               }
 1253 1260           }
 1254 1261       }
 1255 1262   }
-1256 1263   
-1257 1264   impl std::iter::FusedIterator for Walk {}
-1258 1265   
           | ...
-2183 2190       ))
-2184 2191   }
-2185 2192   
 2186 2193   #[cfg(test)]
 2187 2194   mod tests {
-2188 2195       use std::ffi::OsStr;
-2189 2196       use std::fs::{self, File};
-2190 2197       use std::io::Write;
           | ...
 2427 2434           );
 2428 2435       }
@@ -150,7 +101,4 @@
 2430 2458       #[test]
 2431 2459       fn min_depth() {
           | ...
-2709 2737               Box::new(|_| WalkState::Continue)
-2710 2738           });
-2711 2739       }
 2712 2740   }

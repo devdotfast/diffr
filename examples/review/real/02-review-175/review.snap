@@ -1,13 +1,7 @@
 --- a/packages/progressive-review/src/review-diff-files.ts
 +++ b/packages/progressive-review/src/review-diff-files.ts
           | ...
- 226  226     return sections.filter((section) => section.trim().length > 0);
- 227  227   }
- 228  228   
  229  229   function parseReviewDiffFile(section: string): ReviewDiffFile | null {
- 230  230     const lines = section.split(/\r?\n/);
- 231  231     const headerPaths = parseDiffGitHeaderPaths(lines[0] ?? "");
- 232  232     let oldPath: string | null = headerPaths?.oldPath ?? null;
           | ...
  236  236     let additions = 0;
  237  237     let deletions = 0;
@@ -42,11 +36,5 @@
  253  261   
  254  262     const status = section.includes("\nnew file mode ")
           | ...
- 272  280       deletions,
- 273  281       patch: section,
- 274  282     };
  275  283   }
- 276  284   
- 277  285   function parseDiffGitHeaderPaths(
- 278  286     line: string,
           | ...

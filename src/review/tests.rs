@@ -375,6 +375,58 @@ mod hunk_tests {
     use crate::summary::DiffResult;
     use crate::summary::FileFormat;
     #[test]
+    fn touching_windows_merge_but_a_hidden_row_separates_hunks() {
+        use crate::display::hunks::Hunk;
+        use line_numbers::LineNumber;
+        use std::fmt::Write;
+        let mut lhs = String::new();
+        for line in 0..40 {
+            writeln!(lhs, "line {line}").unwrap();
+        }
+        for (second, expected_hunks) in [(17, 1), (18, 2)] {
+            let rhs = lhs
+                .replace("line 10\n", "changed 10\n")
+                .replace(&format!("line {second}\n"), &format!("changed {second}\n"));
+            let diff = DiffResult::from_sources("a.txt", &lhs, &rhs);
+            // Give preparation the two separate change seeds: upstream may have
+            // already merged them using its different padding policy.
+            let raw: Vec<_> = [10, second]
+                .into_iter()
+                .map(|line| {
+                    let line = LineNumber(line);
+                    Hunk {
+                        novel_lhs: [line].into_iter().collect(),
+                        novel_rhs: [line].into_iter().collect(),
+                        lines: vec![(Some(line), Some(line))],
+                    }
+                })
+                .collect();
+            let (hunks, _) = crate::display::prepare::prepare(
+                &raw,
+                (&lhs, &rhs),
+                (&diff.lhs_positions, &diff.rhs_positions),
+                &Default::default(),
+                3,
+            );
+            assert_eq!(hunks.len(), expected_hunks);
+            let selected = layout::LineSelection::from_hunks(&hunks);
+            assert_eq!(selected.lhs.contains(&14), second == 17);
+        }
+    }
+
+    #[test]
+    fn identical_files_keep_alignment_for_showing_hidden_source() {
+        let source = "fn unchanged() {\n    work();\n}\n";
+        let diff = DiffResult::from_sources("a.rs", source, source);
+        assert!(diff.hunks.is_empty());
+        let viewer = diff.viewer_json();
+        assert_eq!(
+            viewer["layout"]["rows"],
+            serde_json::json!([[0, 0], [1, 1], [2, 2]])
+        );
+    }
+
+    #[test]
     fn unsupported_language_uses_text_diff_without_syntax_annotations() {
         let result = DiffResult::from_sources("a.txt", "hello old\n", "hello new\n");
         assert!(matches!(result.file_format, FileFormat::PlainText));

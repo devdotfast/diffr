@@ -652,7 +652,11 @@ fn diff_file_content(
             lhs_positions: vec![],
             rhs_positions: vec![],
             hunks: vec![],
-            line_alignment: vec![],
+            line_alignment: lhs_src
+                .split_terminator('\n')
+                .enumerate()
+                .map(|(line, _)| (Some(line), Some(line)))
+                .collect(),
             folds: vec![],
             has_byte_changes: None,
             has_syntactic_changes: false,

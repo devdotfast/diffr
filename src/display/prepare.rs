@@ -61,8 +61,12 @@ pub(crate) fn prepare(
     let mut groups: Vec<BTreeSet<usize>> = Vec::new();
     for selection in selections {
         if let Some(previous) = groups.last_mut() {
-            // Interleaving islands share a display hunk, without exposing the gaps.
-            if selection.first() <= previous.last() {
+            // Touching or interleaving windows share a hunk, without exposing gaps.
+            if selection
+                .first()
+                .zip(previous.last())
+                .is_some_and(|(first, last)| *first <= last.saturating_add(1))
+            {
                 previous.extend(selection);
                 continue;
             }

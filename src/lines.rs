@@ -74,35 +74,6 @@ pub(crate) struct SourcePosition {
     pub(crate) byte_column: usize,
 }
 
-impl SourceRange {
-    pub(crate) fn line(text: &str, line: usize) -> Self {
-        let text = text.trim_end_matches('\r');
-        Self {
-            start: SourcePosition {
-                line: LineNumber::from(line as u32),
-                byte_column: 0,
-            },
-            end: SourcePosition {
-                line: LineNumber::from(if text.is_empty() {
-                    (line + 1) as u32
-                } else {
-                    line as u32
-                }),
-                byte_column: text.len(),
-            },
-        }
-    }
-
-    pub(crate) fn rows(&self) -> std::ops::RangeInclusive<usize> {
-        let mut last_line = self.end.line.as_usize();
-        // An exclusive end at column zero does not include that line.
-        if self.end.byte_column == 0 && self.end.line != self.start.line {
-            last_line -= 1;
-        }
-        self.start.line.as_usize()..=last_line
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;

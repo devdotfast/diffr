@@ -1,10 +1,8 @@
 //! Select enclosing syntax context for one change hunk.
 use std::collections::BTreeSet;
 
-use super::hunks::{ContextRange, Hunk};
-use super::line_layout::{self as layout, LineSelection};
-use crate::lines::SourceRange;
-use crate::parse::syntax::{MatchedPos, Syntax};
+use super::line_layout::LineSelection;
+use crate::parse::syntax::Syntax;
 
 /// Syntax candidates are discovered once, before hunks are constructed.
 #[derive(Clone, Debug, Default)]
@@ -89,77 +87,6 @@ fn select_candidates(
         .filter(|candidate| changed.range(candidate.contains.clone()).next().is_some())
         .flat_map(|candidate| candidate.rows.iter().copied())
         .collect()
-}
-
-pub(crate) fn add_hunk_context(
-    hunks: &mut [Hunk],
-    (lhs_src, rhs_src): (&str, &str),
-    (lhs_positions, rhs_positions): (&[MatchedPos], &[MatchedPos]),
-    annotations: &SyntaxAnnotations,
-) {
-    let rows = layout::aligned_rows((lhs_src, rhs_src), (lhs_positions, rhs_positions));
-    let lhs_lines: Vec<_> = lhs_src.split('\n').collect();
-    let rhs_lines: Vec<_> = rhs_src.split('\n').collect();
-    let lhs_novel = layout::novel_lines(lhs_positions);
-    let rhs_novel = layout::novel_lines(rhs_positions);
-    let mut lhs_index = vec![None; lhs_lines.len()];
-    let mut rhs_index = vec![None; rhs_lines.len()];
-    let mut shared_rows = Vec::new();
-    for (lhs, rhs) in rows {
-        let (Some(lhs), Some(rhs)) = (lhs, rhs) else {
-            continue;
-        };
-        if lhs_novel.contains(&lhs) || rhs_novel.contains(&rhs) {
-            continue;
-        }
-        let index = shared_rows.len();
-        shared_rows.push((lhs, rhs));
-        lhs_index[lhs] = Some(index);
-        rhs_index[rhs] = Some(index);
-    }
-    for hunk in hunks {
-        let selected = annotations.context_for_changes(&hunk.novel_lhs, &hunk.novel_rhs);
-        let indexes: std::collections::BTreeSet<_> = selected
-            .lhs
-            .iter()
-            .filter_map(|&line| lhs_index[line])
-            .chain(selected.rhs.iter().filter_map(|&line| rhs_index[line]))
-            .collect();
-        hunk.context = indexes
-            .into_iter()
-            .map(|index| {
-                let (lhs, rhs) = shared_rows[index];
-                ContextRange {
-                    lhs: SourceRange::line(lhs_lines[lhs], lhs),
-                    rhs: SourceRange::line(rhs_lines[rhs], rhs),
-                }
-            })
-            .collect();
-    }
-}
-
-/// Context is accumulated as paired rows during the single hunk merge pass.
-/// Compact the union once, after merging, rather than rebuilding it at each step.
-pub(crate) fn compact_hunk_context(hunks: &mut [Hunk]) {
-    for hunk in hunks {
-        let mut context = std::mem::take(&mut hunk.context);
-        context.sort_by_key(|r| (r.lhs.start.line, r.rhs.start.line));
-        context.dedup_by_key(|r| (r.lhs.start.line, r.rhs.start.line));
-        for region in context {
-            let Some(previous) = hunk.context.last_mut() else {
-                hunk.context.push(region);
-                continue;
-            };
-            if previous.lhs.rows().end() + 1 == region.lhs.start.line.as_usize()
-                && previous.rhs.rows().end() + 1 == region.rhs.start.line.as_usize()
-            {
-                previous.lhs.end = region.lhs.end;
-                previous.rhs.end = region.rhs.end;
-                continue;
-            }
-            hunk.context.push(region);
-        }
-    }
 }
 
 #[cfg(test)]

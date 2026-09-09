@@ -1,7 +1,7 @@
 //! Deterministic, uncolored review snapshots. Fold candidates do not hide source.
 use std::fmt::Write;
 
-use crate::display::line_layout::{aligned_rows, baseline, reindented_pairs, sources};
+use crate::display::line_layout::{reindented_pairs, sources, LineSelection};
 use crate::summary::DiffResult;
 
 impl DiffResult {
@@ -14,22 +14,17 @@ pub(super) fn snapshot(diff: &DiffResult) -> String {
     let (lhs_src, rhs_src) = sources(diff);
     let lhs_lines: Vec<_> = lhs_src.split_terminator('\n').collect();
     let rhs_lines: Vec<_> = rhs_src.split_terminator('\n').collect();
-    let positions = (&diff.lhs_positions[..], &diff.rhs_positions[..]);
-    let rows = aligned_rows((lhs_src, rhs_src), positions);
-    let mut selected = baseline(positions, &rows);
-    for hunk in &diff.hunks {
-        selected.include_context(&hunk.context);
-    }
+    let selected = LineSelection::from_hunks(&diff.hunks);
     let mut out = format!("--- a/{}\n+++ b/{}\n", diff.display_path, diff.display_path);
-    if selected.lhs.is_empty() && selected.rhs.is_empty() {
+    if diff.hunks.is_empty() {
         out.push_str("(no syntactic changes)\n");
         return out;
     }
     let reindented = reindented_pairs(diff);
     let mut writer = SnapshotWriter::new(out);
-    for (l, r) in rows {
-        let left = l.filter(|l| selected.lhs.contains(l));
-        let right = r.filter(|r| selected.rhs.contains(r));
+    for &(l, r) in &diff.line_alignment {
+        let left = l.filter(|line| selected.lhs.contains(line));
+        let right = r.filter(|line| selected.rhs.contains(line));
         if left.is_none() && right.is_none() {
             writer.flush_changes();
             writer.gap = true;

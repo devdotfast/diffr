@@ -448,6 +448,7 @@ fn diff_file(
                 lhs_positions: vec![],
                 rhs_positions: vec![],
                 hunks: vec![],
+                line_alignment: vec![],
                 folds: vec![],
                 has_byte_changes,
                 has_syntactic_changes: false,
@@ -607,6 +608,7 @@ fn check_only_text(
         lhs_positions: vec![],
         rhs_positions: vec![],
         hunks: vec![],
+        line_alignment: vec![],
         folds: vec![],
         has_byte_changes,
         has_syntactic_changes: lhs_src != rhs_src,
@@ -650,6 +652,7 @@ fn diff_file_content(
             lhs_positions: vec![],
             rhs_positions: vec![],
             hunks: vec![],
+            line_alignment: vec![],
             folds: vec![],
             has_byte_changes: None,
             has_syntactic_changes: false,
@@ -699,6 +702,7 @@ fn diff_file_content(
                                     lhs_positions: vec![],
                                     rhs_positions: vec![],
                                     hunks: vec![],
+                                    line_alignment: vec![],
                                     folds: vec![],
                                     has_byte_changes,
                                     has_syntactic_changes,
@@ -855,14 +859,8 @@ fn diff_file_content(
     let opposite_to_lhs = opposite_positions(&lhs_positions);
     let opposite_to_rhs = opposite_positions(&rhs_positions);
 
-    let mut hunks = matched_pos_to_hunks(&lhs_positions, &rhs_positions);
-    display::syntax_context::add_hunk_context(
-        &mut hunks,
-        (lhs_src, rhs_src),
-        (&lhs_positions, &rhs_positions),
-        &annotations,
-    );
-    let mut hunks = merge_adjacent(
+    let hunks = matched_pos_to_hunks(&lhs_positions, &rhs_positions);
+    let hunks = merge_adjacent(
         &hunks,
         &opposite_to_lhs,
         &opposite_to_rhs,
@@ -871,7 +869,13 @@ fn diff_file_content(
         display_options.num_context_lines as usize,
     );
     let has_syntactic_changes = !hunks.is_empty();
-    display::syntax_context::compact_hunk_context(&mut hunks);
+    let (hunks, line_alignment) = display::prepare::prepare(
+        &hunks,
+        (lhs_src, rhs_src),
+        (&lhs_positions, &rhs_positions),
+        &annotations,
+        display_options.num_context_lines as usize,
+    );
 
     let has_byte_changes = if lhs_src == rhs_src {
         None
@@ -888,6 +892,7 @@ fn diff_file_content(
         lhs_positions,
         rhs_positions,
         hunks,
+        line_alignment,
         folds,
         has_byte_changes,
         has_syntactic_changes,
@@ -999,14 +1004,6 @@ fn print_diff_result(display_options: &DisplayOptions, summary: &DiffResult) {
 
             match display_options.display_mode {
                 DisplayMode::Inline => {
-                    let context = display::inline::prepare(
-                        lhs_src,
-                        rhs_src,
-                        &summary.lhs_positions,
-                        &summary.rhs_positions,
-                        hunks,
-                        display_options.num_context_lines as usize,
-                    );
                     display::inline::print(
                         lhs_src,
                         rhs_src,
@@ -1014,24 +1011,14 @@ fn print_diff_result(display_options: &DisplayOptions, summary: &DiffResult) {
                         &summary.lhs_positions,
                         &summary.rhs_positions,
                         hunks,
-                        &context,
                         &summary.display_path,
                         &summary.extra_info,
                         &summary.file_format,
                     );
                 }
                 DisplayMode::SideBySide | DisplayMode::SideBySideShowBoth => {
-                    let prepared = display::side_by_side::prepare(
-                        lhs_src,
-                        rhs_src,
-                        &summary.lhs_positions,
-                        &summary.rhs_positions,
-                        hunks,
-                        display_options.num_context_lines as usize,
-                    );
                     display::side_by_side::print(
                         hunks,
-                        &prepared,
                         display_options,
                         &summary.display_path,
                         summary.extra_info.as_ref(),

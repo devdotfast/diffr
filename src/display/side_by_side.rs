@@ -6,8 +6,7 @@ use line_numbers::{LineNumber, SingleLineSpan};
 use owo_colors::{OwoColorize, Style};
 
 use crate::constants::Side;
-use crate::display::context::all_matched_lines_filled;
-use crate::display::hunks::{matched_lines_indexes_for_hunk, Hunk};
+use crate::display::hunks::Hunk;
 use crate::display::style::{
     self, apply_colors, apply_line_number_color, color_positions, novel_style, replace_tabs,
     split_and_apply, width_respecting_tabs, BackgroundColor,
@@ -337,64 +336,15 @@ fn visible_content_max_display_width(
     lhs_src: &str,
     rhs_src: &str,
     hunks: &[Hunk],
-    num_context_lines: u32,
     tab_width: usize,
 ) -> (usize, usize) {
     let mut lhs_displayed_lines: DftHashSet<usize> = DftHashSet::default();
     let mut rhs_displayed_lines: DftHashSet<usize> = DftHashSet::default();
 
     for hunk in hunks {
-        let mut min_lhs_line: Option<LineNumber> = None;
-        let mut max_lhs_line: Option<LineNumber> = None;
-        let mut min_rhs_line: Option<LineNumber> = None;
-        let mut max_rhs_line: Option<LineNumber> = None;
-
-        for (lhs_line, rhs_line) in &hunk.lines {
-            if let Some(lhs_line) = lhs_line {
-                if let Some(current_min) = min_lhs_line {
-                    min_lhs_line = Some(min(current_min, *lhs_line));
-                } else {
-                    min_lhs_line = Some(*lhs_line);
-                }
-
-                if let Some(current_max) = max_lhs_line {
-                    max_lhs_line = Some(max(current_max, *lhs_line));
-                } else {
-                    max_lhs_line = Some(*lhs_line);
-                }
-            }
-
-            if let Some(rhs_line) = rhs_line {
-                if let Some(current_min) = min_rhs_line {
-                    min_rhs_line = Some(min(current_min, *rhs_line));
-                } else {
-                    min_rhs_line = Some(*rhs_line);
-                }
-
-                if let Some(current_max) = max_rhs_line {
-                    max_rhs_line = Some(max(current_max, *rhs_line));
-                } else {
-                    max_rhs_line = Some(*rhs_line);
-                }
-            }
-
-            if let (Some(min_lhs_line), Some(max_lhs_line)) = (min_lhs_line, max_lhs_line) {
-                let min_lhs_plus_padding =
-                    max(0, min_lhs_line.0 as isize - num_context_lines as isize) as usize;
-                let max_lhs_plus_padding = max_lhs_line.0 as usize + num_context_lines as usize;
-                for lhs_line_num in min_lhs_plus_padding..=max_lhs_plus_padding {
-                    lhs_displayed_lines.insert(lhs_line_num);
-                }
-            }
-
-            if let (Some(min_rhs_line), Some(max_rhs_line)) = (min_rhs_line, max_rhs_line) {
-                let min_rhs_plus_padding =
-                    max(0, min_rhs_line.0 as isize - num_context_lines as isize) as usize;
-                let max_rhs_plus_padding = max_rhs_line.0 as usize + num_context_lines as usize;
-                for rhs_line_num in min_rhs_plus_padding..=max_rhs_plus_padding {
-                    rhs_displayed_lines.insert(rhs_line_num);
-                }
-            }
+        for (lhs, rhs) in &hunk.lines {
+            lhs_displayed_lines.extend(lhs.map(|line| line.as_usize()));
+            rhs_displayed_lines.extend(rhs.map(|line| line.as_usize()));
         }
     }
 
@@ -421,80 +371,8 @@ fn visible_content_max_display_width(
     (lhs_content_max_width, rhs_content_max_width)
 }
 
-pub(crate) struct PreparedLines {
-    hunks: Vec<Vec<(Option<LineNumber>, Option<LineNumber>)>>,
-    max_visible: (LineNumber, LineNumber),
-}
-
-pub(crate) fn prepare(
-    lhs_src: &str,
-    rhs_src: &str,
-    lhs_mps: &[MatchedPos],
-    rhs_mps: &[MatchedPos],
-    hunks: &[Hunk],
-    num_context_lines: usize,
-) -> PreparedLines {
-    let mut lhs_lines = split_on_newlines(lhs_src).collect::<Vec<_>>();
-    let mut rhs_lines = split_on_newlines(rhs_src).collect::<Vec<_>>();
-    if lhs_lines.last() == Some(&"") && lhs_lines.len() > 1 {
-        lhs_lines.pop();
-    }
-    if rhs_lines.last() == Some(&"") && rhs_lines.len() > 1 {
-        rhs_lines.pop();
-    }
-    let matched_lines = all_matched_lines_filled(lhs_mps, rhs_mps, &lhs_lines, &rhs_lines);
-    let mut matched_lines_to_print = &matched_lines[..];
-
-    let mut lhs_max_visible_line = 1.into();
-    let mut rhs_max_visible_line = 1.into();
-
-    if let Some(hunk) = hunks.last() {
-        let (start_i, end_i) =
-            matched_lines_indexes_for_hunk(matched_lines_to_print, hunk, num_context_lines);
-        let aligned_lines = &matched_lines_to_print[start_i..end_i];
-
-        for (lhs_line_num, rhs_line_num) in aligned_lines.iter().rev() {
-            if let Some(lhs_line_num) = *lhs_line_num {
-                lhs_max_visible_line = max(lhs_max_visible_line, lhs_line_num);
-            }
-            if let Some(rhs_line_num) = *rhs_line_num {
-                rhs_max_visible_line = max(rhs_max_visible_line, rhs_line_num);
-            }
-
-            if lhs_max_visible_line > 1.into() && rhs_max_visible_line > 1.into() {
-                break;
-            }
-        }
-    }
-
-    let lhs_max_line_in_file = LineNumber(lhs_lines.len().saturating_sub(1) as u32);
-    let rhs_max_line_in_file = LineNumber(rhs_lines.len().saturating_sub(1) as u32);
-
-    lhs_max_visible_line = LineNumber(min(
-        lhs_max_visible_line.0 + num_context_lines as u32,
-        lhs_max_line_in_file.0,
-    ));
-    rhs_max_visible_line = LineNumber(min(
-        rhs_max_visible_line.0 + num_context_lines as u32,
-        rhs_max_line_in_file.0,
-    ));
-
-    let mut rows = Vec::with_capacity(hunks.len());
-    for hunk in hunks {
-        let (start, end) =
-            matched_lines_indexes_for_hunk(matched_lines_to_print, hunk, num_context_lines);
-        rows.push(matched_lines_to_print[start..end].to_vec());
-        matched_lines_to_print = &matched_lines_to_print[start..];
-    }
-    PreparedLines {
-        hunks: rows,
-        max_visible: (lhs_max_visible_line, rhs_max_visible_line),
-    }
-}
-
 pub(crate) fn print(
     hunks: &[Hunk],
-    prepared: &PreparedLines,
     display_options: &DisplayOptions,
     display_path: &str,
     old_path: Option<&String>,
@@ -504,13 +382,8 @@ pub(crate) fn print(
     lhs_mps: &[MatchedPos],
     rhs_mps: &[MatchedPos],
 ) {
-    let (lhs_content_max_width, rhs_content_max_width) = visible_content_max_display_width(
-        lhs_src,
-        rhs_src,
-        hunks,
-        display_options.num_context_lines,
-        display_options.tab_width,
-    );
+    let (lhs_content_max_width, rhs_content_max_width) =
+        visible_content_max_display_width(lhs_src, rhs_src, hunks, display_options.tab_width);
 
     let (lhs_colored_lines, rhs_colored_lines) = if display_options.use_color {
         (
@@ -620,7 +493,26 @@ pub(crate) fn print(
         rhs_lines.pop();
     }
 
-    let (lhs_max_visible_line, rhs_max_visible_line) = prepared.max_visible;
+    let mut lhs_max_visible_line = 1.into();
+    let mut rhs_max_visible_line = 1.into();
+
+    if let Some(hunk) = hunks.last() {
+        let aligned_lines = &hunk.lines;
+
+        for (lhs_line_num, rhs_line_num) in aligned_lines.iter().rev() {
+            if let Some(lhs_line_num) = *lhs_line_num {
+                lhs_max_visible_line = max(lhs_max_visible_line, lhs_line_num);
+            }
+            if let Some(rhs_line_num) = *rhs_line_num {
+                rhs_max_visible_line = max(rhs_max_visible_line, rhs_line_num);
+            }
+
+            if lhs_max_visible_line > 1.into() && rhs_max_visible_line > 1.into() {
+                break;
+            }
+        }
+    }
+
     let lhs_max_line_in_file = LineNumber(lhs_lines.len().saturating_sub(1) as u32);
     let rhs_max_line_in_file = LineNumber(rhs_lines.len().saturating_sub(1) as u32);
 
@@ -647,13 +539,19 @@ pub(crate) fn print(
             )
         );
 
-        let aligned_lines = &prepared.hunks[i];
+        let aligned_lines = &hunk.lines;
 
         let no_lhs_changes = hunk.novel_lhs.is_empty();
         let no_rhs_changes = hunk.novel_rhs.is_empty();
         let same_lines = aligned_lines.iter().all(|(l, r)| l == r);
 
         for (lhs_line_num, rhs_line_num) in aligned_lines {
+            let skips_lines = |before: Option<LineNumber>, after: Option<LineNumber>| matches!((before, after), (Some(before), Some(after)) if after.0 > before.0 + 1);
+            if skips_lines(prev_lhs_line_num, *lhs_line_num)
+                || skips_lines(prev_rhs_line_num, *rhs_line_num)
+            {
+                println!("...");
+            }
             let lhs_line_novel = highlight_as_novel(
                 *lhs_line_num,
                 &lhs_lines,
@@ -923,14 +821,11 @@ mod tests {
             novel_lhs,
             novel_rhs,
             lines: vec![(Some(0.into()), Some(0.into()))],
-            context: Vec::new(),
         }];
 
         // Simple smoke test.
-        let prepared = prepare("foo", "bar", &lhs_mps, &rhs_mps, &hunks, 3);
         print(
             &hunks,
-            &prepared,
             &DisplayOptions::default(),
             "foo-new.el",
             None,

@@ -1,58 +1,14 @@
 //! Inline, or "unified" diff display.
 
+use line_numbers::LineNumber;
+
 use crate::constants::Side;
-use crate::display::context::{
-    calculate_after_context, calculate_before_context, opposite_positions,
-};
 use crate::display::hunks::Hunk;
 use crate::display::style::{self, apply_colors, apply_line_number_color};
 use crate::lines::{format_line_num, format_line_num_padded, split_on_newlines, MaxLine};
 use crate::options::DisplayOptions;
 use crate::parse::syntax::MatchedPos;
 use crate::summary::FileFormat;
-
-pub(crate) struct HunkContext {
-    before: Vec<(
-        Option<line_numbers::LineNumber>,
-        Option<line_numbers::LineNumber>,
-    )>,
-    after: Vec<(
-        Option<line_numbers::LineNumber>,
-        Option<line_numbers::LineNumber>,
-    )>,
-}
-
-pub(crate) fn prepare(
-    lhs_src: &str,
-    rhs_src: &str,
-    lhs_mps: &[MatchedPos],
-    rhs_mps: &[MatchedPos],
-    hunks: &[Hunk],
-    num_context_lines: usize,
-) -> Vec<HunkContext> {
-    let opposite_to_lhs = opposite_positions(lhs_mps);
-    let opposite_to_rhs = opposite_positions(rhs_mps);
-    hunks
-        .iter()
-        .map(|hunk| {
-            let before = calculate_before_context(
-                &hunk.lines,
-                &opposite_to_lhs,
-                &opposite_to_rhs,
-                num_context_lines,
-            );
-            let after = calculate_after_context(
-                &[&before[..], &hunk.lines[..]].concat(),
-                &opposite_to_lhs,
-                &opposite_to_rhs,
-                lhs_src.max_line(),
-                rhs_src.max_line(),
-                num_context_lines,
-            );
-            HunkContext { before, after }
-        })
-        .collect()
-}
 
 pub(crate) fn print(
     lhs_src: &str,
@@ -61,7 +17,6 @@ pub(crate) fn print(
     lhs_mps: &[MatchedPos],
     rhs_mps: &[MatchedPos],
     hunks: &[Hunk],
-    context: &[HunkContext],
     display_path: &str,
     extra_info: &Option<String>,
     file_format: &FileFormat,
@@ -109,6 +64,8 @@ pub(crate) fn print(
     let lhs_line_nums_width = format_line_num(lhs_src.max_line()).len();
     let rhs_line_nums_width = format_line_num(rhs_src.max_line()).len();
 
+    let lhs_lines: Vec<_> = split_on_newlines(lhs_src).collect();
+    let rhs_lines: Vec<_> = split_on_newlines(rhs_src).collect();
     for (i, hunk) in hunks.iter().enumerate() {
         println!(
             "{}",
@@ -122,69 +79,71 @@ pub(crate) fn print(
             )
         );
 
-        let hunk_lines = hunk.lines.clone();
-
-        let before_lines = &context[i].before;
-        let after_lines = &context[i].after;
-
-        for (lhs_line, _) in before_lines {
-            if let Some(lhs_line) = lhs_line {
-                print!(
+        let mut removed = String::new();
+        let mut added = String::new();
+        let mut previous: (Option<LineNumber>, Option<LineNumber>) = (None, None);
+        for &(lhs, rhs) in &hunk.lines {
+            let has_gap = lhs
+                .zip(previous.0)
+                .is_some_and(|(line, prev)| line.0 > prev.0 + 1)
+                || rhs
+                    .zip(previous.1)
+                    .is_some_and(|(line, prev)| line.0 > prev.0 + 1);
+            if has_gap {
+                println!("{}{}      ...", removed, added);
+                removed.clear();
+                added.clear();
+            }
+            if lhs.is_some() {
+                previous.0 = lhs;
+            }
+            if rhs.is_some() {
+                previous.1 = rhs;
+            }
+            if let (Some(left), Some(right)) = (lhs, rhs) {
+                if lhs_lines[left.as_usize()] == rhs_lines[right.as_usize()] {
+                    print!("{}{}", removed, added);
+                    removed.clear();
+                    added.clear();
+                    print!(
+                        "{}   {}",
+                        apply_line_number_color(
+                            &format_line_num_padded(left, lhs_line_nums_width),
+                            false,
+                            Side::Left,
+                            display_options
+                        ),
+                        lhs_colored_lines[left.as_usize()]
+                    );
+                    continue;
+                }
+            }
+            if let Some(line) = lhs {
+                removed.push_str(&format!(
                     "{}   {}",
                     apply_line_number_color(
-                        &format_line_num_padded(*lhs_line, lhs_line_nums_width),
-                        false,
+                        &format_line_num_padded(line, lhs_line_nums_width),
+                        hunk.novel_lhs.contains(&line),
                         Side::Left,
-                        display_options,
+                        display_options
                     ),
-                    lhs_colored_lines[lhs_line.as_usize()]
-                );
+                    lhs_colored_lines[line.as_usize()]
+                ));
             }
-        }
-
-        for (lhs_line, _) in &hunk_lines {
-            if let Some(lhs_line) = lhs_line {
-                print!(
-                    "{}   {}",
-                    apply_line_number_color(
-                        &format_line_num_padded(*lhs_line, lhs_line_nums_width),
-                        true,
-                        Side::Left,
-                        display_options,
-                    ),
-                    lhs_colored_lines[lhs_line.as_usize()]
-                );
-            }
-        }
-        for (_, rhs_line) in &hunk_lines {
-            if let Some(rhs_line) = rhs_line {
-                print!(
+            if let Some(line) = rhs {
+                added.push_str(&format!(
                     "   {}{}",
                     apply_line_number_color(
-                        &format_line_num_padded(*rhs_line, rhs_line_nums_width),
-                        true,
+                        &format_line_num_padded(line, rhs_line_nums_width),
+                        hunk.novel_rhs.contains(&line),
                         Side::Right,
-                        display_options,
+                        display_options
                     ),
-                    rhs_colored_lines[rhs_line.as_usize()]
-                );
+                    rhs_colored_lines[line.as_usize()]
+                ));
             }
         }
-
-        for (_, rhs_line) in after_lines {
-            if let Some(rhs_line) = rhs_line {
-                print!(
-                    "   {}{}",
-                    apply_line_number_color(
-                        &format_line_num_padded(*rhs_line, rhs_line_nums_width),
-                        false,
-                        Side::Right,
-                        display_options,
-                    ),
-                    rhs_colored_lines[rhs_line.as_usize()]
-                );
-            }
-        }
+        print!("{}{}", removed, added);
         println!();
     }
 }

@@ -11,15 +11,7 @@ use crate::constants::Side;
 use crate::display::context::{add_context, opposite_positions};
 use crate::display::side_by_side::lines_with_novel;
 use crate::hash::{DftHashMap, DftHashSet};
-use crate::lines::SourceRange;
 use crate::parse::syntax::{zip_pad_shorter, MatchKind, MatchedPos};
-
-/// Unchanged source on both sides of one aligned context region.
-#[derive(Debug, Clone)]
-pub(crate) struct ContextRange {
-    pub(crate) lhs: SourceRange,
-    pub(crate) rhs: SourceRange,
-}
 
 /// A hunk represents a series of modified lines that are displayed
 /// together.
@@ -29,11 +21,9 @@ pub(crate) struct Hunk {
     pub(crate) novel_lhs: DftHashSet<LineNumber>,
     /// The RHS line numbers that contain novel content.
     pub(crate) novel_rhs: DftHashSet<LineNumber>,
-    /// Line pairs that contain modified lines. This does not include
-    /// padding, so at least one of the two lines has novel content.
+    /// Aligned source rows. In DiffResult these include ordinary padding and
+    /// enclosing syntax context. Discontinuities represent hidden gaps.
     pub(crate) lines: Vec<(Option<LineNumber>, Option<LineNumber>)>,
-    /// Additional enclosing syntax selected for this hunk.
-    pub(crate) context: Vec<ContextRange>,
 }
 
 impl Hunk {
@@ -72,13 +62,10 @@ impl Hunk {
             ));
         }
 
-        let mut context = self.context;
-        context.extend_from_slice(&other.context);
         Self {
             novel_lhs: self.novel_lhs.union(&other.novel_lhs).copied().collect(),
             novel_rhs: self.novel_rhs.union(&other.novel_rhs).copied().collect(),
             lines: deduped_lines,
-            context,
         }
     }
 }
@@ -157,7 +144,6 @@ pub(crate) fn merge_adjacent(
 
     let mut prev_lhs_lines: DftHashSet<LineNumber> = DftHashSet::default();
     let mut prev_rhs_lines: DftHashSet<LineNumber> = DftHashSet::default();
-    let mut prev_context_lhs_lines: DftHashSet<LineNumber> = DftHashSet::default();
 
     for hunk in hunks {
         let mut lhs_lines: DftHashSet<LineNumber> = DftHashSet::default();
@@ -181,13 +167,9 @@ pub(crate) fn merge_adjacent(
             }
         }
 
-        let context_lhs_lines: DftHashSet<LineNumber> =
-            hunk.context.iter().map(|r| r.lhs.start.line).collect();
         match prev_hunk {
             Some(hunk_so_far) => {
-                if lhs_lines.is_disjoint(&prev_lhs_lines)
-                    && rhs_lines.is_disjoint(&prev_rhs_lines)
-                    && context_lhs_lines.is_disjoint(&prev_context_lhs_lines)
+                if lhs_lines.is_disjoint(&prev_lhs_lines) && rhs_lines.is_disjoint(&prev_rhs_lines)
                 {
                     // No overlaps, start a new hunk.
                     merged_hunks.push(hunk_so_far.clone());
@@ -195,13 +177,11 @@ pub(crate) fn merge_adjacent(
 
                     prev_lhs_lines = lhs_lines;
                     prev_rhs_lines = rhs_lines;
-                    prev_context_lhs_lines = context_lhs_lines;
                 } else {
                     // Adjacent hunks, merge.
                     prev_hunk = Some(hunk_so_far.merge(hunk));
                     prev_lhs_lines.extend(lhs_lines.iter());
                     prev_rhs_lines.extend(rhs_lines.iter());
-                    prev_context_lhs_lines.extend(context_lhs_lines);
                 }
             }
             None => {
@@ -209,7 +189,6 @@ pub(crate) fn merge_adjacent(
                 prev_hunk = Some(hunk.clone());
                 prev_lhs_lines = lhs_lines;
                 prev_rhs_lines = rhs_lines;
-                prev_context_lhs_lines = context_lhs_lines;
             }
         }
     }
@@ -342,7 +321,6 @@ fn lines_to_hunks(
                 novel_lhs,
                 novel_rhs,
                 lines: current_hunk_lines,
-                context: Vec::new(),
             });
             current_hunk_lines = vec![line];
         }
@@ -362,7 +340,6 @@ fn lines_to_hunks(
             novel_lhs,
             novel_rhs,
             lines: current_hunk_lines,
-            context: Vec::new(),
         });
     }
 
@@ -836,7 +813,6 @@ mod tests {
             novel_lhs,
             novel_rhs,
             lines: vec![(Some(1.into()), Some(1.into()))],
-            context: Vec::new(),
         };
 
         let res = matched_lines_for_hunk(matched_lines, &hunk);
@@ -866,8 +842,8 @@ mod tests {
         let hunk = Hunk {
             novel_lhs,
             novel_rhs,
+            // LHS and RHS are misaligned
             lines: vec![(Some(1.into()), Some(2.into()))],
-            context: Vec::new(),
         };
 
         let res = matched_lines_for_hunk(matched_lines, &hunk);

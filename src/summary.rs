@@ -42,7 +42,10 @@ pub(crate) struct DiffResult {
     pub(crate) file_format: FileFormat,
     pub(crate) lhs_src: FileContent,
     pub(crate) rhs_src: FileContent,
+    /// Complete selected rows, including ordinary padding and syntax context.
     pub(crate) hunks: Vec<Hunk>,
+    /// Full alignment retained for expanding context beyond the selected hunks.
+    pub(crate) line_alignment: Vec<crate::display::line_layout::Row>,
     pub(crate) folds: Vec<Fold>,
 
     pub(crate) lhs_positions: Vec<MatchedPos>,

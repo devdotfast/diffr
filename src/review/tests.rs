@@ -217,9 +217,6 @@ mod folds {
 }
 
 mod syntax_tests {
-    use super::text;
-    use crate::display::hunks::ContextRange;
-    use crate::display::line_layout::LineSelection;
     use crate::summary::DiffResult;
     use crate::summary::FileContent;
     use std::fmt::Write as _;
@@ -235,13 +232,14 @@ mod syntax_tests {
             .replace("work(35)", "changed(35)")
             .replace("work(60)", "changed(60)");
         let diff = DiffResult::from_sources("a.rs", &lhs, &rhs);
-        assert_eq!(diff.hunks.len(), 1);
+        let prepared = &diff;
+        assert_eq!(prepared.hunks.len(), 1);
         let mut seen = std::collections::BTreeSet::new();
-        for context in &diff.hunks[0].context {
-            for pair in context.lhs.rows().zip(context.rhs.rows()) {
-                assert!(seen.insert(pair), "duplicate context row");
-            }
+        for (lhs, rhs) in &prepared.hunks[0].lines {
+            let pair = (lhs.unwrap().as_usize(), rhs.unwrap().as_usize());
+            assert!(seen.insert(pair), "duplicate displayed row");
         }
+        assert!(!seen.contains(&(24, 24)), "distant gaps stay hidden");
         assert!(seen.contains(&(0, 0)));
         assert!(seen.contains(&(71, 71)));
     }
@@ -252,7 +250,12 @@ mod syntax_tests {
         for (lhs, rhs) in [("", source), (source, "")] {
             let diff = DiffResult::from_sources("a.rs", lhs, rhs);
             assert!(!diff.folds.is_empty());
-            assert!(diff.hunks.iter().all(|h| h.context.is_empty()));
+            let prepared = &diff;
+            assert!(prepared
+                .hunks
+                .iter()
+                .flat_map(|h| &h.lines)
+                .all(|(lhs, rhs)| lhs.is_none() || rhs.is_none()));
         }
     }
 
@@ -263,10 +266,6 @@ mod syntax_tests {
         let rhs = lhs.replace("x = 1", "x = 2");
         let result = DiffResult::from_sources("a.py", lhs, &rhs);
         assert!(matches!(&result.rhs_src,FileContent::Text(s) if s==&rhs));
-        for region in result.hunks.iter().flat_map(|h| &h.context) {
-            text(lhs, &region.lhs);
-            text(&rhs, &region.rhs);
-        }
         assert!(result.snapshot().contains("café"));
     }
 
@@ -287,29 +286,38 @@ mod syntax_tests {
                 "    work();\n".repeat(24)
             )
         };
-        let lhs = format!("{}\n{}", function("first"), function("second"));
+        let lhs = format!(
+            "{}{}{}",
+            function("first"),
+            "\n".repeat(12),
+            function("second")
+        );
         let mut lines: Vec<_> = lhs.lines().map(str::to_owned).collect();
         let second = lines.iter().position(|l| l == "fn second() {").unwrap();
         lines[12] = "    changed_first();".into();
         lines[second + 12] = "    changed_second();".into();
         let rhs = lines.join("\n") + "\n";
         let review = DiffResult::from_sources("a.rs", &lhs, &rhs);
-        assert_eq!(review.hunks.len(), 2);
-        for (i, hunk) in review.hunks.iter().enumerate() {
-            let mut selected = LineSelection::default();
-            selected.include_context(&hunk.context);
+        let prepared = &review;
+        assert_eq!(prepared.hunks.len(), 2);
+        for (i, hunk) in prepared.hunks.iter().enumerate() {
+            let selected: std::collections::BTreeSet<_> = hunk
+                .lines
+                .iter()
+                .filter_map(|(_, rhs)| rhs.map(|line| line.as_usize()))
+                .collect();
             let (own, other) = if i == 0 { (0, second) } else { (second, 0) };
-            assert!(selected.rhs.contains(&own));
-            assert!(!selected.rhs.contains(&other));
+            assert!(selected.contains(&own));
+            assert!(!selected.contains(&other));
         }
         let domain = review.domain_json();
         assert!(domain.get("context").is_none());
         assert!(domain["hunks"][0]["lines"].is_array());
-        assert!(domain["hunks"][0]["context"].is_array());
+        assert!(domain["hunks"][0].get("context").is_none());
     }
 
     #[test]
-    fn consecutive_signature_context_is_one_range() {
+    fn consecutive_signature_context_is_selected() {
         let mut body = String::new();
         for i in 0..30 {
             writeln!(body, "    value_{i} = {i}").unwrap();
@@ -317,8 +325,8 @@ mod syntax_tests {
         let lhs = format!("def run(\n    first,\n    second,\n):\n{body}");
         let rhs = lhs.replace("value_20 = 20", "value_20 = 999");
         let diff = DiffResult::from_sources("a.py", &lhs, &rhs);
-        assert!(diff.hunks.iter().flat_map(|h| &h.context).any(|r| matches!(r,
-            ContextRange { lhs, rhs } if lhs.start.line.as_usize() == 0 && lhs.end.line.as_usize() == 3 && rhs.end.line.as_usize() == 3)));
+        let selected = super::selection_without_padding(&diff);
+        assert!((0..4).all(|line| selected.lhs.contains(&line) && selected.rhs.contains(&line)));
     }
 
     #[test]
@@ -326,7 +334,17 @@ mod syntax_tests {
         let lhs = include_str!("../../examples/review/real/07-ripgrep-3487/before.rs");
         let rhs = include_str!("../../examples/review/real/07-ripgrep-3487/after.rs");
         let review = DiffResult::from_sources("a.rs", lhs, rhs);
-        assert!(!review.snapshot().contains("Ok(if matched"));
+        let selected = super::selection_without_padding(&review);
+        let return_line = rhs
+            .lines()
+            .position(|line| line.contains("Ok(if matched"))
+            .unwrap();
+        assert!(
+            !selected.rhs.contains(&return_line),
+            "the unrelated return is not syntax context"
+        );
+        // Padding around the function's closing brace can expose this nearby return.
+        assert!(review.snapshot().contains("Ok(if matched"));
         assert!(review.snapshot().contains("fn run("));
     }
 
@@ -339,10 +357,7 @@ mod syntax_tests {
         let lhs = format!("def values():\n    return {{\n{entries}    }}\n");
         let rhs = lhs.replace("'12': 12", "'12': 999");
         let review = DiffResult::from_sources("a.py", &lhs, &rhs);
-        let mut context = LineSelection::default();
-        for hunk in &review.hunks {
-            context.include_context(&hunk.context);
-        }
+        let context = super::selection_without_padding(&review);
         assert!(
             context.rhs.contains(&1),
             "return opener is beyond ordinary padding"
@@ -360,43 +375,10 @@ mod hunk_tests {
     use crate::summary::DiffResult;
     use crate::summary::FileFormat;
     #[test]
-    fn context_overlap_merges_transitively_without_filling_the_gap() {
-        let make = |line: u32, context: &[usize]| {
-            let mut hunk = crate::display::hunks::Hunk {
-                novel_lhs: [line_numbers::LineNumber::from(line)].into_iter().collect(),
-                novel_rhs: [line_numbers::LineNumber::from(line)].into_iter().collect(),
-                lines: vec![(Some(line.into()), Some(line.into()))],
-                context: Vec::new(),
-            };
-            hunk.context = context
-                .iter()
-                .map(|&line| crate::display::hunks::ContextRange {
-                    lhs: crate::lines::SourceRange::line("header", line),
-                    rhs: crate::lines::SourceRange::line("header", line),
-                })
-                .collect();
-            hunk
-        };
-        let hunks = [make(10, &[0]), make(40, &[0, 90]), make(70, &[90])];
-        let mut merged = crate::display::hunks::merge_adjacent(
-            &hunks,
-            &Default::default(),
-            &Default::default(),
-            100.into(),
-            100.into(),
-            3,
-        );
-        crate::display::syntax_context::compact_hunk_context(&mut merged);
-        assert_eq!(merged.len(), 1);
-        assert_eq!(merged[0].lines.len(), 3);
-        assert_eq!(merged[0].context.len(), 2);
-    }
-
-    #[test]
     fn unsupported_language_uses_text_diff_without_syntax_annotations() {
         let result = DiffResult::from_sources("a.txt", "hello old\n", "hello new\n");
         assert!(matches!(result.file_format, FileFormat::PlainText));
-        assert!(result.folds.is_empty() && result.hunks.iter().all(|h| h.context.is_empty()));
+        assert!(result.folds.is_empty());
         assert!(result.snapshot().contains("- hello old"));
         assert!(result.snapshot().contains("+ hello new"));
     }
@@ -416,11 +398,8 @@ mod hunk_tests {
             let (lhs_src, rhs_src) = (read_source("lhs"), read_source("rhs"));
             let path = p["sources"]["rhs"]["path"].as_str().unwrap();
             let result = DiffResult::from_sources(path, &lhs_src, &rhs_src);
-            let positions = (&result.lhs_positions[..], &result.rhs_positions[..]);
-            let baseline = layout::baseline(
-                positions,
-                &layout::aligned_rows(layout::sources(&result), positions),
-            );
+            let prepared = &result;
+            let baseline = layout::LineSelection::from_hunks(&prepared.hunks);
             let lhs_novel = layout::novel_lines(&result.lhs_positions);
             let rhs_novel = layout::novel_lines(&result.rhs_positions);
             assert!(lhs_novel.is_subset(&baseline.lhs));
@@ -440,17 +419,17 @@ mod hunk_tests {
                 }
             }
             let mut seen = std::collections::BTreeSet::new();
-            for context in result.hunks.iter().flat_map(|h| &h.context) {
-                text(&lhs_src, &context.lhs);
-                text(&rhs_src, &context.rhs);
-                assert!(context.lhs.rows().all(|line| !lhs_novel.contains(&line)));
-                assert!(context.rhs.rows().all(|line| !rhs_novel.contains(&line)));
-                for row in context.lhs.rows().zip(context.rhs.rows()) {
-                    assert!(
-                        seen.insert(row),
-                        "duplicate context across hunks: {}",
-                        dir.display()
-                    );
+            for row in prepared.hunks.iter().flat_map(|h| &h.lines) {
+                assert!(
+                    seen.insert(*row),
+                    "duplicate selected row: {}",
+                    dir.display()
+                );
+                if let Some(lhs) = row.0 {
+                    assert!(lhs.as_usize() < lhs_src.lines().count());
+                }
+                if let Some(rhs) = row.1 {
+                    assert!(rhs.as_usize() < rhs_src.lines().count());
                 }
             }
         }
@@ -476,8 +455,30 @@ mod hunk_tests {
         );
         assert!(matches!(diff.file_format, FileFormat::TextFallback { .. }));
         assert!(diff.folds.is_empty());
-        assert!(diff.hunks.iter().all(|hunk| hunk.context.is_empty()));
         let result = diff;
         assert!(result.snapshot().contains("+ x = 2"));
     }
+}
+
+fn selection_without_padding(
+    diff: &crate::summary::DiffResult,
+) -> crate::display::line_layout::LineSelection {
+    let (lhs, rhs) = crate::display::line_layout::sources(diff);
+    let file = crate::options::FileArgument::NamedPath(diff.display_path.clone().into());
+    let options = crate::options::DisplayOptions {
+        num_context_lines: 0,
+        ..Default::default()
+    };
+    let diff = crate::diff_file_content(
+        &diff.display_path,
+        None,
+        &file,
+        &file,
+        lhs,
+        rhs,
+        &options,
+        &crate::options::DiffOptions::default(),
+        &[],
+    );
+    crate::display::line_layout::LineSelection::from_hunks(&diff.hunks)
 }

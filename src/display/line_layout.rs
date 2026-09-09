@@ -1,5 +1,5 @@
 //! Line alignment, ordinary context padding, and indentation classification.
-use super::hunks::ContextRange;
+use super::hunks::Hunk;
 use crate::display::context::all_matched_lines_filled;
 use crate::parse::syntax::MatchedPos;
 use crate::summary::{DiffResult, FileContent};
@@ -12,15 +12,15 @@ pub(crate) struct LineSelection {
 }
 
 impl LineSelection {
-    pub(crate) fn include_context(&mut self, context: &[ContextRange]) {
-        for region in context {
-            self.lhs.extend(region.lhs.rows());
-            self.rhs.extend(region.rhs.rows());
+    pub(crate) fn from_hunks(hunks: &[Hunk]) -> Self {
+        let mut selection = Self::default();
+        for (lhs, rhs) in hunks.iter().flat_map(|hunk| &hunk.lines) {
+            selection.lhs.extend(lhs.map(|line| line.as_usize()));
+            selection.rhs.extend(rhs.map(|line| line.as_usize()));
         }
+        selection
     }
 }
-
-const CONTEXT_PADDING: usize = 3;
 
 pub(crate) type Row = (Option<usize>, Option<usize>);
 
@@ -62,29 +62,6 @@ pub(crate) fn aligned_rows(
             Some((lhs, rhs))
         })
         .collect()
-}
-
-pub(crate) fn baseline(
-    (lhs_positions, rhs_positions): (&[MatchedPos], &[MatchedPos]),
-    rows: &[Row],
-) -> LineSelection {
-    let lhs_novel = novel_lines(lhs_positions);
-    let rhs_novel = novel_lines(rhs_positions);
-    let mut selected = LineSelection::default();
-    for (i, (lhs, rhs)) in rows.iter().enumerate() {
-        if !lhs.is_some_and(|line| lhs_novel.contains(&line))
-            && !rhs.is_some_and(|line| rhs_novel.contains(&line))
-        {
-            continue;
-        }
-        let start = i.saturating_sub(CONTEXT_PADDING);
-        let end = (i + CONTEXT_PADDING + 1).min(rows.len());
-        for (lhs, rhs) in &rows[start..end] {
-            selected.lhs.extend(lhs);
-            selected.rhs.extend(rhs);
-        }
-    }
-    selected
 }
 
 /// Only treat indentation as formatting when the matcher confirms a pairing

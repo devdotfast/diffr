@@ -102,14 +102,8 @@ fn hunk(hunk: &crate::display::hunks::Hunk) -> Value {
         .iter()
         .map(|(lhs, rhs)| (lhs.map(|line| line.0), rhs.map(|line| line.0)))
         .collect();
-    let context: Vec<_> = hunk
-        .context
-        .iter()
-        .map(|r| json!({"lhs": range(&r.lhs), "rhs": range(&r.rhs)}))
-        .collect();
     json!({
         "novel_lhs": novel_lhs, "novel_rhs": novel_rhs, "lines": lines,
-        "context": context,
     })
 }
 
@@ -136,18 +130,17 @@ impl DiffResult {
             "lhs_positions": self.lhs_positions.iter().map(position).collect::<Vec<_>>(),
             "rhs_positions": self.rhs_positions.iter().map(position).collect::<Vec<_>>(),
             "hunks": hunks,
+            "line_alignment": self.line_alignment,
             "has_byte_changes": self.has_byte_changes,
             "has_syntactic_changes": self.has_syntactic_changes,
             "folds": folds,
         })
     }
 
-    /// Disposable layout for the fixture viewer. It is not part of the domain
-    /// snapshot: clients may choose another layout for the same domain value.
+    /// Adapt the existing alignment and selected rows for the fixture viewer.
     pub(crate) fn viewer_json(&self) -> Value {
-        let positions = (&self.lhs_positions[..], &self.rhs_positions[..]);
-        let rows = layout::aligned_rows(layout::sources(self), positions);
-        let baseline = layout::baseline(positions, &rows);
+        let rows = &self.line_alignment;
+        let baseline = layout::LineSelection::from_hunks(&self.hunks);
         let reindented = layout::reindented_pairs(self);
         json!({
             "domain": self.domain_json(),

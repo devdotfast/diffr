@@ -1,9 +1,0 @@
-(statement_block) @fold.body
-(class_body) @fold.body
-(switch_body) @fold.body
-(object) @fold.collection
-(array) @fold.collection
-(import_statement) @fold.import
-(comment) @fold.comment
-(string) @fold.string
-(template_string) @fold.string

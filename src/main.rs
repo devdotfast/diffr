@@ -770,8 +770,7 @@ fn diff_file_content(
                                 }
 
                                 annotations = display::syntax_context::SyntaxAnnotations::collect(
-                                    (&lhs_tree, &rhs_tree),
-                                    (lhs_src, rhs_src),
+                                    (&lhs, &rhs),
                                 );
 
                                 (

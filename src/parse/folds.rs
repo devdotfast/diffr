@@ -2,7 +2,7 @@
 use crate::diff::changes::ChangeKind;
 use crate::hash::DftHashMap;
 use crate::lines::{SourcePosition, SourceRange};
-use crate::parse::{guess_language::Language, syntax::Syntax};
+use crate::parse::syntax::Syntax;
 use streaming_iterator::StreamingIterator as _;
 use tree_sitter::{Query, QueryCursor, Tree};
 
@@ -50,19 +50,6 @@ pub(crate) enum Correspondence<T> {
     Added(T),
 }
 
-pub(crate) fn query_source(language: Language) -> Option<&'static str> {
-    Some(match language {
-        Language::Rust => include_str!("fold_queries/rust.scm"),
-        Language::Python => include_str!("fold_queries/python.scm"),
-        Language::Go => include_str!("fold_queries/go.scm"),
-        Language::JavaScript
-        | Language::JavascriptJsx
-        | Language::TypeScript
-        | Language::TypeScriptTsx => include_str!("fold_queries/javascript.scm"),
-        _ => return None,
-    })
-}
-
 pub(crate) fn classify(
     tree: &Tree,
     src: &str,
@@ -83,7 +70,9 @@ pub(crate) fn classify(
                 "fold.test" => FoldKind::Test,
                 "fold.comment" => FoldKind::Comment,
                 "fold.string" => FoldKind::String,
-                "name" | "attribute" => continue,
+                name if name == "name" || name == "attribute" || name.starts_with("context.") => {
+                    continue
+                }
                 name => panic!("unknown fold capture: {name}"),
             };
             // Test is more specific than the generic body capture.

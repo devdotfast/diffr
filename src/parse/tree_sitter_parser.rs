@@ -78,7 +78,7 @@ pub(crate) struct TreeSitterConfig {
     /// The tree-sitter query used for syntax highlighting this
     /// language.
     highlight_query: ts::Query,
-    fold_query: Option<ts::Query>,
+    syntax_query: Option<ts::Query>,
 
     /// Sub-languages in use, if any.
     sub_languages: Vec<TreeSitterSubLanguage>,
@@ -114,8 +114,8 @@ pub(crate) fn from_language(language: guess::Language) -> &'static TreeSitterCon
     let mut cache = CONFIG_CACHE.lock().unwrap();
     cache.entry(language).or_insert_with(|| {
         let mut config = build_config(language);
-        config.fold_query = folds::query_source(language)
-            .map(|source| ts::Query::new(&config.language, source).expect("invalid fold query"));
+        config.syntax_query = super::query_source(language)
+            .map(|source| ts::Query::new(&config.language, source).expect("invalid syntax query"));
         Box::leak(Box::new(config))
     })
 }
@@ -127,7 +127,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_ada::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string_literal", "character_literal"]
                     .into_iter()
@@ -147,7 +147,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: [
                     "string_literal",
@@ -175,7 +175,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: vec!["string"].into_iter().collect(),
                 delimiter_tokens: vec![("(", ")"), ("[", "]"), ("{", "}")],
@@ -190,7 +190,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string", "raw_string", "heredoc_body", "simple_expansion"]
                     .into_iter()
@@ -206,7 +206,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_c::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string_literal", "char_literal"].into_iter().collect(),
                 delimiter_tokens: vec![("(", ")"), ("{", "}"), ("[", "]")],
@@ -223,7 +223,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             highlight_query.push_str(tree_sitter_cpp::HIGHLIGHT_QUERY);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 // The C++ grammar extends the C grammar, so the node
                 // names are generally the same.
@@ -241,7 +241,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["kwd_lit", "regex_lit"].into_iter().collect(),
                 delimiter_tokens: vec![("{", "}"), ("(", ")"), ("[", "]")]
@@ -260,7 +260,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_cmake::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["argument"].into_iter().collect(),
                 delimiter_tokens: vec![("(", ")")].into_iter().collect(),
@@ -278,7 +278,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["str_lit", "char_lit"].into_iter().collect(),
                 delimiter_tokens: vec![("(", ")")],
@@ -291,7 +291,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_c_sharp::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: [
                     "string_literal",
@@ -316,7 +316,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: [
                     "integer_value",
@@ -337,7 +337,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_dart_orchard::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string_literal", "script_tag"].into_iter().collect(),
                 delimiter_tokens: vec![("{", "}"), ("(", ")"), ("[", "]"), ("<", ">")],
@@ -354,7 +354,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_devicetree::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["byte_string_literal", "string_literal"]
                     .into_iter()
@@ -373,7 +373,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_containerfile::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: [
                     "shell_command",
@@ -402,7 +402,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: vec!["string", "sigil", "heredoc"].into_iter().collect(),
                 delimiter_tokens: vec![("(", ")"), ("{", "}"), ("do", "end")]
@@ -419,7 +419,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string_constant_expr"].into_iter().collect(),
                 delimiter_tokens: vec![("{", "}"), ("[", "]"), ("(", ")")],
@@ -434,7 +434,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: [].into_iter().collect(),
                 ignore_trailing_tokens: vec![],
@@ -451,7 +451,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: [].into_iter().collect(),
                 delimiter_tokens: vec![("(", ")"), ("{", "}"), ("[", "]")],
@@ -467,7 +467,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 ts::Query::new(&language, tree_sitter_fish::HIGHLIGHTS_QUERY).unwrap();
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language,
                 atom_nodes: ["single_quote_string", "double_quote_string"]
                     .into_iter()
@@ -483,7 +483,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string", "triple_quoted_string"].into_iter().collect(),
                 delimiter_tokens: vec![("(", ")"), ("[", "]"), ("{", "}")],
@@ -498,7 +498,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_fortran::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string_literal", "number_literal"].into_iter().collect(),
                 delimiter_tokens: vec![("(", ")"), ("(/", "/)"), ("[", "]")],
@@ -512,7 +512,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_gleam::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string"].into_iter().collect(),
                 delimiter_tokens: vec![("(", ")"), ("[", "]"), ("{", "}")],
@@ -527,7 +527,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["interpreted_string_literal", "raw_string_literal"]
                     .into_iter()
@@ -545,7 +545,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_haskell::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["qualified_variable"].into_iter().collect(),
                 delimiter_tokens: vec![("[", "]"), ("(", ")")],
@@ -559,7 +559,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_hcl::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string_lit", "heredoc_template"].into_iter().collect(),
                 delimiter_tokens: vec![
@@ -584,7 +584,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: [
                     "doctype",
@@ -618,7 +618,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
         Janet => {
             let language = unsafe { tree_sitter_janet_simple() };
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: [].into_iter().collect(),
                 delimiter_tokens: vec![
@@ -644,7 +644,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_java_orchard::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: [
                     "string_literal",
@@ -679,7 +679,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string", "template_string", "regex"].into_iter().collect(),
                 delimiter_tokens: vec![
@@ -710,7 +710,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string"].into_iter().collect(),
                 delimiter_tokens: vec![("{", "}"), ("[", "]")],
@@ -725,7 +725,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: [
                     "string_literal",
@@ -748,7 +748,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
         Kotlin => {
             let language = unsafe { tree_sitter_kotlin() };
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 // Flattening nullable type means we can't diff the
                 // structure of complex types within, but it beats
@@ -777,7 +777,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
         LaTeX => {
             let language = unsafe { tree_sitter_latex() };
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: [].into_iter().collect(),
                 delimiter_tokens: vec![("{", "}"), ("[", "]")],
@@ -795,7 +795,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string"].into_iter().collect(),
                 delimiter_tokens: vec![("(", ")"), ("{", "}"), ("[", "]")]
@@ -812,7 +812,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["shell_text", "text"].into_iter().collect(),
                 delimiter_tokens: vec![("(", ")")].into_iter().collect(),
@@ -831,7 +831,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: [].into_iter().collect(),
                 delimiter_tokens: vec![("(", ")")],
@@ -849,7 +849,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string_expression", "indented_string_expression"]
                     .into_iter()
@@ -865,7 +865,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_objc::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string_literal"].into_iter().collect(),
                 delimiter_tokens: vec![
@@ -886,7 +886,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_ocaml::LANGUAGE_OCAML;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: OCAML_ATOM_NODES.iter().copied().collect(),
                 delimiter_tokens: vec![("(", ")"), ("[", "]"), ("{", "}")],
@@ -900,7 +900,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: OCAML_ATOM_NODES.iter().copied().collect(),
                 delimiter_tokens: vec![("(", ")"), ("[", "]"), ("{", "}")],
@@ -915,7 +915,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: [].into_iter().collect(),
                 delimiter_tokens: vec![("(", ")"), ("[", "]")],
@@ -932,7 +932,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = ts_parser_perl::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: [
                     "scalar",
@@ -958,7 +958,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string", "encapsed_string"].into_iter().collect(),
                 delimiter_tokens: vec![("(", ")"), ("[", "]"), ("{", "}")],
@@ -972,7 +972,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_proto::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string"].into_iter().collect(),
                 delimiter_tokens: vec![("{", "}")],
@@ -989,7 +989,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_python::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string"].into_iter().collect(),
                 delimiter_tokens: vec![("(", ")"), ("[", "]"), ("{", "}")],
@@ -1016,7 +1016,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             highlight_query.push_str(tree_sitter_qmljs::HIGHLIGHTS_QUERY);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string", "template_string", "regex"].into_iter().collect(),
                 delimiter_tokens: vec![("{", "}"), ("(", ")"), ("[", "]"), ("<", ">")],
@@ -1029,7 +1029,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_r::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string", "special"].into_iter().collect(),
                 delimiter_tokens: vec![("{", "}"), ("(", ")"), ("[", "]")],
@@ -1043,7 +1043,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_racket::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string", "byte_string", "regex", "here_string"]
                     .into_iter()
@@ -1059,7 +1059,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_ruby::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string", "heredoc_body", "regex"].into_iter().collect(),
                 delimiter_tokens: vec![
@@ -1082,7 +1082,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["char_literal", "string_literal", "raw_string_literal"]
                     .into_iter()
@@ -1115,7 +1115,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_scala::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string", "interpolated_string_expression"]
                     .into_iter()
@@ -1142,7 +1142,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_scheme::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string"].into_iter().collect(),
                 delimiter_tokens: vec![("{", "}"), ("(", ")"), ("[", "]")],
@@ -1155,7 +1155,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
         Smali => {
             let language = unsafe { tree_sitter_smali() };
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string"].into_iter().collect(),
                 delimiter_tokens: Vec::new(),
@@ -1172,7 +1172,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_solidity::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string", "hex_string_literal", "unicode_string_literal"]
                     .into_iter()
@@ -1188,7 +1188,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_sequel::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string", "identifier"].into_iter().collect(),
                 delimiter_tokens: vec![("(", ")")],
@@ -1203,7 +1203,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["line_string_literal"].into_iter().collect(),
                 delimiter_tokens: vec![("{", "}"), ("(", ")"), ("[", "]"), ("<", ">")],
@@ -1222,7 +1222,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string", "quoted_key"].into_iter().collect(),
                 delimiter_tokens: vec![("{", "}"), ("[", "]")],
@@ -1250,7 +1250,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             highlight_query.push_str(tree_sitter_typescript::HIGHLIGHTS_QUERY);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string", "template_string", "regex", "predefined_type"]
                     .into_iter()
@@ -1274,7 +1274,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 // XMLDecl is the <?xml ...?> header, but the parser
                 // just treats it as a sequence of tokens rather than
@@ -1292,7 +1292,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: [
                     "string_scalar",
@@ -1313,7 +1313,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = tree_sitter_verilog::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 ignore_trailing_tokens: vec![],
                 language: language.clone(),
                 atom_nodes: ["integral_number"].into_iter().collect(),
@@ -1331,7 +1331,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: [].into_iter().collect(),
                 delimiter_tokens: vec![("(", ")")],
@@ -1346,7 +1346,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language = tree_sitter::Language::new(language_fn);
 
             TreeSitterConfig {
-                fold_query: None,
+                syntax_query: None,
                 language: language.clone(),
                 atom_nodes: ["string"].into_iter().collect(),
                 delimiter_tokens: vec![("{", "}"), ("[", "]"), ("(", ")")]
@@ -1522,7 +1522,8 @@ fn tree_highlights(
     }
 
     HighlightedNodeIds {
-        fold_kinds: folds::classify(tree, src, config.fold_query.as_ref()),
+        fold_kinds: folds::classify(tree, src, config.syntax_query.as_ref()),
+        contexts: super::context::classify(tree, src, config.syntax_query.as_ref()),
         comment_ids,
         keyword_ids,
         string_ids,
@@ -1771,6 +1772,7 @@ fn find_delim_positions(
 #[derive(Debug)]
 pub(crate) struct HighlightedNodeIds {
     fold_kinds: DftHashMap<usize, FoldKind>,
+    contexts: DftHashMap<usize, Vec<super::context::ContextMetadata>>,
     keyword_ids: DftHashSet<usize>,
     comment_ids: DftHashSet<usize>,
     string_ids: DftHashSet<usize>,
@@ -1864,33 +1866,42 @@ fn syntax_from_cursor<'a>(
         errors.record(&node);
     }
 
-    if config.atom_nodes.contains(node.kind()) || highlights.comment_ids.contains(&node.id()) {
-        // Treat nodes like string literals as atoms, regardless
-        // of whether they have children.
-        //
-        // Also, if this node is highlighted as a comment, treat it as
-        // an atom unconditionally.
-        atom_from_cursor(arena, src, nl_pos, cursor, highlights, ignore_comments)
-    } else if highlights.keyword_ids.contains(&node.id()) && node.child_count() == 1 {
-        // If this list has a single child, and the list itself (not
-        // the child) is marked as a keyword, treat it as an atom with
-        // keyword highlighting.
-        atom_from_cursor(arena, src, nl_pos, cursor, highlights, ignore_comments)
-    } else if node.child_count() > 0 {
-        Some(list_from_cursor(
-            arena,
-            src,
-            nl_pos,
-            cursor,
-            errors,
-            config,
-            highlights,
-            subtrees,
-            ignore_comments,
-        ))
-    } else {
-        atom_from_cursor(arena, src, nl_pos, cursor, highlights, ignore_comments)
+    let syntax =
+        if config.atom_nodes.contains(node.kind()) || highlights.comment_ids.contains(&node.id()) {
+            // Treat nodes like string literals as atoms, regardless
+            // of whether they have children.
+            //
+            // Also, if this node is highlighted as a comment, treat it as
+            // an atom unconditionally.
+            atom_from_cursor(arena, src, nl_pos, cursor, highlights, ignore_comments)
+        } else if highlights.keyword_ids.contains(&node.id()) && node.child_count() == 1 {
+            // If this list has a single child, and the list itself (not
+            // the child) is marked as a keyword, treat it as an atom with
+            // keyword highlighting.
+            atom_from_cursor(arena, src, nl_pos, cursor, highlights, ignore_comments)
+        } else if node.child_count() > 0 {
+            Some(list_from_cursor(
+                arena,
+                src,
+                nl_pos,
+                cursor,
+                errors,
+                config,
+                highlights,
+                subtrees,
+                ignore_comments,
+            ))
+        } else {
+            atom_from_cursor(arena, src, nl_pos, cursor, highlights, ignore_comments)
+        }?;
+    if let Some(contexts) = highlights.contexts.get(&node.id()) {
+        syntax
+            .info()
+            .context
+            .borrow_mut()
+            .extend(contexts.iter().cloned());
     }
+    Some(syntax)
 }
 
 /// Does `node` match the ignorable trailing tokens configuration for

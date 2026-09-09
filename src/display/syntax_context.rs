@@ -1,48 +1,82 @@
 //! Select enclosing syntax context for one change hunk.
 use std::collections::BTreeSet;
-use tree_sitter::{Node, Tree};
 
 use super::hunks::{ContextRange, Hunk};
 use super::line_layout::{self as layout, LineSelection};
 use crate::lines::SourceRange;
-use crate::parse::syntax::MatchedPos;
+use crate::parse::syntax::{MatchedPos, Syntax};
 
 /// Syntax candidates are discovered once, before hunks are constructed.
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct SyntaxAnnotations {
     lhs_candidates: Vec<ContextCandidate>,
     rhs_candidates: Vec<ContextCandidate>,
 }
 
-struct ContextCandidate {
-    contains: std::ops::RangeInclusive<usize>,
-    rows: BTreeSet<usize>,
+#[derive(Clone, Debug)]
+pub(crate) struct ContextCandidate {
+    pub(crate) contains: std::ops::RangeInclusive<usize>,
+    pub(crate) rows: BTreeSet<usize>,
 }
 
 impl SyntaxAnnotations {
-    pub(crate) fn collect(
-        (lhs_tree, rhs_tree): (&Tree, &Tree),
-        (lhs_src, rhs_src): (&str, &str),
-    ) -> Self {
+    pub(crate) fn collect((lhs, rhs): (&[&Syntax<'_>], &[&Syntax<'_>])) -> Self {
         Self {
-            lhs_candidates: candidates(lhs_tree, lhs_src),
-            rhs_candidates: candidates(rhs_tree, rhs_src),
+            lhs_candidates: candidates(lhs),
+            rhs_candidates: candidates(rhs),
         }
     }
 
-    fn context_for_hunk(&self, hunk: &crate::display::hunks::Hunk) -> LineSelection {
+    pub(crate) fn context_for_changes(
+        &self,
+        lhs: &crate::hash::DftHashSet<line_numbers::LineNumber>,
+        rhs: &crate::hash::DftHashSet<line_numbers::LineNumber>,
+    ) -> LineSelection {
         LineSelection {
-            lhs: select_candidates(&self.lhs_candidates, &hunk.novel_lhs),
-            rhs: select_candidates(&self.rhs_candidates, &hunk.novel_rhs),
+            lhs: select_candidates(&self.lhs_candidates, lhs),
+            rhs: select_candidates(&self.rhs_candidates, rhs),
         }
     }
 }
 
-fn candidates(tree: &Tree, source: &str) -> Vec<ContextCandidate> {
-    let lines: Vec<_> = source.split('\n').collect();
-    let mut candidates = Vec::new();
-    collect_candidates(tree.root_node(), &lines, &mut candidates);
-    candidates
+fn candidates(roots: &[&Syntax<'_>]) -> Vec<ContextCandidate> {
+    let mut contexts = Vec::new();
+    let mut occupied = BTreeSet::new();
+    let mut pending = roots.to_vec();
+    while let Some(node) = pending.pop() {
+        contexts.extend(node.info().context.borrow().iter().cloned());
+        match node {
+            Syntax::Atom { position, .. } => {
+                occupied.extend(position.iter().map(|span| span.line.as_usize()))
+            }
+            Syntax::List {
+                open_position,
+                close_position,
+                children,
+                ..
+            } => {
+                occupied.extend(
+                    open_position
+                        .iter()
+                        .chain(close_position)
+                        .filter(|span| span.start_col < span.end_col)
+                        .map(|span| span.line.as_usize()),
+                );
+                pending.extend(children);
+            }
+        }
+    }
+    contexts
+        .into_iter()
+        .map(|context| {
+            let mut rows: BTreeSet<_> = occupied.range(context.header).copied().collect();
+            rows.extend(context.closing);
+            ContextCandidate {
+                contains: context.contains,
+                rows,
+            }
+        })
+        .collect()
 }
 
 fn select_candidates(
@@ -55,125 +89,6 @@ fn select_candidates(
         .filter(|candidate| changed.range(candidate.contains.clone()).next().is_some())
         .flat_map(|candidate| candidate.rows.iter().copied())
         .collect()
-}
-
-fn is_function(kind: &str) -> bool {
-    matches!(
-        kind,
-        "function_definition"
-            | "function_declaration"
-            | "method_definition"
-            | "method_declaration"
-            | "function_item"
-            | "arrow_function"
-    )
-}
-fn is_scope(kind: &str) -> bool {
-    is_function(kind)
-        || matches!(
-            kind,
-            "class_definition" | "class_declaration" | "impl_item" | "mod_item" | "struct_item"
-        )
-}
-
-fn add_lines(out: &mut BTreeSet<usize>, start: usize, end: usize, src: &[&str]) {
-    out.extend((start..=end).filter(|r| *r < src.len() && !src[*r].trim().is_empty()));
-}
-
-fn header_end(node: Node<'_>, body: Node<'_>) -> usize {
-    if body.kind() == "block"
-        && node.kind().ends_with("definition")
-        && body.start_position().row > node.start_position().row
-    {
-        body.start_position().row - 1
-    } else {
-        body.start_position().row
-    }
-}
-
-fn scope_body(node: Node<'_>) -> Option<Node<'_>> {
-    if !is_scope(node.kind()) {
-        return None;
-    }
-    node.child_by_field_name("body")
-}
-
-fn closing_brace_line(body: Node<'_>, source: &[&str]) -> Option<usize> {
-    let row = body.end_position().row;
-    source
-        .get(row)
-        .filter(|line| line.trim_start().starts_with('}'))
-        .map(|_| row)
-}
-
-fn add_boundaries(node: Node<'_>, out: &mut BTreeSet<usize>, src: &[&str]) {
-    add_lines(
-        out,
-        node.start_position().row,
-        node.start_position().row,
-        src,
-    );
-    add_lines(out, node.end_position().row, node.end_position().row, src);
-}
-
-fn candidate(node: Node<'_>, rows: BTreeSet<usize>) -> ContextCandidate {
-    ContextCandidate {
-        contains: node.start_position().row..=node.end_position().row,
-        rows,
-    }
-}
-
-fn collect_candidates(node: Node<'_>, src: &[&str], out: &mut Vec<ContextCandidate>) {
-    if let Some(body) = scope_body(node) {
-        let mut rows = BTreeSet::new();
-        add_lines(
-            &mut rows,
-            node.start_position().row,
-            header_end(node, body),
-            src,
-        );
-        rows.extend(closing_brace_line(body, src));
-        out.push(candidate(node, rows));
-        collect_tail(node, body, src, out);
-    }
-    if matches!(
-        node.kind(),
-        "for_statement"
-            | "for_expression"
-            | "loop_expression"
-            | "expression_switch_statement"
-            | "switch_statement"
-            | "match_expression"
-            | "return_statement"
-            | "return_expression"
-    ) {
-        let mut rows = BTreeSet::new();
-        add_boundaries(node, &mut rows, src);
-        out.push(candidate(node, rows));
-    }
-    let mut cursor = node.walk();
-    for child in node.named_children(&mut cursor) {
-        collect_candidates(child, src, out);
-    }
-}
-
-fn collect_tail(node: Node<'_>, body: Node<'_>, src: &[&str], out: &mut Vec<ContextCandidate>) {
-    if node.kind() != "function_item" {
-        return;
-    }
-    let mut cursor = body.walk();
-    let Some(tail) = body.named_children(&mut cursor).last() else {
-        return;
-    };
-    if matches!(
-        tail.kind(),
-        "let_declaration" | "expression_statement" | "line_comment" | "block_comment"
-    ) {
-        return;
-    }
-    let mut rows = BTreeSet::new();
-    add_boundaries(tail, &mut rows, src);
-    out.push(candidate(tail, rows));
 }
 
 pub(crate) fn add_hunk_context(
@@ -203,7 +118,7 @@ pub(crate) fn add_hunk_context(
         rhs_index[rhs] = Some(index);
     }
     for hunk in hunks {
-        let selected = annotations.context_for_hunk(hunk);
+        let selected = annotations.context_for_changes(&hunk.novel_lhs, &hunk.novel_rhs);
         let indexes: std::collections::BTreeSet<_> = selected
             .lhs
             .iter()
@@ -244,5 +159,62 @@ pub(crate) fn compact_hunk_context(hunks: &mut [Hunk]) {
             }
             hunk.context.push(region);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parse::{guess_language::Language, tree_sitter_parser as parser};
+    use typed_arena::Arena;
+
+    #[test]
+    fn context_survives_without_source_or_tree() {
+        let arena = Arena::new();
+        let syntax = {
+            let source = String::from(
+                "def run(\n    value,\n):\n    return {\n        'key': value,\n    }\n",
+            );
+            parser::parse(
+                &arena,
+                &source,
+                parser::from_language(Language::Python),
+                false,
+            )
+        };
+        let selected = select_candidates(
+            &candidates(&syntax),
+            &std::iter::once(line_numbers::LineNumber::from(4)).collect(),
+        );
+        assert_eq!(selected, BTreeSet::from([0, 1, 2, 3, 5]));
+    }
+
+    #[test]
+    fn atomic_tail_retains_context_after_wrapper_flattening() {
+        let arena = Arena::new();
+        let syntax = parser::parse(
+            &arena,
+            "fn run() -> i32 {\n    answer\n}\n",
+            parser::from_language(Language::Rust),
+            false,
+        );
+        let mut pending = syntax;
+        let mut found_tail = false;
+        while let Some(node) = pending.pop() {
+            match node {
+                Syntax::Atom { content, .. } if content == "answer" => {
+                    assert!(node
+                        .info()
+                        .context
+                        .borrow()
+                        .iter()
+                        .any(|context| context.contains == (1..=1)));
+                    found_tail = true;
+                }
+                Syntax::List { children, .. } => pending.extend(children),
+                _ => {}
+            }
+        }
+        assert!(found_tail);
     }
 }

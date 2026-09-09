@@ -4,7 +4,7 @@
 
 use super::folds::{self, Fold, FoldKind};
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::hash::Hash;
 use std::num::NonZeroU32;
 use std::{env, fmt};
@@ -87,6 +87,8 @@ impl FoldMetadata {
 pub(crate) struct SyntaxInfo<'a> {
     /// Parent fold semantics replace the child's when a wrapper is flattened.
     pub(crate) fold: Cell<Option<FoldMetadata>>,
+    /// Multiple enclosing contexts can survive on one flattened node.
+    pub(crate) context: RefCell<Vec<super::context::ContextMetadata>>,
     /// The previous node with the same parent as this one.
     previous_sibling: Cell<Option<&'a Syntax<'a>>>,
     /// The next node with the same parent as this one.
@@ -117,6 +119,7 @@ impl<'a> SyntaxInfo<'a> {
     pub(crate) fn new() -> Self {
         Self {
             fold: Cell::new(None),
+            context: RefCell::new(Vec::new()),
             previous_sibling: Cell::new(None),
             next_sibling: Cell::new(None),
             prev: Cell::new(None),

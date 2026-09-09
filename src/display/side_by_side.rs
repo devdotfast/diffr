@@ -923,6 +923,7 @@ mod tests {
             novel_lhs,
             novel_rhs,
             lines: vec![(Some(0.into()), Some(0.into()))],
+            context: Vec::new(),
         }];
 
         // Simple smoke test.

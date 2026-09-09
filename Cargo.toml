@@ -37,6 +37,7 @@ pkg-url = "{ repo }/releases/download/{ version }/difft-{ version }-{ target }.{
 pkg-fmt = "zip"
 
 [dependencies]
+git2 = { version = "0.20", default-features = false }
 regex = "1.10.4"
 clap = { version = "4.0.0", features = ["cargo", "env", "wrap_help", "string"] }
 typed-arena = "2.0.2"

@@ -2,6 +2,8 @@
 
 #![allow(clippy::mutable_key_type)] // Hash for Syntax doesn't use mutable fields.
 
+use super::folds::{self, Fold, FoldKind};
+
 use std::cell::Cell;
 use std::hash::Hash;
 use std::num::NonZeroU32;
@@ -15,7 +17,7 @@ use crate::diff::changes::ChangeKind::*;
 use crate::diff::changes::{ChangeKind, ChangeMap};
 use crate::diff::lcs_diff;
 use crate::hash::DftHashMap;
-use crate::lines::{is_all_whitespace, split_on_newlines};
+use crate::lines::{is_all_whitespace, split_on_newlines, SourceRange};
 use crate::words::split_words_and_numbers;
 
 /// A Debug implementation that does not recurse into the
@@ -50,6 +52,23 @@ pub(crate) type SyntaxId = NonZeroU32;
 
 pub(crate) type ContentId = u32;
 
+/// One semantic fold boundary, shared by Atoms and Lists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FoldMetadata {
+    pub(crate) kind: FoldKind,
+    /// Only set when flattening removes the List that owned this boundary.
+    pub(crate) range_override: Option<SourceRange>,
+}
+
+impl FoldMetadata {
+    pub(crate) fn new(kind: FoldKind) -> Self {
+        Self {
+            kind,
+            range_override: None,
+        }
+    }
+}
+
 /// Fields that are common to both `Syntax::List` and `Syntax::Atom`.
 ///
 /// This struct uses interior mutability (`Cell`) extensively. In some
@@ -66,6 +85,8 @@ pub(crate) type ContentId = u32;
 /// (This is deliberately exchanging correctness-by-construction for
 /// performance.)
 pub(crate) struct SyntaxInfo<'a> {
+    /// Parent fold semantics replace the child's when a wrapper is flattened.
+    pub(crate) fold: Cell<Option<FoldMetadata>>,
     /// The previous node with the same parent as this one.
     previous_sibling: Cell<Option<&'a Syntax<'a>>>,
     /// The next node with the same parent as this one.
@@ -95,6 +116,7 @@ pub(crate) struct SyntaxInfo<'a> {
 impl<'a> SyntaxInfo<'a> {
     pub(crate) fn new() -> Self {
         Self {
+            fold: Cell::new(None),
             previous_sibling: Cell::new(None),
             next_sibling: Cell::new(None),
             prev: Cell::new(None),
@@ -215,6 +237,7 @@ impl<'a> fmt::Debug for Syntax<'a> {
 }
 
 impl<'a> Syntax<'a> {
+    #[cfg(test)]
     pub(crate) fn new_list(
         arena: &'a Arena<Self>,
         open_content: &str,
@@ -222,6 +245,26 @@ impl<'a> Syntax<'a> {
         children: Vec<&'a Self>,
         close_content: &str,
         close_position: Vec<SingleLineSpan>,
+    ) -> &'a Self {
+        Self::new_list_with_fold(
+            arena,
+            open_content,
+            open_position,
+            children,
+            close_content,
+            close_position,
+            None,
+        )
+    }
+
+    pub(crate) fn new_list_with_fold(
+        arena: &'a Arena<Self>,
+        open_content: &str,
+        open_position: Vec<SingleLineSpan>,
+        children: Vec<&'a Self>,
+        close_content: &str,
+        close_position: Vec<SingleLineSpan>,
+        fold: Option<FoldMetadata>,
     ) -> &'a Self {
         // Skip empty atoms: they aren't displayed, so there's no
         // point making our syntax tree bigger. These occur when we're
@@ -244,7 +287,12 @@ impl<'a> Syntax<'a> {
         // syntax tree smaller. It also really helps when looking at
         // debug output for small inputs.
         if children.len() == 1 && open_content.is_empty() && close_content.is_empty() {
-            return children[0];
+            let child = children[0];
+            if let Some(mut fold) = fold {
+                fold.range_override = Some(folds::interior_range(&open_position, &close_position));
+                child.info().fold.set(Some(fold));
+            }
+            return child;
         }
 
         let mut num_descendants = 0;
@@ -258,7 +306,10 @@ impl<'a> Syntax<'a> {
         }
 
         arena.alloc(List {
-            info: SyntaxInfo::default(),
+            info: SyntaxInfo {
+                fold: Cell::new(fold),
+                ..SyntaxInfo::default()
+            },
             open_position,
             open_content: open_content.into(),
             close_content: close_content.into(),
@@ -270,9 +321,19 @@ impl<'a> Syntax<'a> {
 
     pub(crate) fn new_atom(
         arena: &'a Arena<Self>,
+        position: Vec<SingleLineSpan>,
+        content: String,
+        kind: AtomKind,
+    ) -> &'a Self {
+        Self::new_atom_with_fold(arena, position, content, kind, None)
+    }
+
+    pub(crate) fn new_atom_with_fold(
+        arena: &'a Arena<Self>,
         mut position: Vec<SingleLineSpan>,
         mut content: String,
         kind: AtomKind,
+        fold: Option<FoldMetadata>,
     ) -> &'a Self {
         // If a parser hasn't cleaned up \r on CRLF files with
         // comments, discard it.
@@ -290,7 +351,10 @@ impl<'a> Syntax<'a> {
         }
 
         arena.alloc(Atom {
-            info: SyntaxInfo::default(),
+            info: SyntaxInfo {
+                fold: Cell::new(fold),
+                ..SyntaxInfo::default()
+            },
             position,
             content,
             kind,
@@ -624,7 +688,7 @@ impl<'a> Eq for Syntax<'a> {}
 
 /// Different types of strings. We want to diff these the same way,
 /// but highlight them differently.
-#[derive(PartialEq, Eq, Debug, Clone, Copy, Hash)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, Hash, serde::Serialize)]
 pub(crate) enum StringKind {
     /// A string literal, such as `"foo"`.
     StringLiteral,
@@ -632,7 +696,7 @@ pub(crate) enum StringKind {
     Text,
 }
 
-#[derive(PartialEq, Eq, Debug, Clone, Copy, Hash)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, Hash, serde::Serialize)]
 pub(crate) enum AtomKind {
     /// The kind of this atom when we don't know anything else about
     /// it. This is typically a variable, e.g. `foo`, or a literal
@@ -664,7 +728,7 @@ pub(crate) enum AtomKind {
 }
 
 /// Unlike atoms, tokens can be delimiters like `{`.
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, serde::Serialize)]
 pub(crate) enum TokenKind {
     Delimiter,
     Atom(AtomKind),
@@ -974,11 +1038,20 @@ impl MatchedPos {
 pub(crate) fn change_positions<'a>(
     nodes: &[&'a Syntax<'a>],
     change_map: &ChangeMap<'a>,
+    side: crate::constants::Side,
+    folds: &mut Vec<Fold>,
 ) -> Vec<MatchedPos> {
     let mut positions = Vec::new();
     let mut seen_unchanged = false;
 
-    change_positions_(nodes, change_map, &mut positions, &mut seen_unchanged);
+    change_positions_(
+        nodes,
+        change_map,
+        &mut positions,
+        &mut seen_unchanged,
+        side,
+        folds,
+    );
 
     // If there are no unchanged items, insert a dummy item at the
     // beginning of both files with a width of zero. This gives
@@ -1015,11 +1088,15 @@ fn change_positions_<'a>(
     change_map: &ChangeMap<'a>,
     positions: &mut Vec<MatchedPos>,
     seen_unchanged: &mut bool,
+    side: crate::constants::Side,
+    folds: &mut Vec<Fold>,
 ) {
     for node in nodes {
         let change = change_map
             .get(node)
             .unwrap_or_else(|| panic!("Should have changes set in all nodes: {:#?}", node));
+
+        folds.extend(folds::project(node, change, side));
 
         if matches!(change, ChangeKind::Unchanged(_)) {
             *seen_unchanged = true;
@@ -1039,7 +1116,7 @@ fn change_positions_<'a>(
                     false,
                 ));
 
-                change_positions_(children, change_map, positions, seen_unchanged);
+                change_positions_(children, change_map, positions, seen_unchanged, side, folds);
 
                 positions.extend(MatchedPos::new(
                     change,

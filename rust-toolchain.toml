@@ -1,4 +1,4 @@
 [toolchain]
 channel = "1.85.0"
-components = ["rustfmt"]
+components = ["rustfmt", "rust-src", "rust-analyzer"]
 profile = "minimal"

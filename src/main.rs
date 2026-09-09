@@ -53,6 +53,7 @@ mod line_parser;
 mod lines;
 mod options;
 mod parse;
+mod review;
 mod summary;
 mod version;
 mod words;
@@ -144,6 +145,14 @@ fn main() {
     pretty_env_logger::try_init_timed_custom_env("DFT_LOG")
         .expect("The logger has not been previously initialized");
     reset_sigpipe();
+
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("review")) {
+        if let Err(error) = review::cli::run() {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
 
     match options::parse_args() {
         Mode::DumpTreeSitter {
@@ -439,6 +448,7 @@ fn diff_file(
                 lhs_positions: vec![],
                 rhs_positions: vec![],
                 hunks: vec![],
+                folds: vec![],
                 has_byte_changes,
                 has_syntactic_changes: false,
             };
@@ -597,6 +607,7 @@ fn check_only_text(
         lhs_positions: vec![],
         rhs_positions: vec![],
         hunks: vec![],
+        folds: vec![],
         has_byte_changes,
         has_syntactic_changes: lhs_src != rhs_src,
     }
@@ -613,6 +624,7 @@ fn diff_file_content(
     diff_options: &DiffOptions,
     overrides: &[(LanguageOverride, Vec<glob::Pattern>)],
 ) -> DiffResult {
+    let mut annotations = display::syntax_context::SyntaxAnnotations::default();
     let guess_src = match rhs_path {
         FileArgument::DevNull => &lhs_src,
         _ => &rhs_src,
@@ -633,16 +645,18 @@ fn diff_file_content(
             extra_info,
             display_path: display_path.to_owned(),
             file_format,
-            lhs_src: FileContent::Text("".into()),
-            rhs_src: FileContent::Text("".into()),
+            lhs_src: FileContent::Text(lhs_src.into()),
+            rhs_src: FileContent::Text(rhs_src.into()),
             lhs_positions: vec![],
             rhs_positions: vec![],
             hunks: vec![],
+            folds: vec![],
             has_byte_changes: None,
             has_syntactic_changes: false,
         };
     }
 
+    let mut folds = Vec::new();
     let (file_format, lhs_positions, rhs_positions) = match lang_config {
         None => {
             let file_format = FileFormat::PlainText;
@@ -685,6 +699,7 @@ fn diff_file_content(
                                     lhs_positions: vec![],
                                     rhs_positions: vec![],
                                     hunks: vec![],
+                                    folds: vec![],
                                     has_byte_changes,
                                     has_syntactic_changes,
                                 };
@@ -731,8 +746,18 @@ fn diff_file_content(
                                 fix_all_sliders(language, &lhs, &mut change_map);
                                 fix_all_sliders(language, &rhs, &mut change_map);
 
-                                let mut lhs_positions = syntax::change_positions(&lhs, &change_map);
-                                let mut rhs_positions = syntax::change_positions(&rhs, &change_map);
+                                let mut lhs_positions = syntax::change_positions(
+                                    &lhs,
+                                    &change_map,
+                                    Side::Left,
+                                    &mut folds,
+                                );
+                                let mut rhs_positions = syntax::change_positions(
+                                    &rhs,
+                                    &change_map,
+                                    Side::Right,
+                                    &mut folds,
+                                );
 
                                 if diff_options.ignore_comments {
                                     let lhs_comments =
@@ -743,6 +768,11 @@ fn diff_file_content(
                                         tsp::comment_positions(&rhs_tree, rhs_src, lang_config);
                                     rhs_positions.extend(rhs_comments);
                                 }
+
+                                annotations = display::syntax_context::SyntaxAnnotations::collect(
+                                    (&lhs_tree, &rhs_tree),
+                                    (lhs_src, rhs_src),
+                                );
 
                                 (
                                     FileFormat::SupportedLanguage(language),
@@ -826,8 +856,14 @@ fn diff_file_content(
     let opposite_to_lhs = opposite_positions(&lhs_positions);
     let opposite_to_rhs = opposite_positions(&rhs_positions);
 
-    let hunks = matched_pos_to_hunks(&lhs_positions, &rhs_positions);
-    let hunks = merge_adjacent(
+    let mut hunks = matched_pos_to_hunks(&lhs_positions, &rhs_positions);
+    display::syntax_context::add_hunk_context(
+        &mut hunks,
+        (lhs_src, rhs_src),
+        (&lhs_positions, &rhs_positions),
+        &annotations,
+    );
+    let mut hunks = merge_adjacent(
         &hunks,
         &opposite_to_lhs,
         &opposite_to_rhs,
@@ -836,6 +872,7 @@ fn diff_file_content(
         display_options.num_context_lines as usize,
     );
     let has_syntactic_changes = !hunks.is_empty();
+    display::syntax_context::compact_hunk_context(&mut hunks);
 
     let has_byte_changes = if lhs_src == rhs_src {
         None
@@ -852,6 +889,7 @@ fn diff_file_content(
         lhs_positions,
         rhs_positions,
         hunks,
+        folds,
         has_byte_changes,
         has_syntactic_changes,
     }

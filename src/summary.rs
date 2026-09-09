@@ -3,6 +3,7 @@
 use std::fmt::Display;
 
 use crate::display::hunks::Hunk;
+use crate::parse::folds::Fold;
 use crate::parse::guess_language::{self, language_name};
 use crate::parse::syntax::MatchedPos;
 
@@ -42,6 +43,7 @@ pub(crate) struct DiffResult {
     pub(crate) lhs_src: FileContent,
     pub(crate) rhs_src: FileContent,
     pub(crate) hunks: Vec<Hunk>,
+    pub(crate) folds: Vec<Fold>,
 
     pub(crate) lhs_positions: Vec<MatchedPos>,
     pub(crate) rhs_positions: Vec<MatchedPos>,

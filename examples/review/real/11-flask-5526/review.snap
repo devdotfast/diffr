@@ -1,0 +1,54 @@
+--- a/src/flask/blueprints.py
++++ b/src/flask/blueprints.py
+          | ...
+  18   18   class Blueprint(SansioBlueprint):
+          | ...
+ 102  102           )
+ 103  103   
+ 104      -     def open_resource(self, resource: str, mode: str = "rb") -> t.IO[t.AnyStr]:
+ 105      -         """Open a resource file relative to :attr:`root_path` for
+ 106      -         reading.
+ 107      - 
+ 108      -         For example, if the file ``schema.sql`` is next to the file
+ 109      -         ``app.py`` where the ``Flask`` app is defined, it can be opened
+ 110      -         with:
+ 111      - 
+ 112      -         .. code-block:: python
+ 113      - 
+ 114      -             with app.open_resource("schema.sql") as f:
+ 115      -                 conn.executescript(f.read())
+      104 +     def open_resource(
+      105 +         self, resource: str, mode: str = "rb", encoding: str | None = "utf-8"
+      106 +     ) -> t.IO[t.AnyStr]:
+      107 +         """Open a resource file relative to :attr:`root_path` for reading. The
+      108 +         blueprint-relative equivalent of the app's :meth:`~.Flask.open_resource`
+      109 +         method.
+      110 + 
+      111 +         :param resource: Path to the resource relative to :attr:`root_path`.
+      112 +         :param mode: Open the file in this mode. Only reading is supported,
+      113 +             valid values are ``"r"`` (or ``"rt"``) and ``"rb"``.
+      114 +         :param encoding: Open the file with this encoding when opening in text
+      115 +             mode. This is ignored when opening in binary mode.
+ 116  116   
+ 117      -         :param resource: Path to the resource relative to
+ 118      -             :attr:`root_path`.
+ 119      -         :param mode: Open the file in this mode. Only reading is
+ 120      -             supported, valid values are "r" (or "rt") and "rb".
+ 121      - 
+ 122      -         Note this is a duplicate of the same method in the Flask
+ 123      -         class.
+ 124      - 
+ 125      -         """
+      117 +         .. versionchanged:: 3.1
+      118 +             Added the ``encoding`` parameter.
+      119 +         """
+ 126  120           if mode not in {"r", "rt", "rb"}:
+ 127  121               raise ValueError("Resources can only be opened for reading.")
+ 128  122   
+ 129      -         return open(os.path.join(self.root_path, resource), mode)
+      123 +         path = os.path.join(self.root_path, resource)
+      124 + 
+      125 +         if mode == "rb":
+      126 +             return open(path, mode)
+      127 + 
+      128 +         return open(path, mode, encoding=encoding)

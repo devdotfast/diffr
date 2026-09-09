@@ -1,0 +1,27 @@
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+          | ...
+ 231  231   func (c *AuthConfig) ActiveToken(hostname string) (string, string) {
+          | ...
+ 234  234   	}
+ 235  235   	token, source := ghauth.TokenFromEnvOrConfig(hostname)
+ 236  236   	if token == "" {
+      237 + 		var user string
+ 237  238   		var err error
+      239 + 		if user, err = c.ActiveUser(hostname); err == nil {
+      240 + 			token, err = c.TokenFromKeyringForUser(hostname, user)
+      241 + 		}
+      242 + 		if err != nil {
+      243 + 			// We should generally be able to find a token for the active user,
+      244 + 			// but in some cases such as if the keyring was set up in a very old
+      245 + 			// version of the CLI, it may only have a unkeyed token, so fallback
+      246 + 			// to it.
+ 238      ~ 		token, err = c.TokenFromKeyring(hostname)
+      247 ~ 			token, err = c.TokenFromKeyring(hostname)
+      248 + 		}
+ 239  249   		if err == nil {
+ 240  250   			source = "keyring"
+ 241  251   		}
+          | ...
+ 244  254   }
+          | ...

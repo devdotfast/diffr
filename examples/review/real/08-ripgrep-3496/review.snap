@@ -1,0 +1,104 @@
+--- a/crates/ignore/src/walk.rs
++++ b/crates/ignore/src/walk.rs
+          | ...
+ 545  545   impl WalkBuilder {
+          | ...
+ 592  592       /// Build a new `Walk` iterator.
+ 593  593       pub fn build(&self) -> Walk {
+          | ...
+ 634  634           Walk {
+          | ...
+ 636  636               it: None,
+ 637  637               ig_root: ig_root.clone(),
+ 638  638               ig: ig_root.clone(),
+      639 +             max_depth: self.max_depth,
+ 639  640               max_filesize: self.max_filesize,
+ 640  641               skip: self.skip.clone(),
+ 641  642               filter: self.filter.clone(),
+ 642  643           }
+ 643  644       }
+          | ...
+1108 1109   }
+          | ...
+1110 1111   /// Walk is a recursive directory iterator over file paths in one or more
+1111 1112   /// directories.
+1112 1113   ///
+1113 1114   /// Only file and directory paths matching the rules are returned. By default,
+1114 1115   /// ignore files like `.gitignore` are respected. The precise matching rules
+1115 1116   /// and precedence is explained in the documentation for `WalkBuilder`.
+1116 1117   pub struct Walk {
+          | ...
+1118 1119       it: Option<WalkEventIter>,
+1119 1120       ig_root: Ignore,
+1120 1121       ig: Ignore,
+     1122 +     max_depth: Option<usize>,
+1121 1123       max_filesize: Option<u64>,
+1122 1124       skip: Option<Arc<Handle>>,
+1123 1125       filter: Option<Filter>,
+1124 1126   }
+          | ...
+1184 1186   impl Iterator for Walk {
+          | ...
+1187 1189       #[inline(always)]
+1188 1190       fn next(&mut self) -> Option<Result<DirEntry, Error>> {
+1189 1191           loop {
+          | ...
+1214 1216               match ev {
+          | ...
+1228 1230                           self.it.as_mut().unwrap().it.skip_current_dir();
+1229 1231                           // Still need to push this on the stack because
+1230 1232                           // we'll get a WalkEvent::Exit event for this dir.
+1231      -                         // We don't care if it errors though.
+1232      -                         let (igtmp, _) = self.ig.add_child(ent.path());
+     1233 +                         // Its ignore files cannot apply to any visited entry.
+     1234 +                         let (igtmp, _) =
+     1235 +                             self.ig.add_child_with_entries(ent.path(), &[]);
+1233 1236                           self.ig = igtmp;
+1234 1237                           continue;
+1235 1238                       }
+1236      -                     let (igtmp, err) = self.ig.add_child(ent.path());
+     1239 +                     let (igtmp, err) = if self.max_depth == Some(ent.depth()) {
+     1240 +                         self.ig.add_child_with_entries(ent.path(), &[])
+     1241 +                     } else {
+     1242 +                         self.ig.add_child(ent.path())
+     1243 +                     };
+1237 1244                       self.ig = igtmp;
+1238 1245                       ent.err = err;
+1239 1246                       return Some(Ok(ent));
+          | ...
+1252 1259               }
+1253 1260           }
+1254 1261       }
+1255 1262   }
+          | ...
+2186 2193   #[cfg(test)]
+2187 2194   mod tests {
+          | ...
+2427 2434           );
+2428 2435       }
+     2436 + 
+     2437 +     #[test]
+     2438 +     fn max_depth_does_not_load_unreachable_ignore_files() {
+     2439 +         let td = tmpdir();
+     2440 +         let leaf = td.path().join("leaf");
+     2441 +         mkdirp(&leaf);
+     2442 +         wfile(leaf.join(".ignore"), "{invalid\n");
+     2443 + 
+     2444 +         let mut builder = WalkBuilder::new(td.path());
+     2445 +         builder.max_depth(Some(1));
+     2446 +         let entry = builder
+     2447 +             .build()
+     2448 +             .find_map(|result| {
+     2449 +                 let entry = result.unwrap();
+     2450 +                 (entry.path() == leaf).then_some(entry)
+     2451 +             })
+     2452 +             .unwrap();
+     2453 + 
+     2454 +         assert!(entry.error().is_none());
+     2455 +         assert_paths(td.path(), &builder, &["leaf"]);
+     2456 +     }
+2429 2457   
+2430 2458       #[test]
+2431 2459       fn min_depth() {
+          | ...
+2712 2740   }

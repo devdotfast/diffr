@@ -1,0 +1,40 @@
+--- a/packages/progressive-review/src/review-diff-files.ts
++++ b/packages/progressive-review/src/review-diff-files.ts
+          | ...
+ 229  229   function parseReviewDiffFile(section: string): ReviewDiffFile | null {
+          | ...
+ 236  236     let additions = 0;
+ 237  237     let deletions = 0;
+ 238  238   
+      239 +   let inHunk = false;
+ 239  240     for (const line of lines) {
+      241 +     if (line.startsWith("@@")) {
+      242 +       inHunk = true;
+      243 +       continue;
+      244 +     }
+      245 +     if (!inHunk) {
+ 240      ~     const parsedOldPath = parseGitFileLine(line, "--- ");
+      246 ~       const parsedOldPath = parseGitFileLine(line, "--- ");
+ 241      ~     const parsedNewPath = parseGitFileLine(line, "+++ ");
+      247 ~       const parsedNewPath = parseGitFileLine(line, "+++ ");
+ 242      ~     if (parsedOldPath !== undefined) oldPath = parsedOldPath;
+      248 ~       if (parsedOldPath !== undefined) oldPath = parsedOldPath;
+          | ...
+ 247      ~     if (line.startsWith("rename to ")) {
+      253 ~       if (line.startsWith("rename to ")) {
+ 248      ~       renameTo = unquoteGitPath(line.slice("rename to ".length).trim());
+      254 ~         renameTo = unquoteGitPath(line.slice("rename to ".length).trim());
+ 249      ~     }
+      255 ~       }
+ 250      -     if (line.startsWith("+") && !line.startsWith("+++ ")) additions += 1;
+ 251      -     if (line.startsWith("-") && !line.startsWith("--- ")) deletions += 1;
+      256 +       continue;
+      257 +     }
+      258 +     if (line.startsWith("+")) additions += 1;
+      259 +     else if (line.startsWith("-")) deletions += 1;
+ 252  260     }
+ 253  261   
+ 254  262     const status = section.includes("\nnew file mode ")
+          | ...
+ 275  283   }
+          | ...

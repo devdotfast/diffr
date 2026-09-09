@@ -1,0 +1,84 @@
+--- a/utils/merkletrie/difftree.go
++++ b/utils/merkletrie/difftree.go
+          | ...
+ 277  277   func DiffTreeContext(ctx context.Context, fromTree, toTree noder.Noder,
+ 278  278   	hashEqual noder.Equal) (Changes, error) {
+          | ...
+ 286  286   	for {
+          | ...
+ 296  296   		switch r := ii.remaining(); r {
+ 297  297   		case noMoreNoders:
+ 298  298   			return ret, nil
+ 299  299   		case onlyFromRemains:
+      300 + 			if !from.Skip() {
+ 300      ~ 			if err = ret.AddRecursiveDelete(from); err != nil {
+      301 ~ 				if err = ret.AddRecursiveDelete(from); err != nil {
+ 301      ~ 				return nil, err
+      302 ~ 					return nil, err
+ 302      ~ 			}
+      303 ~ 				}
+      304 + 			}
+ 303  305   			if err = ii.nextFrom(); err != nil {
+ 304  306   				return nil, err
+ 305  307   			}
+ 306  308   		case onlyToRemains:
+ 307      - 			if to.Skip() {
+ 308      - 				if err = ret.AddRecursiveDelete(to); err != nil {
+ 309      - 					return nil, err
+ 310      - 				}
+ 311      - 			} else {
+      309 + 			if !to.Skip() {
+ 312  310   				if err = ret.AddRecursiveInsert(to); err != nil {
+ 313  311   					return nil, err
+ 314  312   				}
+          | ...
+ 317  315   				return nil, err
+ 318  316   			}
+ 319  317   		case bothHaveNodes:
+ 320      - 			if from.Skip() {
+ 321      - 				if err = ret.AddRecursiveDelete(from); err != nil {
+ 322      - 					return nil, err
+ 323      - 				}
+ 324      - 				if err := ii.nextBoth(); err != nil {
+ 325      - 					return nil, err
+ 326      - 				}
+ 327      - 				break
+ 328      - 			}
+ 329      - 			if to.Skip() {
+ 330      - 				if err = ret.AddRecursiveDelete(to); err != nil {
+ 331      - 					return nil, err
+ 332      - 				}
+ 333      - 				if err := ii.nextBoth(); err != nil {
+ 334      - 					return nil, err
+ 335      - 				}
+ 336      - 				break
+ 337      - 			}
+ 338      - 
+ 339      - 			if err = diffNodes(&ret, ii); err != nil {
+      318 + 			var err error
+      319 + 			switch {
+      320 + 			case from.Skip():
+      321 + 				if from.Name() == to.Name() {
+      322 + 					err = ii.nextBoth()
+      323 + 				} else {
+      324 + 					err = ii.nextFrom()
+      325 + 				}
+      326 + 			case to.Skip():
+      327 + 				if from.Name() == to.Name() {
+      328 + 					err = ii.nextBoth()
+      329 + 				} else {
+      330 + 					err = ii.nextTo()
+      331 + 				}
+      332 + 			default:
+      333 + 				err = diffNodes(&ret, ii)
+      334 + 			}
+      335 + 
+      336 + 			if err != nil {
+ 340  337   				return nil, err
+ 341  338   			}
+ 342  339   		default:
+          | ...
+ 344  341   		}
+ 345  342   	}
+ 346  343   }
+          | ...

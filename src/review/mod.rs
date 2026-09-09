@@ -2,6 +2,8 @@
 //! Parsing, fold projection, and hunk context live in the core modules.
 pub(crate) mod cli;
 mod render;
+#[cfg(test)]
+mod tests;
 mod wire;
 
 use crate::summary::DiffResult;

@@ -107,3 +107,53 @@ impl SnapshotWriter {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use crate::summary::DiffResult;
+    #[test]
+    fn matched_rename_to_is_reindented_not_deleted_and_added() {
+        let lhs = include_str!("../../examples/review/real/02-review-175/before.ts");
+        let rhs = include_str!("../../examples/review/real/02-review-175/after.ts");
+        let review = DiffResult::from_sources("parser.ts", lhs, rhs);
+        assert!(super::reindented_pairs(&review).contains(&(247, 253)));
+        let output = review.snapshot();
+        let assignment: Vec<_> = output
+            .lines()
+            .filter(|line| line.contains("renameTo = unquoteGitPath"))
+            .collect();
+        assert_eq!(assignment.len(), 2);
+        assert!(assignment.iter().all(|line| line.as_bytes()[10] == b'~'));
+        let domain = review.domain_json();
+        assert_eq!(domain["lhs_src"]["Text"], lhs);
+        assert_eq!(domain["rhs_src"]["Text"], rhs);
+        let token = domain["lhs_positions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["pos"]["line"] == 247 && p["pos"]["start_col"] == 6)
+            .unwrap();
+        assert_eq!(
+            token["kind"]["UnchangedToken"]["opposite_pos"][0]["line"],
+            253
+        );
+        assert_eq!(
+            token["kind"]["UnchangedToken"]["opposite_pos"][0]["start_col"],
+            8
+        );
+        assert!(domain["folds"][0]["regions"]["Paired"].is_object());
+        assert!(
+            domain.get("layout").is_none(),
+            "layout is not part of the domain"
+        );
+    }
+
+    #[test]
+    fn changed_literal_is_not_treated_as_reindentation() {
+        let review = DiffResult::from_sources(
+            "a.py",
+            "def f():\n    return ' a'\n",
+            "def f():\n    return '  a'\n",
+        );
+        assert!(!super::reindented_pairs(&review).contains(&(1, 1)));
+    }
+}

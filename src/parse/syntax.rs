@@ -1298,6 +1298,60 @@ mod tests {
     }
 
     #[test]
+    fn flattened_parent_fold_replaces_child_fold() {
+        let arena = Arena::new();
+        let point = |col| SingleLineSpan {
+            line: 0.into(),
+            start_col: col,
+            end_col: col,
+        };
+        let metadata = |kind| FoldMetadata {
+            kind,
+            range_override: None,
+        };
+        let atom = Syntax::new_atom_with_fold(
+            &arena,
+            vec![SingleLineSpan {
+                line: 0.into(),
+                start_col: 4,
+                end_col: 7,
+            }],
+            "abc".into(),
+            AtomKind::Normal,
+            Some(metadata(FoldKind::String)),
+        );
+        let body = Syntax::new_list_with_fold(
+            &arena,
+            "",
+            vec![point(2)],
+            vec![atom],
+            "",
+            vec![point(9)],
+            Some(metadata(FoldKind::Body)),
+        );
+        let test = Syntax::new_list_with_fold(
+            &arena,
+            "",
+            vec![point(0)],
+            vec![body],
+            "",
+            vec![point(10)],
+            Some(metadata(FoldKind::Test)),
+        );
+        assert!(std::ptr::eq(test, atom));
+        assert_eq!(
+            test.info().fold.get(),
+            Some(FoldMetadata {
+                kind: FoldKind::Test,
+                range_override: Some(folds::interior_range(&[point(0)], &[point(10)])),
+            })
+        );
+        let wrapper = Syntax::new_list(&arena, "", vec![], vec![test], "", vec![]);
+        assert!(std::ptr::eq(wrapper, atom));
+        assert_eq!(wrapper.info().fold.get(), test.info().fold.get());
+    }
+
+    #[test]
     fn test_ignore_empty_atoms() {
         let pos = vec![SingleLineSpan {
             line: 0.into(),

@@ -1,0 +1,19 @@
+--- a/src/flask/sansio/scaffold.py
++++ b/src/flask/sansio/scaffold.py
+          | ...
+  52   52   class Scaffold:
+          | ...
+ 300  300           """
+ 301  301           return self._method_route("GET", rule, options)
+      302 + 
+      303 +     @setupmethod
+      304 +     def query(self, rule: str, **options: t.Any) -> t.Callable[[T_route], T_route]:
+      305 +         """Shortcut for :meth:`route` with ``methods=["QUERY"]``.
+      306 + 
+      307 +         .. versionadded:: 3.2
+      308 +         """
+      309 +         return self._method_route("QUERY", rule, options)
+ 302  310   
+ 303  311       @setupmethod
+ 304  312       def post(self, rule: str, **options: t.Any) -> t.Callable[[T_route], T_route]:
+          | ...

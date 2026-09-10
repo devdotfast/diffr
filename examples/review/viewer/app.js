@@ -1,3 +1,4 @@
+import { diffEvents } from "./stream.mjs";
 import { foldLine } from "./inline-folds.mjs";
 const $ = (id) => document.getElementById(id);
 const escape = (s) =>
@@ -8,6 +9,7 @@ const escape = (s) =>
     .replaceAll('"', "&quot;");
 const encoder = new TextEncoder(),
   decoder = new TextDecoder();
+let activeRequest;
 let inlineFolds = [[], []];
 let viewFolds = [];
 let fixtures = [],
@@ -294,11 +296,27 @@ function indexTokensByLine(positions) {
 
 async function select(id) {
   const request = ++generation;
-  $("status").textContent = "Loading generated domain…";
+  activeRequest?.abort();
+  activeRequest = new AbortController();
+  const signal = activeRequest.signal;
+  $("status").textContent = "Requesting streamed diff…";
   const response = await fetch(`data/${encodeURIComponent(id)}.json`);
   if (!response.ok) throw Error(`Unable to load ${id}`);
   const data = await response.json();
   if (request !== generation) return;
+  let received = false;
+  for await (const event of diffEvents(data.request, signal)) {
+    if (request !== generation) return;
+    if (event.type === "file_error") throw Error(event.message);
+    if (event.type !== "file") continue;
+    received = true;
+    show({ ...data, domain: event.diff, layout: event.layout });
+    $("status").textContent = "File received; waiting for stream completion…";
+  }
+  if (!received) throw Error("No file returned");
+  $("status").textContent = "Stream complete. Folds and review state stay in this browser.";
+}
+function show(data) {
   current = data;
   viewFolds = foldCandidates(data.domain);
   expanded = new Set();
@@ -383,6 +401,7 @@ $("download").onclick = () => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 function fail(error) {
+  if (arguments[0]?.name === "AbortError") return;
   $("status").textContent = error.message;
   console.error(error);
 }

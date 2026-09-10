@@ -72,15 +72,13 @@ export function App({
   const inventory = useMemo(() => snapshot.inventory.map(file => ({file})), [snapshot.inventory]);
   const tree = useMemo(() => buildFileTree(inventory), [inventory]);
   // Keep loaded indexes stable for row keys, selections and file expansion.
-  // Only presentation order changes once the stream is complete.
-  const fileOrder = useMemo(() => snapshot.complete
-    ? flattenFileTree(tree, new Set()).flatMap(({node}) => {
+  // Present arriving diffs in tree order throughout loading.
+  const fileOrder = useMemo(() => flattenFileTree(tree, new Set()).flatMap(({node}) => {
         if (node.fileIndex === undefined) return [];
         const loaded = loadedByIdentity.get(fileIdentity(snapshot.inventory[node.fileIndex]));
         return loaded === undefined ? [] : [loaded];
-      })
-    : snapshot.files.map((_, index) => index),
-    [snapshot.complete, snapshot.files, snapshot.inventory, tree, loadedByIdentity]);
+      }),
+    [snapshot.inventory, tree, loadedByIdentity]);
   const rowCache = useRef(
     new WeakMap<DiffFile, { key: string; rows: ViewerRow[] }>(),
   );
@@ -107,30 +105,20 @@ export function App({
     geometry.rows.findLast(r => r.row.key.endsWith(":header"))?.top ?? 0, [geometry]);
   const maxScroll = Math.max(lastFileTop, geometry.height - viewportHeight),
     top = Math.min(scroll, maxScroll);
-  useEffect(() => {
-    if (scroll > maxScroll) setScroll(maxScroll);
-  }, [scroll, maxScroll]);
-  const previousGeometry = useRef(geometry);
-  useEffect(() => {
-    const previous = previousGeometry.current;
-    if (previous !== geometry) {
-      const anchor = visibleRows(previous, scroll, 1)[0];
-      if (anchor) {
-        const next = geometry.rows.find((r) => r.row.key === anchor.row.key);
-        if (next)
-          setScroll(
-            Math.min(
-              Math.max(
-                0,
-                next.top + Math.min(scroll - anchor.top, next.height - 1),
-              ),
-              maxScroll,
-            ),
-          );
-      }
-      previousGeometry.current = geometry;
-    }
-  }, [geometry, maxScroll]);
+  // Reconcile the offset before committing new geometry. An effect would first
+  // mount the new rows at the old offset, exposing a wrong viewport for one frame.
+  const [previousGeometry, setPreviousGeometry] = useState(geometry);
+  if (previousGeometry !== geometry) {
+    const anchor = visibleRows(previousGeometry, scroll, 1)[0];
+    const next = anchor && geometry.rows.find(r => r.row.key === anchor.row.key);
+    const nextScroll = next && anchor
+      ? next.top + Math.min(scroll - anchor.top, next.height - 1)
+      : scroll;
+    setPreviousGeometry(geometry);
+    setScroll(Math.max(0, Math.min(nextScroll, maxScroll)));
+  } else if (scroll > maxScroll) {
+    setScroll(maxScroll);
+  }
   const move = (amount: number) =>
     setScroll((current) => Math.max(0, Math.min(maxScroll, current + amount)));
   const toggleFile = (index: number) => {
@@ -217,18 +205,7 @@ export function App({
       setPendingFile(null);
     }
   }, [pendingFile, loadedByIdentity, geometry, maxScroll, snapshot.failedFiles, snapshot.complete]);
-  const treeRows = useMemo(() => {
-    if (snapshot.complete) return flattenFileTree(tree, closedDirectories);
-    const manifestIndexes = new Map(snapshot.inventory.map((file, index) => [fileIdentity(file), index]));
-    const ready = snapshot.files.map(file => manifestIndexes.get(fileIdentity(file.file))!);
-    const shown = new Set(ready);
-    const order = [...ready, ...snapshot.inventory.map((_, i) => i).filter(i => !shown.has(i))];
-    return order.map(fileIndex => ({
-      depth: 0,
-      node: {key: `file:${fileIndex}`, fileIndex, children: [],
-        name: snapshot.inventory[fileIndex].new_path ?? snapshot.inventory[fileIndex].old_path ?? ""},
-    }));
-  }, [snapshot.complete, snapshot.files, snapshot.inventory, tree, closedDirectories]);
+  const treeRows = useMemo(() => flattenFileTree(tree, closedDirectories), [tree, closedDirectories]);
   const counts = useMemo(() => snapshot.files.map(lineCounts), [snapshot.files]);
   useEffect(() => {
     const file = inventory[currentTreeFile];

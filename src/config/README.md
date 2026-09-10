@@ -67,3 +67,21 @@ Tree-sitter supplies query syntax and text predicates such as `#eq?` and `#match
 This module implements `#set!` with the `tag` property. It does not implement arbitrary Neovim directives or Lua callbacks.
 Helper captures must begin with `_`. Unsupported captures, properties, directives,
 invalid TOML, and invalid query syntax fail during `compile()`.
+
+## MVP configuration tradeoff
+
+Language configuration currently lives in two separate parts:
+
+- **How to parse a file:** [`guess_language.rs`](../parse/guess_language.rs)
+  detects the language; [`TreeSitterConfig` / `build_config`](../parse/tree_sitter_parser.rs)
+  selects its built-in Tree-sitter grammar and parsing/highlighting rules.
+- **What syntax to expose in a diff:** [`Config` → `Params`](../config.rs)
+  supplies queries for that language identifying foldable AST regions, their tags,
+  and extra syntax context worth showing around changes. Bundled rules live in
+  [`defaults.toml`](defaults.toml). These rules do not set UI collapse state.
+
+These parts are coupled: annotation queries must use the selected grammar's node
+names. `Config::compile` validates queries against that grammar, but we retain
+separate configuration structures for the MVP. A later refactor should resolve
+both into one per-language entry in `Params`, while keeping annotation rules
+user-configurable.

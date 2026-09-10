@@ -189,6 +189,8 @@ mod query_tests {
             "((block) @fold (#offset! @fold 0 1 0))",
             "((block) @fold (#offset! @fold 0 x 0 0))",
             "((block) @fold (#unknown! @fold))",
+            "((block) @fold (#make-range! \"missing\" @fold @fold))",
+            "((block) @fold (#make-range! \"fold\" @fold))",
             "((block) @fold (#set! typo value))",
             "((block) @fold (#set! tag))",
         ] {
@@ -199,6 +201,28 @@ mod query_tests {
                 Err(error) => error,
             };
             assert!(error.to_string().contains("languages.rust.folds:"));
+        }
+    }
+
+    #[test]
+    fn rust_labeled_blocks_fold_between_actual_braces() {
+        let params = Params::default();
+        for source in [
+            "fn f() { 'outer: { work(); } }",
+            "fn f() { 'outer: /* prefix */ { work(); } }",
+            "fn f() { { work(); } }",
+        ] {
+            let result = DiffResult::from_sources_with_params("a.rs", "", source, &params);
+            let start = source.find("{ work(); }").unwrap() + 1;
+            let end = start + " work(); ".len();
+            assert!(
+                result.rhs_folds.iter().any(|fold| {
+                    fold.range.start.line.as_usize() == 0
+                        && fold.range.start.byte_column == start
+                        && fold.range.end.byte_column == end
+                }),
+                "missing inner body in {source}"
+            );
         }
     }
 

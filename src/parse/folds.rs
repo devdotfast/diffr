@@ -132,7 +132,7 @@ pub(crate) fn classify(
             .iter()
             .filter(|capture| query.capture_names()[capture.index as usize] == "fold")
         {
-            let Some(region) = adjusted_range(fold, pattern, &lines) else {
+            let Some(region) = adjusted_range(fold, pattern, &lines, matched.captures) else {
                 continue;
             };
             if region.start == region.end || ambiguous_folds.contains(&fold.node.id()) {

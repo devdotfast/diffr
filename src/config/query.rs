@@ -11,6 +11,13 @@ pub(crate) struct AnnotationQuery {
 pub(crate) struct Pattern {
     pub(crate) tags: Vec<String>,
     pub(crate) offsets: Vec<Offset>,
+    pub(crate) ranges: Vec<CaptureRange>,
+}
+
+pub(crate) struct CaptureRange {
+    pub(crate) target: u32,
+    pub(crate) start: u32,
+    pub(crate) end: u32,
 }
 
 pub(crate) struct Offset {
@@ -74,6 +81,29 @@ impl AnnotationQuery {
                 pattern.tags.push(tag.to_owned());
             }
             for predicate in query.general_predicates(index) {
+                if predicate.operator.as_ref() == "make-range!" {
+                    let [QueryPredicateArg::String(name), QueryPredicateArg::Capture(start), QueryPredicateArg::Capture(end)] =
+                        predicate.args.as_ref()
+                    else {
+                        return Err(ConfigError(
+                            "#make-range! requires a capture name and two boundary captures".into(),
+                        ));
+                    };
+                    let target = query.capture_index_for_name(name).ok_or_else(|| {
+                        ConfigError(format!("#make-range! target @{name} must be captured"))
+                    })?;
+                    if pattern.ranges.iter().any(|range| range.target == target) {
+                        return Err(ConfigError(
+                            "duplicate #make-range! target in one pattern".into(),
+                        ));
+                    }
+                    pattern.ranges.push(CaptureRange {
+                        target,
+                        start: *start,
+                        end: *end,
+                    });
+                    continue;
+                }
                 if predicate.operator.as_ref() != "offset!" {
                     return Err(ConfigError(format!(
                         "unsupported directive #{}",

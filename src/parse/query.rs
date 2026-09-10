@@ -24,8 +24,18 @@ pub(super) fn adjusted_range(
     capture: &QueryCapture<'_>,
     pattern: &Pattern,
     lines: &[&str],
+    captures: &[QueryCapture<'_>],
 ) -> Option<SourceRange> {
     let mut range = node_range(capture.node);
+    if let Some(boundary) = pattern
+        .ranges
+        .iter()
+        .find(|range| range.target == capture.index)
+    {
+        let find = |id| captures.iter().rev().find(|capture| capture.index == id);
+        range.start = node_range(find(boundary.start)?.node).start;
+        range.end = node_range(find(boundary.end)?.node).end;
+    }
     if let Some(offset) = pattern
         .offsets
         .iter()

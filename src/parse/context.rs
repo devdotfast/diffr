@@ -39,15 +39,15 @@ pub(crate) fn classify(
         };
         let scope = node_range(owner.node);
         let start = capture("context.start")
-            .and_then(|capture| adjusted_range(capture, pattern, &lines))
+            .and_then(|capture| adjusted_range(capture, pattern, &lines, matched.captures))
             .map_or(scope.start, |range| range.start);
         let end = if let Some(capture) = capture("context.end") {
-            let Some(range) = adjusted_range(capture, pattern, &lines) else {
+            let Some(range) = adjusted_range(capture, pattern, &lines, matched.captures) else {
                 continue;
             };
             range.start
         } else if let Some(capture) = capture("context.final") {
-            let Some(range) = adjusted_range(capture, pattern, &lines) else {
+            let Some(range) = adjusted_range(capture, pattern, &lines, matched.captures) else {
                 continue;
             };
             range.end
@@ -61,7 +61,7 @@ pub(crate) fn classify(
             continue;
         }
         let last = capture("context.last")
-            .and_then(|capture| adjusted_range(capture, pattern, &lines))
+            .and_then(|capture| adjusted_range(capture, pattern, &lines, matched.captures))
             .map(|range| last_line(&range));
         result
             .entry(owner.node.id())

@@ -1,17 +1,19 @@
 [languages.rust]
 folds = '''
 ([
-  (block "{" "}")
-  (field_declaration_list "{" "}")
-  (declaration_list "{" "}")
-  (match_block "{" "}")
+  (block "{" @_open "}" @_close)
+  (field_declaration_list "{" @_open "}" @_close)
+  (declaration_list "{" @_open "}" @_close)
+  (match_block "{" @_open "}" @_close)
 ] @fold
+  (#make-range! "fold" @_open @_close)
   (#offset! @fold 0 1 0 -1)
   (#set! tag "body"))
 ([
-  (array_expression "[" "]")
-  (field_initializer_list "{" "}")
+  (array_expression "[" @_open "]" @_close)
+  (field_initializer_list "{" @_open "}" @_close)
 ] @fold
+  (#make-range! "fold" @_open @_close)
   (#offset! @fold 0 1 0 -1)
   (#set! tag "collection"))
 ((use_declaration) @fold
@@ -26,8 +28,9 @@ folds = '''
   (raw_string_literal)
 ] @fold
   (#set! tag "string"))
-((function_item attributes: (attributes (attribute_item) @_attribute) body: (block) @fold)
+((function_item attributes: (attributes (attribute_item) @_attribute) body: (block "{" @_open "}" @_close) @fold)
   (#match? @_attribute "test")
+  (#make-range! "fold" @_open @_close)
   (#offset! @fold 0 1 0 -1)
   (#set! tag "test"))
 '''

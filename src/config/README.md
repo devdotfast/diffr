@@ -15,7 +15,8 @@ Queries live inline in TOML:
 ```toml
 [languages.rust]
 folds = '''
-((block) @fold
+((block "{" @_open "}" @_close) @fold
+  (#make-range! "fold" @_open @_close)
   (#offset! @fold 0 1 0 -1)
   (#set! tag "body"))
 '''
@@ -33,7 +34,13 @@ See `defaults.toml` for the complete bundled rules.
 
 ## Folds and tags
 
-`@fold` selects a node's source range. `#offset!` adjusts its start row, start byte
+`@fold` selects a node's source range. `#make-range! "fold" @_open @_close`
+uses the start of the first boundary and the end of the second, as in
+[nvim-treesitter's make-range convention](https://github.com/nvim-treesitter/nvim-treesitter/blob/master/lua/nvim-treesitter/query.lua).
+Our supported subset requires the target to be an existing capture, preserving
+its syntax-node identity for correspondence. It selects raw boundary coordinates;
+any offset on the target is then applied. This lets labeled Rust blocks fold
+between their braces without hiding the label. `#offset!` adjusts its start row, start byte
 column, end row, and end byte column. End coordinates are exclusive. Offsets that
 leave the source, reverse the range, or split a UTF-8 character discard that match.
 
@@ -60,7 +67,7 @@ hunks. It does not implement Neovim's sticky-header UI.
 ## Supported query features
 
 Tree-sitter supplies query syntax and text predicates such as `#eq?` and `#match?`.
-This module implements the Neovim `#offset!` directive and `#set!` with the `tag`
+This module implements `#offset!`, the described `#make-range!` subset, and `#set!` with the `tag`
 property. It does not implement arbitrary Neovim directives or Lua callbacks.
 Helper captures must begin with `_`. Unsupported captures, properties, directives,
 invalid TOML, and invalid query syntax fail during `compile()`.

@@ -280,12 +280,20 @@ mod tests {
         assert_eq!(hook.command, ["uv", "run", "summarize.py"]);
         assert_eq!(hook.tags.as_deref(), Some(&["body".to_owned()][..]));
         assert_eq!((hook.min_lines, hook.timeout_ms), (30, 5000));
-        assert!(Config::from_toml("").unwrap().compile().unwrap().hook.is_none());
+        assert!(Config::from_toml("")
+            .unwrap()
+            .compile()
+            .unwrap()
+            .hook
+            .is_none());
         for input in [
             "[folds.hook]\ncommand = []",
             "[folds.hook]\ncommand = ['x']\ntimeout_ms = 0",
         ] {
-            assert!(Config::from_toml(input).unwrap().compile().is_err(), "{input}");
+            assert!(
+                Config::from_toml(input).unwrap().compile().is_err(),
+                "{input}"
+            );
         }
         assert!(Config::from_toml("[folds.hook]\ncommand = ['x']\nunknown = 1").is_err());
     }

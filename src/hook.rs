@@ -4,12 +4,13 @@
 //! The hook replies in any order, keyed by request id; callers block on their
 //! own reply so files still stream out as each worker finishes.
 use crate::config::HookConfig;
+use crate::hash::DftHashMap;
 use crate::parse::folds::FoldMatch;
 use crate::review::wire;
 use crate::summary::{DiffResult, FileContent, FileFormat};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -41,7 +42,7 @@ struct RequestFold<'a> {
 struct Reply {
     id: u64,
     #[serde(default)]
-    texts: HashMap<String, String>,
+    texts: BTreeMap<String, String>,
     #[serde(default)]
     error: Option<String>,
 }
@@ -52,7 +53,7 @@ enum Outcome {
     Closed(String),
 }
 
-type Pending = Arc<Mutex<Result<HashMap<u64, SyncSender<Outcome>>, String>>>;
+type Pending = Arc<Mutex<Result<DftHashMap<u64, SyncSender<Outcome>>, String>>>;
 
 pub(crate) struct Hook {
     config: HookConfig,
@@ -75,7 +76,7 @@ impl Hook {
             .map_err(|error| format!("could not start fold hook {:?}: {error}", config.command))?;
         let stdin = child.stdin.take().expect("piped hook stdin");
         let stdout = child.stdout.take().expect("piped hook stdout");
-        let pending: Pending = Arc::new(Mutex::new(Ok(HashMap::new())));
+        let pending: Pending = Arc::new(Mutex::new(Ok(DftHashMap::default())));
         let reader = std::thread::spawn({
             let pending = Arc::clone(&pending);
             move || dispatch(BufReader::new(stdout), &pending)
@@ -153,7 +154,10 @@ impl Hook {
             Ok(Outcome::Closed(reason)) => return Err(reason),
             Err(RecvTimeoutError::Timeout) => {
                 self.forget(id);
-                return Err(format!("fold hook timed out after {}ms", self.config.timeout_ms));
+                return Err(format!(
+                    "fold hook timed out after {}ms",
+                    self.config.timeout_ms
+                ));
             }
             Err(RecvTimeoutError::Disconnected) => {
                 unreachable!("reader drops senders only after signalling")
@@ -316,7 +320,9 @@ mod tests {
         assert!(error.contains("timed out"), "{error}");
         let error = hook("exit 0", 5000).summarize(&mut result).unwrap_err();
         assert!(error.contains("exited"), "{error}");
-        let error = hook("echo not json", 5000).summarize(&mut result).unwrap_err();
+        let error = hook("echo not json", 5000)
+            .summarize(&mut result)
+            .unwrap_err();
         assert!(error.contains("invalid reply"), "{error}");
         let error = hook(
             r#"read -r line; echo '{"id":1,"error":"rate limited"}'; sleep 30"#,
@@ -325,9 +331,12 @@ mod tests {
         .summarize(&mut result)
         .unwrap_err();
         assert!(error.contains("rate limited"), "{error}");
-        let error = hook(r#"read -r line; echo '{"id":1,"texts":{"7":"x"}}'; sleep 30"#, 5000)
-            .summarize(&mut result)
-            .unwrap_err();
+        let error = hook(
+            r#"read -r line; echo '{"id":1,"texts":{"7":"x"}}'; sleep 30"#,
+            5000,
+        )
+        .summarize(&mut result)
+        .unwrap_err();
         assert!(error.contains("unknown fold"), "{error}");
         assert!(result.rhs_folds.iter().all(|fold| fold.summary.is_none()));
     }

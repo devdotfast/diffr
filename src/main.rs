@@ -48,6 +48,7 @@ mod diff;
 mod display;
 mod exit_codes;
 mod files;
+mod git;
 mod gitattributes;
 mod hash;
 mod line_parser;

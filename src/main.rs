@@ -62,6 +62,7 @@ mod words;
 #[macro_use]
 extern crate log;
 
+use crate::config::Params;
 use display::style::print_warning;
 use log::info;
 use options::{FilePermissions, USAGE};
@@ -155,7 +156,7 @@ fn main() {
         return;
     }
 
-    let params = &crate::config::Params::default();
+    let params = &Params::default();
 
     match options::parse_args() {
         Mode::DumpTreeSitter {
@@ -418,7 +419,7 @@ fn main() {
 
 /// Print a diff between two files.
 fn diff_file(
-    params: &crate::config::Params,
+    params: &Params,
     display_path: &str,
     renamed: Option<String>,
     lhs_path: &FileArgument,
@@ -518,7 +519,7 @@ fn diff_file(
 }
 
 fn diff_conflicts_file(
-    params: &crate::config::Params,
+    params: &Params,
     display_path: &str,
     path: &FileArgument,
     display_options: &DisplayOptions,
@@ -626,7 +627,7 @@ fn check_only_text(
 }
 
 fn diff_file_content(
-    params: &crate::config::Params,
+    params: &Params,
     display_path: &str,
     extra_info: Option<String>,
     _lhs_path: &FileArgument,
@@ -919,7 +920,7 @@ fn diff_file_content(
 /// When more than one file is modified, the hg extdiff extension passes directory
 /// paths with all the modified files.
 fn diff_directories<'a>(
-    params: &'a crate::config::Params,
+    params: &'a Params,
     lhs_dir: &'a Path,
     rhs_dir: &'a Path,
     display_options: &DisplayOptions,
@@ -1123,7 +1124,7 @@ mod tests {
     fn test_diff_identical_content() {
         let s = "foo";
         let res = diff_file_content(
-            &crate::config::Params::default(),
+            &Params::default(),
             "foo.el",
             None,
             &FileArgument::from_path_argument(OsStr::new("foo.el")),

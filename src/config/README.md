@@ -15,9 +15,7 @@ Queries live inline in TOML:
 ```toml
 [languages.rust]
 folds = '''
-((block "{" @_open "}" @_close) @fold
-  (#make-range! "fold" @_open @_close)
-  (#offset! @fold 0 1 0 -1)
+((block "{" @fold.open "}" @fold.close) @fold
   (#set! tag "body"))
 '''
 context = '''
@@ -34,15 +32,14 @@ See `defaults.toml` for the complete bundled rules.
 
 ## Folds and tags
 
-`@fold` selects a node's source range. `#make-range! "fold" @_open @_close`
-uses the start of the first boundary and the end of the second, as in
-[nvim-treesitter's make-range convention](https://github.com/nvim-treesitter/nvim-treesitter/blob/master/lua/nvim-treesitter/query.lua).
-Our supported subset requires the target to be an existing capture, preserving
-its syntax-node identity for correspondence. It selects raw boundary coordinates;
-any offset on the target is then applied. This lets labeled Rust blocks fold
-between their braces without hiding the label. `#offset!` adjusts its start row, start byte
-column, end row, and end byte column. End coordinates are exclusive. Offsets that
-leave the source, reverse the range, or split a UTF-8 character discard that match.
+`@fold` selects a node's full source range. To fold an interior instead,
+capture its delimiters as `@fold.open` and `@fold.close`. The hidden range runs
+from the opening node's end to the closing node's start. These are direct
+Tree-sitter coordinates; labels and comments before the opening brace stay visible.
+Both delimiter captures must be present, ordered, and contained in the fold node.
+
+These fold-boundary captures are our convention. There are no arbitrary byte or
+line offsets, and no `#offset!` or `#make-range!` directives.
 
 `#set! tag "name"` supplies application metadata. Tag names are arbitrary strings;
 dots have no special meaning. Multiple rules selecting the same node and range
@@ -67,7 +64,6 @@ hunks. It does not implement Neovim's sticky-header UI.
 ## Supported query features
 
 Tree-sitter supplies query syntax and text predicates such as `#eq?` and `#match?`.
-This module implements `#offset!`, the described `#make-range!` subset, and `#set!` with the `tag`
-property. It does not implement arbitrary Neovim directives or Lua callbacks.
+This module implements `#set!` with the `tag` property. It does not implement arbitrary Neovim directives or Lua callbacks.
 Helper captures must begin with `_`. Unsupported captures, properties, directives,
 invalid TOML, and invalid query syntax fail during `compile()`.

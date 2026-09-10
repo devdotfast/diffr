@@ -1,6 +1,6 @@
 //! Compile the supported Tree-sitter capture and directive conventions.
 use super::ConfigError;
-use tree_sitter::{Query, QueryPredicateArg};
+use tree_sitter::Query;
 
 pub(crate) struct AnnotationQuery {
     pub(crate) query: Query,
@@ -10,22 +10,6 @@ pub(crate) struct AnnotationQuery {
 #[derive(Default)]
 pub(crate) struct Pattern {
     pub(crate) tags: Vec<String>,
-    pub(crate) offsets: Vec<Offset>,
-    pub(crate) ranges: Vec<CaptureRange>,
-}
-
-pub(crate) struct CaptureRange {
-    pub(crate) target: u32,
-    pub(crate) start: u32,
-    pub(crate) end: u32,
-}
-
-pub(crate) struct Offset {
-    pub(crate) capture: u32,
-    pub(crate) start_row: isize,
-    pub(crate) start_column: isize,
-    pub(crate) end_row: isize,
-    pub(crate) end_column: isize,
 }
 
 impl AnnotationQuery {
@@ -39,6 +23,8 @@ impl AnnotationQuery {
                 || matches!(
                     *name,
                     "fold"
+                        | "fold.open"
+                        | "fold.close"
                         | "context"
                         | "context.start"
                         | "context.end"
@@ -80,66 +66,11 @@ impl AnnotationQuery {
                     .ok_or_else(|| ConfigError("#set! tag requires a nonempty string".into()))?;
                 pattern.tags.push(tag.to_owned());
             }
-            for predicate in query.general_predicates(index) {
-                if predicate.operator.as_ref() == "make-range!" {
-                    let [QueryPredicateArg::String(name), QueryPredicateArg::Capture(start), QueryPredicateArg::Capture(end)] =
-                        predicate.args.as_ref()
-                    else {
-                        return Err(ConfigError(
-                            "#make-range! requires a capture name and two boundary captures".into(),
-                        ));
-                    };
-                    let target = query.capture_index_for_name(name).ok_or_else(|| {
-                        ConfigError(format!("#make-range! target @{name} must be captured"))
-                    })?;
-                    if pattern.ranges.iter().any(|range| range.target == target) {
-                        return Err(ConfigError(
-                            "duplicate #make-range! target in one pattern".into(),
-                        ));
-                    }
-                    pattern.ranges.push(CaptureRange {
-                        target,
-                        start: *start,
-                        end: *end,
-                    });
-                    continue;
-                }
-                if predicate.operator.as_ref() != "offset!" {
-                    return Err(ConfigError(format!(
-                        "unsupported directive #{}",
-                        predicate.operator
-                    )));
-                }
-                let [QueryPredicateArg::Capture(capture), a, b, c, d] = predicate.args.as_ref()
-                else {
-                    return Err(ConfigError(
-                        "#offset! requires a capture and four integer offsets".into(),
-                    ));
-                };
-                let integer = |arg: &QueryPredicateArg| -> Result<isize, ConfigError> {
-                    let QueryPredicateArg::String(value) = arg else {
-                        return Err(ConfigError("offsets must be integers".into()));
-                    };
-                    value
-                        .parse()
-                        .map_err(|_| ConfigError(format!("invalid offset: {value}")))
-                };
-                if pattern
-                    .offsets
-                    .iter()
-                    .any(|offset: &Offset| offset.capture == *capture)
-                {
-                    return Err(ConfigError(
-                        "duplicate #offset! for a capture in one pattern".into(),
-                    ));
-                }
-                pattern.offsets.push(Offset {
-                    capture: *capture,
-                    start_row: integer(a)?,
-                    start_column: integer(b)?,
-                    end_row: integer(c)?,
-                    end_column: integer(d)?,
-                });
+            if let Some(predicate) = query.general_predicates(index).first() {
+                return Err(ConfigError(format!(
+                    "unsupported directive #{}",
+                    predicate.operator
+                )));
             }
             patterns.push(pattern);
         }

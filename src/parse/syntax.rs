@@ -56,7 +56,7 @@ pub(crate) type ContentId = u32;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FoldMetadata {
     pub(crate) tags: Vec<String>,
-    /// Only set when flattening removes the List that owned this boundary.
+    /// Query-selected boundary, retained when flattening removes its owner.
     pub(crate) range_override: Option<SourceRange>,
 }
 

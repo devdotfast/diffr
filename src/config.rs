@@ -168,9 +168,9 @@ mod query_tests {
     }
 
     #[test]
-    fn arbitrary_tags_and_byte_offsets_reach_the_domain() {
+    fn arbitrary_tags_and_delimiter_captures_reach_the_domain() {
         let params = configured(
-            r#"((block) @fold (#offset! @fold 0 1 0 -1) (#set! tag "user.validation"))"#,
+            r#"((block "{" @fold.open "}" @fold.close) @fold (#set! tag "user.validation"))"#,
             "",
         );
         let source = "fn f() { println!(\"☕\"); }";
@@ -186,11 +186,9 @@ mod query_tests {
     #[test]
     fn rejects_unsupported_or_malformed_directives_at_compile_time() {
         for query in [
-            "((block) @fold (#offset! @fold 0 1 0))",
-            "((block) @fold (#offset! @fold 0 x 0 0))",
+            "((block) @fold (#offset! @fold 0 1 0 -1))",
             "((block) @fold (#unknown! @fold))",
-            "((block) @fold (#make-range! \"missing\" @fold @fold))",
-            "((block) @fold (#make-range! \"fold\" @fold))",
+            "((block) @fold (#make-range! \"fold\" @fold @fold))",
             "((block) @fold (#set! typo value))",
             "((block) @fold (#set! tag))",
         ] {
@@ -227,11 +225,16 @@ mod query_tests {
     }
 
     #[test]
-    fn invalid_utf8_offsets_do_not_produce_invalid_source_ranges() {
-        let params = configured(r#"((string_literal) @fold (#offset! @fold 0 2 0 -1))"#, "");
-        let diff =
-            DiffResult::from_sources_with_params("a.rs", "", "fn f() { let x = \"☕\"; }", &params);
-        assert!(diff.rhs_folds.is_empty());
+    fn unicode_string_fold_uses_the_complete_node_range() {
+        let params = configured("(string_literal) @fold", "");
+        let source = "fn f() { let x = \"☕\"; }";
+        let diff = DiffResult::from_sources_with_params("a.rs", "", source, &params);
+        assert_eq!(diff.rhs_folds.len(), 1);
+        let range = diff.rhs_folds[0].range;
+        assert_eq!(
+            &source[range.start.byte_column..range.end.byte_column],
+            "\"☕\""
+        );
     }
 
     #[test]
@@ -282,7 +285,7 @@ mod tag_tests {
     #[test]
     fn conflicting_ranges_do_not_depend_on_query_order() {
         let whole = "((block) @fold (#set! tag \"whole\"))";
-        let interior = "((block) @fold (#offset! @fold 0 1 0 -1) (#set! tag \"inside\"))";
+        let interior = "((block \"{\" @fold.open \"}\" @fold.close) @fold (#set! tag \"inside\"))";
         for query in [
             format!("{whole}\n{interior}"),
             format!("{interior}\n{whole}"),

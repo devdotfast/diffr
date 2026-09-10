@@ -1,7 +1,12 @@
 //! Fold metadata is attached during parsing; pairing reuses syntax identity.
+use super::query::node_range;
+use crate::config::query::AnnotationQuery;
 use crate::diff::changes::ChangeKind;
+use crate::hash::{DftHashMap, DftHashSet};
 use crate::lines::{SourcePosition, SourceRange};
-use crate::parse::syntax::Syntax;
+use crate::parse::syntax::{FoldMetadata, Syntax};
+use streaming_iterator::StreamingIterator as _;
+use tree_sitter::{QueryCursor, Tree};
 
 #[derive(Debug)]
 pub(crate) struct Fold {
@@ -20,6 +25,70 @@ pub(crate) enum FoldMatch {
         opposite: SourceRange,
     },
     Novel,
+}
+
+/// Interpret configurable fold captures in their own query traversal.
+pub(crate) fn classify(
+    tree: &Tree,
+    src: &str,
+    compiled: Option<&AnnotationQuery>,
+) -> DftHashMap<usize, FoldMetadata> {
+    let mut result = DftHashMap::default();
+    let Some(compiled) = compiled else {
+        return result;
+    };
+    let query = &compiled.query;
+    let mut ambiguous_folds = DftHashSet::default();
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(query, tree.root_node(), src.as_bytes());
+    while let Some(matched) = matches.next() {
+        let pattern = &compiled.patterns[matched.pattern_index];
+        for fold in matched
+            .captures
+            .iter()
+            .filter(|capture| query.capture_names()[capture.index as usize] == "fold")
+        {
+            let capture = |name| {
+                matched
+                    .captures
+                    .iter()
+                    .rev()
+                    .find(|capture| query.capture_names()[capture.index as usize] == name)
+            };
+            let region = match (capture("fold.open"), capture("fold.close")) {
+                (Some(open), Some(close))
+                    if open.node.start_byte() >= fold.node.start_byte()
+                        && close.node.end_byte() <= fold.node.end_byte()
+                        && open.node.end_byte() <= close.node.start_byte() =>
+                {
+                    SourceRange {
+                        start: node_range(open.node).end,
+                        end: node_range(close.node).start,
+                    }
+                }
+                (None, None) => node_range(fold.node),
+                _ => continue,
+            };
+            if region.start == region.end || ambiguous_folds.contains(&fold.node.id()) {
+                continue;
+            }
+            let metadata = result
+                .entry(fold.node.id())
+                .or_insert_with(|| FoldMetadata {
+                    tags: Vec::new(),
+                    range_override: Some(region),
+                });
+            if metadata.range_override != Some(region) {
+                result.remove(&fold.node.id());
+                ambiguous_folds.insert(fold.node.id());
+                continue;
+            }
+            metadata.tags.extend(pattern.tags.iter().cloned());
+            metadata.tags.sort();
+            metadata.tags.dedup();
+        }
+    }
+    result
 }
 
 /// Lists already retain the two edges of their interior, even without delimiters.
@@ -105,54 +174,4 @@ pub(crate) fn project(node: &Syntax<'_>, change: ChangeKind<'_>) -> Option<Fold>
             })
             .unwrap_or_else(|| "…".into()),
     })
-}
-
-/// Interpret configurable fold captures in their own query traversal.
-pub(crate) fn classify(
-    tree: &tree_sitter::Tree,
-    src: &str,
-    compiled: Option<&crate::config::query::AnnotationQuery>,
-) -> crate::hash::DftHashMap<usize, super::syntax::FoldMetadata> {
-    use super::{query::adjusted_range, syntax::FoldMetadata};
-    use crate::hash::{DftHashMap, DftHashSet};
-    use streaming_iterator::StreamingIterator as _;
-    let mut result = DftHashMap::default();
-    let Some(compiled) = compiled else {
-        return result;
-    };
-    let query = &compiled.query;
-    let lines: Vec<_> = src.split('\n').collect();
-    let mut ambiguous_folds = DftHashSet::default();
-    let mut cursor = tree_sitter::QueryCursor::new();
-    let mut matches = cursor.matches(query, tree.root_node(), src.as_bytes());
-    while let Some(matched) = matches.next() {
-        let pattern = &compiled.patterns[matched.pattern_index];
-        for fold in matched
-            .captures
-            .iter()
-            .filter(|capture| query.capture_names()[capture.index as usize] == "fold")
-        {
-            let Some(region) = adjusted_range(fold, pattern, &lines, matched.captures) else {
-                continue;
-            };
-            if region.start == region.end || ambiguous_folds.contains(&fold.node.id()) {
-                continue;
-            }
-            let metadata = result
-                .entry(fold.node.id())
-                .or_insert_with(|| FoldMetadata {
-                    tags: Vec::new(),
-                    range_override: Some(region),
-                });
-            if metadata.range_override != Some(region) {
-                result.remove(&fold.node.id());
-                ambiguous_folds.insert(fold.node.id());
-                continue;
-            }
-            metadata.tags.extend(pattern.tags.iter().cloned());
-            metadata.tags.sort();
-            metadata.tags.dedup();
-        }
-    }
-    result
 }

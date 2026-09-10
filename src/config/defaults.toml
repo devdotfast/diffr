@@ -1,20 +1,16 @@
 [languages.rust]
 folds = '''
 ([
-  (block "{" @_open "}" @_close)
-  (field_declaration_list "{" @_open "}" @_close)
-  (declaration_list "{" @_open "}" @_close)
-  (match_block "{" @_open "}" @_close)
+  (block "{" @fold.open "}" @fold.close)
+  (field_declaration_list "{" @fold.open "}" @fold.close)
+  (declaration_list "{" @fold.open "}" @fold.close)
+  (match_block "{" @fold.open "}" @fold.close)
 ] @fold
-  (#make-range! "fold" @_open @_close)
-  (#offset! @fold 0 1 0 -1)
   (#set! tag "body"))
 ([
-  (array_expression "[" @_open "]" @_close)
-  (field_initializer_list "{" @_open "}" @_close)
+  (array_expression "[" @fold.open "]" @fold.close)
+  (field_initializer_list "{" @fold.open "}" @fold.close)
 ] @fold
-  (#make-range! "fold" @_open @_close)
-  (#offset! @fold 0 1 0 -1)
   (#set! tag "collection"))
 ((use_declaration) @fold
   (#set! tag "import"))
@@ -28,10 +24,8 @@ folds = '''
   (raw_string_literal)
 ] @fold
   (#set! tag "string"))
-((function_item attributes: (attributes (attribute_item) @_attribute) body: (block "{" @_open "}" @_close) @fold)
+((function_item attributes: (attributes (attribute_item) @_attribute) body: (block "{" @fold.open "}" @fold.close) @fold)
   (#match? @_attribute "test")
-  (#make-range! "fold" @_open @_close)
-  (#offset! @fold 0 1 0 -1)
   (#set! tag "test"))
 '''
 context = '''
@@ -50,12 +44,11 @@ folds = '''
 ((block) @fold
   (#set! tag "body"))
 ([
-  (list "[" "]")
-  (dictionary "{" "}")
-  (set "{" "}")
-  (tuple "(" ")")
+  (list "[" @fold.open "]" @fold.close)
+  (dictionary "{" @fold.open "}" @fold.close)
+  (set "{" @fold.open "}" @fold.close)
+  (tuple "(" @fold.open ")" @fold.close)
 ] @fold
-  (#offset! @fold 0 1 0 -1)
   (#set! tag "collection"))
 ((tuple) @fold (#not-match? @fold "^\\(") (#set! tag "collection"))
 ([
@@ -78,13 +71,11 @@ context = '''
 [languages.go]
 folds = '''
 ([
-  (block "{" "}")
-  (field_declaration_list "{" "}")
+  (block "{" @fold.open "}" @fold.close)
+  (field_declaration_list "{" @fold.open "}" @fold.close)
 ] @fold
-  (#offset! @fold 0 1 0 -1)
   (#set! tag "body"))
-((literal_value "{" "}") @fold
-  (#offset! @fold 0 1 0 -1)
+((literal_value "{" @fold.open "}" @fold.close) @fold
   (#set! tag "collection"))
 ((import_declaration) @fold
   (#set! tag "import"))
@@ -95,8 +86,8 @@ folds = '''
   (interpreted_string_literal)
 ] @fold
   (#set! tag "string"))
-(function_declaration name: (identifier) @_name body: (block) @fold
-  (#match? @_name "^Test") (#offset! @fold 0 1 0 -1) (#set! tag "test"))
+(function_declaration name: (identifier) @_name body: (block "{" @fold.open "}" @fold.close) @fold
+  (#match? @_name "^Test") (#set! tag "test"))
 '''
 context = '''
 [
@@ -109,17 +100,15 @@ context = '''
 [languages.javascript]
 folds = '''
 ([
-  (statement_block "{" "}")
-  (class_body "{" "}")
-  (switch_body "{" "}")
+  (statement_block "{" @fold.open "}" @fold.close)
+  (class_body "{" @fold.open "}" @fold.close)
+  (switch_body "{" @fold.open "}" @fold.close)
 ] @fold
-  (#offset! @fold 0 1 0 -1)
   (#set! tag "body"))
 ([
-  (object "{" "}")
-  (array "[" "]")
+  (object "{" @fold.open "}" @fold.close)
+  (array "[" @fold.open "]" @fold.close)
 ] @fold
-  (#offset! @fold 0 1 0 -1)
   (#set! tag "collection"))
 ((import_statement) @fold
   (#set! tag "import"))
@@ -139,24 +128,21 @@ context = '''
   (class_declaration body: (class_body "{" @context.final "}" @context.last))
 ] @context
 [(for_statement) (switch_statement) (return_statement)] @context @context.last
-((arrow_function body: (_) @context.end) @context
-  (#offset! @context.end 0 1 0 0))
+(arrow_function body: (_) @context.end) @context
 '''
 
 [languages.javascriptjsx]
 folds = '''
 ([
-  (statement_block "{" "}")
-  (class_body "{" "}")
-  (switch_body "{" "}")
+  (statement_block "{" @fold.open "}" @fold.close)
+  (class_body "{" @fold.open "}" @fold.close)
+  (switch_body "{" @fold.open "}" @fold.close)
 ] @fold
-  (#offset! @fold 0 1 0 -1)
   (#set! tag "body"))
 ([
-  (object "{" "}")
-  (array "[" "]")
+  (object "{" @fold.open "}" @fold.close)
+  (array "[" @fold.open "]" @fold.close)
 ] @fold
-  (#offset! @fold 0 1 0 -1)
   (#set! tag "collection"))
 ((import_statement) @fold
   (#set! tag "import"))
@@ -176,24 +162,21 @@ context = '''
   (class_declaration body: (class_body "{" @context.final "}" @context.last))
 ] @context
 [(for_statement) (switch_statement) (return_statement)] @context @context.last
-((arrow_function body: (_) @context.end) @context
-  (#offset! @context.end 0 1 0 0))
+(arrow_function body: (_) @context.end) @context
 '''
 
 [languages.typescript]
 folds = '''
 ([
-  (statement_block "{" "}")
-  (class_body "{" "}")
-  (switch_body "{" "}")
+  (statement_block "{" @fold.open "}" @fold.close)
+  (class_body "{" @fold.open "}" @fold.close)
+  (switch_body "{" @fold.open "}" @fold.close)
 ] @fold
-  (#offset! @fold 0 1 0 -1)
   (#set! tag "body"))
 ([
-  (object "{" "}")
-  (array "[" "]")
+  (object "{" @fold.open "}" @fold.close)
+  (array "[" @fold.open "]" @fold.close)
 ] @fold
-  (#offset! @fold 0 1 0 -1)
   (#set! tag "collection"))
 ((import_statement) @fold
   (#set! tag "import"))
@@ -213,24 +196,21 @@ context = '''
   (class_declaration body: (class_body "{" @context.final "}" @context.last))
 ] @context
 [(for_statement) (switch_statement) (return_statement)] @context @context.last
-((arrow_function body: (_) @context.end) @context
-  (#offset! @context.end 0 1 0 0))
+(arrow_function body: (_) @context.end) @context
 '''
 
 [languages.typescripttsx]
 folds = '''
 ([
-  (statement_block "{" "}")
-  (class_body "{" "}")
-  (switch_body "{" "}")
+  (statement_block "{" @fold.open "}" @fold.close)
+  (class_body "{" @fold.open "}" @fold.close)
+  (switch_body "{" @fold.open "}" @fold.close)
 ] @fold
-  (#offset! @fold 0 1 0 -1)
   (#set! tag "body"))
 ([
-  (object "{" "}")
-  (array "[" "]")
+  (object "{" @fold.open "}" @fold.close)
+  (array "[" @fold.open "]" @fold.close)
 ] @fold
-  (#offset! @fold 0 1 0 -1)
   (#set! tag "collection"))
 ((import_statement) @fold
   (#set! tag "import"))
@@ -250,7 +230,6 @@ context = '''
   (class_declaration body: (class_body "{" @context.final "}" @context.last))
 ] @context
 [(for_statement) (switch_statement) (return_statement)] @context @context.last
-((arrow_function body: (_) @context.end) @context
-  (#offset! @context.end 0 1 0 0))
+(arrow_function body: (_) @context.end) @context
 '''
 

@@ -1,4 +1,10 @@
 //! Semantic context boundaries captured before Tree-sitter wrappers are flattened.
+use super::query::{last_line, node_range};
+use crate::config::query::AnnotationQuery;
+use crate::hash::DftHashMap;
+use crate::lines::SourcePosition;
+use streaming_iterator::StreamingIterator as _;
+use tree_sitter::{QueryCursor, Tree};
 
 /// Whole-line context, independent of the eventual hunk or display layout.
 #[derive(Clone, Debug)]
@@ -10,23 +16,18 @@ pub(crate) struct ContextMetadata {
 
 /// Interpret configurable context captures in their own query traversal.
 pub(crate) fn classify(
-    tree: &tree_sitter::Tree,
+    tree: &Tree,
     src: &str,
-    compiled: Option<&crate::config::query::AnnotationQuery>,
-) -> crate::hash::DftHashMap<usize, Vec<ContextMetadata>> {
-    use super::query::{adjusted_range, last_line, node_range};
-    use crate::{hash::DftHashMap, lines::SourcePosition};
-    use streaming_iterator::StreamingIterator as _;
+    compiled: Option<&AnnotationQuery>,
+) -> DftHashMap<usize, Vec<ContextMetadata>> {
     let mut result: DftHashMap<usize, Vec<ContextMetadata>> = DftHashMap::default();
     let Some(compiled) = compiled else {
         return result;
     };
     let query = &compiled.query;
-    let lines: Vec<_> = src.split('\n').collect();
-    let mut cursor = tree_sitter::QueryCursor::new();
+    let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(query, tree.root_node(), src.as_bytes());
     while let Some(matched) = matches.next() {
-        let pattern = &compiled.patterns[matched.pattern_index];
         let capture = |name: &str| {
             matched
                 .captures
@@ -38,19 +39,12 @@ pub(crate) fn classify(
             continue;
         };
         let scope = node_range(owner.node);
-        let start = capture("context.start")
-            .and_then(|capture| adjusted_range(capture, pattern, &lines, matched.captures))
-            .map_or(scope.start, |range| range.start);
+        let start =
+            capture("context.start").map_or(scope.start, |capture| node_range(capture.node).start);
         let end = if let Some(capture) = capture("context.end") {
-            let Some(range) = adjusted_range(capture, pattern, &lines, matched.captures) else {
-                continue;
-            };
-            range.start
+            node_range(capture.node).start
         } else if let Some(capture) = capture("context.final") {
-            let Some(range) = adjusted_range(capture, pattern, &lines, matched.captures) else {
-                continue;
-            };
-            range.end
+            node_range(capture.node).end
         } else {
             SourcePosition {
                 line: (scope.start.line.0 + 1).into(),
@@ -60,9 +54,7 @@ pub(crate) fn classify(
         if (start.line, start.byte_column) >= (end.line, end.byte_column) {
             continue;
         }
-        let last = capture("context.last")
-            .and_then(|capture| adjusted_range(capture, pattern, &lines, matched.captures))
-            .map(|range| last_line(&range));
+        let last = capture("context.last").map(|capture| last_line(&node_range(capture.node)));
         result
             .entry(owner.node.id())
             .or_default()

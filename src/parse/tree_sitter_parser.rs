@@ -1,6 +1,6 @@
 //! Load and configure parsers written with tree-sitter.
 
-use super::syntax::FoldMetadata;
+use crate::config::Params;
 use std::sync::{LazyLock, Mutex};
 
 use line_numbers::{LineNumber, LinePositions};
@@ -8,7 +8,7 @@ use streaming_iterator::StreamingIterator as _;
 use tree_sitter as ts;
 use typed_arena::Arena;
 
-use super::syntax::{self, MatchedPos, StringKind};
+use super::syntax::{self, FoldMetadata, MatchedPos, StringKind};
 use crate::constants::Side;
 use crate::hash::{DftHashMap, DftHashSet};
 use crate::options::DiffOptions;
@@ -1389,7 +1389,7 @@ pub(crate) fn to_tree_with_limit(
 /// and return a map of their node IDs mapped to parsed trees. Every time we see such a node,
 /// we will ignore it and recurse into the root node of the given tree instead.
 pub(crate) fn parse_subtrees(
-    params: &crate::config::Params,
+    params: &Params,
     src: &str,
     config: &TreeSitterConfig,
     tree: &tree_sitter::Tree,
@@ -1436,7 +1436,7 @@ pub(crate) fn parse_subtrees(
 /// Calculate which tree-sitter node IDs should have which syntax
 /// highlighting.
 fn tree_highlights(
-    params: &crate::config::Params,
+    params: &Params,
     tree: &tree_sitter::Tree,
     src: &str,
     config: &TreeSitterConfig,
@@ -1566,7 +1566,7 @@ fn print_cursor(src: &str, cursor: &mut ts::TreeCursor, depth: usize) {
 }
 
 pub(crate) fn comment_positions(
-    params: &crate::config::Params,
+    params: &Params,
     tree: &tree_sitter::Tree,
     src: &str,
     config: &TreeSitterConfig,
@@ -1620,7 +1620,7 @@ impl ParseErrors {
 }
 
 pub(crate) fn to_syntax_with_limit<'a>(
-    params: &crate::config::Params,
+    params: &Params,
     lhs_src: &str,
     rhs_src: &str,
     lhs_tree: &tree_sitter::Tree,
@@ -1667,7 +1667,7 @@ pub(crate) fn to_syntax_with_limit<'a>(
 }
 
 pub(crate) fn to_syntax<'a>(
-    params: &crate::config::Params,
+    params: &Params,
     tree: &tree_sitter::Tree,
     src: &str,
     arena: &'a Arena<Syntax<'a>>,
@@ -1723,7 +1723,7 @@ pub(crate) fn parse<'a>(
 ) -> Vec<&'a Syntax<'a>> {
     let tree = to_tree(src, config);
     let (nodes, _errors) = to_syntax(
-        &crate::config::Params::default(),
+        &Params::default(),
         &tree,
         src,
         arena,

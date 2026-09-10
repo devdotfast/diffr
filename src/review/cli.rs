@@ -1,4 +1,5 @@
 //! Git ref input for the experimental review snapshot command.
+use crate::config::Params;
 use crate::summary::DiffResult;
 use clap::{Arg, Command as App};
 use git2::{Commit, ErrorCode, Repository};
@@ -27,7 +28,7 @@ fn read_blob(repo: &Repository, commit: &Commit<'_>, path: &str) -> Result<Optio
 }
 
 pub(crate) fn run() -> Result<()> {
-    let params = crate::config::Params::default();
+    let params = Params::default();
     let args = App::new("difft review")
         .about("Experimental syntax-context diff snapshot; fold candidates stay expanded")
         .arg(

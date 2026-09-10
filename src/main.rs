@@ -56,6 +56,7 @@ mod lines;
 mod options;
 mod parse;
 mod review;
+mod server;
 mod summary;
 mod version;
 mod words;
@@ -149,6 +150,13 @@ fn main() {
         .expect("The logger has not been previously initialized");
     reset_sigpipe();
 
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("serve")) {
+        if let Err(error) = server::run() {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("review")) {
         if let Err(error) = review::cli::run() {
             eprintln!("{error}");

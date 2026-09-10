@@ -30,7 +30,7 @@ pub(crate) fn read_blob(
 
 use crate::config::Params;
 use crate::summary::DiffResult;
-use git2::{AttrCheckFlags, AttrValue, Delta, DiffFindOptions, Oid};
+use git2::{AttrCheckFlags, AttrValue, Delta, DiffFindOptions, DiffOptions, Oid};
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -72,6 +72,9 @@ pub(crate) struct DiffSession {
 }
 
 impl DiffSession {
+    pub(crate) fn remaining(&self) -> usize {
+        self.files.len()
+    }
 
     pub(crate) fn open(
         workspace: &Path,
@@ -141,7 +144,11 @@ fn discover(
 ) -> Result<Vec<FileChange>> {
     let base = repo.find_commit(base)?.tree()?;
     let head = repo.find_commit(head)?.tree()?;
-    let mut diff = repo.diff_tree_to_tree(Some(&base), Some(&head), None)?;
+    let mut diff = repo.diff_tree_to_tree(
+        Some(&base),
+        Some(&head),
+        Some(DiffOptions::new().include_typechange(true)),
+    )?;
     diff.find_similar(Some(DiffFindOptions::new().renames(true)))?;
     let mut files = Vec::new();
     for delta in diff.deltas() {

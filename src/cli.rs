@@ -1,4 +1,4 @@
-//! Git-style CLI input; rendering and HTTP remain adapters over the same engine.
+//! Git-style CLI input; rendering and NDJSON remain adapters over the same engine.
 use crate::config::Config;
 use crate::git::{Comparison, DiffSession, FileParams, Operand, Result};
 use crate::options::{DiffOptions, DisplayMode, DisplayOptions};
@@ -30,9 +30,10 @@ pub(crate) fn run() -> Result<i32> {
         .unwrap_or_default();
     let args = Command::new(env!("CARGO_BIN_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
-        .about("Structural diffs with Git-style comparison inputs; use the server subcommand for HTTP")
+        .about("Structural diffs with Git-style comparison inputs")
         .arg(Arg::new("repo").long("repo").default_value("."))
         .arg(Arg::new("config").long("config"))
+        .arg(Arg::new("order").long("order").value_delimiter(',').action(ArgAction::Append).help("File class priority from diffr-classify attributes"))
         .arg(flag("cached").visible_alias("staged"))
         .arg(flag("merge-base"))
         .arg(flag("no-index"))
@@ -49,7 +50,7 @@ pub(crate) fn run() -> Result<i32> {
         .arg(flag("no-renames"))
         .arg(flag("find-renames").short('M').conflicts_with("no-renames"))
         .arg(Arg::new("unified").short('U').long("unified").default_value("3").value_parser(clap::value_parser!(u32)))
-        .arg(Arg::new("format").long("format").value_parser(["text", "json", "snapshot"]).default_value("text"))
+        .arg(Arg::new("format").long("format").value_parser(["text", "json", "ndjson", "snapshot"]).default_value("text"))
         .arg(Arg::new("display").long("display").value_parser(["inline", "side-by-side", "side-by-side-show-both"]).default_value("side-by-side"))
         .arg(Arg::new("color").long("color").num_args(0..=1).require_equals(true).default_missing_value("always").default_value("auto").value_parser(["auto", "always", "never"]))
         .arg(flag("no-color"))
@@ -59,8 +60,14 @@ pub(crate) fn run() -> Result<i32> {
         .arg(Arg::new("graph-limit").long("graph-limit").value_parser(clap::value_parser!(usize)))
         .arg(Arg::new("parse-error-limit").long("parse-error-limit").value_parser(clap::value_parser!(usize)))
         .arg(Arg::new("items").num_args(0..).value_parser(clap::value_parser!(OsString)))
-        .after_help("Examples:\n  diffr\n  diffr --cached\n  diffr main...HEAD -- src/\n  diffr --no-index -- before.rs after.rs\n  diffr server --repo .\n\nUnsupported Git flags are rejected; this is not a complete git diff implementation.")
+        .after_help("Examples:\n  diffr\n  diffr --cached\n  diffr main...HEAD -- src/\n  diffr --no-index -- before.rs after.rs\n  diffr main HEAD --format ndjson\n\nUnsupported Git flags are rejected; this is not a complete git diff implementation.")
         .get_matches_from(argv);
+    let streaming = args.get_one::<String>("format").unwrap() == "ndjson";
+    if streaming
+        && (args.get_flag("quiet") || args.contains_id("metadata") || args.get_flag("no-index"))
+    {
+        return Err("--format ndjson requires a repository comparison and cannot be combined with --quiet or metadata output".into());
+    }
     let items: Vec<OsString> = args
         .get_many::<OsString>("items")
         .into_iter()
@@ -126,7 +133,12 @@ pub(crate) fn run() -> Result<i32> {
     let files = FileParams {
         paths,
         renames: !args.get_flag("no-renames"),
-        ..FileParams::default()
+        order: args
+            .get_many::<String>("order")
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect(),
     };
     let has_changes = if args.get_flag("quiet") || args.contains_id("metadata") {
         let diff = comparison.resolve(&repo)?.diff(&repo, &files)?;
@@ -143,6 +155,14 @@ pub(crate) fn run() -> Result<i32> {
         session.context_lines = display.num_context_lines;
         session.diff_options = diff_options;
         let changed = session.remaining() > 0;
+        if streaming {
+            let failed = crate::stream::write(session, &mut io::stdout().lock())?;
+            return Ok(if failed {
+                2
+            } else {
+                i32::from(changed && args.get_flag("exit-code"))
+            });
+        }
         for (file, result) in session {
             let result = result.map_err(|error| format!("{}: {error}", file.path()))?;
             render(&result, &args, &display)?;

@@ -133,10 +133,6 @@ tree-sitter-yaml = "0.7.0"
 tree-sitter-zig = "1.1.2"
 ts-parser-perl = "1.2.0"
 toml = { version = "0.8", default-features = false, features = ["parse"] }
-axum = "0.8"
-async-stream = "0.3"
-tokio = { version = "1", features = ["rt-multi-thread", "net"] }
-tower-http = { version = "0.6", features = ["fs"] }
 
 
 [target.'cfg(not(any(windows, target_os = "illumos", target_os = "freebsd")))'.dependencies]

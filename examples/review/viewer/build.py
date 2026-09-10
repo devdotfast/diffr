@@ -19,7 +19,7 @@ ENV.pop('DFT_DBG_KEEP_UNCHANGED', None)
 def git(repo, *args, input=None):
     return subprocess.check_output(['git', '-C', str(repo), *args], input=input, env=ENV).decode().strip()
 
-# Keep a workspace for the HTTP server; only Git baseline text is precomputed.
+# Build pinned comparisons and capture the CLI stream for the static viewer.
 REPO = OUT / "workspace"
 REPO.mkdir(exist_ok=True)
 git(REPO, 'init', '-q')
@@ -78,5 +78,11 @@ for files in sides:
 for meta in index:
     path = OUT / (meta['id'] + '.json')
     view = json.loads(path.read_text())
-    view['request'].update(before={'kind': 'revision', 'ref': commits[0]}, after={'kind': 'revision', 'ref': commits[1]})
+    paths = view['request']['files']['paths']
+    stream_path = OUT / (meta['id'] + '.ndjson')
+    with stream_path.open('wb') as output:
+        subprocess.run([str(ROOT / 'target/debug/diffr'), '--repo', str(REPO),
+                        *commits, '--format', 'ndjson', '--', *paths],
+                       stdout=output, env=ENV, check=True)
+    view['request'] = 'data/' + stream_path.name
     path.write_text(json.dumps(view))

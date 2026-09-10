@@ -1,11 +1,6 @@
-// A response ending without "complete" is incomplete, even with HTTP 200.
+// Read the captured CLI stream. EOF without "complete" means incomplete.
 export async function* diffEvents(request, signal) {
-  const response = await fetch("/diff", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-    signal,
-  });
+  const response = await fetch(request, { signal });
   if (!response.ok) throw Error(await response.text());
   const reader = response.body.getReader();
   const decoder = new TextDecoder();

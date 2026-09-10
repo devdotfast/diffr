@@ -28,7 +28,7 @@ for changes; ordinary output exits 0. Errors exit 2. `--no-index` supports two
 files, implies change exit status, and does not yet support metadata options.
 
 Structural output uses the existing terminal renderer. `--format json` emits
-one domain object per line; `--format snapshot` is the fixture text adapter.
+one domain object per line. `--format ndjson` emits a buffered event stream; `--format snapshot` is the fixture text adapter.
 `-U N` selects ordinary context padding. Matching limits, `--ignore-comments`,
 color, width and inline/split display remain configurable; see `--help`.
 
@@ -36,4 +36,4 @@ This is a subset of git diff, not full flag parity: unsupported options and Git
 magic pathspecs fail explicitly. Untracked files are excluded as in git diff.
 The old file/external-diff/debug parser is available under `debug` for diagnostic
 use; it is not the default argument syntax. `review` is replaced by the normal
-CLI's `--format` option. The HTTP contract is in [streaming.md](streaming.md).
+CLI's `--format` option. The stdout event contract is in [streaming.md](streaming.md).

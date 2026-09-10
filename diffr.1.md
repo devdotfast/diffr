@@ -11,7 +11,7 @@ diffr - structural Git comparisons and local diff streaming
 
 **diffr** **--no-index** BEFORE AFTER
 
-**diffr server** **--repo** DIRECTORY [**--listen** ADDRESS]
+**diffr** REVISION REVISION **--format ndjson**
 
 # DESCRIPTION
 
@@ -36,7 +36,7 @@ compare their trees. A...B compares merge-base(A,B) to B; A..B compares A to B.
 **--quiet**, **--exit-code**
 : Exit 1 for changes. Quiet also suppresses output. Errors exit 2.
 
-**--format** text|json|snapshot
+**--format** text|json|ndjson|snapshot
 : Terminal rendering, domain JSON records, or fixture text.
 
 **-U** N
@@ -48,7 +48,8 @@ compare their trees. A...B compares merge-base(A,B) to B; A..B compares A to B.
 **--help**
 : List the supported options. Unsupported Git flags are rejected.
 
-# SERVER
+# STREAMING
 
-The server accepts POST /diff with before and after operands and emits NDJSON.
-See docs/streaming.md in the source distribution for the request and event schema.
+--format ndjson emits start, file, file_error and complete records to stdout.
+Computation and output run on separate threads with a bounded queue.
+See docs/streaming.md for the event schema and exit status contract.

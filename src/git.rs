@@ -1,4 +1,4 @@
-//! Git comparison selection and lazy source loading shared by CLI and server.
+//! Git comparison selection and lazy source loading used by the CLI and its stdout stream.
 use crate::config::Params;
 use crate::summary::DiffResult;
 use git2::{AttrCheckFlags, AttrValue, Delta, Diff, DiffFindOptions, DiffOptions, Oid, Repository};

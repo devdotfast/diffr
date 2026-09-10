@@ -1,22 +1,23 @@
-# Local diff streaming
+# CLI diff streaming
 
 ```sh
-diffr server --repo /path/to/workspace --listen 127.0.0.1:4176
+diffr main HEAD --format ndjson
+diffr --cached --format ndjson --order source,test -- src/
 ```
 
-One server binds to one workspace. Only loopback listening is supported.
+Spawn one process per comparison and consume stdout line by line. The comparison
+arguments are the same as the [ordinary CLI](cli.md). There is no HTTP server.
+`--format json` remains the bare domain-object output; `ndjson` adds file metadata,
+progress, recoverable errors and a completion record. NDJSON currently requires a
+repository comparison; it rejects `--no-index`, `--quiet` and metadata output flags.
 
 ## Configuration and ordering
 
-The server reads repository-root `diffr.toml` once at startup. `--config PATH`
-selects another file instead of the repository file. A missing repository file
-uses defaults; a missing explicit file or invalid configuration is an error.
+Each invocation loads repository-root `diffr.toml` and compiles it once.
+`--config PATH` selects another file instead. Omitted keys retain bundled defaults;
+query strings replace whole values, and empty queries disable that feature.
 
-Supplied keys override bundled defaults. Query strings replace whole
-values. Omitted keys retain defaults; an empty query disables that feature.
-
-Classifications use the current workspace's Git attributes, not attributes from
-the requested revisions. Git resolves normal nested/global attribute precedence:
+File classes come from the current workspace's Git attributes:
 
 ```gitattributes
 *          diffr-classify=source
@@ -25,83 +26,72 @@ docs/**    diffr-classify=docs
 **/*.lock  diffr-classify=generated
 ```
 
-Only string-valued attributes assign a class. Set/unset/unspecified attributes
-leave the file unclassified. Unlisted and unclassified files sort last; ties use
-path order. Renames classify by new path, deletions by old path.
+`--order source,test,docs` prioritizes those classes. It can also be repeated.
+Unlisted and unclassified files follow, with path order breaking ties. Without
+`--order`, use path order. Renames classify by new path; deletions by old path.
+Only string attributes assign classes. Normal Git attribute precedence applies.
 
-Discovery copies classifications into descriptors, fixing ordering for the request.
-Discovery and rename detection finish before the first event. Rename detection can
-read file contents; syntax matching starts afterward, one file at a time.
+Paths after `--` accept libgit2 directory prefixes and wildcard patterns, not Git
+magic pathspecs. Only changed files are selected. An unmatched path yields an empty
+stream. Filtering precedes rename detection, so selecting one side of a rename
+can appear as an addition or deletion. `--no-renames` skips rename detection.
 
-## Request
+## Output contract
 
-`POST /diff` with `Content-Type: application/json`:
+Stdout contains only UTF-8 newline-delimited JSON records. Read complete lines;
+pipe reads can split records or contain several.
 
-```json
-{"before":{"kind":"revision","ref":"main"},"after":{"kind":"revision","ref":"HEAD"},"files":{"order":["source","test"],"paths":["src/lib.rs"]}}
-```
-
-`before` and `after` are required. Each is a tagged operand:
-`{"kind":"revision","ref":"HEAD"}`, `{"kind":"index"}`,
-`{"kind":"working_tree"}`, or `{"kind":"empty_tree"}`.
-Compare revisions/trees, revision to index or worktree, or index to worktree;
-reversing those pairs is supported. Same-side index/index and worktree/worktree
-comparisons are rejected. Revision refs resolve once. Index content is pinned by
-blob ID during discovery. Worktree files are read as each result is computed;
-this is not an atomic workspace snapshot. There is no implicit merge base.
-
-- `files` groups client selection and ordering. It may be omitted.
-- Omitted `files.order` or `[]` means path order only; no server default exists.
-- Omitted or empty `files.paths` selects all changed files. Paths accept libgit2 directory prefixes and wildcard patterns; Git magic
-  pathspecs are rejected. Only changed files are returned; unmatched paths produce
-  an empty stream. Path filtering precedes rename detection, so selecting only one
-  side of a rename can appear as an addition or deletion.
-- `files.renames` defaults to true; false skips rename detection.
-
-## Response contract
-
-HTTP 200 uses `application/x-ndjson`. Decode full newline-delimited JSON records:
-network chunks can split a record or contain several.
-
-| Event | Fields | Client action |
+| Event | Fields | Consumer action |
 | --- | --- | --- |
-| `start` | `version: 1`, resolved `before`, `after`, `total` | Initialize progress. |
-| `file` | `file`, `diff` | Render immediately. |
-| `file_error` | `file`, `message` | Show the failure and continue reading. |
+| `start` | `version: 1`, `before`, `after`, `total` | Initialize progress. |
+| `file` | `file`, `diff` | Render a result. |
+| `file_error` | `file`, `message` | Report failure and keep reading. |
 | `complete` | `succeeded`, `failed` | Mark complete, including partial failures. |
-| `error` | `message` | Terminal worker failure; mark incomplete. |
 
-The file descriptor has nullable `old_path`, `new_path`, `class`, and a `status`
-of added/deleted/modified/renamed/type_changed/conflicted. `diff` is the existing domain JSON: sources, token correspondence,
-folds, and syntax-context hunks. Display alignment is computed by the client;
-layout is never included in the response.
+`before` and `after` identify the operands: `{"kind":"revision","ref":"<oid>"}`,
+`{"kind":"index"}`, `{"kind":"working_tree"}`, or `{"kind":"empty_tree"}`.
+Revision refs resolve once. Index source is pinned by blob ID during discovery.
+Worktree files are read as results are computed, not as an atomic snapshot.
 
-Invalid refs or unsupported comparisons/pathspecs return HTTP 400 with `{"error":"..."}` before streaming.
-JSON extraction failures use the framework's non-200 error response. Preparation
-worker failures return HTTP 500. After streaming starts, failures use events.
+The file descriptor contains nullable `old_path`, `new_path`, `class`, and `status`
+(added/deleted/modified/renamed/type_changed/conflicted). `diff` is the existing
+domain JSON: complete sources, token correspondence, folds and context hunks.
+There is no display layout in the response.
 
-EOF without `complete` means incomplete, regardless of HTTP 200.
-At completion, `succeeded + failed == total`, and each selected file has exactly
-one file or file_error event.
+At completion, `succeeded + failed == total`; every selected file has one result
+or file error. EOF without `complete` means interrupted/incomplete output.
+Setup failures write to stderr and exit 2 before producing any records.
+Per-file failures emit `file_error`, allow subsequent results, and finish with
+`complete` and exit 2. Success exits 0, or 1 with `--exit-code` if changes exist.
+Unexpected computation or output failures can terminate without `complete`.
 
-Cancel with AbortController. Dropping the response stops scheduling subsequent
-files. An already running file computation may finish after disconnection.
-There is no parallel file scheduler or full-result buffer.
+Regular UTF-8 text files are supported. Binary/non-UTF-8 files, symlinks,
+submodules and unmerged index entries produce per-file errors. Non-UTF-8 paths
+fail discovery.
 
-Current scope is UTF-8 regular text files. Binary/non-UTF-8 contents, symlinks and
-submodules produce per-file errors; later files continue. Non-UTF-8 paths fail
-discovery.
+## Computation and output
 
-## Example and checks
+Discovery and rename detection finish before `start`; syntax matching is lazy.
+A producer thread consumes the file iterator. The calling thread serializes,
+writes and flushes each event. A bounded queue holds one ready event, allowing
+computation to overlap slow writes without collecting the entire comparison.
+When the queue is full, the producer waits. This bounds the number of in-flight
+files, not their individual size.
 
-The [example client](../examples/review/viewer/stream.mjs) renders file events and
-cancels old requests on navigation. Git baseline text is precomputed; domain diffs
-are computed live.
+Closing stdout stops production when its next send fails; an already running file
+may finish. Terminate the process to cancel immediately. The CLI also retains its
+normal SIGPIPE behavior on Unix.
+
+## Fixture viewer
+
+The viewer reads captured CLI streams from static files:
 
 ```sh
 cargo build --locked
 python3 examples/review/viewer/build.py
-target/debug/diffr server --repo examples/review/viewer/data/workspace \
-  --web-root examples/review/viewer --listen 127.0.0.1:4176
+python3 -m http.server 4176 --bind 127.0.0.1 --directory examples/review/viewer
 python3 tests/streaming/check.py
 ```
+
+Rebuild captures after backend changes. Static HTTP serves the example assets
+only; it does not compute diffs.

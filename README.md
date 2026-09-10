@@ -1,6 +1,6 @@
 # diffr
 
-This fork adds syntax folds, configurable context and a streaming server to
+This fork adds syntax folds, configurable context and stdout streaming to
 [Difftastic](https://github.com/Wilfred/difftastic).
 
 ```sh
@@ -8,7 +8,7 @@ cargo install --path . --locked
 diffr                         # index versus working tree
 diffr --cached                # staged changes
 diffr main...HEAD -- src/      # merge-base comparison
-diffr server --repo . --listen 127.0.0.1:4176
+diffr main HEAD --format ndjson
 ```
 
 See the [CLI reference](docs/cli.md), [streaming API](docs/streaming.md),

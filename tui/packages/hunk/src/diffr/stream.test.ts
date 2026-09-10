@@ -28,6 +28,7 @@ test("decode byte-fragmented Unicode stream and preserve fold metadata", async (
         end: { line: 2, byte_column: 8 },
       },
       placeholder: "…",
+      summary: null,
       match_kind: "Novel",
     },
   ];

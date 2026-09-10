@@ -16,6 +16,8 @@ pub(crate) struct Fold {
     pub(crate) match_kind: FoldMatch,
     /// Text shown in place of the source, including supplied pseudocode.
     pub(crate) placeholder: String,
+    /// Longer replacement text supplied by a configured fold hook.
+    pub(crate) summary: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -171,5 +173,6 @@ pub(crate) fn project(node: &Syntax<'_>, change: ChangeKind<'_>) -> Option<Fold>
                     .unwrap_or_default()
             })
             .unwrap_or_else(|| "…".into()),
+        summary: None,
     })
 }

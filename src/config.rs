@@ -13,7 +13,6 @@ use strum::IntoEnumIterator;
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Config {
     pub(crate) languages: BTreeMap<String, LanguageConfig>,
-    pub(crate) files: FilesConfig,
 }
 
 #[derive(Default, Deserialize)]
@@ -22,12 +21,6 @@ pub(crate) struct LanguageConfig {
     /// None keeps the bundled query; an empty string disables this feature.
     pub(crate) folds: Option<String>,
     pub(crate) context: Option<String>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub(crate) struct FilesConfig {
-    pub(crate) order: Option<Vec<String>>,
 }
 
 #[derive(Debug)]
@@ -40,7 +33,6 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 pub(crate) struct Params {
-    pub(crate) file_order: Vec<String>,
     languages: DftHashMap<Language, OnceLock<Arc<LanguageParams>>>,
 }
 
@@ -87,11 +79,6 @@ impl Config {
 
     pub(crate) fn compile(self) -> Result<Params, ConfigError> {
         let defaults = Self::from_toml(include_str!("config/defaults.toml"))?;
-        let file_order = self
-            .files
-            .order
-            .or(defaults.files.order)
-            .unwrap_or_default();
         let mut resolved = defaults.languages;
         for (name, overrides) in self.languages {
             let target = resolved.entry(name).or_default();
@@ -124,10 +111,7 @@ impl Config {
                 })),
             );
         }
-        Ok(Params {
-            languages,
-            file_order,
-        })
+        Ok(Params { languages })
     }
 }
 

@@ -1,6 +1,6 @@
 //! Git ref input for the experimental review snapshot command.
 use crate::config::Config;
-use crate::git::{DiffSession, Result};
+use crate::git::{DiffSession, FileParams, Result};
 use clap::{Arg, Command as App};
 use git2::Repository;
 use std::path::{Component, Path};
@@ -48,8 +48,10 @@ pub(crate) fn run() -> Result<()> {
         args.get_one::<String>("base").unwrap(),
         args.get_one::<String>("head").unwrap(),
         Arc::new(params),
-        None,
-        paths.as_deref(),
+        &FileParams {
+            paths,
+            ..FileParams::default()
+        },
     )?;
     for (_, result) in session {
         let result = result?;

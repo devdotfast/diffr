@@ -13,13 +13,8 @@ The server reads repository-root `diffr.toml` once at startup. `--config PATH`
 selects another file instead of the repository file. A missing repository file
 uses defaults; a missing explicit file or invalid configuration is an error.
 
-Supplied keys override bundled defaults. Query strings and arrays replace whole
+Supplied keys override bundled defaults. Query strings replace whole
 values. Omitted keys retain defaults; an empty query disables that feature.
-
-```toml
-[files]
-order = ["source", "test", "docs", "generated"]
-```
 
 Classifications use the current workspace's Git attributes, not attributes from
 the requested revisions. Git resolves normal nested/global attribute precedence:
@@ -44,18 +39,17 @@ read file contents; syntax matching starts afterward, one file at a time.
 `POST /diff` with `Content-Type: application/json`:
 
 ```json
-{"base":"main","head":"HEAD","order":["source","test"],"paths":["src/lib.rs"],"include_layout":false}
+{"base":"main","head":"HEAD","files":{"order":["source","test"],"paths":["src/lib.rs"]}}
 ```
 
 Only `base` and `head` are required. They resolve to pinned commit IDs. This is
 direct base-to-head comparison, with no implicit merge-base calculation.
 
-- Omitted `order` uses server config; `[]` means path order only.
-- Omitted `paths` selects all changed files. Supplied paths are exact, not globs;
+- `files` groups client selection and ordering. It may be omitted.
+- Omitted `files.order` or `[]` means path order only; no server default exists.
+- Omitted `files.paths` selects all changed files. Supplied paths are exact, not globs;
   either side of a rename can select it. Explicit unchanged files are returned too.
   Missing paths fail before streaming.
-- `include_layout` defaults to false. True adds the existing viewer alignment
-  beside the domain payload.
 
 ## Response contract
 
@@ -65,7 +59,7 @@ network chunks can split a record or contain several.
 | Event | Fields | Client action |
 | --- | --- | --- |
 | `start` | `version: 1`, resolved `base`, `head`, `total` | Initialize progress. |
-| `file` | `file`, `diff`, optional `layout` | Render immediately. |
+| `file` | `file`, `diff` | Render immediately. |
 | `file_error` | `file`, `message` | Show the failure and continue reading. |
 | `complete` | `succeeded`, `failed` | Mark complete, including partial failures. |
 | `error` | `message` | Terminal worker failure; mark incomplete. |
@@ -73,7 +67,8 @@ network chunks can split a record or contain several.
 The file descriptor has nullable `old_path`, `new_path`, `class`, and a `status`
 of added/deleted/modified/renamed/type_changed/unchanged. Unchanged applies only to
 explicit paths. `diff` is the existing domain JSON: sources, token correspondence,
-folds, and syntax-context hunks.
+folds, and syntax-context hunks. Display alignment is computed by the client;
+layout is never included in the response.
 
 Invalid refs/paths return HTTP 400 with `{"error":"..."}` before streaming.
 JSON extraction failures use the framework's non-200 error response. Preparation

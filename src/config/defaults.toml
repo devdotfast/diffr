@@ -1,6 +1,3 @@
-[files]
-order = ["source", "test", "docs", "generated"]
-
 [languages.rust]
 folds = '''
 ([

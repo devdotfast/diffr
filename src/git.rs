@@ -31,7 +31,7 @@ pub(crate) fn read_blob(
 use crate::config::Params;
 use crate::summary::DiffResult;
 use git2::{AttrCheckFlags, AttrValue, Delta, DiffFindOptions, DiffOptions, Oid};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 #[derive(Clone, Debug, Serialize)]
@@ -62,6 +62,15 @@ impl FileChange {
     }
 }
 
+/// Client selection and ordering; omitted order leaves files in path order.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct FileParams {
+    pub(crate) order: Vec<String>,
+    /// Exact repository-relative paths; None selects all changed files.
+    pub(crate) paths: Option<Vec<String>>,
+}
+
 /// Owns pinned revisions and descriptors, not precomputed patches.
 pub(crate) struct DiffSession {
     repo: Repository,
@@ -81,19 +90,12 @@ impl DiffSession {
         base: &str,
         head: &str,
         params: Arc<Params>,
-        order: Option<&[String]>,
-        paths: Option<&[String]>,
+        files: &FileParams,
     ) -> Result<Self> {
         let repo = Repository::open(workspace)?;
         let base = repo.revparse_single(base)?.peel_to_commit()?.id();
         let head = repo.revparse_single(head)?.peel_to_commit()?.id();
-        let files = discover(
-            &repo,
-            base,
-            head,
-            order.unwrap_or(&params.file_order),
-            paths,
-        )?;
+        let files = discover(&repo, base, head, &files.order, files.paths.as_deref())?;
         Ok(Self {
             repo,
             base,

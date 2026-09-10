@@ -1,6 +1,6 @@
 //! One-workspace HTTP adapter over the file iterator.
 use crate::config::{Config, Params};
-use crate::git::{DiffSession, FileChange, Result};
+use crate::git::{DiffSession, FileChange, FileParams, Result};
 use axum::{
     body::Body,
     extract::State,
@@ -25,12 +25,8 @@ use tower_http::services::ServeDir;
 struct DiffRequest {
     base: String,
     head: String,
-    /// None uses the server order; [] requests path order only.
-    order: Option<Vec<String>>,
-    /// Exact repository-relative paths; None selects all changed files.
-    paths: Option<Vec<String>>,
     #[serde(default)]
-    include_layout: bool,
+    files: FileParams,
 }
 
 #[derive(Serialize)]
@@ -45,8 +41,6 @@ enum Event {
     File {
         file: FileChange,
         diff: Value,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        layout: Option<Value>,
     },
     FileError {
         file: FileChange,
@@ -73,15 +67,13 @@ struct Server {
 }
 
 async fn diff(State(server): State<Arc<Server>>, Json(request): Json<DiffRequest>) -> Response {
-    let include_layout = request.include_layout;
     let prepared = tokio::task::spawn_blocking(move || {
         DiffSession::open(
             &server.workspace,
             &request.base,
             &request.head,
             Arc::clone(&server.params),
-            request.order.as_deref(),
-            request.paths.as_deref(),
+            &request.files,
         )
     })
     .await;
@@ -111,15 +103,7 @@ async fn diff(State(server): State<Arc<Server>>, Json(request): Json<DiffRequest
             let next = tokio::task::spawn_blocking(move || {
                 let (file, result) = session.next().expect("remaining file");
                 let event = match result {
-                    Ok(diff) => {
-                        let (diff, layout) = if include_layout {
-                            let mut view = diff.viewer_json();
-                            (view["domain"].take(), Some(view["layout"].take()))
-                        } else {
-                            (diff.domain_json(), None)
-                        };
-                        Event::File { file, diff, layout }
-                    }
+                    Ok(diff) => Event::File { file, diff: diff.domain_json() },
                     Err(error) => Event::FileError { file, message: error.to_string() },
                 };
                 (session, event)

@@ -30,14 +30,14 @@ pub(crate) fn run() -> Result<()> {
         Config::load(workspace, args.get_one::<String>("config").map(Path::new))?.compile()?;
     let paths = args
         .get_one::<String>("path")
-        .map(|path| vec![path.clone()]);
-    if paths.as_ref().is_some_and(|paths| {
-        paths.iter().any(|path| {
-            path.is_empty()
-                || Path::new(path)
-                    .components()
-                    .any(|c| !matches!(c, Component::Normal(_)))
-        })
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    if paths.iter().any(|path| {
+        path.is_empty()
+            || Path::new(path)
+                .components()
+                .any(|c| !matches!(c, Component::Normal(_)))
     }) {
         return Err(
             "Expected a repository-relative file path without '.' or '..' components".into(),

@@ -67,8 +67,8 @@ impl FileChange {
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileParams {
     pub(crate) order: Vec<String>,
-    /// Exact repository-relative paths; None selects all changed files.
-    pub(crate) paths: Option<Vec<String>>,
+    /// Exact repository-relative paths; empty selects all changed files.
+    pub(crate) paths: Vec<String>,
 }
 
 /// Owns pinned revisions and descriptors, not precomputed patches.
@@ -95,7 +95,7 @@ impl DiffSession {
         let repo = Repository::open(workspace)?;
         let base = repo.revparse_single(base)?.peel_to_commit()?.id();
         let head = repo.revparse_single(head)?.peel_to_commit()?.id();
-        let files = discover(&repo, base, head, &files.order, files.paths.as_deref())?;
+        let files = discover(&repo, base, head, &files.order, &files.paths)?;
         Ok(Self {
             repo,
             base,
@@ -142,7 +142,7 @@ fn discover(
     base: Oid,
     head: Oid,
     order: &[String],
-    paths: Option<&[String]>,
+    paths: &[String],
 ) -> Result<Vec<FileChange>> {
     let base = repo.find_commit(base)?.tree()?;
     let head = repo.find_commit(head)?.tree()?;
@@ -179,11 +179,11 @@ fn discover(
         } else {
             Some(path(delta.new_file())?)
         };
-        if paths.is_some_and(|paths| {
-            !paths
+        if !paths.is_empty()
+            && !paths
                 .iter()
                 .any(|path| old_path.as_ref() == Some(path) || new_path.as_ref() == Some(path))
-        }) {
+        {
             continue;
         }
         files.push(FileChange {
@@ -194,7 +194,7 @@ fn discover(
         });
     }
     // An explicitly selected unchanged file is still a valid single-file diff.
-    for path in paths.unwrap_or_default() {
+    for path in paths {
         if path.is_empty()
             || Path::new(path)
                 .components()

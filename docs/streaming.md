@@ -47,7 +47,7 @@ direct base-to-head comparison, with no implicit merge-base calculation.
 
 - `files` groups client selection and ordering. It may be omitted.
 - Omitted `files.order` or `[]` means path order only; no server default exists.
-- Omitted `files.paths` selects all changed files. Supplied paths are exact, not globs;
+- Omitted or empty `files.paths` selects all changed files. Supplied paths are exact, not globs;
   either side of a rename can select it. Explicit unchanged files are returned too.
   Missing paths fail before streaming.
 

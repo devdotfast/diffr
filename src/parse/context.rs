@@ -20,15 +20,15 @@ pub(crate) fn classify(
     src: &str,
     compiled: Option<&AnnotationQuery>,
 ) -> DftHashMap<usize, Vec<ContextMetadata>> {
-    let mut result: DftHashMap<usize, Vec<ContextMetadata>> = DftHashMap::default();
+    let mut contexts = DftHashMap::<_, Vec<_>>::default();
     let Some(compiled) = compiled else {
-        return result;
+        return contexts;
     };
     let query = &compiled.query;
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(query, tree.root_node(), src.as_bytes());
     while let Some(matched) = matches.next() {
-        let capture = |name: &str| {
+        let capture = |name| {
             matched
                 .captures
                 .iter()
@@ -55,7 +55,7 @@ pub(crate) fn classify(
             continue;
         }
         let last = capture("context.last").map(|capture| last_line(&node_range(capture.node)));
-        result
+        contexts
             .entry(owner.node.id())
             .or_default()
             .push(ContextMetadata {
@@ -68,5 +68,5 @@ pub(crate) fn classify(
                 closing: last,
             });
     }
-    result
+    contexts
 }

@@ -33,9 +33,9 @@ pub(crate) fn classify(
     src: &str,
     compiled: Option<&AnnotationQuery>,
 ) -> DftHashMap<usize, FoldMetadata> {
-    let mut result = DftHashMap::default();
+    let mut kinds = DftHashMap::default();
     let Some(compiled) = compiled else {
-        return result;
+        return kinds;
     };
     let query = &compiled.query;
     let mut ambiguous_folds = DftHashSet::default();
@@ -72,14 +72,12 @@ pub(crate) fn classify(
             if region.start == region.end || ambiguous_folds.contains(&fold.node.id()) {
                 continue;
             }
-            let metadata = result
-                .entry(fold.node.id())
-                .or_insert_with(|| FoldMetadata {
-                    tags: Vec::new(),
-                    range_override: Some(region),
-                });
+            let metadata = kinds.entry(fold.node.id()).or_insert_with(|| FoldMetadata {
+                tags: Vec::new(),
+                range_override: Some(region),
+            });
             if metadata.range_override != Some(region) {
-                result.remove(&fold.node.id());
+                kinds.remove(&fold.node.id());
                 ambiguous_folds.insert(fold.node.id());
                 continue;
             }
@@ -88,7 +86,7 @@ pub(crate) fn classify(
             metadata.tags.dedup();
         }
     }
-    result
+    kinds
 }
 
 /// Lists already retain the two edges of their interior, even without delimiters.

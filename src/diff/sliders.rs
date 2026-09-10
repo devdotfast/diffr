@@ -682,8 +682,9 @@ mod tests {
     use typed_arena::Arena;
 
     use super::*;
+    use crate::config::Params;
     use crate::parse::guess_language;
-    use crate::parse::tree_sitter_parser::{from_language, parse};
+    use crate::parse::tree_sitter_parser::parse;
     use crate::syntax::{init_all_info, AtomKind};
 
     /// Test that we slide at the start if the unchanged node is
@@ -798,7 +799,8 @@ mod tests {
     #[test]
     fn test_slider_two_steps() {
         let arena = Arena::new();
-        let config = from_language(guess_language::Language::EmacsLisp);
+        let params = Params::default();
+        let config = params.language(guess_language::Language::EmacsLisp);
 
         let lhs = parse(&arena, "A B", config, false);
         let rhs = parse(&arena, "A B X\n A B", config, false);
@@ -823,7 +825,8 @@ mod tests {
     #[test]
     fn test_slider_partially_unchanged() {
         let arena = Arena::new();
-        let config = from_language(guess_language::Language::EmacsLisp);
+        let params = Params::default();
+        let config = params.language(guess_language::Language::EmacsLisp);
 
         let lhs = parse(&arena, "(A B) X \n (A B)", config, false);
         let rhs = parse(&arena, "((novel) A B)", config, false);

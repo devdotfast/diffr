@@ -92,6 +92,7 @@ fn select_candidates(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Params;
     use crate::parse::{guess_language::Language, tree_sitter_parser as parser};
     use typed_arena::Arena;
 
@@ -105,7 +106,7 @@ mod tests {
             parser::parse(
                 &arena,
                 &source,
-                parser::from_language(Language::Python),
+                Params::default().language(Language::Python),
                 false,
             )
         };
@@ -122,7 +123,7 @@ mod tests {
         let syntax = parser::parse(
             &arena,
             "fn run() -> i32 {\n    answer\n}\n",
-            parser::from_language(Language::Rust),
+            Params::default().language(Language::Rust),
             false,
         );
         let mut pending = syntax;

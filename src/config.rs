@@ -5,7 +5,7 @@ use crate::parse::{guess_language::Language, tree_sitter_parser};
 use query::AnnotationQuery;
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use strum::IntoEnumIterator;
 
 #[derive(Default, Deserialize)]
@@ -32,13 +32,30 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 pub(crate) struct Params {
-    languages: DftHashMap<Language, OnceLock<LanguageParams>>,
+    languages: DftHashMap<Language, OnceLock<Arc<LanguageParams>>>,
 }
 
 pub(crate) struct LanguageParams {
     pub(crate) parser: &'static tree_sitter_parser::TreeSitterConfig,
     pub(crate) folds: AnnotationQuery,
     pub(crate) context: AnnotationQuery,
+    sub_languages: OnceLock<
+        Vec<(
+            &'static tree_sitter_parser::TreeSitterSubLanguage,
+            Arc<LanguageParams>,
+        )>,
+    >,
+}
+
+impl LanguageParams {
+    pub(crate) fn sub_languages(
+        &self,
+    ) -> &[(
+        &'static tree_sitter_parser::TreeSitterSubLanguage,
+        Arc<LanguageParams>,
+    )] {
+        self.sub_languages.get().expect("resolved sub-languages")
+    }
 }
 
 impl Config {
@@ -71,11 +88,12 @@ impl Config {
             };
             languages.insert(
                 language,
-                OnceLock::from(LanguageParams {
+                OnceLock::from(Arc::new(LanguageParams {
                     parser,
                     folds: compile("folds", config.folds)?,
                     context: compile("context", config.context)?,
-                }),
+                    sub_languages: OnceLock::new(),
+                })),
             );
         }
         Ok(Params { languages })
@@ -83,18 +101,28 @@ impl Config {
 }
 
 impl Params {
-    pub(crate) fn language(&self, language: Language) -> &LanguageParams {
-        self.languages[&language].get_or_init(|| {
+    pub(crate) fn language(&self, language: Language) -> &Arc<LanguageParams> {
+        let config = self.languages[&language].get_or_init(|| {
             // Languages without annotation rules still support structural diffing.
             // Keep their grammars lazy, as in the existing parser registry.
             let parser = tree_sitter_parser::from_language(language);
-            LanguageParams {
+            Arc::new(LanguageParams {
                 parser,
                 folds: AnnotationQuery::compile(&parser.language, "").expect("empty fold query"),
                 context: AnnotationQuery::compile(&parser.language, "")
                     .expect("empty context query"),
-            }
-        })
+                sub_languages: OnceLock::new(),
+            })
+        });
+        config.sub_languages.get_or_init(|| {
+            config
+                .parser
+                .sub_languages
+                .iter()
+                .map(|sub| (sub, Arc::clone(self.language(sub.parse_as))))
+                .collect()
+        });
+        config
     }
 }
 
@@ -168,6 +196,24 @@ mod tests {
             assert_eq!(result.rhs_folds.len(), 1);
             assert_eq!(result.rhs_folds[0].tags, [tag]);
         }
+    }
+
+    #[test]
+    fn embedded_languages_use_the_configured_queries() {
+        let params = Config::from_toml(
+            "[languages.javascript]\nfolds = '((statement_block) @fold (#set! tag embedded))'",
+        )
+        .unwrap()
+        .compile()
+        .unwrap();
+        let result = DiffResult::from_sources_with_params(
+            "page.html",
+            "",
+            "<script>function run() { work(); }</script>",
+            &params,
+        );
+        assert_eq!(result.rhs_folds.len(), 1);
+        assert_eq!(result.rhs_folds[0].tags, ["embedded"]);
     }
 
     #[test]
@@ -282,11 +328,8 @@ mod query_tests {
             ("(function_item) @context", 0),
         ] {
             let params = configured("", query);
-            let contexts = context::classify(
-                &tree,
-                src,
-                Some(&params.language(grammar.language_id).context),
-            );
+            let contexts =
+                context::classify(&tree, src, Some(&params.language(Language::Rust).context));
             let context = contexts.values().next().unwrap().first().unwrap();
             assert_eq!(context.header, 0..=last_header);
         }

@@ -191,7 +191,7 @@ fn main() {
             let language = guess(path, &src, &language_overrides);
             match language {
                 Some(lang) => {
-                    let ts_lang = tsp::from_language(lang);
+                    let ts_lang = params.language(lang);
                     let arena = Arena::new();
                     let ast = tsp::parse(&arena, &src, ts_lang, ignore_comments);
                     init_all_info(&ast, &[]);
@@ -214,7 +214,7 @@ fn main() {
             let language = guess(path, &src, &language_overrides);
             match language {
                 Some(lang) => {
-                    let ts_lang = tsp::from_language(lang);
+                    let ts_lang = params.language(lang);
                     let arena = Arena::new();
                     let ast = tsp::parse(&arena, &src, ts_lang, ignore_comments);
                     init_all_info(&ast, &[]);
@@ -688,7 +688,6 @@ fn diff_file_content(
             match tsp::to_tree_with_limit(diff_options, lang_config.parser, lhs_src, rhs_src) {
                 Ok((lhs_tree, rhs_tree)) => {
                     match tsp::to_syntax_with_limit(
-                        params,
                         lhs_src,
                         rhs_src,
                         &lhs_tree,
@@ -770,20 +769,12 @@ fn diff_file_content(
                                     syntax::change_positions(&rhs, &change_map, &mut rhs_folds);
 
                                 if diff_options.ignore_comments {
-                                    let lhs_comments = tsp::comment_positions(
-                                        params,
-                                        &lhs_tree,
-                                        lhs_src,
-                                        lang_config,
-                                    );
+                                    let lhs_comments =
+                                        tsp::comment_positions(&lhs_tree, lhs_src, lang_config);
                                     lhs_positions.extend(lhs_comments);
 
-                                    let rhs_comments = tsp::comment_positions(
-                                        params,
-                                        &rhs_tree,
-                                        rhs_src,
-                                        lang_config,
-                                    );
+                                    let rhs_comments =
+                                        tsp::comment_positions(&rhs_tree, rhs_src, lang_config);
                                     rhs_positions.extend(rhs_comments);
                                 }
 

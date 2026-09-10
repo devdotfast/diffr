@@ -81,7 +81,9 @@ There are two inputs to language configuration:
 
 [`Params::language`](../config.rs) resolves both into one `LanguageParams`:
 the parser configuration plus fold and context queries compiled against its grammar.
-Parsing receives this entry directly. Embedded languages use the same lookup.
+Parsing receives only this entry, including resolved embedded-language entries.
+It does not also receive the server-wide `Params`. Shared entries reuse the compiled
+queries when a language appears both directly and inside another language.
 
 Every supported language has an entry, even without annotation rules. Those
 languages retain structural diffing and highlighting with empty annotation queries;

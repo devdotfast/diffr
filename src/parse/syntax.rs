@@ -1041,7 +1041,6 @@ impl MatchedPos {
 pub(crate) fn change_positions<'a>(
     nodes: &[&'a Syntax<'a>],
     change_map: &ChangeMap<'a>,
-    side: crate::constants::Side,
     folds: &mut Vec<Fold>,
 ) -> Vec<MatchedPos> {
     let mut positions = Vec::new();
@@ -1052,7 +1051,6 @@ pub(crate) fn change_positions<'a>(
         change_map,
         &mut positions,
         &mut seen_unchanged,
-        side,
         folds,
     );
 
@@ -1091,7 +1089,6 @@ fn change_positions_<'a>(
     change_map: &ChangeMap<'a>,
     positions: &mut Vec<MatchedPos>,
     seen_unchanged: &mut bool,
-    side: crate::constants::Side,
     folds: &mut Vec<Fold>,
 ) {
     for node in nodes {
@@ -1099,7 +1096,7 @@ fn change_positions_<'a>(
             .get(node)
             .unwrap_or_else(|| panic!("Should have changes set in all nodes: {:#?}", node));
 
-        folds.extend(folds::project(node, change, side));
+        folds.extend(folds::project(node, change));
 
         if matches!(change, ChangeKind::Unchanged(_)) {
             *seen_unchanged = true;
@@ -1119,7 +1116,7 @@ fn change_positions_<'a>(
                     false,
                 ));
 
-                change_positions_(children, change_map, positions, seen_unchanged, side, folds);
+                change_positions_(children, change_map, positions, seen_unchanged, folds);
 
                 positions.extend(MatchedPos::new(
                     change,

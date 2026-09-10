@@ -32,22 +32,20 @@ impl FoldKind {
 #[derive(Debug)]
 pub(crate) struct Fold {
     pub(crate) kind: FoldKind,
-    /// May span multiple syntax nodes. Paired regions share one fold toggle;
-    /// current collapsed state belongs to the client.
-    pub(crate) regions: Correspondence<SourceRange>,
+    /// Source on this side; may span multiple syntax nodes.
+    pub(crate) range: SourceRange,
+    pub(crate) match_kind: FoldMatch,
     /// Text shown in place of the source, including supplied pseudocode.
     pub(crate) placeholder: String,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum Correspondence<T> {
-    /// Corresponding regions need not contain identical text.
-    Paired {
-        lhs: T,
-        rhs: T,
+pub(crate) enum FoldMatch {
+    /// A corresponding fold, whose contents may differ. Collapsed state is client-owned.
+    Unchanged {
+        opposite: SourceRange,
     },
-    Deleted(T),
-    Added(T),
+    Novel,
 }
 
 pub(crate) fn classify(
@@ -136,13 +134,8 @@ fn range(node: &Syntax<'_>) -> Option<SourceRange> {
     Some(region)
 }
 
-/// Project the same node match used for MatchedPos. Paired folds emit on the left only.
-pub(crate) fn project(
-    node: &Syntax<'_>,
-    change: ChangeKind<'_>,
-    side: crate::constants::Side,
-) -> Option<Fold> {
-    use crate::constants::Side;
+/// Project a side-local annotation using the same correspondence as MatchedPos.
+pub(crate) fn project(node: &Syntax<'_>, change: ChangeKind<'_>) -> Option<Fold> {
     let own = node.info().fold.get()?;
     let own_range = range(node)?;
     let opposite = match change {
@@ -151,18 +144,14 @@ pub(crate) fn project(
         | ChangeKind::ReplacedString(_, other) => range(other),
         _ => None,
     };
-    let regions = match (side, opposite) {
-        (Side::Left, Some(other)) => Correspondence::Paired {
-            lhs: own_range,
-            rhs: other,
-        },
-        (Side::Right, Some(_)) => return None,
-        (Side::Left, None) => Correspondence::Deleted(own_range),
-        (Side::Right, None) => Correspondence::Added(own_range),
+    let match_kind = match opposite {
+        Some(opposite) => FoldMatch::Unchanged { opposite },
+        None => FoldMatch::Novel,
     };
     Some(Fold {
         kind: own.kind,
-        regions,
+        range: own_range,
+        match_kind,
         placeholder: own.kind.placeholder().into(),
     })
 }

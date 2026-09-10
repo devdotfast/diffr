@@ -1,7 +1,7 @@
 //! Lossless JSON encoding of the domain model, not Difftastic's display JSON.
 use crate::display::line_layout as layout;
 use crate::lines::SourceRange;
-use crate::parse::folds::Correspondence;
+use crate::parse::folds::{Fold, FoldMatch};
 use crate::parse::syntax::{MatchKind, MatchedPos};
 use crate::summary::DiffResult;
 use crate::summary::{FileContent, FileFormat};
@@ -64,14 +64,17 @@ fn range(range: &SourceRange) -> Value {
     })
 }
 
-fn correspondence(region: &Correspondence<SourceRange>) -> Value {
-    match region {
-        Correspondence::Paired { lhs, rhs } => json!({
-            "Paired": {"lhs": range(lhs), "rhs": range(rhs)},
-        }),
-        Correspondence::Added(rhs) => json!({"Added": range(rhs)}),
-        Correspondence::Deleted(lhs) => json!({"Deleted": range(lhs)}),
-    }
+fn fold(fold: &Fold) -> Value {
+    let match_kind = match &fold.match_kind {
+        FoldMatch::Unchanged { opposite } => json!({"Unchanged": {"opposite": range(opposite)}}),
+        FoldMatch::Novel => json!("Novel"),
+    };
+    json!({
+        "kind": fold.kind,
+        "range": range(&fold.range),
+        "match_kind": match_kind,
+        "placeholder": fold.placeholder,
+    })
 }
 
 fn content(content: &FileContent) -> Value {
@@ -110,17 +113,6 @@ fn hunk(hunk: &crate::display::hunks::Hunk) -> Value {
 impl DiffResult {
     pub(crate) fn domain_json(&self) -> Value {
         let hunks: Vec<_> = self.hunks.iter().map(hunk).collect();
-        let folds: Vec<_> = self
-            .folds
-            .iter()
-            .map(|fold| {
-                json!({
-                    "kind": fold.kind,
-                    "regions": correspondence(&fold.regions),
-                    "placeholder": fold.placeholder,
-                })
-            })
-            .collect();
         json!({
             "display_path": self.display_path,
             "extra_info": self.extra_info,
@@ -130,16 +122,19 @@ impl DiffResult {
             "lhs_positions": self.lhs_positions.iter().map(position).collect::<Vec<_>>(),
             "rhs_positions": self.rhs_positions.iter().map(position).collect::<Vec<_>>(),
             "hunks": hunks,
-            "line_alignment": self.line_alignment,
             "has_byte_changes": self.has_byte_changes,
             "has_syntactic_changes": self.has_syntactic_changes,
-            "folds": folds,
+            "lhs_folds": self.lhs_folds.iter().map(fold).collect::<Vec<_>>(),
+            "rhs_folds": self.rhs_folds.iter().map(fold).collect::<Vec<_>>(),
         })
     }
 
     /// Adapt the existing alignment and selected rows for the fixture viewer.
     pub(crate) fn viewer_json(&self) -> Value {
-        let rows = &self.line_alignment;
+        let rows = layout::aligned_rows(
+            layout::sources(self),
+            (&self.lhs_positions, &self.rhs_positions),
+        );
         let baseline = layout::LineSelection::from_hunks(&self.hunks);
         let reindented = layout::reindented_pairs(self);
         json!({

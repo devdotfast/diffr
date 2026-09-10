@@ -12,7 +12,7 @@ pub(crate) fn prepare(
     positions: (&[MatchedPos], &[MatchedPos]),
     annotations: &SyntaxAnnotations,
     padding: usize,
-) -> (Vec<Hunk>, Vec<line_layout::Row>) {
+) -> Vec<Hunk> {
     let rows = line_layout::aligned_rows(sources, positions);
     let lhs_novel = line_layout::novel_lines(positions.0);
     let rhs_novel = line_layout::novel_lines(positions.1);
@@ -73,7 +73,7 @@ pub(crate) fn prepare(
         }
         groups.push(selection);
     }
-    let hunks = groups
+    groups
         .into_iter()
         .map(|selected| {
             let lines: Vec<_> = selected
@@ -102,6 +102,5 @@ pub(crate) fn prepare(
                 novel_rhs,
             }
         })
-        .collect();
-    (hunks, rows)
+        .collect()
 }

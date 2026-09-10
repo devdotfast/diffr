@@ -43,6 +43,13 @@ pub(crate) fn aligned_rows(
     (lhs_src, rhs_src): (&str, &str),
     (lhs_positions, rhs_positions): (&[MatchedPos], &[MatchedPos]),
 ) -> Vec<Row> {
+    if lhs_src == rhs_src {
+        return lhs_src
+            .split_terminator('\n')
+            .enumerate()
+            .map(|(line, _)| (Some(line), Some(line)))
+            .collect();
+    }
     let lhs_lines: Vec<_> = lhs_src.split_terminator('\n').collect();
     let rhs_lines: Vec<_> = rhs_src.split_terminator('\n').collect();
     let mut lhs_seen = BTreeSet::new();

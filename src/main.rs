@@ -448,8 +448,8 @@ fn diff_file(
                 lhs_positions: vec![],
                 rhs_positions: vec![],
                 hunks: vec![],
-                line_alignment: vec![],
-                folds: vec![],
+                lhs_folds: vec![],
+                rhs_folds: vec![],
                 has_byte_changes,
                 has_syntactic_changes: false,
             };
@@ -608,8 +608,8 @@ fn check_only_text(
         lhs_positions: vec![],
         rhs_positions: vec![],
         hunks: vec![],
-        line_alignment: vec![],
-        folds: vec![],
+        lhs_folds: vec![],
+        rhs_folds: vec![],
         has_byte_changes,
         has_syntactic_changes: lhs_src != rhs_src,
     }
@@ -652,18 +652,15 @@ fn diff_file_content(
             lhs_positions: vec![],
             rhs_positions: vec![],
             hunks: vec![],
-            line_alignment: lhs_src
-                .split_terminator('\n')
-                .enumerate()
-                .map(|(line, _)| (Some(line), Some(line)))
-                .collect(),
-            folds: vec![],
+            lhs_folds: vec![],
+            rhs_folds: vec![],
             has_byte_changes: None,
             has_syntactic_changes: false,
         };
     }
 
-    let mut folds = Vec::new();
+    let mut lhs_folds = Vec::new();
+    let mut rhs_folds = Vec::new();
     let (file_format, lhs_positions, rhs_positions) = match lang_config {
         None => {
             let file_format = FileFormat::PlainText;
@@ -706,8 +703,8 @@ fn diff_file_content(
                                     lhs_positions: vec![],
                                     rhs_positions: vec![],
                                     hunks: vec![],
-                                    line_alignment: vec![],
-                                    folds: vec![],
+                                    lhs_folds: vec![],
+                                    rhs_folds: vec![],
                                     has_byte_changes,
                                     has_syntactic_changes,
                                 };
@@ -754,18 +751,10 @@ fn diff_file_content(
                                 fix_all_sliders(language, &lhs, &mut change_map);
                                 fix_all_sliders(language, &rhs, &mut change_map);
 
-                                let mut lhs_positions = syntax::change_positions(
-                                    &lhs,
-                                    &change_map,
-                                    Side::Left,
-                                    &mut folds,
-                                );
-                                let mut rhs_positions = syntax::change_positions(
-                                    &rhs,
-                                    &change_map,
-                                    Side::Right,
-                                    &mut folds,
-                                );
+                                let mut lhs_positions =
+                                    syntax::change_positions(&lhs, &change_map, &mut lhs_folds);
+                                let mut rhs_positions =
+                                    syntax::change_positions(&rhs, &change_map, &mut rhs_folds);
 
                                 if diff_options.ignore_comments {
                                     let lhs_comments =
@@ -873,7 +862,7 @@ fn diff_file_content(
         display_options.num_context_lines as usize,
     );
     let has_syntactic_changes = !hunks.is_empty();
-    let (hunks, line_alignment) = display::prepare::prepare(
+    let hunks = display::prepare::prepare(
         &hunks,
         (lhs_src, rhs_src),
         (&lhs_positions, &rhs_positions),
@@ -896,8 +885,8 @@ fn diff_file_content(
         lhs_positions,
         rhs_positions,
         hunks,
-        line_alignment,
-        folds,
+        lhs_folds,
+        rhs_folds,
         has_byte_changes,
         has_syntactic_changes,
     }

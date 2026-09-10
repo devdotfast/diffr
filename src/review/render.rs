@@ -22,7 +22,10 @@ pub(super) fn snapshot(diff: &DiffResult) -> String {
     }
     let reindented = reindented_pairs(diff);
     let mut writer = SnapshotWriter::new(out);
-    for &(l, r) in &diff.line_alignment {
+    for (l, r) in crate::display::line_layout::aligned_rows(
+        (lhs_src, rhs_src),
+        (&diff.lhs_positions, &diff.rhs_positions),
+    ) {
         let left = l.filter(|line| selected.lhs.contains(line));
         let right = r.filter(|line| selected.rhs.contains(line));
         if left.is_none() && right.is_none() {
@@ -135,7 +138,7 @@ mod tests {
             token["kind"]["UnchangedToken"]["opposite_pos"][0]["start_col"],
             8
         );
-        assert!(domain["folds"][0]["regions"]["Paired"].is_object());
+        assert!(domain["lhs_folds"][0]["match_kind"]["Unchanged"].is_object());
         assert!(
             domain.get("layout").is_none(),
             "layout is not part of the domain"

@@ -17,7 +17,6 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
 use std::time::Duration;
 
 #[derive(Serialize)]
@@ -58,10 +57,10 @@ type Pending = Arc<Mutex<Result<DftHashMap<u64, SyncSender<Outcome>>, String>>>;
 pub(crate) struct Hook {
     config: HookConfig,
     child: Mutex<Child>,
-    stdin: Mutex<ChildStdin>,
+    /// Closed before the child is stopped so hooks can finish on stdin EOF.
+    stdin: Mutex<Option<ChildStdin>>,
     pending: Pending,
     next_id: AtomicU64,
-    reader: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl Hook {
@@ -77,17 +76,18 @@ impl Hook {
         let stdin = child.stdin.take().expect("piped hook stdin");
         let stdout = child.stdout.take().expect("piped hook stdout");
         let pending: Pending = Arc::new(Mutex::new(Ok(DftHashMap::default())));
-        let reader = std::thread::spawn({
+        // Detached: it ends when every holder of the stdout pipe has exited,
+        // which a wrapper such as `uv run` can outlive being killed.
+        std::thread::spawn({
             let pending = Arc::clone(&pending);
             move || dispatch(BufReader::new(stdout), &pending)
         });
         Ok(Self {
             config: config.clone(),
             child: Mutex::new(child),
-            stdin: Mutex::new(stdin),
+            stdin: Mutex::new(Some(stdin)),
             pending,
             next_id: AtomicU64::new(1),
-            reader: Mutex::new(Some(reader)),
         })
     }
 
@@ -144,6 +144,7 @@ impl Hook {
         }
         {
             let mut stdin = self.stdin.lock().unwrap();
+            let stdin = stdin.as_mut().expect("stdin is open until drop");
             if let Err(error) = stdin.write_all(&line).and_then(|()| stdin.flush()) {
                 self.forget(id);
                 return Err(format!("fold hook stdin closed: {error}"));
@@ -235,12 +236,10 @@ fn dispatch(stdout: BufReader<impl std::io::Read>, pending: &Pending) {
 
 impl Drop for Hook {
     fn drop(&mut self) {
+        self.stdin.lock().unwrap().take();
         let mut child = self.child.lock().unwrap();
         let _ = child.kill();
         let _ = child.wait();
-        if let Some(reader) = self.reader.lock().unwrap().take() {
-            let _ = reader.join();
-        }
     }
 }
 

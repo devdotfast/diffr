@@ -16,7 +16,10 @@ export interface Geometry {
   height: number;
   leftWidth: number;
   rightWidth: number;
+  /** Split gutter: padding, line number, gap, fold chevron, gap. */
   gutter: number;
+  /** Unified gutter: padding, old number, gap, new number, gap, chevron, gap. */
+  unifiedGutter: number;
 }
 export function measureRows(
   rows: ViewerRow[],
@@ -35,8 +38,8 @@ export function measureRows(
       ),
     1,
   );
-  // Line number, fold chevron, change sign, space.
-  const gutter = String(maxLine).length + 3;
+  const digits = String(maxLine).length;
+  const gutter = digits + 4, unifiedGutter = digits * 2 + 5;
   const leftWidth = Math.floor((width - 1) / 2),
     rightWidth = width - leftWidth - 1;
   const measure = (spans: RenderSpan[] | undefined, available: number) => {
@@ -52,13 +55,13 @@ export function measureRows(
   const measured = rows.map((row) => {
     const left = measure(row.left?.spans, leftWidth - gutter),
       right = measure(row.right?.spans, rightWidth - gutter);
-    const cell = measure(row.cell?.spans, width - gutter * 2);
+    const cell = measure(row.cell?.spans, width - unifiedGutter);
     const height = Math.max(1, left.length, right.length, cell.length);
     const result = { row, top, height, left, right, cell };
     top += height;
     return result;
   });
-  return { rows: measured, height: top, leftWidth, rightWidth, gutter };
+  return { rows: measured, height: top, leftWidth, rightWidth, gutter, unifiedGutter };
 }
 export function visibleRows(geometry: Geometry, top: number, height: number) {
   const window = resolveVisibleRowIndexWindow({

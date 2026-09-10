@@ -75,17 +75,13 @@ export const CodeRowView = memo(function CodeRowView({
             : fold?.collapsed
               ? theme.foldBackground
               : theme.bg;
-    const number = "lineNumber" in value ? value.lineNumber : undefined;
+    // Row colours carry addition and deletion, so the gutter holds numbers and the chevron only.
+    const digits = geometry.gutter - 4;
+    const number = (n: number | undefined) => `${visualLine ? "" : (n ?? "")}`.padStart(digits);
     const numbers = unified
-      ? `${visualLine ? "" : ((value as UnifiedLineCell).oldLineNumber ?? "")}`.padStart(
-          geometry.gutter - 2,
-        ) +
-        " " +
-        `${visualLine ? "" : ((value as UnifiedLineCell).newLineNumber ?? "")}`.padStart(
-          geometry.gutter - 2,
-        )
-      : `${visualLine ? "" : (number ?? "")}`.padStart(geometry.gutter - 3);
-    const gutterWidth = unified ? geometry.gutter * 2 : geometry.gutter;
+      ? ` ${number((value as UnifiedLineCell).oldLineNumber)} ${number((value as UnifiedLineCell).newLineNumber)} `
+      : ` ${number("lineNumber" in value ? value.lineNumber : undefined)} `;
+    const gutterWidth = unified ? geometry.unifiedGutter : geometry.gutter;
     const available = Math.max(1, width - gutterWidth);
     const collapsed = fold?.collapsed && lastLine ? fold : undefined;
     const used = collapsed
@@ -123,8 +119,8 @@ export const CodeRowView = memo(function CodeRowView({
         >
           {visualLine ? " " : chevron(fold)}
         </text>
-        <text width={2} height={1} fg={theme.muted} selectable={false}>
-          {(visualLine ? " " : value.sign) + " "}
+        <text width={1} height={1} selectable={false}>
+          {" "}
         </text>
         <text
           width={used}

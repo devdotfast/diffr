@@ -68,11 +68,25 @@ export function App({
     viewportHeight = Math.max(1, height - 2);
   const layout =
     mode === "auto" ? (contentWidth >= 100 ? "split" : "unified") : mode;
+  const loadedByIdentity = useMemo(() => new Map(snapshot.files.map((f, i) => [fileIdentity(f.file), i])), [snapshot.files]);
+  const inventory = useMemo(() => snapshot.inventory.map(file => ({file})), [snapshot.inventory]);
+  const tree = useMemo(() => buildFileTree(inventory), [inventory]);
+  // Keep loaded indexes stable for row keys, selections and file expansion.
+  // Only presentation order changes once the stream is complete.
+  const fileOrder = useMemo(() => snapshot.complete
+    ? flattenFileTree(tree, new Set()).flatMap(({node}) => {
+        if (node.fileIndex === undefined) return [];
+        const loaded = loadedByIdentity.get(fileIdentity(snapshot.inventory[node.fileIndex]));
+        return loaded === undefined ? [] : [loaded];
+      })
+    : snapshot.files.map((_, index) => index),
+    [snapshot.complete, snapshot.files, snapshot.inventory, tree, loadedByIdentity]);
   const rowCache = useRef(
     new WeakMap<DiffFile, { key: string; rows: ViewerRow[] }>(),
   );
   const rows = useMemo(() => {
-    const all = snapshot.files.flatMap((file, index) => {
+    const all = fileOrder.flatMap(index => {
+      const file = snapshot.files[index];
       const key = `${index}:${layout}:${isLight}:${fullContext}`;
       let cached = rowCache.current.get(file);
       if (cached?.key !== key) {
@@ -84,7 +98,7 @@ export function App({
     for (const [i, error] of snapshot.errors.entries())
       all.push({ key: `error:${i}`, fileIndex: -1, label: error });
     return all;
-  }, [snapshot.files, snapshot.errors, layout, theme, closed, fullContext]);
+  }, [snapshot.files, snapshot.errors, layout, theme, closed, fullContext, fileOrder]);
   const geometry = useMemo(
     () => measureRows(rows, contentWidth, wrap, horizontal),
     [rows, contentWidth, wrap, horizontal],
@@ -190,9 +204,6 @@ export function App({
   );
   const viewport = visibleRows(geometry, top, viewportHeight);
   const currentFile = viewport[0]?.row.fileIndex ?? 0;
-  const loadedByIdentity = useMemo(() => new Map(snapshot.files.map((f, i) => [fileIdentity(f.file), i])), [snapshot.files]);
-  const inventory = useMemo(() => snapshot.inventory.map(file => ({file})), [snapshot.inventory]);
-  const tree = useMemo(() => buildFileTree(inventory), [inventory]);
   const activeIdentity = pendingFile ?? (snapshot.files[currentFile] ? fileIdentity(snapshot.files[currentFile].file) : null);
   const currentTreeFile = snapshot.inventory.findIndex(file => fileIdentity(file) === activeIdentity);
   useEffect(() => {
@@ -206,7 +217,18 @@ export function App({
       setPendingFile(null);
     }
   }, [pendingFile, loadedByIdentity, geometry, maxScroll, snapshot.failedFiles, snapshot.complete]);
-  const treeRows = useMemo(() => flattenFileTree(tree, closedDirectories), [tree, closedDirectories]);
+  const treeRows = useMemo(() => {
+    if (snapshot.complete) return flattenFileTree(tree, closedDirectories);
+    const manifestIndexes = new Map(snapshot.inventory.map((file, index) => [fileIdentity(file), index]));
+    const ready = snapshot.files.map(file => manifestIndexes.get(fileIdentity(file.file))!);
+    const shown = new Set(ready);
+    const order = [...ready, ...snapshot.inventory.map((_, i) => i).filter(i => !shown.has(i))];
+    return order.map(fileIndex => ({
+      depth: 0,
+      node: {key: `file:${fileIndex}`, fileIndex, children: [],
+        name: snapshot.inventory[fileIndex].new_path ?? snapshot.inventory[fileIndex].old_path ?? ""},
+    }));
+  }, [snapshot.complete, snapshot.files, snapshot.inventory, tree, closedDirectories]);
   const counts = useMemo(() => snapshot.files.map(lineCounts), [snapshot.files]);
   useEffect(() => {
     const file = inventory[currentTreeFile];

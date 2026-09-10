@@ -59,12 +59,16 @@ test("file errors complete without discarding earlier successful results", async
   ).toBe(4);
 });
 
-test("manifest validates count, unique identities and result ordering", async () => {
+test("manifest validates count and identities while allowing results in arrival order", async () => {
   const a = createTestDiffFile(), b = createTestDiffFile();
   b.file = {...b.file, old_path: "b.ts", new_path: "b.ts"};
   for (const events of [
     [{...start, files: []}],
     [{...start, total: 2, files: [a.file, a.file]}],
-    [{...start, total: 2, files: [a.file, b.file]}, b],
+    [{...start, total: 2, files: [a.file, b.file]}, b, b],
+    [start, b],
   ]) await expect(decode(events)).rejects.toThrow();
+  expect((await decode([{...start, total: 2, files: [a.file, b.file]}, b, a,
+    {type: "complete", succeeded: 2, failed: 0}])).map(e => e.type))
+    .toEqual(["start", "file", "file", "complete"]);
 });

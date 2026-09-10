@@ -10,7 +10,8 @@ export async function* readDiffStream(
     succeeded = 0,
     failed = 0,
     total = 0;
-  let inventory: string[] = [];
+  let inventory = new Set<string>();
+  const received = new Set<string>();
   function parse(line: string): DiffEvent {
     if (line.length > 128 * 1024 * 1024)
       throw new Error("diffr event exceeds 128 MiB");
@@ -20,14 +21,16 @@ export async function* readDiffStream(
       if (started) throw new Error("Duplicate diffr start");
       started = true;
       total = event.total;
-      inventory = event.files.map(fileIdentity);
-      if (inventory.length !== total || new Set(inventory).size !== total)
+      inventory = new Set(event.files.map(fileIdentity));
+      if (event.files.length !== total || inventory.size !== total)
         throw new Error("Inconsistent diffr file manifest");
     } else {
       if (!started) throw new Error("Missing diffr start");
       if (event.type === "file" || event.type === "file_error") {
-        if (fileIdentity(event.file) !== inventory[succeeded + failed])
-          throw new Error("File result does not match diffr manifest order");
+        const identity = fileIdentity(event.file);
+        if (!inventory.has(identity) || received.has(identity))
+          throw new Error("Unknown or duplicate diffr file result");
+        received.add(identity);
       }
       if (event.type === "file") succeeded++;
       if (event.type === "file_error") failed++;

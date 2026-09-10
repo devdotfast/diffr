@@ -9,11 +9,9 @@ on stdout, matched by id. Requests are answered concurrently, so replies arrive
 in whatever order the model finishes; diffr routes them by id.
 
 Environment:
-  OPENROUTER_API_KEY     required
-  DIFFR_SUMMARY_MODEL    default google/gemini-3.1-flash-lite
+  GOOGLE_API_KEY         required
+  DIFFR_SUMMARY_MODEL    default gemini-3.8-flash
   DIFFR_SUMMARY_WORKERS  concurrent requests, default 16
-  DIFFR_SUMMARY_REASONING  "off" (default) disables model reasoning; "required" leaves
-                           it on for models whose endpoint refuses to disable it
 """
 import json
 import os
@@ -23,13 +21,10 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-API_KEY = os.environ["OPENROUTER_API_KEY"]
-MODEL = os.environ.get("DIFFR_SUMMARY_MODEL", "google/gemini-3.1-flash-lite")
+API_KEY = os.environ["GOOGLE_API_KEY"]
+MODEL = os.environ.get("DIFFR_SUMMARY_MODEL", "gemini-3.8-flash")
 WORKERS = int(os.environ.get("DIFFR_SUMMARY_WORKERS", "16"))
-REASONING = os.environ.get("DIFFR_SUMMARY_REASONING", "off")
-if REASONING not in ("off", "required"):
-    raise SystemExit(f"DIFFR_SUMMARY_REASONING must be off or required, not {REASONING!r}")
-URL = "https://openrouter.ai/api/v1/chat/completions"
+URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
 
 SYSTEM = (
     "You rewrite regions of a source file as terse Python-style pseudocode for a diff "
@@ -37,9 +32,17 @@ SYSTEM = (
     "one numbered source file and a list of folds, each with an id and 1-based line range. "
     "For each fold, write pseudocode covering only that fold's lines: keep the control flow "
     "and the names that matter, drop types, error plumbing and boilerplate. Aim for about one "
-    "pseudocode line per five source lines, between one and eight lines per fold. Reply with a "
-    "JSON object mapping each fold id, as a string such as \"3\", to its pseudocode string."
+    "pseudocode line per five source lines, between one and eight lines per fold. Reply with "
+    "one {id, pseudocode} object per fold."
 )
+SCHEMA = {
+    "type": "ARRAY",
+    "items": {
+        "type": "OBJECT",
+        "properties": {"id": {"type": "INTEGER"}, "pseudocode": {"type": "STRING"}},
+        "required": ["id", "pseudocode"],
+    },
+}
 
 write_lock = threading.Lock()
 
@@ -59,33 +62,32 @@ def prompt(request):
 
 def complete(request):
     body = {
-        "model": MODEL,
-        "messages": [
-            {"role": "system", "content": SYSTEM},
-            {"role": "user", "content": prompt(request)},
-        ],
-        "temperature": 0,
-        "max_tokens": 160 * len(request["folds"]) + 100,
-        "response_format": {"type": "json_object"},
-        "provider": {"sort": "latency"},
+        "systemInstruction": {"parts": [{"text": SYSTEM}]},
+        "contents": [{"role": "user", "parts": [{"text": prompt(request)}]}],
+        "generationConfig": {
+            "temperature": 0,
+            "maxOutputTokens": 160 * len(request["folds"]) + 100,
+            "thinkingConfig": {"thinkingBudget": 0},
+            "responseMimeType": "application/json",
+            "responseSchema": SCHEMA,
+        },
     }
-    if REASONING == "off":
-        body["reasoning"] = {"enabled": False}
     http = urllib.request.Request(
         URL,
         data=json.dumps(body).encode(),
-        headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+        headers={"x-goog-api-key": API_KEY, "Content-Type": "application/json"},
     )
     with urllib.request.urlopen(http, timeout=60) as response:
         data = json.load(response)
-    content = data["choices"][0]["message"]["content"]
-    # Models vary between "3" and "fold 3" as keys; both identify fold 3.
-    texts = {key.removeprefix("fold").strip(): text for key, text in json.loads(content).items()}
-    expected = {str(fold["id"]) for fold in request["folds"]}
-    unexpected = set(texts) - expected
-    if unexpected or not all(isinstance(text, str) for text in texts.values()):
-        raise ValueError(f"model returned malformed fold map: {content[:200]}")
-    return {key: text.strip() for key, text in texts.items() if text.strip()}
+    content = data["candidates"][0]["content"]["parts"][-1]["text"]
+    expected = {fold["id"] for fold in request["folds"]}
+    texts = {}
+    for item in json.loads(content):
+        if item["id"] not in expected:
+            raise ValueError(f"model answered for unknown fold {item['id']}: {content[:200]}")
+        if item["pseudocode"].strip():
+            texts[str(item["id"])] = item["pseudocode"].strip()
+    return texts
 
 
 def answer(line):

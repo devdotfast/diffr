@@ -130,8 +130,9 @@ exit also fails every later request, since ids can no longer be trusted. Hook
 stderr passes through to diffr's stderr. Failing to start the command exits 2
 before `start`.
 
-`examples/hooks/summarize.py` is a reference hook that asks a model through
-OpenRouter for Python-style pseudocode, answering up to 16 files at once.
+`examples/hooks/summarize.py` is a reference hook that asks Gemini 3.8 Flash,
+with thinking disabled, for Python-style pseudocode. It needs `GOOGLE_API_KEY`
+and answers up to 16 files at once.
 
 ## Fixture viewer
 

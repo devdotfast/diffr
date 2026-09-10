@@ -144,7 +144,7 @@ fn main() {
     reset_sigpipe();
 
     let result = match std::env::args_os().nth(1).as_deref() {
-        Some(arg) if arg == "serve" => server::run().map(|()| 0),
+        Some(arg) if arg == "server" => server::run().map(|()| 0),
         Some(arg) if arg == "debug" => {
             run_debug();
             return;

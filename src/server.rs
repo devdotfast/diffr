@@ -138,7 +138,7 @@ async fn diff(State(server): State<Arc<Server>>, Json(request): Json<DiffRequest
 }
 
 pub(crate) fn run() -> Result<()> {
-    let args = Command::new("difft serve")
+    let args = Command::new("diffr server")
         .arg(Arg::new("repo").long("repo").required(true))
         .arg(Arg::new("config").long("config"))
         .arg(
@@ -149,7 +149,7 @@ pub(crate) fn run() -> Result<()> {
         )
         .arg(Arg::new("web-root").long("web-root"))
         .get_matches_from(
-            std::iter::once(std::ffi::OsString::from("difft serve"))
+            std::iter::once(std::ffi::OsString::from("diffr server"))
                 .chain(std::env::args_os().skip(2)),
         );
     let address = *args.get_one::<SocketAddr>("listen").unwrap();

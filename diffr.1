@@ -1,0 +1,47 @@
+.TH DIFFR 1
+.SH NAME
+diffr \- structural Git comparisons and local diff streaming
+.SH SYNOPSIS
+.B diffr
+[OPTIONS] [REVISION [REVISION]] [-- PATHSPEC...]
+.br
+.B diffr --no-index
+BEFORE AFTER
+.br
+.B diffr server --repo
+DIRECTORY [--listen ADDRESS]
+.SH DESCRIPTION
+Without revisions, compare index to working tree. With --cached, compare HEAD
+to index. With one revision, compare it to working tree. With two, compare
+their trees. A...B compares merge-base(A,B) to B; A..B compares A to B.
+.SH OPTIONS
+.TP
+.B --repo DIRECTORY
+Discover the repository from DIRECTORY (default current directory).
+.TP
+.B --cached, --staged
+Compare a revision (default HEAD) to the index.
+.TP
+.B -R
+Reverse before and after.
+.TP
+.B --name-only, --name-status, --stat, --numstat, --shortstat
+Print metadata without syntax matching. Stat counts are textual.
+.TP
+.B --quiet, --exit-code
+Exit 1 for changes. Quiet also suppresses output. Errors exit 2.
+.TP
+.B --format text|json|snapshot
+Terminal rendering, domain JSON records, or fixture text.
+.TP
+.B -U N
+Ordinary context padding (default 3).
+.TP
+.B --config FILE
+Read explicit TOML instead of repository diffr.toml.
+.TP
+.B --help
+List supported options. Unsupported Git flags are rejected.
+.SH SERVER
+POST /diff accepts before and after operands and emits NDJSON. See
+docs/streaming.md in the source distribution for its schema.

@@ -45,7 +45,7 @@ def request(port, body):
     return 200, events
 
 def serve(repo, config=None):
-    args = [str(ROOT / "target/debug/difft"), "serve", "--repo", str(repo), "--listen", "127.0.0.1:0"]
+    args = [str(ROOT / "target/debug/diffr"), "server", "--repo", str(repo), "--listen", "127.0.0.1:0"]
     if config:
         args += ["--config", str(config)]
     process = subprocess.Popen(args, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, env=ENV, text=True)
@@ -132,7 +132,7 @@ with tempfile.TemporaryDirectory(prefix="diffr-operands-") as temp:
     source.write_text(working)
 
     def cli(*args):
-        return subprocess.run([str(ROOT / "target/debug/difft"), "--repo", str(repo), *args],
+        return subprocess.run([str(ROOT / "target/debug/diffr"), "--repo", str(repo), *args],
                               capture_output=True, env=ENV)
 
     for selection in ([], ["--cached"], [base], [base, "HEAD"], ["-R"], ["--cached", "-R"], [base, "-R"]):
@@ -176,6 +176,6 @@ with tempfile.TemporaryDirectory(prefix="diffr-unborn-") as temp:
     git(repo, "init", "-q")
     (repo / "new.rs").write_text("fn new() {}\n")
     git(repo, "add", ".")
-    result = subprocess.run([str(ROOT / "target/debug/difft"), "--repo", str(repo), "--cached", "--name-status"], capture_output=True, env=ENV)
+    result = subprocess.run([str(ROOT / "target/debug/diffr"), "--repo", str(repo), "--cached", "--name-status"], capture_output=True, env=ENV)
     assert result.returncode == 0 and result.stdout == b"A\tnew.rs\n", result
 print("Git operand checks passed")

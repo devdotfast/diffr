@@ -1,11 +1,10 @@
 # Local diff streaming
 
 ```sh
-difft serve --repo /path/to/workspace --listen 127.0.0.1:4176
+diffr server --repo /path/to/workspace --listen 127.0.0.1:4176
 ```
 
-One server binds to one workspace. The command remains `difft` until the separate
-rename change. Only loopback listening is supported.
+One server binds to one workspace. Only loopback listening is supported.
 
 ## Configuration and ordering
 
@@ -102,7 +101,7 @@ are computed live.
 ```sh
 cargo build --locked
 python3 examples/review/viewer/build.py
-target/debug/difft serve --repo examples/review/viewer/data/workspace \
+target/debug/diffr server --repo examples/review/viewer/data/workspace \
   --web-root examples/review/viewer --listen 127.0.0.1:4176
 python3 tests/streaming/check.py
 ```

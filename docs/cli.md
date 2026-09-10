@@ -1,15 +1,15 @@
 # Git-style CLI
 
 ```sh
-difft                         # index -> working tree
-difft --cached                # HEAD -> index (empty tree on an unborn branch)
-difft HEAD                    # HEAD -> working tree
-difft main HEAD               # two revisions
-difft main...HEAD             # merge-base(main, HEAD) -> HEAD
-difft main..HEAD              # main -> HEAD
-difft --merge-base main       # merge-base(main, HEAD) -> working tree
-difft HEAD -- src/ '*.rs'      # repository selection, with pathspecs
-difft --no-index before.rs after.rs
+diffr                         # index -> working tree
+diffr --cached                # HEAD -> index (empty tree on an unborn branch)
+diffr HEAD                    # HEAD -> working tree
+diffr main HEAD               # two revisions
+diffr main...HEAD             # merge-base(main, HEAD) -> HEAD
+diffr main..HEAD              # main -> HEAD
+diffr --merge-base main       # merge-base(main, HEAD) -> working tree
+diffr HEAD -- src/ '*.rs'      # repository selection, with pathspecs
+diffr --no-index before.rs after.rs
 ```
 
 `--repo DIR` selects a repository; otherwise discovery starts in the current

@@ -53,7 +53,7 @@ impl Repo {
         (commit.to_string(), blob.map(|id| id.to_string()))
     }
     pub(crate) fn review(&self, base: &str, head: &str, path: &str) -> std::process::Output {
-        Command::new(assert_cmd::cargo_bin!("difft"))
+        Command::new(assert_cmd::cargo_bin!("diffr"))
             .args(["--repo"])
             .arg(&self.0)
             .args([base, head, "--format", "snapshot", "--", path])

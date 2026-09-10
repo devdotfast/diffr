@@ -59,7 +59,7 @@ pub(crate) fn run() -> Result<i32> {
         .arg(Arg::new("graph-limit").long("graph-limit").value_parser(clap::value_parser!(usize)))
         .arg(Arg::new("parse-error-limit").long("parse-error-limit").value_parser(clap::value_parser!(usize)))
         .arg(Arg::new("items").num_args(0..).value_parser(clap::value_parser!(OsString)))
-        .after_help("Examples:\n  difft\n  difft --cached\n  difft main...HEAD -- src/\n  difft --no-index -- before.rs after.rs\n  difft serve --repo .\n\nUnsupported Git flags are rejected; this is not a complete git diff implementation.")
+        .after_help("Examples:\n  diffr\n  diffr --cached\n  diffr main...HEAD -- src/\n  diffr --no-index -- before.rs after.rs\n  diffr server --repo .\n\nUnsupported Git flags are rejected; this is not a complete git diff implementation.")
         .get_matches_from(argv);
     let items: Vec<OsString> = args
         .get_many::<OsString>("items")

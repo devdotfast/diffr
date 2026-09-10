@@ -1,3 +1,23 @@
+# diffr
+
+This fork adds syntax folds, configurable context and a streaming server to
+[Difftastic](https://github.com/Wilfred/difftastic).
+
+```sh
+cargo install --path . --locked
+diffr                         # index versus working tree
+diffr --cached                # staged changes
+diffr main...HEAD -- src/      # merge-base comparison
+diffr server --repo . --listen 127.0.0.1:4176
+```
+
+See the [CLI reference](docs/cli.md), [streaming API](docs/streaming.md),
+and [fixture viewer](examples/review/viewer/README.md).
+The executable is `diffr`; the Cargo package remains `difftastic`.
+The upstream installation commands below install upstream Difftastic, not this fork.
+
+---
+
 <p align="center">
   <a href="#readme"><img src="img/logo.png" alt="it's difftastic!"/></a>
   <br>

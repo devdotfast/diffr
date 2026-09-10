@@ -30,12 +30,6 @@ include = [
         "/README.md",
 ]
 
-[package.metadata.binstall]
-pkg-url = "{ repo }/releases/download/{ version }/difft-{ version }-{ target }.{ archive-format }"
-
-[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
-pkg-fmt = "zip"
-
 [dependencies]
 git2 = { version = "0.20", default-features = false }
 regex = "1.10.4"
@@ -165,7 +159,7 @@ version_check = "0.9.4"
 lto = "thin"
 
 [[bin]]
-name = "difft"
+name = "diffr"
 path = "src/main.rs"
 
 [package.metadata.deb]
@@ -174,7 +168,7 @@ section = "utility"
 priority = "optional"
 assets = [
 	"$auto",
-	[ "difft.1", "usr/share/man/man1/", "644" ],
+	[ "diffr.1", "usr/share/man/man1/", "644" ],
 	[ "CHANGELOG.md", "usr/share/doc/difftastic/", "644" ],
 ]
 

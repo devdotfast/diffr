@@ -5,7 +5,7 @@ Build fixtures and start the local streaming server:
 ```sh
 cargo build --locked
 python3 examples/review/viewer/build.py
-target/debug/difft serve --repo examples/review/viewer/data/workspace \
+target/debug/diffr server --repo examples/review/viewer/data/workspace \
   --web-root examples/review/viewer --listen 127.0.0.1:4176
 ```
 

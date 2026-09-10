@@ -165,6 +165,6 @@ The offline validator checks distinct PRs, byte-identical source hashes, the ann
 
 The Python validator checks the hand-authored fixture contract. Rust tests additionally exercise the live parser/matcher, annotation bounds, import pairing, fallback, and snapshot rendering. They do not establish semantic correctness of every syntax match or split-view alignment. Partial-overlap policy and moved-region layout remain unspecified; do not infer them from these fixtures. All source pairs currently use LF; CRLF and UTF-8 byte-boundary behavior need targeted edge coverage alongside the real PR cases.
 
-The original [synthetic examples](synthetic/README.md) remain available as small explanatory cases; the real corpus is the primary reference. Upstream notices are preserved under [licenses](licenses/). Review fixtures are private-repository code and this corpus is local; nothing has been pushed or published.
+The original [synthetic examples](synthetic/README.md) remain available as small explanatory cases; the real corpus is the primary reference. Review fixtures are private-repository code and this corpus is local; nothing has been pushed or published.
 
 Difftastic baseline: `274d0a8f57291477cfbfb27bace0d82395d15c97`. The matching algorithm remains unchanged; the review path adds an annotation collection hook. Runtime/memory benchmarks have not been added.

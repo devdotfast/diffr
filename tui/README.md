@@ -128,10 +128,9 @@ scroll full pages; Space/Shift-Space also page; g (or gg)/G go to start/end.
 h/l or arrows pan horizontally. Cmd-B toggles the tree; backslash is its fallback.
 
 The first NDJSON event includes `files: FileChange[]` in comparison order.
-The sidebar renders the manifest immediately as a flat list. Ready files lead in
-arrival order, matching the diff pane; pending files follow, marked ◌, with failures !.
-When loading completes, both panes switch to directory-tree order while retaining
-the visible source row. Result arrival order need not match manifest order; each
+The tree renders this manifest immediately; pending files are marked ◌ and failures !.
+Diffs appear in tree order as they arrive, retaining the visible source row when
+an earlier file loads. Result arrival order need not match manifest order; each
 manifest file must produce exactly one result or file error.
 Selecting a pending file jumps to its diff when it arrives. Rust emits and flushes
 the manifest before structural comparison, including for `--no-index`.

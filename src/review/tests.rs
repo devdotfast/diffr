@@ -328,6 +328,33 @@ mod syntax_tests {
     }
 
     #[test]
+    fn generator_declarations_keep_enclosing_signature_context() {
+        let body = (0..30)
+            .map(|i| format!("    yield value_{i};\n"))
+            .collect::<String>();
+        for extension in ["js", "jsx", "ts", "tsx"] {
+            for prefix in ["export function*", "export async function*"] {
+                let lhs = format!("{prefix} stream(\n    chunks,\n) {{\n{body}}}\n");
+                let rhs = lhs.replace("yield value_20;", "yield changed_value;");
+                let diff = DiffResult::from_sources(&format!("stream.{extension}"), &lhs, &rhs);
+                let selected = super::selection_without_padding(&diff);
+                assert!(
+                    (0..3).all(|line| selected.lhs.contains(&line) && selected.rhs.contains(&line)),
+                    "missing generator signature: {extension}, {prefix}"
+                );
+                assert!(
+                    selected.lhs.contains(&33) && selected.rhs.contains(&33),
+                    "missing closing brace: {extension}, {prefix}"
+                );
+                assert!(
+                    !selected.lhs.contains(&10) && !selected.rhs.contains(&10),
+                    "unrelated body should stay hidden"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn consecutive_signature_context_is_selected() {
         let mut body = String::new();
         for i in 0..30 {

@@ -1,6 +1,7 @@
 import { expect, test, spyOn } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
-import { act } from "react";
+import { act, Profiler } from "react";
+import { TextRenderable, type BaseRenderable } from "@opentui/core";
 
 import { App } from "./App";
 import { DiffStore } from "../diffr/store";
@@ -105,7 +106,6 @@ test("hierarchical tree navigation, sticky counts, sidebar toggle and menus", as
     file.diff.hunks = [{novel_lhs: [20], novel_rhs: [20,21], lines: file.diff.aligned_rows}];
     store.accept(file);
   }
-  store.accept({type: "complete", succeeded: 2, failed: 0});
   const t = await testRender(<App store={store} onQuit={() => {}} />, {width:150, height:20});
   try {
     await act(async () => { await t.renderOnce(); });
@@ -176,7 +176,7 @@ test("Hunk navigation chords and draggable sidebar preserve viewport behavior", 
     await act(async () => { t.renderer.destroy(); });
   }
 });
-test("initial manifest renders pending list and remembers a jump until its diff arrives", async () => {
+test("initial manifest renders pending tree and remembers a jump until its diff arrives", async () => {
   const store = new DiffStore(), a = createTestDiffFile(), b = createTestDiffFile();
   a.file = {...a.file, old_path:"src/a.ts", new_path:"src/a.ts"};
   b.file = {...b.file, old_path:"src/b.ts", new_path:"src/b.ts"};
@@ -185,20 +185,20 @@ test("initial manifest renders pending list and remembers a jump until its diff 
   const t = await testRender(<App store={store} onQuit={() => {}} />, {width:150, height:20});
   try {
     await act(async () => { await t.renderOnce(); });
-    await t.waitForFrame(f => f.includes("◌ src/a.ts") && f.includes("◌ src/b.ts"));
+    await t.waitForFrame(f => f.includes("◌ a.ts") && f.includes("◌ b.ts"));
     expect(t.captureCharFrame()).not.toContain('send("old")');
-    await act(async () => { await t.mockMouse.click(8,2); });
-    await t.waitForFrame(f => f.includes("Waiting for src/b.ts"));
+    await act(async () => { await t.mockMouse.click(8,3); });
+    await t.waitForFrame(f => f.includes("Waiting for b.ts"));
     await act(async () => { store.accept(a); });
-    await t.waitForFrame(f => f.includes("◌ src/b.ts"));
+    await t.waitForFrame(f => f.includes("◌ b.ts"));
     await act(async () => { store.accept(b); });
     await t.waitForFrame(f => f.split("\n")[1].includes("src/b.ts"));
-    expect(t.captureCharFrame()).not.toContain("◌ src/b.ts");
+    expect(t.captureCharFrame()).not.toContain("◌ b.ts");
   } finally {
     await act(async () => { t.renderer.destroy(); });
   }
 });
-test("arrival-order list becomes tree-order diffs without moving the visible source row", async () => {
+test("streaming diffs follow tree order without moving the visible source row", async () => {
   const store = new DiffStore();
   const files = ["z/last.ts", "a/first.ts", "m/middle.ts"].map(path => {
     const file = createTestDiffFile();
@@ -217,19 +217,73 @@ test("arrival-order list becomes tree-order diffs without moving the visible sou
   try {
     await act(async () => { await t.renderOnce(); store.accept(files[0]); store.accept(files[2]); });
     await t.waitForFrame(f => f.includes("m/middle.ts"));
-    expect(sidebarLines().slice(0,3)).toEqual(["z/last.ts", "m/middle.ts", "◌ a/first.ts"]);
+    expect(sidebarLines().slice(0,6)).toEqual(["▾ a", "◌ first.ts", "▾ m", "middle.ts", "▾ z", "last.ts"]);
+    await act(async () => { t.mockInput.pressKey("g"); });
+    await t.waitForFrame(f => f.split("\n")[1].includes("m/middle.ts"));
     await act(async () => { t.mockInput.pressKey("d", {ctrl:true}); });
     await t.renderOnce();
     const before = t.captureCharFrame().split("\n")[2].slice(28);
-    await act(async () => { store.accept(files[1]); store.accept({type:"complete", succeeded:3, failed:0}); });
-    await t.waitForFrame(f => f.includes("▾ a") && f.split("\n")[1].includes("z/last.ts"));
+    await act(async () => { store.accept(files[1]); });
+    await t.waitForFrame(f => !f.includes("◌ first.ts") && f.split("\n")[1].includes("m/middle.ts"));
     expect(t.captureCharFrame().split("\n")[2].slice(28)).toBe(before);
     expect(sidebarLines().slice(0,6)).toEqual(["▾ a", "first.ts", "▾ m", "middle.ts", "▾ z", "last.ts"]);
+    await act(async () => { store.accept({type:"complete", succeeded:3, failed:0}); });
+    await t.renderOnce();
+    expect(t.captureCharFrame().split("\n")[2].slice(28)).toBe(before);
     await act(async () => { t.mockInput.pressKey("g"); });
     await t.waitForFrame(f => f.split("\n")[1].includes("a/first.ts"));
     await act(async () => { await t.mockMouse.click(8,4); });
     await t.waitForFrame(f => f.split("\n")[1].includes("m/middle.ts"));
   } finally {
+    await act(async () => { t.renderer.destroy(); });
+  }
+});
+
+for (const wrap of [false, true]) for (const unified of [false, true])
+test(`stream arrivals preserve code in every commit (wrap=${wrap}, unified=${unified})`, async () => {
+  const store = new DiffStore();
+  const files = ["m/current.ts", "a/earlier.ts", "z/later.ts"].map(path => {
+    const file = createTestDiffFile();
+    file.file = {...file.file, old_path:path, new_path:path};
+    const lines = Array.from({length:50}, (_, i) => `source ${path} ${i} ${"word ".repeat(20)}`);
+    file.diff.lhs_src = file.diff.rhs_src = {Text:lines.join("\n")};
+    file.diff.lhs_positions = file.diff.rhs_positions = [];
+    file.diff.aligned_rows = lines.map((_, i) => [i,i]);
+    file.diff.hunks = [{novel_lhs:[], novel_rhs:[], lines:file.diff.aligned_rows}];
+    return file;
+  });
+  store.accept({type:"start", version:1, before:{kind:"index"}, after:{kind:"working_tree"},
+    total:files.length, files:files.map(f => f.file)});
+  store.accept(files[0]);
+  let capture: (() => void) | undefined;
+  const commits: string[][] = [];
+  const t = await testRender(<Profiler id="viewport" onRender={() => capture?.()}>
+    <App store={store} onQuit={() => {}} />
+  </Profiler>, {width:150, height:20});
+  const sourceCells = (node: BaseRenderable): string[] => {
+    if (node instanceof TextRenderable) {
+      const text = node.content.chunks.map(chunk => chunk.text).join("");
+      return text.includes("source ") || text.includes("word ") ? [text] : [];
+    }
+    return node.getChildren().flatMap(sourceCells);
+  };
+  try {
+    await act(async () => { await t.renderOnce(); });
+    if (unified) await act(async () => { t.mockInput.pressKey("s"); });
+    if (wrap) await act(async () => { t.mockInput.pressKey("w"); });
+    await act(async () => { t.mockInput.pressKey("d", {ctrl:true}); });
+    await t.renderOnce();
+    const before = sourceCells(t.renderer.root);
+    expect(before.length).toBeGreaterThan(0);
+    capture = () => { commits.push(sourceCells(t.renderer.root)); };
+    for (const file of files.slice(1)) {
+      commits.length = 0;
+      await act(async () => { store.accept(file); });
+      expect(commits.length).toBeGreaterThan(0);
+      for (const cells of commits) expect(cells).toEqual(before);
+    }
+  } finally {
+    capture = undefined;
     await act(async () => { t.renderer.destroy(); });
   }
 });

@@ -123,6 +123,7 @@ folds = '''
 context = '''
 [
   (function_declaration body: (statement_block "{" @context.final "}" @context.last))
+  (generator_function_declaration body: (statement_block "{" @context.final "}" @context.last))
   (method_definition body: (statement_block "{" @context.final "}" @context.last))
   (arrow_function body: (statement_block "{" @context.final "}" @context.last))
   (class_declaration body: (class_body "{" @context.final "}" @context.last))
@@ -157,6 +158,7 @@ folds = '''
 context = '''
 [
   (function_declaration body: (statement_block "{" @context.final "}" @context.last))
+  (generator_function_declaration body: (statement_block "{" @context.final "}" @context.last))
   (method_definition body: (statement_block "{" @context.final "}" @context.last))
   (arrow_function body: (statement_block "{" @context.final "}" @context.last))
   (class_declaration body: (class_body "{" @context.final "}" @context.last))
@@ -191,6 +193,7 @@ folds = '''
 context = '''
 [
   (function_declaration body: (statement_block "{" @context.final "}" @context.last))
+  (generator_function_declaration body: (statement_block "{" @context.final "}" @context.last))
   (method_definition body: (statement_block "{" @context.final "}" @context.last))
   (arrow_function body: (statement_block "{" @context.final "}" @context.last))
   (class_declaration body: (class_body "{" @context.final "}" @context.last))
@@ -225,6 +228,7 @@ folds = '''
 context = '''
 [
   (function_declaration body: (statement_block "{" @context.final "}" @context.last))
+  (generator_function_declaration body: (statement_block "{" @context.final "}" @context.last))
   (method_definition body: (statement_block "{" @context.final "}" @context.last))
   (arrow_function body: (statement_block "{" @context.final "}" @context.last))
   (class_declaration body: (class_body "{" @context.final "}" @context.last))

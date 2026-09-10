@@ -53,5 +53,5 @@ for directory in sorted((ROOT / 'examples/review/real').iterdir()):
     view['meta'] = meta
     (OUT / f'{directory.name}.json').write_text(json.dumps(view))
     index.append(meta)
-    print(directory.name, len(view['domain']['folds']), 'folds')
+    print(directory.name, len(view['domain']['lhs_folds']) + len(view['domain']['rhs_folds']), 'folds')
 (OUT / 'index.json').write_text(json.dumps(index))

@@ -9,6 +9,7 @@ const escape = (s) =>
 const encoder = new TextEncoder(),
   decoder = new TextDecoder();
 let inlineFolds = [[], []];
+let viewFolds = [];
 let fixtures = [],
   current,
   source,
@@ -26,6 +27,19 @@ const rowsOf = (range) => {
     (_, i) => range.start.line + i,
   );
 };
+// One UI toggle for each match; the domain keeps annotations on each side.
+function foldCandidates(domain) {
+  const left = domain.lhs_folds.map((fold) => ({
+    ...fold,
+    regions: fold.match_kind.Unchanged
+      ? { Paired: { lhs: fold.range, rhs: fold.match_kind.Unchanged.opposite } }
+      : { Deleted: fold.range },
+  }));
+  const right = domain.rhs_folds
+    .filter((fold) => fold.match_kind === "Novel")
+    .map((fold) => ({ ...fold, regions: { Added: fold.range } }));
+  return [...left, ...right];
+}
 function regions(c) {
   if (c.Paired) return [c.Paired.lhs, c.Paired.rhs];
   return c.Added ? [null, c.Added] : [c.Deleted, null];
@@ -63,7 +77,7 @@ function sourceLine(side, row, semantic) {
   )
     .map((part) => {
       if (part.text) return highlight(side, row, true, ...part.text);
-      const label = current.domain.folds[part.fold].placeholder;
+      const label = viewFolds[part.fold].placeholder;
       return `<button class="inline-fold" data-fold="${part.fold}" aria-label="${part.collapsed ? "Expand" : "Collapse"} ${escape(label)}" aria-expanded="${!part.collapsed}">${part.collapsed ? "⋯" : "▾"}</button>`;
     })
     .join("");
@@ -107,7 +121,7 @@ function visibleRows(domain, layout, showAll) {
       lines.forEach((_, row) => selected[side].add(row)),
     );
   }
-  domain.folds.forEach((fold, index) => {
+  viewFolds.forEach((fold, index) => {
     if (!expanded.has(index)) return;
     regions(fold.regions).forEach((range, side) => {
       if (!range) return;
@@ -162,10 +176,10 @@ function foldHeader(fold, index) {
 function renderReview() {
   const { domain, layout } = current;
   const selected = visibleRows(domain, layout, $("all").checked);
-  const { membership, inline, inlineRanges } = indexFolds(domain.folds);
+  const { membership, inline, inlineRanges } = indexFolds(viewFolds);
   inlineFolds = inlineRanges;
   const size = (index) =>
-    regions(domain.folds[index].regions).reduce(
+    regions(viewFolds[index].regions).reduce(
       (n, r) => n + (r ? rowsOf(r).length : 0),
       0,
     );
@@ -196,7 +210,7 @@ function renderReview() {
         continue;
       if (inline.has(index)) {
         if (closed.has(index)) {
-          const [lhsRange, rhsRange] = regions(domain.folds[index].regions);
+          const [lhsRange, rhsRange] = regions(viewFolds[index].regions);
           if (coversWholeRow(lhsRange, l)) l = null;
           if (coversWholeRow(rhsRange, r)) r = null;
         }
@@ -209,7 +223,7 @@ function renderReview() {
           gap = false;
         }
         seenFolds.add(index);
-        html += foldHeader(domain.folds[index], index);
+        html += foldHeader(viewFolds[index], index);
       }
       if (closed.has(index)) {
         if (membership[0].get(l)?.includes(index)) l = null;
@@ -248,7 +262,7 @@ function renderReview() {
   $("review").innerHTML =
     html || '<div class="empty">No syntactic changes</div>';
   $("stats").textContent =
-    `${domain.folds.length} fold candidates · ${closed.size} collapsed`;
+    `${viewFolds.length} fold candidates · ${closed.size} collapsed`;
 }
 function navigation() {
   $("cases").innerHTML = fixtures
@@ -286,9 +300,10 @@ async function select(id) {
   const data = await response.json();
   if (request !== generation) return;
   current = data;
+  viewFolds = foldCandidates(data.domain);
   expanded = new Set();
   closed = new Set(
-    data.domain.folds.flatMap((f, i) =>
+    viewFolds.flatMap((f, i) =>
       f.kind === "Import" ? [i] : [],
     ),
   );
@@ -342,11 +357,11 @@ $("all").onchange = () => {
 };
 $("expand").onclick = () => {
   closed.clear();
-  expanded = new Set(current.domain.folds.map((_, i) => i));
+  expanded = new Set(viewFolds.map((_, i) => i));
   renderReview();
 };
 $("collapse").onclick = () => {
-  closed = new Set(current.domain.folds.map((_, i) => i));
+  closed = new Set(viewFolds.map((_, i) => i));
   renderReview();
 };
 $("reviewed").onclick = () => {

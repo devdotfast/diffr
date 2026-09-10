@@ -41,9 +41,11 @@ Saved streams use the same reader:
 - `[` / `]`: previous/next hunk.
 - Folds follow VS Code with controls always shown: a foldable row shows `▾` in the
   gutter, and a collapsed fold shows `▸` plus a `⋯ Placeholder` after the header line.
-  Click either to toggle. Alt-click also folds or unfolds every nested region. `z` toggles
-  the fold on the top row; `Z` (and View > Fold all / Unfold all) folds or unfolds every
-  visible fold. The header and closing delimiter stay visible; paired unchanged folds
+  Click either to toggle. Alt-click also folds or unfolds every nested region. Vim chords
+  act on the fold whose header is the top row: `za` toggle, `zo` open, `zc` close, with
+  `zA` / `zO` / `zC` recursive; `zM` / `zR` (and View > Fold all / Unfold all) fold or
+  unfold every visible fold; `zj` / `zk` scroll to the next or previous fold header.
+  The header and closing delimiter stay visible; paired unchanged folds
   collapse on both sides. A fold on one side only blanks that side's cells, keeping the
   other side's lines in Rust's alignment.
 - `c`: toggle compact/all context. Compact uses Rust-selected nearby and enclosing syntax context, with an ellipsis for each omitted stretch.

@@ -57,6 +57,8 @@ export function App({
     [message, setMessage] = useState("");
   // Fold ids collapsed per loaded file; VS Code keeps this per editor model.
   const [collapsed, setCollapsed] = useState<Map<number, ReadonlySet<string>>>(new Map());
+  // Vim's z prefix: the next key names the fold command.
+  const pendingZ = useRef(false);
   const [closedDirectories, setClosedDirectories] = useState<Set<string>>(new Set());
   const [treeScroll, setTreeScroll] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(28);
@@ -148,17 +150,42 @@ export function App({
       for (const id of ids) if (collapse) next.add(id); else next.delete(id);
       return new Map(old).set(fileIndex, next);
     });
-  // Alt-click folds or unfolds every region nested inside, as in VS Code.
-  const toggleFold = (fileIndex: number, fold: RowFold, recursive: boolean) => {
+  // Recursive commands (Alt-click, zC, zO, zA) include every region nested inside.
+  const setFold = (fileIndex: number, fold: RowFold, collapse: boolean, recursive: boolean) => {
     const regions = regionsOf(snapshot.files[fileIndex]);
     const region = regions.find((r) => r.id === fold.id);
     if (!region) throw new Error(`Unknown fold ${fold.id}`);
     const ids = recursive
       ? [fold.id, ...nestedRegions(regions, region).map((r) => r.id)]
       : [fold.id];
-    setFolds(fileIndex, ids, !fold.collapsed);
+    setFolds(fileIndex, ids, collapse);
   };
+  const toggleFold = (fileIndex: number, fold: RowFold, recursive: boolean) =>
+    setFold(fileIndex, fold, !fold.collapsed, recursive);
   const rowFold = (row: ViewerRow) => row.cell?.fold ?? row.right?.fold ?? row.left?.fold;
+  const navigateFold = (direction: number) => {
+    const headers = geometry.rows.filter((r) => rowFold(r.row));
+    const target =
+      direction > 0
+        ? headers.find((r) => r.top > top)
+        : headers.findLast((r) => r.top < top);
+    if (target) setScroll(Math.min(maxScroll, target.top));
+  };
+  // Vim fold commands act on the fold whose header is the top visible row.
+  const foldCommand = (command: string) => {
+    if (command === "R") return foldAll(false);
+    if (command === "M") return foldAll(true);
+    if (command === "j") return navigateFold(1);
+    if (command === "k") return navigateFold(-1);
+    const current = visibleRows(geometry, top, 1)[0]?.row;
+    const fold = current && rowFold(current);
+    if (!current || !fold) return;
+    const recursive = command === command.toUpperCase();
+    const letter = command.toLowerCase();
+    if (letter === "a") toggleFold(current.fileIndex, fold, recursive);
+    else if (letter === "o") setFold(current.fileIndex, fold, false, recursive);
+    else if (letter === "c") setFold(current.fileIndex, fold, true, recursive);
+  };
   const foldAll = (collapse: boolean) => {
     const byFile = new Map<number, string[]>();
     for (const row of rows) {
@@ -168,7 +195,6 @@ export function App({
     if (collapse) for (const [fileIndex, ids] of byFile) setFolds(fileIndex, ids, true);
     else setCollapsed(new Map());
   };
-  const anyCollapsed = [...collapsed.values()].some((ids) => ids.size > 0);
   const jump = (index: number) => {
     const row = geometry.rows.find((r) => r.row.fileIndex === index);
     if (row) setScroll(Math.min(maxScroll, row.top));
@@ -192,6 +218,13 @@ export function App({
   useKeyboard((key) => {
     // Hunk's chord matcher handles raw control bytes and Kitty events alike.
     const is = (...chords: string[]) => !key.super && chords.some(chord => matchesKey(chord, key));
+    if (pendingZ.current) {
+      pendingZ.current = false;
+      const command = key.shift ? key.name?.toUpperCase() : key.name;
+      if (!key.ctrl && !key.meta && command?.length === 1 && "aocAOCRMjk".includes(command))
+        foldCommand(command);
+      return;
+    }
     if (is("q", "ctrl+c")) onQuit();
     else if ((key.name === "b" && (key.super || key.meta)) || is("\\")) {
       key.preventDefault(); setShowSidebar(v => !v);
@@ -220,11 +253,7 @@ export function App({
       const current = visibleRows(geometry, top, 1)[0];
       if (current && current.row.fileIndex >= 0)
         toggleFile(current.row.fileIndex);
-    } else if (is("z")) {
-      const current = visibleRows(geometry, top, 1)[0]?.row;
-      const fold = current && rowFold(current);
-      if (current && fold) toggleFold(current.fileIndex, fold, false);
-    } else if (is("Z")) foldAll(!anyCollapsed);
+    } else if (is("z")) pendingZ.current = true;
   });
   const [selectionStart, selectionEnd] = useMemo(
     () => selectionBounds(rows, selection),
@@ -368,7 +397,7 @@ export function App({
     View: [[`Layout: ${layout}  s`, () => { setMode(layout === "split" ? "unified" : "split"); setSelection(null); }],
       [`Wrap: ${wrap ? "on" : "off"}  w`, () => setWrap(v => !v)],
       [`Context: ${fullContext ? "all" : "compact"}  c`, () => { setFullContext(v => !v); setSelection(null); }],
-      ["Fold all  Z", () => foldAll(true)], ["Unfold all  Z", () => foldAll(false)]],
+      ["Fold all  zM", () => foldAll(true)], ["Unfold all  zR", () => foldAll(false)]],
     Navigate: [["Previous change  [", () => navigateHunk(-1)], ["Next change  ]", () => navigateHunk(1)],
       ["First file  Home", () => setScroll(0)], ["Last file  End", () => setScroll(maxScroll)]],
     Theme: [["Dark", () => setLight(false)], ["Light", () => setLight(true)]],
@@ -376,7 +405,7 @@ export function App({
       ["Half page: Ctrl-D / Ctrl-U", () => setMessage("d / Ctrl-D: half down · u / Ctrl-U: half up")],
       ["Full page: Ctrl-F / Ctrl-B", () => setMessage("Ctrl-F: page down · Ctrl-B: page up")],
       ["Drag to select · y to copy", () => setMessage("Drag source lines; y copies original source")],
-      ["Folds: click ▸ · z · Alt-click", () => setMessage("Click the gutter chevron or ⋯ · z toggles the top fold · Alt-click folds nested regions · Z folds/unfolds all")]],
+      ["Folds: click ▾ · za zo zc · zM zR", () => setMessage("Click the chevron or ⋯ · za toggle, zo open, zc close the top fold (zA zO zC recursive) · zM/zR fold/unfold all · zj/zk next/previous fold")]],
   };
   return (
     <box
@@ -528,7 +557,7 @@ export function App({
       </box>}
       <text height={1} fg={theme.muted} selectable={false}>
         {fit(
-          `${snapshot.files.length}/${snapshot.total} files ${snapshot.complete ? "" : "loading…"} ${snapshot.errors.length ? `${snapshot.errors.length} errors` : ""}  [/] hunks · z fold · drag selects lines · y copy · q quit ${message}`,
+          `${snapshot.files.length}/${snapshot.total} files ${snapshot.complete ? "" : "loading…"} ${snapshot.errors.length ? `${snapshot.errors.length} errors` : ""}  [/] hunks · za fold · drag selects lines · y copy · q quit ${message}`,
           width,
         )}
       </text>

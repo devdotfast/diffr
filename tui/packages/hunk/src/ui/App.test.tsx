@@ -316,14 +316,29 @@ test("folds collapse from the gutter chevron and expand from the placeholder", a
     const folded = lines()[inner];
     await act(async () => { await t.mockMouse.click(folded.lastIndexOf("⋯") + 1, inner); });
     await t.waitForFrame((f) => f.includes("a();"));
-    // z toggles the fold on the top row once "fn outer() {" is scrolled to the top.
-    await act(async () => { t.mockInput.pressKey("j"); });
+    // Vim chords act on the top row once "fn outer() {" is scrolled to the top.
+    const chord = async (...keys: string[]) => {
+      for (const key of keys) await act(async () => { t.mockInput.pressKey(key); });
+    };
+    await chord("j");
     await t.waitForFrame((f) => !f.includes("fn outer() {"));
-    await act(async () => { t.mockInput.pressKey("z"); });
+    await chord("z", "c");
     await t.waitForFrame((f) => !f.includes("inner(|| {") && !f.includes("a();"));
-    await act(async () => { t.mockInput.pressKey("z"); });
+    await chord("z", "c");
+    await chord("z", "a");
     await t.waitForFrame((f) => f.includes("inner(|| {"));
-    await act(async () => { t.mockInput.pressKey("k"); });
+    // zC closes recursively, then zo reopens only the outer fold.
+    await chord("z", "C");
+    await t.waitForFrame((f) => !f.includes("inner(|| {"));
+    await chord("z", "o");
+    await t.waitForFrame((f) => f.includes("inner(|| {") && !f.includes("a();"));
+    await chord("z", "O");
+    await t.waitForFrame((f) => f.includes("a();"));
+    // zj scrolls to the next fold header; an unknown z command is ignored.
+    await chord("z", "j");
+    await t.waitForFrame((f) => !f.includes("inner(|| {") && f.includes("a();"));
+    await chord("z", "x");
+    await chord("k", "k");
     await t.waitForFrame((f) => f.includes("fn outer() {"));
     // Alt-click on the outer chevron folds nested regions too, so reopening keeps them folded.
     const outer = rowOf("fn outer() {");
@@ -331,7 +346,9 @@ test("folds collapse from the gutter chevron and expand from the placeholder", a
     await t.waitForFrame((f) => !f.includes("inner(|| {"));
     await act(async () => { await t.mockMouse.click(chevronX, outer); });
     await t.waitForFrame((f) => f.includes("inner(|| {") && !f.includes("a();"));
-    await act(async () => { t.mockInput.pressKey("Z"); });
+    await chord("z", "M");
+    await t.waitForFrame((f) => !f.includes("inner(|| {"));
+    await chord("z", "R");
     await t.waitForFrame((f) => f.includes("a();"));
   } finally {
     await act(async () => { t.renderer.destroy(); });

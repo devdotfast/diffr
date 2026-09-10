@@ -205,3 +205,62 @@ mod query_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod tag_tests {
+    use super::*;
+    use crate::summary::DiffResult;
+
+    #[test]
+    fn repeated_rules_accumulate_sorted_tags_without_duplicate_folds() {
+        let query = r#"
+            ((block) @fold (#set! tag "user.check"))
+            ((block) @fold (#set! tag "body"))
+            ((block) @fold (#set! tag "user.check"))
+        "#;
+        let params = Config::from_toml(&format!("[languages.rust]\nfolds = '''{query}'''"))
+            .unwrap()
+            .compile()
+            .unwrap();
+        let result =
+            DiffResult::from_sources_with_params("a.rs", "", "fn f() { work(); }", &params);
+        assert_eq!(result.rhs_folds.len(), 1);
+        assert_eq!(result.rhs_folds[0].tags, ["body", "user.check"]);
+    }
+
+    #[test]
+    fn conflicting_ranges_do_not_depend_on_query_order() {
+        let whole = "((block) @fold (#set! tag \"whole\"))";
+        let interior = "((block) @fold (#offset! @fold 0 1 0 -1) (#set! tag \"inside\"))";
+        for query in [
+            format!("{whole}\n{interior}"),
+            format!("{interior}\n{whole}"),
+        ] {
+            let params = Config::from_toml(&format!("[languages.rust]\nfolds = '''{query}'''"))
+                .unwrap()
+                .compile()
+                .unwrap();
+            let result =
+                DiffResult::from_sources_with_params("a.rs", "", "fn f() { work(); }", &params);
+            assert!(result.rhs_folds.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_bodies_keep_both_tags_and_remain_paired() {
+        use crate::parse::folds::FoldMatch;
+        let params = Params::default();
+        let result = DiffResult::from_sources_with_params(
+            "a.rs",
+            "#[test]\nfn example() { old(); }",
+            "#[test]\nfn example() { old(); new(); }",
+            &params,
+        );
+        assert_eq!(result.lhs_folds.len(), 1);
+        assert_eq!(result.rhs_folds.len(), 1);
+        assert_eq!(result.lhs_folds[0].tags, ["body", "test"]);
+        assert_eq!(result.rhs_folds[0].tags, ["body", "test"]);
+        assert!(matches!(&result.lhs_folds[0].match_kind,
+            FoldMatch::Unchanged { opposite } if *opposite == result.rhs_folds[0].range));
+    }
+}

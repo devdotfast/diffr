@@ -1,7 +1,7 @@
 //! Evaluate one compiled query per syntax tree, retaining metadata before flattening.
 use super::{context::ContextMetadata, syntax::FoldMetadata};
 use crate::config::query::{AnnotationQuery, Pattern};
-use crate::hash::DftHashMap;
+use crate::hash::{DftHashMap, DftHashSet};
 use crate::lines::{SourcePosition, SourceRange};
 use streaming_iterator::StreamingIterator as _;
 use tree_sitter::{Node, QueryCapture, QueryCursor};
@@ -23,6 +23,7 @@ pub(crate) fn collect(
     };
     let query = &compiled.query;
     let lines: Vec<_> = src.split('\n').collect();
+    let mut ambiguous_folds = DftHashSet::default();
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(query, tree.root_node(), src.as_bytes());
     while let Some(matched) = matches.next() {
@@ -42,24 +43,24 @@ pub(crate) fn collect(
             let Some(region) = adjusted_range(fold, pattern, &lines) else {
                 continue;
             };
-            if region.start == region.end {
+            if region.start == region.end || ambiguous_folds.contains(&fold.node.id()) {
                 continue;
             }
-            // Preserve the existing test classification until tag accumulation is enabled.
-            if result
+            let metadata = result
                 .folds
-                .get(&fold.node.id())
-                .is_some_and(|metadata| metadata.tags.iter().any(|tag| tag == "test"))
-            {
+                .entry(fold.node.id())
+                .or_insert_with(|| FoldMetadata {
+                    tags: Vec::new(),
+                    range_override: Some(region),
+                });
+            if metadata.range_override != Some(region) {
+                result.folds.remove(&fold.node.id());
+                ambiguous_folds.insert(fold.node.id());
                 continue;
             }
-            result.folds.insert(
-                fold.node.id(),
-                FoldMetadata {
-                    tags: pattern.tags.clone(),
-                    range_override: Some(region),
-                },
-            );
+            metadata.tags.extend(pattern.tags.iter().cloned());
+            metadata.tags.sort();
+            metadata.tags.dedup();
         }
         let Some(owner) = capture("context") else {
             continue;

@@ -26,7 +26,7 @@ folds = '''
   (raw_string_literal)
 ] @fold
   (#set! tag "string"))
-((attribute_item) @_attribute . (function_item body: (block) @fold)
+((function_item attributes: (attributes (attribute_item) @_attribute) body: (block) @fold)
   (#match? @_attribute "test")
   (#offset! @fold 0 1 0 -1)
   (#set! tag "test"))

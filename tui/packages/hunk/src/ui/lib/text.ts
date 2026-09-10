@@ -9,11 +9,16 @@ export function isPrintableAsciiText(text: string) {
   return printableAsciiRegex.test(text);
 }
 // Hunk and string-width both require Intl.Segmenter to preserve terminal grapheme semantics.
-const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const graphemeSegmenter = new Intl.Segmenter(undefined, {
+  granularity: "grapheme",
+});
 
 /** Iterate user-visible text clusters so wide and combining characters stay together. */
 export function textClusters(text: string) {
-  return Array.from(graphemeSegmenter.segment(text), (segment) => segment.segment);
+  return Array.from(
+    graphemeSegmenter.segment(text),
+    (segment) => segment.segment,
+  );
 }
 
 // Zero-width cluster classes restricted to a single code point. A plain u-flag character
@@ -160,7 +165,11 @@ function measureCachedClusterWidth(cluster: string) {
  */
 export function measureClusterWidth(cluster: string): number {
   // Complex source lines still contain mostly ASCII clusters after segmentation.
-  if (cluster.length === 1 && cluster.charCodeAt(0) >= 0x20 && cluster.charCodeAt(0) <= 0x7e) {
+  if (
+    cluster.length === 1 &&
+    cluster.charCodeAt(0) >= 0x20 &&
+    cluster.charCodeAt(0) <= 0x7e
+  ) {
     return 1;
   }
 
@@ -216,7 +225,10 @@ export function measureSanitizedTextWidth(text: string) {
     const charWidth = measureClusterWidth(repeatedChar);
     // Composition-sensitive and zero-width units can merge across repetitions; fall through to
     // whole-text grapheme handling instead of multiplying an isolated scalar width.
-    if (charWidth > 0 && !scalarRequiresGraphemeComposition(repeatedChar, codePoint)) {
+    if (
+      charWidth > 0 &&
+      !scalarRequiresGraphemeComposition(repeatedChar, codePoint)
+    ) {
       return charWidth * text.length;
     }
   }
@@ -290,7 +302,8 @@ export function wrapText(text: string, width: number) {
       continue;
     }
 
-    const nextWidth = current.length === 0 ? wordWidth : currentWidth + 1 + wordWidth;
+    const nextWidth =
+      current.length === 0 ? wordWidth : currentWidth + 1 + wordWidth;
     if (nextWidth <= width) {
       current = current.length === 0 ? word : `${current} ${word}`;
       currentWidth = nextWidth;
@@ -451,7 +464,11 @@ export function sliceTextByWidth(text: string, offset: number, width: number) {
 }
 
 /** Slice already-sanitized text without rescanning for terminal control sequences. */
-export function sliceSanitizedTextByWidth(safeText: string, offset: number, width: number) {
+export function sliceSanitizedTextByWidth(
+  safeText: string,
+  offset: number,
+  width: number,
+) {
   const startOffset = Math.max(0, offset);
   const maxWidth = Math.max(0, width);
   if (maxWidth === 0) {
@@ -482,7 +499,8 @@ export function sliceSanitizedTextByWidth(safeText: string, offset: number, widt
       continue;
     }
     if (scalarStart < startOffset) {
-      const hiddenCellWidth = Math.min(scalarEnd, startOffset + maxWidth) - startOffset;
+      const hiddenCellWidth =
+        Math.min(scalarEnd, startOffset + maxWidth) - startOffset;
       if (hiddenCellWidth > 0) {
         scalarVisibleText += " ".repeat(hiddenCellWidth);
         scalarUsedWidth += hiddenCellWidth;
@@ -514,7 +532,8 @@ export function sliceSanitizedTextByWidth(safeText: string, offset: number, widt
       continue;
     }
     if (clusterStart < startOffset) {
-      const hiddenCellWidth = Math.min(clusterEnd, startOffset + maxWidth) - startOffset;
+      const hiddenCellWidth =
+        Math.min(clusterEnd, startOffset + maxWidth) - startOffset;
       if (hiddenCellWidth > 0) {
         visibleText += " ".repeat(hiddenCellWidth);
         usedWidth += hiddenCellWidth;
@@ -545,7 +564,11 @@ export function sliceSanitizedTextByWidth(safeText: string, offset: number, widt
  * caller's string). Callers must pass a normalized range (`startCell <= endCell`); inverted
  * ranges are unspecified.
  */
-export function cellRangeToCharRange(text: string, startCell: number, endCell: number) {
+export function cellRangeToCharRange(
+  text: string,
+  startCell: number,
+  endCell: number,
+) {
   const safeStartCell = Math.max(0, startCell);
 
   if (printableAsciiRegex.test(text)) {
@@ -572,7 +595,9 @@ export function cellRangeToCharRange(text: string, startCell: number, endCell: n
     // Zero-width clusters (e.g. U+200B) occupy no cell, so they never satisfy the covering
     // check; attach them to a range that starts at their position instead of dropping them.
     const coversStart =
-      clusterWidth > 0 ? cellCursor + clusterWidth > safeStartCell : cellCursor >= safeStartCell;
+      clusterWidth > 0
+        ? cellCursor + clusterWidth > safeStartCell
+        : cellCursor >= safeStartCell;
     if (startIndex < 0 && coversStart) {
       startIndex = unitCursor;
     }

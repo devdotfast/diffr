@@ -82,7 +82,11 @@ function preserveCrossSpanGraphemes(spans: RenderSpan[]) {
 }
 
 /** Slice styled spans to one visible window while preserving color runs. */
-export function sliceSpansWindow(spans: RenderSpan[], offset: number, width: number) {
+export function sliceSpansWindow(
+  spans: RenderSpan[],
+  offset: number,
+  width: number,
+) {
   if (width <= 0) {
     return {
       spans: [] as RenderSpan[],
@@ -120,7 +124,11 @@ export function sliceSpansWindow(spans: RenderSpan[], offset: number, width: num
       continue;
     }
 
-    const visible = sliceSanitizedTextByWidth(span.text, remainingOffset, remaining);
+    const visible = sliceSanitizedTextByWidth(
+      span.text,
+      remainingOffset,
+      remaining,
+    );
     remainingOffset = 0;
 
     if (visible.text.length === 0) {
@@ -169,7 +177,9 @@ export function wrapSpans(spans: RenderSpan[], width: number) {
   }
   if (safeSpans.length > 1 && hasCompositionSensitiveSpan) {
     plannedSpans = mergeCrossSpanGraphemes(safeSpans);
-    simpleSpanWidths = plannedSpans.map((span) => measureSimpleSanitizedTextWidth(span.text));
+    simpleSpanWidths = plannedSpans.map((span) =>
+      measureSimpleSanitizedTextWidth(span.text),
+    );
   }
 
   for (let spanIndex = 0; spanIndex < plannedSpans.length; spanIndex += 1) {
@@ -252,7 +262,10 @@ export function wrapSpans(spans: RenderSpan[], width: number) {
 }
 
 /** Count wrapped visual lines without allocating the styled line arrays used by rendering. */
-export function measureWrappedSpansLineCount(spans: RenderSpan[], width: number) {
+export function measureWrappedSpansLineCount(
+  spans: RenderSpan[],
+  width: number,
+) {
   if (width <= 0) {
     return 1;
   }

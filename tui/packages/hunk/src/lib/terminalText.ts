@@ -50,7 +50,9 @@ export function sanitizeTerminalText(
 
   // Strip placeholder delimiters from untrusted input so authored text cannot spoof
   // an internal token that later restores an ANSI sequence at the wrong location.
-  const tokenSafeText = preserveAnsiStyle ? text.replace(preservedStyleTokenDelimiters, "") : text;
+  const tokenSafeText = preserveAnsiStyle
+    ? text.replace(preservedStyleTokenDelimiters, "")
+    : text;
 
   const sanitized = tokenSafeText
     .replace(sevenBitControlStrings, preserveStyle)
@@ -75,7 +77,10 @@ export function sanitizeTerminalText(
 
 /** Sanitize a single terminal row or cell where newlines must never be preserved. */
 export function sanitizeTerminalLine(text: string) {
-  return sanitizeTerminalText(text, { preserveNewlines: false, preserveTabs: true });
+  return sanitizeTerminalText(text, {
+    preserveNewlines: false,
+    preserveTabs: true,
+  });
 }
 
 /** Render an exact filesystem path safely without letting controls alter terminal geometry. */
@@ -101,7 +106,9 @@ export function formatTerminalPath(path: string) {
 }
 
 /** Sanitize render spans while preserving their non-text styling metadata. */
-export function sanitizeTerminalSpans<T extends { text: string }>(spans: T[]): T[] {
+export function sanitizeTerminalSpans<T extends { text: string }>(
+  spans: T[],
+): T[] {
   let sanitized: T[] | null = null;
   for (let index = 0; index < spans.length; index += 1) {
     const span = spans[index]!;

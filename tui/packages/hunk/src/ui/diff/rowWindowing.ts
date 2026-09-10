@@ -1,5 +1,7 @@
-import type { DiffSectionGeometry } from "./diffSectionGeometry";
-import type { PlannedReviewRow } from "./reviewRenderPlan";
+export interface RowBounds {
+  top: number;
+  height: number;
+}
 
 /** One visible slice within a file body, measured in file-local row units. */
 export interface VisibleBodyBounds {
@@ -7,13 +9,7 @@ export interface VisibleBodyBounds {
   height: number;
 }
 
-export interface VisiblePlannedRowWindow {
-  bottomSpacerHeight: number;
-  plannedRows: PlannedReviewRow[];
-  topSpacerHeight: number;
-}
-
-/** Index-only visible slice shared by Pierre plans and alternate file-view rows. */
+/** Index-only visible slice over measured terminal rows. */
 export interface VisibleRowIndexWindow {
   bottomSpacerHeight: number;
   endIndex: number;
@@ -25,7 +21,10 @@ export interface VisibleRowIndexWindow {
  * Find the first row whose bottom edge is after the visible top boundary.
  * Requires row bounds to be sorted by non-decreasing row bottom.
  */
-function findFirstRowWithBottomAfter(rowBounds: DiffSectionGeometry["rowBounds"], top: number) {
+function findFirstRowWithBottomAfter(
+  rowBounds: readonly RowBounds[],
+  top: number,
+) {
   let low = 0;
   let high = rowBounds.length - 1;
   let result = rowBounds.length;
@@ -49,7 +48,10 @@ function findFirstRowWithBottomAfter(rowBounds: DiffSectionGeometry["rowBounds"]
  * Find the last row whose top edge is before the visible bottom boundary.
  * Requires row bounds to be sorted by non-decreasing row top.
  */
-function findLastRowWithTopBefore(rowBounds: DiffSectionGeometry["rowBounds"], bottom: number) {
+function findLastRowWithTopBefore(
+  rowBounds: readonly RowBounds[],
+  bottom: number,
+) {
   let low = 0;
   let high = rowBounds.length - 1;
   let result = -1;
@@ -71,7 +73,7 @@ function findLastRowWithTopBefore(rowBounds: DiffSectionGeometry["rowBounds"], b
 
 /** Return whether one measured row overlaps the requested closed-open visible interval. */
 function rowOverlapsVisibleRange(
-  rowBounds: DiffSectionGeometry["rowBounds"][number],
+  rowBounds: RowBounds,
   minVisibleTop: number,
   maxVisibleBottom: number,
 ) {
@@ -90,7 +92,7 @@ export function resolveVisibleRowIndexWindow({
   visibleBodyBounds,
 }: {
   bodyHeight: number;
-  rowBounds: DiffSectionGeometry["rowBounds"];
+  rowBounds: readonly RowBounds[];
   visibleBodyBounds: VisibleBodyBounds;
 }): VisibleRowIndexWindow {
   const minVisibleTop = Math.max(0, visibleBodyBounds.top);
@@ -102,7 +104,11 @@ export function resolveVisibleRowIndexWindow({
   let firstVisibleIndex = findFirstRowWithBottomAfter(rowBounds, minVisibleTop);
   while (
     firstVisibleIndex < rowBounds.length &&
-    !rowOverlapsVisibleRange(rowBounds[firstVisibleIndex]!, minVisibleTop, maxVisibleBottom)
+    !rowOverlapsVisibleRange(
+      rowBounds[firstVisibleIndex]!,
+      minVisibleTop,
+      maxVisibleBottom,
+    )
   ) {
     firstVisibleIndex += 1;
   }
@@ -110,7 +116,11 @@ export function resolveVisibleRowIndexWindow({
   let lastVisibleIndex = findLastRowWithTopBefore(rowBounds, maxVisibleBottom);
   while (
     lastVisibleIndex >= 0 &&
-    !rowOverlapsVisibleRange(rowBounds[lastVisibleIndex]!, minVisibleTop, maxVisibleBottom)
+    !rowOverlapsVisibleRange(
+      rowBounds[lastVisibleIndex]!,
+      minVisibleTop,
+      maxVisibleBottom,
+    )
   ) {
     lastVisibleIndex -= 1;
   }
@@ -121,7 +131,11 @@ export function resolveVisibleRowIndexWindow({
 
   // firstVisibleIndex > lastVisibleIndex should not happen with sorted row bounds, but keep the
   // empty-window fallback defensive in case an upstream geometry invariant is ever broken.
-  if (firstVisibleIndex < 0 || lastVisibleIndex < 0 || firstVisibleIndex > lastVisibleIndex) {
+  if (
+    firstVisibleIndex < 0 ||
+    lastVisibleIndex < 0 ||
+    firstVisibleIndex > lastVisibleIndex
+  ) {
     const topSpacerHeight = Math.min(bodyHeight, minVisibleTop);
 
     return {
@@ -155,34 +169,9 @@ export function resolveVisibleRowIndexWindow({
     startIndex,
     endIndex,
     // The bottom spacer is the remaining body height after the last mounted row's bottom edge.
-    bottomSpacerHeight: Math.max(0, bodyHeight - (endRowBounds.top + endRowBounds.height)),
-  };
-}
-
-/**
- * Slice planned rows down to the visible body range while preserving total section height.
- * Geometry and planned rows share array order, so only the final visible slice is allocated.
- */
-export function resolveVisiblePlannedRowWindow({
-  plannedRows,
-  sectionGeometry,
-  visibleBodyBounds,
-}: {
-  plannedRows: PlannedReviewRow[];
-  sectionGeometry: DiffSectionGeometry;
-  visibleBodyBounds: VisibleBodyBounds;
-}): VisiblePlannedRowWindow {
-  if (plannedRows.length === 0 || sectionGeometry.rowBounds.length !== plannedRows.length) {
-    return { bottomSpacerHeight: 0, plannedRows, topSpacerHeight: 0 };
-  }
-  const window = resolveVisibleRowIndexWindow({
-    bodyHeight: sectionGeometry.bodyHeight,
-    rowBounds: sectionGeometry.rowBounds,
-    visibleBodyBounds,
-  });
-  return {
-    bottomSpacerHeight: window.bottomSpacerHeight,
-    plannedRows: plannedRows.slice(window.startIndex, window.endIndex),
-    topSpacerHeight: window.topSpacerHeight,
+    bottomSpacerHeight: Math.max(
+      0,
+      bodyHeight - (endRowBounds.top + endRowBounds.height),
+    ),
   };
 }

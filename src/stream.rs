@@ -91,3 +91,52 @@ fn produce(
     }
     sender.send(Event::Complete { succeeded, failed })
 }
+
+/// Stream a standalone file comparison through the same file/completion events.
+/// File operands identify paths rather than repository revisions.
+pub(crate) fn write_file(
+    before: &str,
+    after: &str,
+    diff: &crate::summary::DiffResult,
+    output: &mut impl Write,
+) -> Result<()> {
+    let mut output = BufWriter::new(output);
+    serde_json::to_writer(
+        &mut output,
+        &serde_json::json!({
+            "type": "start", "version": 1, "total": 1,
+            "before": {"kind": "file", "path": before},
+            "after": {"kind": "file", "path": after}
+        }),
+    )?;
+    output.write_all(b"\n")?;
+    serde_json::to_writer(
+        &mut output,
+        &Event::File {
+            file: FileChange {
+                old_path: (before != "/dev/null").then(|| before.into()),
+                new_path: (after != "/dev/null").then(|| after.into()),
+                status: if before == "/dev/null" {
+                    crate::git::FileStatus::Added
+                } else if after == "/dev/null" {
+                    crate::git::FileStatus::Deleted
+                } else {
+                    crate::git::FileStatus::Modified
+                },
+                class: None,
+            },
+            diff: diff.domain_json(),
+        },
+    )?;
+    output.write_all(b"\n")?;
+    serde_json::to_writer(
+        &mut output,
+        &Event::Complete {
+            succeeded: 1,
+            failed: 0,
+        },
+    )?;
+    output.write_all(b"\n")?;
+    output.flush()?;
+    Ok(())
+}

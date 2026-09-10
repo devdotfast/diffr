@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { formatTerminalPath, sanitizeTerminalSpans, sanitizeTerminalText } from "./terminalText";
+import {
+  formatTerminalPath,
+  sanitizeTerminalSpans,
+  sanitizeTerminalText,
+} from "./terminalText";
 
 const OSC52_CLIPBOARD = "\x1b]52;c;SGVsbG8=\x07";
 const OSC_ST = "\x1b]8;;https://example.test\x1b\\";
@@ -77,9 +81,12 @@ describe("sanitizeTerminalText", () => {
   });
 
   test("removes crafted style placeholder delimiters before restoring ANSI styling", () => {
-    const output = sanitizeTerminalText("safe\u{f0000}0\u{f0001}\x1b[31mred\x1b[m", {
-      preserveAnsiStyle: true,
-    });
+    const output = sanitizeTerminalText(
+      "safe\u{f0000}0\u{f0001}\x1b[31mred\x1b[m",
+      {
+        preserveAnsiStyle: true,
+      },
+    );
 
     expect(output).toBe("safe0\x1b[31mred\x1b[m");
   });

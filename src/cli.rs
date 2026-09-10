@@ -6,7 +6,7 @@ use clap::{Arg, ArgAction, ArgGroup, ArgMatches, Command};
 use git2::{DiffStatsFormat, Repository};
 use std::{
     ffi::OsString,
-    io::{self, Write},
+    io::{self, IsTerminal, Write},
     path::{Component, Path, PathBuf},
     sync::Arc,
 };
@@ -17,6 +17,7 @@ fn flag(name: &'static str) -> Arg {
 
 pub(crate) fn run() -> Result<i32> {
     let mut argv: Vec<OsString> = std::env::args_os().collect();
+    let frontend_args = argv[1..].to_vec();
     // Preserve the distinction between revisions and paths explicitly following --.
     let has_separator = argv.iter().any(|arg| arg == "--");
     let explicit_paths = argv
@@ -62,11 +63,16 @@ pub(crate) fn run() -> Result<i32> {
         .arg(Arg::new("items").num_args(0..).value_parser(clap::value_parser!(OsString)))
         .after_help("Examples:\n  diffr\n  diffr --cached\n  diffr main...HEAD -- src/\n  diffr --no-index -- before.rs after.rs\n  diffr main HEAD --format ndjson\n\nUnsupported Git flags are rejected; this is not a complete git diff implementation.")
         .get_matches_from(argv);
+    if opens_tui(
+        args.value_source("format") == Some(clap::parser::ValueSource::CommandLine),
+        args.get_flag("quiet") || args.contains_id("metadata"),
+        io::stdin().is_terminal() && io::stdout().is_terminal(),
+    ) {
+        return launch_tui(&frontend_args);
+    }
     let streaming = args.get_one::<String>("format").unwrap() == "ndjson";
-    if streaming
-        && (args.get_flag("quiet") || args.contains_id("metadata") || args.get_flag("no-index"))
-    {
-        return Err("--format ndjson requires a repository comparison and cannot be combined with --quiet or metadata output".into());
+    if streaming && (args.get_flag("quiet") || args.contains_id("metadata")) {
+        return Err("--format ndjson cannot be combined with --quiet or metadata output".into());
     }
     let items: Vec<OsString> = args
         .get_many::<OsString>("items")
@@ -438,6 +444,53 @@ fn no_index(
         &[],
         &[],
     );
-    render(&diff, args, display)?;
-    Ok(i32::from(changed))
+    if args.get_one::<String>("format").map(String::as_str) == Some("ndjson") {
+        crate::stream::write_file(
+            &paths[0].to_string_lossy(),
+            &paths[1].to_string_lossy(),
+            &diff,
+            &mut io::stdout().lock(),
+        )?;
+        Ok(i32::from(changed && args.get_flag("exit-code")))
+    } else {
+        render(&diff, args, display)?;
+        Ok(i32::from(changed))
+    }
+}
+
+/// Explicit machine/text modes and redirected output must never enter the alternate screen.
+fn opens_tui(explicit_format: bool, metadata_or_quiet: bool, terminal: bool) -> bool {
+    terminal && !explicit_format && !metadata_or_quiet
+}
+
+fn launch_tui(args: &[OsString]) -> Result<i32> {
+    let entry = std::env::var_os("DIFFR_TUI_ENTRY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tui/packages/hunk/src/main.tsx")
+        });
+    if !entry.is_file() {
+        return Err(
+            "Terminal frontend is unavailable; install the tui dependencies or use --format text"
+                .into(),
+        );
+    }
+    let bun = std::env::var_os("DIFFR_BUN").unwrap_or_else(|| "bun".into());
+    let status = std::process::Command::new(bun)
+        .arg("run").arg(entry).arg("--diffr").arg(std::env::current_exe()?)
+        .arg("--").args(args).status()
+        .map_err(|error| format!("Could not launch terminal frontend: {error}. Install Bun and run bun install in tui/, or use --format text."))?;
+    Ok(status.code().unwrap_or(2))
+}
+
+#[cfg(test)]
+mod tui_launch_tests {
+    use super::opens_tui;
+    #[test]
+    fn only_implicit_interactive_output_opens_the_viewer() {
+        assert!(opens_tui(false, false, true));
+        assert!(!opens_tui(true, false, true));
+        assert!(!opens_tui(false, true, true));
+        assert!(!opens_tui(false, false, false));
+    }
 }

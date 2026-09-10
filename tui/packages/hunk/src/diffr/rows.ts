@@ -1,0 +1,283 @@
+/** Project Rust hunk correspondence into Hunk terminal cells; never compute a second diff. */
+import type { DiffFile, DiffResult, Highlight, MatchedPos } from "./wire";
+import type {
+  RenderSpan,
+  SplitLineCell,
+  UnifiedLineCell,
+} from "../ui/diff/diffRowModel";
+import { measureTextWidth } from "../ui/lib/text";
+export type Layout = "split" | "unified";
+export interface ViewerRow {
+  key: string;
+  fileIndex: number;
+  hunkIndex?: number;
+  label?: string;
+  left?: SplitLineCell;
+  right?: SplitLineCell;
+  cell?: UnifiedLineCell;
+}
+export interface Palette {
+  bg: string;
+  fg: string;
+  muted: string;
+  addition: string;
+  deletion: string;
+  addWord: string;
+  deleteWord: string;
+  keyword: string;
+  string: string;
+  type: string;
+  comment: string;
+}
+export const dark: Palette = {
+  bg: "#0d1117",
+  fg: "#e6edf3",
+  muted: "#8b949e",
+  addition: "#12261e",
+  deletion: "#301a20",
+  addWord: "#24583a",
+  deleteWord: "#74333c",
+  keyword: "#ff7b72",
+  string: "#a5d6ff",
+  type: "#79c0ff",
+  comment: "#8b949e",
+};
+export const light: Palette = {
+  bg: "#ffffff",
+  fg: "#24292f",
+  muted: "#57606a",
+  addition: "#dafbe1",
+  deletion: "#ffebe9",
+  addWord: "#aceebb",
+  deleteWord: "#ffcecb",
+  keyword: "#cf222e",
+  string: "#0a3069",
+  type: "#0550ae",
+  comment: "#6e7781",
+};
+export const sourceLines = (text: string) =>
+  text === "" ? [] : text.replace(/\n$/, "").split("\n");
+function color(token: Highlight, theme: Palette) {
+  if (token === "Delimiter") return theme.fg;
+  const atom = token.Atom;
+  return typeof atom === "object"
+    ? theme.string
+    : atom === "Keyword"
+      ? theme.keyword
+      : atom === "Type"
+        ? theme.type
+        : atom === "Comment"
+          ? theme.comment
+          : theme.fg;
+}
+function byLine(positions: MatchedPos[]) {
+  const result = new Map<number, MatchedPos[]>();
+  for (const position of positions) {
+    const list = result.get(position.pos.line) ?? [];
+    list.push(position);
+    result.set(position.pos.line, list);
+  }
+  return result;
+}
+/** Translate UTF-8 byte spans before expanding tabs into terminal cells. */
+export function lineSpans(
+  text: string,
+  positions: MatchedPos[],
+  side: "left" | "right",
+  theme: Palette,
+): RenderSpan[] {
+  const bytes = new TextEncoder().encode(text),
+    decoder = new TextDecoder("utf-8", { fatal: true });
+  const spans: RenderSpan[] = [];
+  let cursor = 0;
+  for (const position of [...positions].sort(
+    (a, b) => a.pos.start_col - b.pos.start_col,
+  )) {
+    const { start_col: start, end_col: end } = position.pos;
+    if (start < cursor || end < start || end > bytes.length)
+      throw new Error("Invalid or overlapping diffr token span");
+    if (start > cursor)
+      spans.push({
+        text: decoder.decode(bytes.slice(cursor, start)),
+        fg: theme.fg,
+      });
+    const kind = Object.values(position.kind)[0];
+    const novel = "Novel" in position.kind || "NovelWord" in position.kind;
+    spans.push({
+      text: decoder.decode(bytes.slice(start, end)),
+      fg: color(kind.highlight, theme),
+      bg: novel
+        ? side === "left"
+          ? theme.deleteWord
+          : theme.addWord
+        : undefined,
+    });
+    cursor = end;
+  }
+  if (cursor < bytes.length)
+    spans.push({ text: decoder.decode(bytes.slice(cursor)), fg: theme.fg });
+  let column = 0;
+  return spans.map((span) => ({
+    ...span,
+    text: span.text
+      .split("\t")
+      .map((part, index) => {
+        const padding = index ? " ".repeat(4 - (column % 4)) : "";
+        column += padding.length + measureTextWidth(part);
+        return padding + part;
+      })
+      .join(""),
+  }));
+}
+/** Render selected hunk rows in their supplied order, retaining all source identities. */
+export function rowsForFile(
+  file: DiffFile,
+  fileIndex: number,
+  layout: Layout,
+  theme: Palette,
+): ViewerRow[] {
+  const d = file.diff;
+  const rows: ViewerRow[] = [
+    {
+      key: `${fileIndex}:header`,
+      fileIndex,
+      label: file.file.new_path ?? file.file.old_path ?? d.display_path,
+    },
+  ];
+  if (d.lhs_src === "Binary" || d.rhs_src === "Binary")
+    return [
+      ...rows,
+      { key: `${fileIndex}:binary`, fileIndex, label: "Binary file" },
+    ];
+  const left = sourceLines(d.lhs_src.Text),
+    right = sourceLines(d.rhs_src.Text);
+  const positions = [byLine(d.lhs_positions), byLine(d.rhs_positions)];
+  const caches = [
+    new Map<number, RenderSpan[]>(),
+    new Map<number, RenderSpan[]>(),
+  ];
+  const cell = (
+    line: number | null,
+    side: 0 | 1,
+    novel: Set<number>,
+  ): SplitLineCell => {
+    if (line === null) return { kind: "empty", sign: " ", spans: [] };
+    const text = (side ? right : left)[line];
+    if (text === undefined)
+      throw new Error(`diffr hunk references missing line ${line}`);
+    let spans = caches[side].get(line);
+    if (!spans) {
+      spans = lineSpans(
+        text,
+        positions[side].get(line) ?? [],
+        side ? "right" : "left",
+        theme,
+      );
+      caches[side].set(line, spans);
+    }
+    const changed = novel.has(line);
+    return {
+      kind: changed ? (side ? "addition" : "deletion") : "context",
+      sign: changed ? (side ? "+" : "-") : " ",
+      lineNumber: line + 1,
+      spans,
+    };
+  };
+  let previousLeft = -1,
+    previousRight = -1;
+  for (const [hunkIndex, hunk] of d.hunks.entries()) {
+    rows.push({
+      key: `${fileIndex}:${hunkIndex}:hunk`,
+      fileIndex,
+      hunkIndex,
+      label: `@@ ${hunkIndex + 1} @@`,
+    });
+    const novelLeft = new Set(hunk.novel_lhs),
+      novelRight = new Set(hunk.novel_rhs);
+    let pendingOld: ViewerRow[] = [],
+      pendingNew: ViewerRow[] = [];
+    const flush = () => {
+      rows.push(...pendingOld, ...pendingNew);
+      pendingOld = [];
+      pendingNew = [];
+    };
+    for (const [l, r] of hunk.lines) {
+      // Adjacent hunks can share context. Don't duplicate source lines in the review stream.
+      if (
+        (l === null || l <= previousLeft) &&
+        (r === null || r <= previousRight)
+      )
+        continue;
+      if (
+        (l !== null && l <= previousLeft) ||
+        (r !== null && r <= previousRight)
+      )
+        throw new Error("Conflicting diffr hunk correspondence");
+      const a = cell(l, 0, novelLeft),
+        b = cell(r, 1, novelRight);
+      const key = `${fileIndex}:${l ?? "_"}:${r ?? "_"}`;
+      if (layout === "split")
+        rows.push({ key, fileIndex, hunkIndex, left: a, right: b });
+      else {
+        const shared =
+          l !== null &&
+          r !== null &&
+          !novelLeft.has(l) &&
+          !novelRight.has(r) &&
+          left[l] === right[r];
+        if (shared) {
+          flush();
+          rows.push({
+            key,
+            fileIndex,
+            hunkIndex,
+            cell: {
+              kind: "context",
+              sign: " ",
+              oldLineNumber: l + 1,
+              newLineNumber: r + 1,
+              spans: b.spans,
+            },
+          });
+        } else {
+          if (l !== null)
+            pendingOld.push({
+              key: `${key}:old`,
+              fileIndex,
+              hunkIndex,
+              cell: {
+                kind: "deletion",
+                sign: "-",
+                oldLineNumber: l + 1,
+                spans: a.spans,
+              },
+            });
+          if (r !== null)
+            pendingNew.push({
+              key: `${key}:new`,
+              fileIndex,
+              hunkIndex,
+              cell: {
+                kind: "addition",
+                sign: "+",
+                newLineNumber: r + 1,
+                spans: b.spans,
+              },
+            });
+        }
+      }
+      if (l !== null) previousLeft = l;
+      if (r !== null) previousRight = r;
+    }
+    flush();
+  }
+  if (!d.hunks.length)
+    rows.push({
+      key: `${fileIndex}:unchanged`,
+      fileIndex,
+      label: d.has_byte_changes
+        ? "No structural changes (source formatting differs)"
+        : "No changes",
+    });
+  return rows;
+}

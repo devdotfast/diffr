@@ -43,8 +43,8 @@ pipe reads can split records or contain several.
 
 | Event | Fields | Consumer action |
 | --- | --- | --- |
-| `start` | `version: 1`, `before`, `after`, `total` | Initialize progress. |
-| `file` | `file`, `diff` | Render a result. |
+| `start` | `version: 1`, `before`, `after`, `total`, `files` | Lay out every file up front. |
+| `file` | `file`, `diff`, optional `hook_error` | Render a result. |
 | `file_error` | `file`, `message` | Report failure and keep reading. |
 | `complete` | `succeeded`, `failed` | Mark complete, including partial failures. |
 
@@ -57,6 +57,10 @@ The file descriptor contains nullable `old_path`, `new_path`, `class`, and `stat
 (added/deleted/modified/renamed/type_changed/conflicted). `diff` is the existing
 domain JSON: complete sources, token correspondence, folds and context hunks.
 There is no display layout in the response.
+
+`files` lists every selected file descriptor in priority order. File results
+arrive in completion order, not manifest order, since files are diffed
+concurrently (`--jobs`, default 16). Match results to the manifest by identity.
 
 At completion, `succeeded + failed == total`; every selected file has one result
 or file error. EOF without `complete` means interrupted/incomplete output.
@@ -72,15 +76,73 @@ fail discovery.
 ## Computation and output
 
 Discovery and rename detection finish before `start`; syntax matching is lazy.
-A producer thread consumes the file iterator. The calling thread serializes,
-writes and flushes each event. A bounded queue holds one ready event, allowing
-computation to overlap slow writes without collecting the entire comparison.
-When the queue is full, the producer waits. This bounds the number of in-flight
-files, not their individual size.
+A pool of `--jobs` workers pulls files from the iterator: each worker reads the
+next file's sources under a lock, then diffs them while other workers pull
+further files. The calling thread serializes, writes and flushes each event.
+A bounded queue holds one ready event, so computation overlaps slow writes
+without collecting the entire comparison. In-flight files are bounded by the
+pool size, not their individual size. `--jobs 1` restores priority order.
 
-Closing stdout stops production when its next send fails; an already running file
-may finish. Terminate the process to cancel immediately. The CLI also retains its
-normal SIGPIPE behavior on Unix.
+Closing stdout stops production once the files in flight finish. Terminate the
+process to cancel immediately. The CLI also retains its normal SIGPIPE behavior
+on Unix.
+
+## Fold hooks
+
+A trusted hook can replace fold placeholders with richer text, such as
+pseudocode, before each `file` event is emitted. A hook is a JSON-RPC 2.0
+server over HTTP that diffr starts once per invocation and calls on loopback:
+
+```toml
+[folds.hook]
+command = ["uv", "run", "--script", "examples/hooks/summarize.py"]
+tags = ["body"]            # optional; any listed tag qualifies. Omit to send every fold.
+min_lines = 12             # optional; default 0
+timeout_ms = 5000          # optional; per call
+startup_timeout_ms = 30000 # optional; time allowed to start listening
+```
+
+The command starts with the caller's environment plus `DIFFR_HOOK_PORT`, the
+loopback port it must listen on, and `DIFFR_WORKSPACE`, the diffed repository's
+root. It runs in the directory containing the config file, so relative paths in
+`command` resolve against the config wherever it lives, including one given by
+`--config` outside the repository. Its stdout is discarded because diffr's own
+stdout carries the event stream; log to stderr. diffr polls the port until the
+hook accepts connections, exits 2 before `start` if the hook exits or misses
+`startup_timeout_ms`, and kills the hook when the comparison ends.
+
+Only novel folds on the after side qualify: bodies that exist in the after
+source with no counterpart in the before source. Files with no qualifying fold
+never reach the hook. Streaming is the only output mode that runs hooks; the
+terminal frontend streams, so it does too.
+
+One call per file, method `summarize`, params by name. The worker diffing that
+file blocks on the reply; other workers keep calling, so a hook must serve
+requests concurrently rather than one at a time.
+
+```jsonc
+// diffr -> hook   POST / with a JSON-RPC 2.0 request
+{"jsonrpc": "2.0", "id": 7, "method": "summarize", "params": {
+  "path": "src/auth.py", "language": "Python", "src": "<after source>",
+  "folds": [{"id": 0, "range": {"start": {"line": 40, "byte_column": 0}, "end": {"line": 88, "byte_column": 1}},
+             "tags": ["body"], "placeholder": "Body"}]}}
+// hook -> diffr
+{"jsonrpc": "2.0", "id": 7, "result": {"0": "def refresh_token(session):\n    ..."}}
+{"jsonrpc": "2.0", "id": 8, "error": {"code": -32000, "message": "rate limited"}}
+```
+
+`language` is null for plain text. A fold `id` indexes `rhs_folds` in that file's
+`diff`; the matching fold gains a non-null `summary` while `placeholder` is
+unchanged. Folds missing from the result keep a null `summary`. An error
+object, a timeout, an unknown fold id, or an invalid response leaves every
+summary in that file null and adds `hook_error` to its `file` event.
+
+`examples/hooks/summarize.py` is a reference hook: an aiohttp server that hands
+each request to jsonrpcserver and asks Gemini 3.8 Flash, with thinking disabled,
+for Python-style pseudocode. It needs `GOOGLE_API_KEY` and answers up to 16
+files at once on one asyncio loop with a shared httpx client. `uv run --script`
+installs its dependencies on first use. `tests/hooks/rpc_server.py` is a
+dependency-free hook used by the tests.
 
 ## Fixture viewer
 

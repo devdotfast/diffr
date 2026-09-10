@@ -50,6 +50,7 @@ const fold = z.object({
     z.object({ Unchanged: z.object({ opposite: range }) }),
   ]),
   placeholder: z.string(),
+  summary: z.string().nullable(),
 });
 const source = z.union([z.literal("Binary"), z.object({ Text: z.string() })]);
 export const diffResultSchema = z.object({

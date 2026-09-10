@@ -51,7 +51,7 @@ fn position(position: &MatchedPos) -> Value {
     json!({"pos": span(&position.pos), "kind": kind})
 }
 
-fn range(range: &SourceRange) -> Value {
+pub(crate) fn range(range: &SourceRange) -> Value {
     json!({
         "start": {
             "line": range.start.line.0,
@@ -74,6 +74,7 @@ fn fold(fold: &Fold) -> Value {
         "range": range(&fold.range),
         "match_kind": match_kind,
         "placeholder": fold.placeholder,
+        "summary": fold.summary,
     })
 }
 

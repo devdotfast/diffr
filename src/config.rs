@@ -5,7 +5,7 @@ use crate::parse::{guess_language::Language, tree_sitter_parser};
 use query::AnnotationQuery;
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use strum::IntoEnumIterator;
 
@@ -13,6 +13,42 @@ use strum::IntoEnumIterator;
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Config {
     pub(crate) languages: BTreeMap<String, LanguageConfig>,
+    pub(crate) folds: FoldsConfig,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct FoldsConfig {
+    pub(crate) hook: Option<HookConfig>,
+}
+
+/// A trusted subprocess that supplies summaries for large novel folds.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HookConfig {
+    /// Relative command paths resolve against the config file, wherever it lives.
+    #[serde(skip)]
+    pub(crate) dir: PathBuf,
+    pub(crate) command: Vec<String>,
+    /// None sends every tagged fold; otherwise a fold needs one of these tags.
+    #[serde(default)]
+    pub(crate) tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub(crate) min_lines: usize,
+    /// Per-call limit once the hook is listening.
+    #[serde(default = "default_timeout_ms")]
+    pub(crate) timeout_ms: u64,
+    /// How long the hook may take to start listening on its port.
+    #[serde(default = "default_startup_timeout_ms")]
+    pub(crate) startup_timeout_ms: u64,
+}
+
+fn default_timeout_ms() -> u64 {
+    5000
+}
+
+fn default_startup_timeout_ms() -> u64 {
+    30_000
 }
 
 #[derive(Default, Deserialize)]
@@ -34,6 +70,7 @@ impl std::error::Error for ConfigError {}
 
 pub(crate) struct Params {
     languages: DftHashMap<Language, OnceLock<Arc<LanguageParams>>>,
+    pub(crate) hook: Option<HookConfig>,
 }
 
 pub(crate) struct LanguageParams {
@@ -65,7 +102,16 @@ impl Config {
             .map(Path::to_path_buf)
             .unwrap_or_else(|| workspace.join("diffr.toml"));
         match std::fs::read_to_string(&path) {
-            Ok(source) => Self::from_toml(&source),
+            Ok(source) => {
+                let mut config = Self::from_toml(&source)?;
+                if let Some(hook) = &mut config.folds.hook {
+                    hook.dir = path
+                        .parent()
+                        .expect("config file has a parent")
+                        .to_path_buf();
+                }
+                Ok(config)
+            }
             Err(error) if explicit.is_none() && error.kind() == std::io::ErrorKind::NotFound => {
                 Ok(Self::default())
             }
@@ -78,6 +124,14 @@ impl Config {
     }
 
     pub(crate) fn compile(self) -> Result<Params, ConfigError> {
+        if let Some(hook) = &self.folds.hook {
+            if hook.command.is_empty() {
+                return Err(ConfigError("folds.hook.command must not be empty".into()));
+            }
+            if hook.timeout_ms == 0 || hook.startup_timeout_ms == 0 {
+                return Err(ConfigError("folds.hook timeouts must be positive".into()));
+            }
+        }
         let defaults = Self::from_toml(include_str!("config/defaults.toml"))?;
         let mut resolved = defaults.languages;
         for (name, overrides) in self.languages {
@@ -111,7 +165,10 @@ impl Config {
                 })),
             );
         }
-        Ok(Params { languages })
+        Ok(Params {
+            languages,
+            hook: self.folds.hook,
+        })
     }
 }
 
@@ -229,6 +286,39 @@ mod tests {
         );
         assert_eq!(result.rhs_folds.len(), 1);
         assert_eq!(result.rhs_folds[0].tags, ["embedded"]);
+    }
+
+    #[test]
+    fn parses_fold_hook_settings() {
+        let params = Config::from_toml(
+            "[folds.hook]\ncommand = ['uv', 'run', 'summarize.py']\ntags = ['body']\nmin_lines = 30",
+        )
+        .unwrap()
+        .compile()
+        .unwrap();
+        let hook = params.hook.unwrap();
+        assert_eq!(hook.command, ["uv", "run", "summarize.py"]);
+        assert_eq!(hook.tags.as_deref(), Some(&["body".to_owned()][..]));
+        assert_eq!(
+            (hook.min_lines, hook.timeout_ms, hook.startup_timeout_ms),
+            (30, 5000, 30_000)
+        );
+        assert!(Config::from_toml("")
+            .unwrap()
+            .compile()
+            .unwrap()
+            .hook
+            .is_none());
+        for input in [
+            "[folds.hook]\ncommand = []",
+            "[folds.hook]\ncommand = ['x']\ntimeout_ms = 0",
+        ] {
+            assert!(
+                Config::from_toml(input).unwrap().compile().is_err(),
+                "{input}"
+            );
+        }
+        assert!(Config::from_toml("[folds.hook]\ncommand = ['x']\nunknown = 1").is_err());
     }
 
     #[test]

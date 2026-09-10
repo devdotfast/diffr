@@ -1,6 +1,7 @@
 //! Git-style CLI input; rendering and NDJSON remain adapters over the same engine.
 use crate::config::Config;
 use crate::git::{Comparison, DiffSession, FileParams, Operand, Result};
+use crate::hook::Hook;
 use crate::options::{DiffOptions, DisplayMode, DisplayOptions};
 use clap::{Arg, ArgAction, ArgGroup, ArgMatches, Command};
 use git2::{DiffStatsFormat, Repository};
@@ -34,6 +35,14 @@ pub(crate) fn run() -> Result<i32> {
         .about("Structural diffs with Git-style comparison inputs")
         .arg(Arg::new("repo").long("repo").default_value("."))
         .arg(Arg::new("config").long("config"))
+        .arg(
+            Arg::new("jobs")
+                .long("jobs")
+                .short('j')
+                .value_parser(clap::value_parser!(usize))
+                .default_value("16")
+                .help("Concurrent file diffs for --format ndjson; results are emitted as each finishes"),
+        )
         .arg(Arg::new("order").long("order").value_delimiter(',').action(ArgAction::Append).help("File class priority from diffr-classify attributes"))
         .arg(flag("cached").visible_alias("staged"))
         .arg(flag("merge-base"))
@@ -157,12 +166,17 @@ pub(crate) fn run() -> Result<i32> {
         let params = Arc::new(
             Config::load(workspace, args.get_one::<String>("config").map(Path::new))?.compile()?,
         );
+        let hook = fold_hook(&params, workspace)?;
         let mut session = DiffSession::open(workspace, comparison, params, &files)?;
         session.context_lines = display.num_context_lines;
         session.diff_options = diff_options;
         let changed = session.remaining() > 0;
         if streaming {
-            let failed = crate::stream::write(session, &mut io::stdout().lock())?;
+            let jobs = *args.get_one::<usize>("jobs").unwrap();
+            if jobs == 0 {
+                return Err("--jobs must be at least 1".into());
+            }
+            let failed = crate::stream::write(session, jobs, hook, &mut io::stdout().lock())?;
             return Ok(if failed {
                 2
             } else {
@@ -447,10 +461,12 @@ fn no_index(
         )
     };
     if args.get_one::<String>("format").map(String::as_str) == Some("ndjson") {
+        let hook = fold_hook(&config, Path::new(args.get_one::<String>("repo").unwrap()))?;
         crate::stream::write_file(
             &paths[0].to_string_lossy(),
             &paths[1].to_string_lossy(),
             compute,
+            hook.as_deref(),
             &mut io::stdout().lock(),
         )?;
         Ok(i32::from(changed && args.get_flag("exit-code")))
@@ -458,6 +474,15 @@ fn no_index(
         render(&compute(), args, display)?;
         Ok(i32::from(changed))
     }
+}
+
+/// Streaming output summarizes large novel folds through the configured hook.
+fn fold_hook(params: &crate::config::Params, workspace: &Path) -> Result<Option<Arc<Hook>>> {
+    params
+        .hook
+        .as_ref()
+        .map(|config| Hook::spawn(config, workspace).map(Arc::new))
+        .transpose()
 }
 
 /// Explicit machine/text modes and redirected output must never enter the alternate screen.

@@ -54,6 +54,7 @@ mod files;
 mod git;
 mod gitattributes;
 mod hash;
+mod hook;
 mod line_parser;
 mod lines;
 mod options;

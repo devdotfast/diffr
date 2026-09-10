@@ -329,28 +329,57 @@ impl DiffSession {
     }
 }
 
-impl Iterator for DiffSession {
-    type Item = (FileChange, Result<DiffResult>);
-    fn next(&mut self) -> Option<Self::Item> {
+/// Sources read on the session thread; diffing needs no repository access.
+pub(crate) struct LoadedFile {
+    pub(crate) file: FileChange,
+    before: String,
+    after: String,
+    params: Arc<Params>,
+    context_lines: u32,
+    diff_options: crate::options::DiffOptions,
+}
+
+impl LoadedFile {
+    pub(crate) fn diff(&self) -> DiffResult {
+        DiffResult::from_sources_with_options(
+            self.file.path(),
+            &self.before,
+            &self.after,
+            &self.params,
+            &crate::options::DisplayOptions {
+                num_context_lines: self.context_lines,
+                ..Default::default()
+            },
+            &self.diff_options,
+        )
+    }
+}
+
+impl DiffSession {
+    /// Read the next file's sources without diffing them.
+    pub(crate) fn load(&mut self) -> Option<(FileChange, Result<LoadedFile>)> {
         let pending = self.files.next()?;
         let result = (|| {
             if matches!(pending.file.status, FileStatus::Conflicted) {
                 return Err("unmerged index entry: resolve the conflict before requesting a structural diff".into());
             }
-            let before = pending.before.read(&self.repo)?;
-            let after = pending.after.read(&self.repo)?;
-            Ok(DiffResult::from_sources_with_options(
-                pending.file.path(),
-                &before,
-                &after,
-                &self.params,
-                &crate::options::DisplayOptions {
-                    num_context_lines: self.context_lines,
-                    ..Default::default()
-                },
-                &self.diff_options,
-            ))
+            Ok(LoadedFile {
+                before: pending.before.read(&self.repo)?,
+                after: pending.after.read(&self.repo)?,
+                file: pending.file.clone(),
+                params: Arc::clone(&self.params),
+                context_lines: self.context_lines,
+                diff_options: self.diff_options.clone(),
+            })
         })();
         Some((pending.file, result))
+    }
+}
+
+impl Iterator for DiffSession {
+    type Item = (FileChange, Result<DiffResult>);
+    fn next(&mut self) -> Option<Self::Item> {
+        let (file, loaded) = self.load()?;
+        Some((file, loaded.map(|loaded| loaded.diff())))
     }
 }

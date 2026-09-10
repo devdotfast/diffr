@@ -43,8 +43,8 @@ pipe reads can split records or contain several.
 
 | Event | Fields | Consumer action |
 | --- | --- | --- |
-| `start` | `version: 1`, `before`, `after`, `total` | Initialize progress. |
-| `file` | `file`, `diff` | Render a result. |
+| `start` | `version: 1`, `before`, `after`, `total`, `files` | Lay out every file up front. |
+| `file` | `file`, `diff`, optional `hook_error` | Render a result. |
 | `file_error` | `file`, `message` | Report failure and keep reading. |
 | `complete` | `succeeded`, `failed` | Mark complete, including partial failures. |
 
@@ -57,6 +57,10 @@ The file descriptor contains nullable `old_path`, `new_path`, `class`, and `stat
 (added/deleted/modified/renamed/type_changed/conflicted). `diff` is the existing
 domain JSON: complete sources, token correspondence, folds and context hunks.
 There is no display layout in the response.
+
+`files` lists every selected file descriptor in priority order. File results
+arrive in completion order, not manifest order, since files are diffed
+concurrently (`--jobs`, default 16). Match results to the manifest by identity.
 
 At completion, `succeeded + failed == total`; every selected file has one result
 or file error. EOF without `complete` means interrupted/incomplete output.
@@ -72,15 +76,62 @@ fail discovery.
 ## Computation and output
 
 Discovery and rename detection finish before `start`; syntax matching is lazy.
-A producer thread consumes the file iterator. The calling thread serializes,
-writes and flushes each event. A bounded queue holds one ready event, allowing
-computation to overlap slow writes without collecting the entire comparison.
-When the queue is full, the producer waits. This bounds the number of in-flight
-files, not their individual size.
+A pool of `--jobs` workers pulls files from the iterator: each worker reads the
+next file's sources under a lock, then diffs them while other workers pull
+further files. The calling thread serializes, writes and flushes each event.
+A bounded queue holds one ready event, so computation overlaps slow writes
+without collecting the entire comparison. In-flight files are bounded by the
+pool size, not their individual size. `--jobs 1` restores priority order.
 
-Closing stdout stops production when its next send fails; an already running file
-may finish. Terminate the process to cancel immediately. The CLI also retains its
-normal SIGPIPE behavior on Unix.
+Closing stdout stops production once the files in flight finish. Terminate the
+process to cancel immediately. The CLI also retains its normal SIGPIPE behavior
+on Unix.
+
+## Fold hooks
+
+A trusted hook subprocess can replace fold placeholders with richer text, such
+as pseudocode, before each `file` event is emitted:
+
+```toml
+[folds.hook]
+command = ["uv", "run", "--script", "examples/hooks/summarize.py"]
+tags = ["body"]     # optional; any listed tag qualifies. Omit to send every fold.
+min_lines = 12      # optional; default 0
+timeout_ms = 5000   # optional; per request
+```
+
+The command starts once per invocation, in the workspace directory, with the
+caller's environment. Only novel folds on the after side qualify: bodies that
+exist in the after source with no counterpart in the before source. Files with
+no qualifying fold never reach the hook. Streaming is the only output mode that
+runs hooks; the terminal frontend streams, so it does too.
+
+Requests are one JSON line per file on the hook's stdin, and replies are one JSON
+line per request on its stdout, matched by `id` and accepted in any order. The
+worker diffing a file blocks on that file's reply; other workers keep going, so
+a hook must answer requests concurrently rather than one at a time.
+
+```jsonc
+// diffr -> hook
+{"id": 7, "path": "src/auth.py", "language": "Python", "src": "<after source>",
+ "folds": [{"id": 0, "range": {"start": {"line": 40, "byte_column": 0}, "end": {"line": 88, "byte_column": 1}},
+            "tags": ["body"], "placeholder": "Body"}]}
+// hook -> diffr
+{"id": 7, "texts": {"0": "def refresh_token(session):\n    ..."}}
+{"id": 8, "error": "rate limited"}
+```
+
+`language` is null for plain text. A fold `id` indexes `rhs_folds` in that file's
+`diff`; the matching fold gains a non-null `summary` while `placeholder` is
+unchanged. Folds missing from `texts` keep a null `summary`. An `error` reply, a
+timeout, an unknown fold id, a malformed line, or hook exit leaves every summary
+in that file null and adds `hook_error` to its `file` event. A malformed line or
+exit also fails every later request, since ids can no longer be trusted. Hook
+stderr passes through to diffr's stderr. Failing to start the command exits 2
+before `start`.
+
+`examples/hooks/summarize.py` is a reference hook that asks a model through
+OpenRouter for Python-style pseudocode, answering up to 16 files at once.
 
 ## Fixture viewer
 

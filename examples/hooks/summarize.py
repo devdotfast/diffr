@@ -1,25 +1,26 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
+# dependencies = ["httpx>=0.27"]
 # ///
 """Reference diffr fold hook: rewrite large novel folds as Python-style pseudocode.
 
 diffr writes one NDJSON request per file on stdin and reads one reply per request
-on stdout, matched by id. Requests are answered concurrently, so replies arrive
-in whatever order the model finishes; diffr routes them by id.
+on stdout, matched by id. Requests are answered concurrently on one event loop
+with a shared HTTP client, so replies arrive in whatever order the model
+finishes; diffr routes them by id.
 
 Environment:
   GOOGLE_API_KEY         required
   DIFFR_SUMMARY_MODEL    default gemini-3.8-flash
   DIFFR_SUMMARY_WORKERS  concurrent requests, default 16
 """
+import asyncio
 import json
 import os
 import sys
-import threading
-import urllib.error
-import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+
+import httpx
 
 API_KEY = os.environ["GOOGLE_API_KEY"]
 MODEL = os.environ.get("DIFFR_SUMMARY_MODEL", "gemini-3.8-flash")
@@ -44,8 +45,6 @@ SCHEMA = {
     },
 }
 
-write_lock = threading.Lock()
-
 
 def prompt(request):
     numbered = "\n".join(
@@ -60,7 +59,7 @@ def prompt(request):
     return f"File {request['path']} ({language}):\n\n{numbered}\n\nFolds:\n{folds}"
 
 
-def complete(request):
+async def complete(client, request):
     body = {
         "systemInstruction": {"parts": [{"text": SYSTEM}]},
         "contents": [{"role": "user", "parts": [{"text": prompt(request)}]}],
@@ -72,14 +71,9 @@ def complete(request):
             "responseSchema": SCHEMA,
         },
     }
-    http = urllib.request.Request(
-        URL,
-        data=json.dumps(body).encode(),
-        headers={"x-goog-api-key": API_KEY, "Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(http, timeout=60) as response:
-        data = json.load(response)
-    content = data["candidates"][0]["content"]["parts"][-1]["text"]
+    response = await client.post(URL, json=body)
+    response.raise_for_status()
+    content = response.json()["candidates"][0]["content"]["parts"][-1]["text"]
     expected = {fold["id"] for fold in request["folds"]}
     texts = {}
     for item in json.loads(content):
@@ -90,25 +84,35 @@ def complete(request):
     return texts
 
 
-def answer(line):
+async def answer(client, limit, line):
     request = json.loads(line)
-    try:
-        reply = {"id": request["id"], "texts": complete(request)}
-    except urllib.error.HTTPError as error:
-        reply = {"id": request["id"], "error": f"{MODEL}: HTTP {error.code} {error.read()[:200]!r}"}
-    except (OSError, ValueError, KeyError) as error:
-        reply = {"id": request["id"], "error": f"{MODEL}: {error}"}
-    with write_lock:
-        sys.stdout.write(json.dumps(reply) + "\n")
-        sys.stdout.flush()
+    async with limit:
+        try:
+            reply = {"id": request["id"], "texts": await complete(client, request)}
+        except httpx.HTTPStatusError as error:
+            reply = {
+                "id": request["id"],
+                "error": f"{MODEL}: HTTP {error.response.status_code} {error.response.text[:200]}",
+            }
+        except (httpx.HTTPError, ValueError, KeyError) as error:
+            reply = {"id": request["id"], "error": f"{MODEL}: {error}"}
+    # Single-threaded: a whole line is written between awaits, never interleaved.
+    sys.stdout.write(json.dumps(reply) + "\n")
+    sys.stdout.flush()
 
 
-def main():
-    with ThreadPoolExecutor(WORKERS) as pool:
-        for line in sys.stdin:
-            if line.strip():
-                pool.submit(answer, line)
+async def main():
+    reader = asyncio.StreamReader()
+    await asyncio.get_running_loop().connect_read_pipe(
+        lambda: asyncio.StreamReaderProtocol(reader), sys.stdin
+    )
+    limit = asyncio.Semaphore(WORKERS)
+    async with httpx.AsyncClient(headers={"x-goog-api-key": API_KEY}, timeout=60) as client:
+        async with asyncio.TaskGroup() as tasks:
+            while line := await reader.readline():
+                if line.strip():
+                    tasks.create_task(answer(client, limit, line))
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

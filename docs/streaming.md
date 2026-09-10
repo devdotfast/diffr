@@ -135,7 +135,8 @@ before `start`.
 
 `examples/hooks/summarize.py` is a reference hook that asks Gemini 3.8 Flash,
 with thinking disabled, for Python-style pseudocode. It needs `GOOGLE_API_KEY`
-and answers up to 16 files at once.
+and answers up to 16 files at once on one asyncio loop with a shared httpx
+client, which `uv run --script` installs on first use.
 
 ## Fixture viewer
 

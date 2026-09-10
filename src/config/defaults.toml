@@ -1,147 +1,253 @@
 [languages.rust]
 folds = '''
-(block) @fold.body
-(field_declaration_list) @fold.body
-(declaration_list) @fold.body
-(match_block) @fold.body
-(array_expression) @fold.collection
-(field_initializer_list) @fold.collection
-(use_declaration) @fold.import
-(line_comment) @fold.comment
-(block_comment) @fold.comment
-(string_literal) @fold.string
-(raw_string_literal) @fold.string
-((attribute_item) @attribute . (function_item body: (block) @fold.test)
-  (#match? @attribute "test"))
+([
+  (block "{" "}")
+  (field_declaration_list "{" "}")
+  (declaration_list "{" "}")
+  (match_block "{" "}")
+] @fold
+  (#offset! @fold 0 1 0 -1)
+  (#set! tag "body"))
+([
+  (array_expression "[" "]")
+  (field_initializer_list "{" "}")
+] @fold
+  (#offset! @fold 0 1 0 -1)
+  (#set! tag "collection"))
+((use_declaration) @fold
+  (#set! tag "import"))
+([
+  (line_comment)
+  (block_comment)
+] @fold
+  (#set! tag "comment"))
+([
+  (string_literal)
+  (raw_string_literal)
+] @fold
+  (#set! tag "string"))
+((attribute_item) @_attribute . (function_item body: (block) @fold)
+  (#match? @_attribute "test")
+  (#offset! @fold 0 1 0 -1)
+  (#set! tag "test"))
 '''
 context = '''
-(function_item body: (block "}" @context.close) @context.body) @context.scope
-(impl_item body: (declaration_list "}" @context.close) @context.body) @context.scope
-(mod_item body: (declaration_list "}" @context.close) @context.body) @context.scope
-(struct_item body: (field_declaration_list "}" @context.close) @context.body) @context.scope
-[(for_expression) (loop_expression) (match_expression) (return_expression)] @context.boundary
-(function_item body: (block (_expression) @context.boundary .))
+[
+  (function_item body: (block "{" @context.final "}" @context.last))
+  (impl_item body: (declaration_list "{" @context.final "}" @context.last))
+  (mod_item body: (declaration_list "{" @context.final "}" @context.last))
+  (struct_item body: (field_declaration_list "{" @context.final "}" @context.last))
+] @context
+[(for_expression) (loop_expression) (match_expression) (return_expression)] @context @context.last
+(function_item body: (block (_expression) @context @context.last .))
 '''
 
 [languages.python]
 folds = '''
-(block) @fold.body
-(list) @fold.collection
-(dictionary) @fold.collection
-(set) @fold.collection
-(tuple) @fold.collection
-(import_statement) @fold.import
-(import_from_statement) @fold.import
-(comment) @fold.comment
-(string) @fold.string
-(function_definition name: (identifier) @name body: (block) @fold.test
-  (#match? @name "^test_"))
+((block) @fold
+  (#set! tag "body"))
+([
+  (list "[" "]")
+  (dictionary "{" "}")
+  (set "{" "}")
+  (tuple "(" ")")
+] @fold
+  (#offset! @fold 0 1 0 -1)
+  (#set! tag "collection"))
+((tuple) @fold (#not-match? @fold "^\\(") (#set! tag "collection"))
+([
+  (import_statement)
+  (import_from_statement)
+] @fold
+  (#set! tag "import"))
+((comment) @fold
+  (#set! tag "comment"))
+((string) @fold
+  (#set! tag "string"))
+(function_definition name: (identifier) @_name body: (block) @fold
+  (#match? @_name "^test_") (#set! tag "test"))
 '''
 context = '''
-[(function_definition body: (block) @context.indented_body)
- (class_definition body: (block) @context.indented_body)] @context.scope
-[(for_statement) (return_statement)] @context.boundary
+[(function_definition ":" @context.final) (class_definition ":" @context.final)] @context
+[(for_statement) (return_statement)] @context @context.last
 '''
 
 [languages.go]
 folds = '''
-(block) @fold.body
-(literal_value) @fold.collection
-(field_declaration_list) @fold.body
-(import_declaration) @fold.import
-(comment) @fold.comment
-(raw_string_literal) @fold.string
-(interpreted_string_literal) @fold.string
-(function_declaration name: (identifier) @name body: (block) @fold.test
-  (#match? @name "^Test"))
+([
+  (block "{" "}")
+  (field_declaration_list "{" "}")
+] @fold
+  (#offset! @fold 0 1 0 -1)
+  (#set! tag "body"))
+((literal_value "{" "}") @fold
+  (#offset! @fold 0 1 0 -1)
+  (#set! tag "collection"))
+((import_declaration) @fold
+  (#set! tag "import"))
+((comment) @fold
+  (#set! tag "comment"))
+([
+  (raw_string_literal)
+  (interpreted_string_literal)
+] @fold
+  (#set! tag "string"))
+(function_declaration name: (identifier) @_name body: (block) @fold
+  (#match? @_name "^Test") (#offset! @fold 0 1 0 -1) (#set! tag "test"))
 '''
 context = '''
-[(function_declaration body: (block "}" @context.close) @context.body)
- (method_declaration body: (block "}" @context.close) @context.body)] @context.scope
-[(for_statement) (expression_switch_statement) (return_statement)] @context.boundary
+[
+  (function_declaration body: (block "{" @context.final "}" @context.last))
+  (method_declaration body: (block "{" @context.final "}" @context.last))
+] @context
+[(for_statement) (expression_switch_statement) (return_statement)] @context @context.last
 '''
 
 [languages.javascript]
 folds = '''
-(statement_block) @fold.body
-(class_body) @fold.body
-(switch_body) @fold.body
-(object) @fold.collection
-(array) @fold.collection
-(import_statement) @fold.import
-(comment) @fold.comment
-(string) @fold.string
-(template_string) @fold.string
+([
+  (statement_block "{" "}")
+  (class_body "{" "}")
+  (switch_body "{" "}")
+] @fold
+  (#offset! @fold 0 1 0 -1)
+  (#set! tag "body"))
+([
+  (object "{" "}")
+  (array "[" "]")
+] @fold
+  (#offset! @fold 0 1 0 -1)
+  (#set! tag "collection"))
+((import_statement) @fold
+  (#set! tag "import"))
+((comment) @fold
+  (#set! tag "comment"))
+([
+  (string)
+  (template_string)
+] @fold
+  (#set! tag "string"))
 '''
 context = '''
-[(function_declaration body: (statement_block "}" @context.close) @context.body)
- (method_definition body: (statement_block "}" @context.close) @context.body)
- (arrow_function body: (statement_block "}" @context.close) @context.body)
- (class_declaration body: (class_body "}" @context.close) @context.body)] @context.scope
-[(for_statement) (switch_statement) (return_statement)] @context.boundary
-(arrow_function body: (_) @context.body) @context.scope
+[
+  (function_declaration body: (statement_block "{" @context.final "}" @context.last))
+  (method_definition body: (statement_block "{" @context.final "}" @context.last))
+  (arrow_function body: (statement_block "{" @context.final "}" @context.last))
+  (class_declaration body: (class_body "{" @context.final "}" @context.last))
+] @context
+[(for_statement) (switch_statement) (return_statement)] @context @context.last
+((arrow_function body: (_) @context.end) @context
+  (#offset! @context.end 0 1 0 0))
 '''
 
 [languages.javascriptjsx]
 folds = '''
-(statement_block) @fold.body
-(class_body) @fold.body
-(switch_body) @fold.body
-(object) @fold.collection
-(array) @fold.collection
-(import_statement) @fold.import
-(comment) @fold.comment
-(string) @fold.string
-(template_string) @fold.string
+([
+  (statement_block "{" "}")
+  (class_body "{" "}")
+  (switch_body "{" "}")
+] @fold
+  (#offset! @fold 0 1 0 -1)
+  (#set! tag "body"))
+([
+  (object "{" "}")
+  (array "[" "]")
+] @fold
+  (#offset! @fold 0 1 0 -1)
+  (#set! tag "collection"))
+((import_statement) @fold
+  (#set! tag "import"))
+((comment) @fold
+  (#set! tag "comment"))
+([
+  (string)
+  (template_string)
+] @fold
+  (#set! tag "string"))
 '''
 context = '''
-[(function_declaration body: (statement_block "}" @context.close) @context.body)
- (method_definition body: (statement_block "}" @context.close) @context.body)
- (arrow_function body: (statement_block "}" @context.close) @context.body)
- (class_declaration body: (class_body "}" @context.close) @context.body)] @context.scope
-[(for_statement) (switch_statement) (return_statement)] @context.boundary
-(arrow_function body: (_) @context.body) @context.scope
+[
+  (function_declaration body: (statement_block "{" @context.final "}" @context.last))
+  (method_definition body: (statement_block "{" @context.final "}" @context.last))
+  (arrow_function body: (statement_block "{" @context.final "}" @context.last))
+  (class_declaration body: (class_body "{" @context.final "}" @context.last))
+] @context
+[(for_statement) (switch_statement) (return_statement)] @context @context.last
+((arrow_function body: (_) @context.end) @context
+  (#offset! @context.end 0 1 0 0))
 '''
 
 [languages.typescript]
 folds = '''
-(statement_block) @fold.body
-(class_body) @fold.body
-(switch_body) @fold.body
-(object) @fold.collection
-(array) @fold.collection
-(import_statement) @fold.import
-(comment) @fold.comment
-(string) @fold.string
-(template_string) @fold.string
+([
+  (statement_block "{" "}")
+  (class_body "{" "}")
+  (switch_body "{" "}")
+] @fold
+  (#offset! @fold 0 1 0 -1)
+  (#set! tag "body"))
+([
+  (object "{" "}")
+  (array "[" "]")
+] @fold
+  (#offset! @fold 0 1 0 -1)
+  (#set! tag "collection"))
+((import_statement) @fold
+  (#set! tag "import"))
+((comment) @fold
+  (#set! tag "comment"))
+([
+  (string)
+  (template_string)
+] @fold
+  (#set! tag "string"))
 '''
 context = '''
-[(function_declaration body: (statement_block "}" @context.close) @context.body)
- (method_definition body: (statement_block "}" @context.close) @context.body)
- (arrow_function body: (statement_block "}" @context.close) @context.body)
- (class_declaration body: (class_body "}" @context.close) @context.body)] @context.scope
-[(for_statement) (switch_statement) (return_statement)] @context.boundary
-(arrow_function body: (_) @context.body) @context.scope
+[
+  (function_declaration body: (statement_block "{" @context.final "}" @context.last))
+  (method_definition body: (statement_block "{" @context.final "}" @context.last))
+  (arrow_function body: (statement_block "{" @context.final "}" @context.last))
+  (class_declaration body: (class_body "{" @context.final "}" @context.last))
+] @context
+[(for_statement) (switch_statement) (return_statement)] @context @context.last
+((arrow_function body: (_) @context.end) @context
+  (#offset! @context.end 0 1 0 0))
 '''
 
 [languages.typescripttsx]
 folds = '''
-(statement_block) @fold.body
-(class_body) @fold.body
-(switch_body) @fold.body
-(object) @fold.collection
-(array) @fold.collection
-(import_statement) @fold.import
-(comment) @fold.comment
-(string) @fold.string
-(template_string) @fold.string
+([
+  (statement_block "{" "}")
+  (class_body "{" "}")
+  (switch_body "{" "}")
+] @fold
+  (#offset! @fold 0 1 0 -1)
+  (#set! tag "body"))
+([
+  (object "{" "}")
+  (array "[" "]")
+] @fold
+  (#offset! @fold 0 1 0 -1)
+  (#set! tag "collection"))
+((import_statement) @fold
+  (#set! tag "import"))
+((comment) @fold
+  (#set! tag "comment"))
+([
+  (string)
+  (template_string)
+] @fold
+  (#set! tag "string"))
 '''
 context = '''
-[(function_declaration body: (statement_block "}" @context.close) @context.body)
- (method_definition body: (statement_block "}" @context.close) @context.body)
- (arrow_function body: (statement_block "}" @context.close) @context.body)
- (class_declaration body: (class_body "}" @context.close) @context.body)] @context.scope
-[(for_statement) (switch_statement) (return_statement)] @context.boundary
-(arrow_function body: (_) @context.body) @context.scope
+[
+  (function_declaration body: (statement_block "{" @context.final "}" @context.last))
+  (method_definition body: (statement_block "{" @context.final "}" @context.last))
+  (arrow_function body: (statement_block "{" @context.final "}" @context.last))
+  (class_declaration body: (class_body "{" @context.final "}" @context.last))
+] @context
+[(for_statement) (switch_statement) (return_statement)] @context @context.last
+((arrow_function body: (_) @context.end) @context
+  (#offset! @context.end 0 1 0 0))
 '''
 

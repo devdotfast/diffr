@@ -1,33 +1,7 @@
 //! Fold metadata is attached during parsing; pairing reuses syntax identity.
 use crate::diff::changes::ChangeKind;
-use crate::hash::DftHashMap;
 use crate::lines::{SourcePosition, SourceRange};
 use crate::parse::syntax::Syntax;
-use streaming_iterator::StreamingIterator as _;
-use tree_sitter::{Query, QueryCursor, Tree};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
-pub(crate) enum FoldKind {
-    Import,
-    Body,
-    Collection,
-    Test,
-    Comment,
-    String,
-}
-
-impl FoldKind {
-    pub(crate) fn placeholder(self) -> &'static str {
-        match self {
-            Self::Import => "Import",
-            Self::Body => "Body",
-            Self::Collection => "Collection",
-            Self::Test => "Test",
-            Self::Comment => "Comment",
-            Self::String => "String",
-        }
-    }
-}
 
 #[derive(Debug)]
 pub(crate) struct Fold {
@@ -46,40 +20,6 @@ pub(crate) enum FoldMatch {
         opposite: SourceRange,
     },
     Novel,
-}
-
-pub(crate) fn classify(
-    tree: &Tree,
-    src: &str,
-    query: Option<&Query>,
-) -> DftHashMap<usize, FoldKind> {
-    let mut kinds = DftHashMap::default();
-    let Some(query) = query else {
-        return kinds;
-    };
-    let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(query, tree.root_node(), src.as_bytes());
-    while let Some(matched) = matches.next() {
-        for capture in matched.captures {
-            let kind = match query.capture_names()[capture.index as usize] {
-                "fold.body" => FoldKind::Body,
-                "fold.collection" => FoldKind::Collection,
-                "fold.import" => FoldKind::Import,
-                "fold.test" => FoldKind::Test,
-                "fold.comment" => FoldKind::Comment,
-                "fold.string" => FoldKind::String,
-                name if name == "name" || name == "attribute" || name.starts_with("context.") => {
-                    continue
-                }
-                name => panic!("unknown fold capture: {name}"),
-            };
-            // Test is more specific than the generic body capture.
-            if kinds.get(&capture.node.id()) != Some(&FoldKind::Test) {
-                kinds.insert(capture.node.id(), kind);
-            }
-        }
-    }
-    kinds
 }
 
 /// Lists already retain the two edges of their interior, even without delimiters.
@@ -102,7 +42,7 @@ pub(crate) fn interior_range(
 }
 
 fn range(node: &Syntax<'_>) -> Option<SourceRange> {
-    let metadata = node.info().fold.get()?;
+    let metadata = node.info().fold.borrow().clone()?;
     let region = match (metadata.range_override, node) {
         (Some(region), _) => region,
         (
@@ -136,7 +76,7 @@ fn range(node: &Syntax<'_>) -> Option<SourceRange> {
 
 /// Project a side-local annotation using the same correspondence as MatchedPos.
 pub(crate) fn project(node: &Syntax<'_>, change: ChangeKind<'_>) -> Option<Fold> {
-    let own = node.info().fold.get()?;
+    let own = node.info().fold.borrow().clone()?;
     let own_range = range(node)?;
     let opposite = match change {
         ChangeKind::Unchanged(other)
@@ -149,9 +89,19 @@ pub(crate) fn project(node: &Syntax<'_>, change: ChangeKind<'_>) -> Option<Fold>
         None => FoldMatch::Novel,
     };
     Some(Fold {
-        tags: vec![own.kind.placeholder().to_lowercase()],
+        tags: own.tags.clone(),
         range: own_range,
         match_kind,
-        placeholder: own.kind.placeholder().into(),
+        placeholder: own
+            .tags
+            .first()
+            .map(|tag| {
+                let mut chars = tag.chars();
+                chars
+                    .next()
+                    .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_else(|| "…".into()),
     })
 }

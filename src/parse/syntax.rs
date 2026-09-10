@@ -2,7 +2,7 @@
 
 #![allow(clippy::mutable_key_type)] // Hash for Syntax doesn't use mutable fields.
 
-use super::folds::{self, Fold, FoldKind};
+use super::folds::{self, Fold};
 
 use std::cell::{Cell, RefCell};
 use std::hash::Hash;
@@ -53,20 +53,11 @@ pub(crate) type SyntaxId = NonZeroU32;
 pub(crate) type ContentId = u32;
 
 /// One semantic fold boundary, shared by Atoms and Lists.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FoldMetadata {
-    pub(crate) kind: FoldKind,
+    pub(crate) tags: Vec<String>,
     /// Only set when flattening removes the List that owned this boundary.
     pub(crate) range_override: Option<SourceRange>,
-}
-
-impl FoldMetadata {
-    pub(crate) fn new(kind: FoldKind) -> Self {
-        Self {
-            kind,
-            range_override: None,
-        }
-    }
 }
 
 /// Fields that are common to both `Syntax::List` and `Syntax::Atom`.
@@ -86,7 +77,7 @@ impl FoldMetadata {
 /// performance.)
 pub(crate) struct SyntaxInfo<'a> {
     /// Parent fold semantics replace the child's when a wrapper is flattened.
-    pub(crate) fold: Cell<Option<FoldMetadata>>,
+    pub(crate) fold: RefCell<Option<FoldMetadata>>,
     /// Multiple enclosing contexts can survive on one flattened node.
     pub(crate) context: RefCell<Vec<super::context::ContextMetadata>>,
     /// The previous node with the same parent as this one.
@@ -118,7 +109,7 @@ pub(crate) struct SyntaxInfo<'a> {
 impl<'a> SyntaxInfo<'a> {
     pub(crate) fn new() -> Self {
         Self {
-            fold: Cell::new(None),
+            fold: RefCell::new(None),
             context: RefCell::new(Vec::new()),
             previous_sibling: Cell::new(None),
             next_sibling: Cell::new(None),
@@ -292,8 +283,9 @@ impl<'a> Syntax<'a> {
         if children.len() == 1 && open_content.is_empty() && close_content.is_empty() {
             let child = children[0];
             if let Some(mut fold) = fold {
-                fold.range_override = Some(folds::interior_range(&open_position, &close_position));
-                child.info().fold.set(Some(fold));
+                fold.range_override
+                    .get_or_insert_with(|| folds::interior_range(&open_position, &close_position));
+                child.info().fold.replace(Some(fold));
             }
             return child;
         }
@@ -310,7 +302,7 @@ impl<'a> Syntax<'a> {
 
         arena.alloc(List {
             info: SyntaxInfo {
-                fold: Cell::new(fold),
+                fold: RefCell::new(fold),
                 ..SyntaxInfo::default()
             },
             open_position,
@@ -355,7 +347,7 @@ impl<'a> Syntax<'a> {
 
         arena.alloc(Atom {
             info: SyntaxInfo {
-                fold: Cell::new(fold),
+                fold: RefCell::new(fold),
                 ..SyntaxInfo::default()
             },
             position,
@@ -1305,8 +1297,8 @@ mod tests {
             start_col: col,
             end_col: col,
         };
-        let metadata = |kind| FoldMetadata {
-            kind,
+        let metadata = |tag: &str| FoldMetadata {
+            tags: vec![tag.to_owned()],
             range_override: None,
         };
         let atom = Syntax::new_atom_with_fold(
@@ -1318,7 +1310,7 @@ mod tests {
             }],
             "abc".into(),
             AtomKind::Normal,
-            Some(metadata(FoldKind::String)),
+            Some(metadata("string")),
         );
         let body = Syntax::new_list_with_fold(
             &arena,
@@ -1327,7 +1319,7 @@ mod tests {
             vec![atom],
             "",
             vec![point(9)],
-            Some(metadata(FoldKind::Body)),
+            Some(metadata("body")),
         );
         let test = Syntax::new_list_with_fold(
             &arena,
@@ -1336,19 +1328,22 @@ mod tests {
             vec![body],
             "",
             vec![point(10)],
-            Some(metadata(FoldKind::Test)),
+            Some(metadata("test")),
         );
         assert!(std::ptr::eq(test, atom));
         assert_eq!(
-            test.info().fold.get(),
+            test.info().fold.borrow().clone(),
             Some(FoldMetadata {
-                kind: FoldKind::Test,
+                tags: vec!["test".to_owned()],
                 range_override: Some(folds::interior_range(&[point(0)], &[point(10)])),
             })
         );
         let wrapper = Syntax::new_list(&arena, "", vec![], vec![test], "", vec![]);
         assert!(std::ptr::eq(wrapper, atom));
-        assert_eq!(wrapper.info().fold.get(), test.info().fold.get());
+        assert_eq!(
+            wrapper.info().fold.borrow().clone(),
+            test.info().fold.borrow().clone()
+        );
     }
 
     #[test]

@@ -1,3 +1,4 @@
+pub(crate) mod annotations;
 pub(crate) mod context;
 pub(crate) mod folds;
 pub(crate) mod guess_language;

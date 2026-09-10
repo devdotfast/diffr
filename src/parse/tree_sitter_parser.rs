@@ -1,6 +1,6 @@
 //! Load and configure parsers written with tree-sitter.
 
-use super::folds::{self, FoldKind};
+use super::syntax::FoldMetadata;
 use std::sync::{LazyLock, Mutex};
 
 use line_numbers::{LineNumber, LinePositions};
@@ -1456,9 +1456,10 @@ fn tree_highlights(
         }
     }
 
+    let annotations = super::annotations::collect(tree, src, params.query(&config.language));
     HighlightedNodeIds {
-        fold_kinds: folds::classify(tree, src, params.query(&config.language)),
-        contexts: super::context::classify(tree, src, params.query(&config.language)),
+        fold_kinds: annotations.folds,
+        contexts: annotations.contexts,
         comment_ids,
         keyword_ids,
         string_ids,
@@ -1718,7 +1719,7 @@ fn find_delim_positions(
 
 #[derive(Debug)]
 pub(crate) struct HighlightedNodeIds {
-    fold_kinds: DftHashMap<usize, FoldKind>,
+    fold_kinds: DftHashMap<usize, FoldMetadata>,
     contexts: DftHashMap<usize, Vec<super::context::ContextMetadata>>,
     keyword_ids: DftHashSet<usize>,
     comment_ids: DftHashSet<usize>,
@@ -2000,9 +2001,8 @@ fn list_from_cursor<'a>(
         }
     }
 
-    let fold_kind = highlights.fold_kinds.get(&list_root_node.id()).copied();
+    let fold = highlights.fold_kinds.get(&list_root_node.id()).cloned();
     let simple_list = before_delim.is_empty() && after_delim.is_empty();
-    let fold = fold_kind.map(crate::parse::syntax::FoldMetadata::new);
     let inner_list = Syntax::new_list_with_fold(
         arena,
         inner_open_content,
@@ -2010,7 +2010,7 @@ fn list_from_cursor<'a>(
         between_delim,
         inner_close_content,
         inner_close_position,
-        if simple_list { fold } else { None },
+        if simple_list { fold.clone() } else { None },
     );
 
     if before_delim.is_empty() && after_delim.is_empty() {
@@ -2114,11 +2114,7 @@ fn atom_from_cursor<'a>(
         position,
         content.to_owned(),
         highlight,
-        highlights
-            .fold_kinds
-            .get(&node.id())
-            .copied()
-            .map(crate::parse::syntax::FoldMetadata::new),
+        highlights.fold_kinds.get(&node.id()).cloned(),
     ))
 }
 

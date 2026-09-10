@@ -31,7 +31,7 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 pub(crate) struct Params {
-    queries: DftHashMap<tree_sitter::Language, AnnotationQuery>,
+    queries: DftHashMap<Language, AnnotationQuery>,
 }
 
 impl Config {
@@ -56,26 +56,22 @@ impl Config {
                 .find(|language| format!("{language:?}").to_lowercase() == name)
                 .ok_or_else(|| ConfigError(format!("unknown language: {name}")))?;
             let grammar = tree_sitter_parser::from_language(language).language.clone();
-            let mut sources = Vec::new();
-            for (feature, source) in [("folds", config.folds), ("context", config.context)] {
-                let Some(source) = source else {
-                    continue;
-                };
-                AnnotationQuery::compile(&grammar, &source)
-                    .map_err(|error| ConfigError(format!("languages.{name}.{feature}: {error}")))?;
-                sources.push(source);
-            }
-            let query = AnnotationQuery::compile(&grammar, &sources.join("\n"))
+            let source = format!(
+                "{}\n{}",
+                config.folds.as_deref().unwrap_or_default(),
+                config.context.as_deref().unwrap_or_default(),
+            );
+            let query = AnnotationQuery::compile(&grammar, &source)
                 .map_err(|error| ConfigError(format!("languages.{name}: {error}")))?;
-            queries.insert(grammar, query);
+            queries.insert(language, query);
         }
         Ok(Params { queries })
     }
 }
 
 impl Params {
-    pub(crate) fn query(&self, language: &tree_sitter::Language) -> Option<&AnnotationQuery> {
-        self.queries.get(language)
+    pub(crate) fn query(&self, language: Language) -> Option<&AnnotationQuery> {
+        self.queries.get(&language)
     }
 }
 
@@ -106,6 +102,31 @@ mod tests {
         assert!(!default_result.rhs_folds.is_empty());
         let python = DiffResult::from_sources_with_params("a.py", "", "import os\n", &custom);
         assert!(!python.rhs_folds.is_empty());
+    }
+
+    #[test]
+    fn shared_grammars_keep_language_configuration_independent() {
+        let params = Config::from_toml(
+            r#"
+            [languages.javascript]
+            folds = '''((statement_block) @fold (#set! tag "plain-js"))'''
+            [languages.javascriptjsx]
+            folds = '''((statement_block) @fold (#set! tag "jsx"))'''
+        "#,
+        )
+        .unwrap()
+        .compile()
+        .unwrap();
+        for (path, tag) in [("file.js", "plain-js"), ("file.jsx", "jsx")] {
+            let result = DiffResult::from_sources_with_params(
+                path,
+                "",
+                "function run() { work(); }",
+                &params,
+            );
+            assert_eq!(result.rhs_folds.len(), 1);
+            assert_eq!(result.rhs_folds[0].tags, [tag]);
+        }
     }
 
     #[test]
@@ -169,7 +190,7 @@ mod query_tests {
                 Ok(_) => panic!("accepted {query}"),
                 Err(error) => error,
             };
-            assert!(error.to_string().contains("languages.rust.folds"));
+            assert!(error.to_string().contains("languages.rust:"));
         }
     }
 
@@ -193,7 +214,7 @@ mod query_tests {
             ("(function_item) @context", 0),
         ] {
             let params = configured("", query);
-            let annotations = annotations::collect(&tree, src, params.query(&grammar.language));
+            let annotations = annotations::collect(&tree, src, params.query(grammar.language_id));
             let context = annotations
                 .contexts
                 .values()

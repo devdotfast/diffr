@@ -723,7 +723,7 @@ fn parse_binary_overrides_or_die(glob_strs: &[String]) -> Vec<glob::Pattern> {
 
 /// Parse CLI arguments passed to the binary.
 pub(crate) fn parse_args() -> Mode {
-    let matches = app().get_matches();
+    let matches = app().get_matches_from(std::env::args_os().skip(1));
 
     let color_output = match matches
         .get_one::<String>("color")
@@ -1039,7 +1039,7 @@ pub(crate) fn parse_args() -> Mode {
 
 /// Try to work out the width of the terminal we're on, or fall back
 /// to a sensible default value.
-fn detect_terminal_width() -> usize {
+pub(crate) fn detect_terminal_width() -> usize {
     if let Some((terminal_size::Width(columns), _)) = terminal_size::terminal_size() {
         if columns > 0 {
             return columns.into();

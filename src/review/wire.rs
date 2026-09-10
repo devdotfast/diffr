@@ -1,4 +1,5 @@
 //! Lossless JSON encoding of the domain model, not Difftastic's display JSON.
+#[cfg(test)]
 use crate::display::line_layout as layout;
 use crate::lines::SourceRange;
 use crate::parse::folds::{Fold, FoldMatch};
@@ -130,6 +131,7 @@ impl DiffResult {
     }
 
     /// Adapt the existing alignment and selected rows for the fixture viewer.
+    #[cfg(test)]
     pub(crate) fn viewer_json(&self) -> Value {
         let rows = layout::aligned_rows(
             layout::sources(self),

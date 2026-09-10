@@ -28,6 +28,7 @@ fn get_base_command() -> Command {
     } else {
         cmd = Command::new(path);
     }
+    cmd.arg("debug");
     cmd
 }
 

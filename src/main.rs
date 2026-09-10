@@ -41,6 +41,7 @@
 #![warn(clippy::todo)]
 #![warn(clippy::dbg_macro)]
 
+mod cli;
 mod config;
 mod conflicts;
 mod constants;
@@ -142,21 +143,24 @@ fn main() {
         .expect("The logger has not been previously initialized");
     reset_sigpipe();
 
-    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("serve")) {
-        if let Err(error) = server::run() {
+    let result = match std::env::args_os().nth(1).as_deref() {
+        Some(arg) if arg == "serve" => server::run().map(|()| 0),
+        Some(arg) if arg == "debug" => {
+            run_debug();
+            return;
+        }
+        _ => cli::run(),
+    };
+    match result {
+        Ok(code) => std::process::exit(code),
+        Err(error) => {
             eprintln!("{error}");
             std::process::exit(2);
         }
-        return;
     }
-    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("review")) {
-        if let Err(error) = review::cli::run() {
-            eprintln!("{error}");
-            std::process::exit(2);
-        }
-        return;
-    }
+}
 
+fn run_debug() {
     let params = &Params::default();
 
     match options::parse_args() {

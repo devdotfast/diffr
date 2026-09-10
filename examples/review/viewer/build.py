@@ -78,5 +78,5 @@ for files in sides:
 for meta in index:
     path = OUT / (meta['id'] + '.json')
     view = json.loads(path.read_text())
-    view['request'].update(base=commits[0], head=commits[1])
+    view['request'].update(before={'kind': 'revision', 'ref': commits[0]}, after={'kind': 'revision', 'ref': commits[1]})
     path.write_text(json.dumps(view))

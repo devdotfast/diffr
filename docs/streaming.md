@@ -39,17 +39,25 @@ read file contents; syntax matching starts afterward, one file at a time.
 `POST /diff` with `Content-Type: application/json`:
 
 ```json
-{"base":"main","head":"HEAD","files":{"order":["source","test"],"paths":["src/lib.rs"]}}
+{"before":{"kind":"revision","ref":"main"},"after":{"kind":"revision","ref":"HEAD"},"files":{"order":["source","test"],"paths":["src/lib.rs"]}}
 ```
 
-Only `base` and `head` are required. They resolve to pinned commit IDs. This is
-direct base-to-head comparison, with no implicit merge-base calculation.
+`before` and `after` are required. Each is a tagged operand:
+`{"kind":"revision","ref":"HEAD"}`, `{"kind":"index"}`,
+`{"kind":"working_tree"}`, or `{"kind":"empty_tree"}`.
+Compare revisions/trees, revision to index or worktree, or index to worktree;
+reversing those pairs is supported. Same-side index/index and worktree/worktree
+comparisons are rejected. Revision refs resolve once. Index content is pinned by
+blob ID during discovery. Worktree files are read as each result is computed;
+this is not an atomic workspace snapshot. There is no implicit merge base.
 
 - `files` groups client selection and ordering. It may be omitted.
 - Omitted `files.order` or `[]` means path order only; no server default exists.
-- Omitted or empty `files.paths` selects all changed files. Supplied paths are exact, not globs;
-  either side of a rename can select it. Explicit unchanged files are returned too.
-  Missing paths fail before streaming.
+- Omitted or empty `files.paths` selects all changed files. Paths accept libgit2 directory prefixes and wildcard patterns; Git magic
+  pathspecs are rejected. Only changed files are returned; unmatched paths produce
+  an empty stream. Path filtering precedes rename detection, so selecting only one
+  side of a rename can appear as an addition or deletion.
+- `files.renames` defaults to true; false skips rename detection.
 
 ## Response contract
 
@@ -58,19 +66,18 @@ network chunks can split a record or contain several.
 
 | Event | Fields | Client action |
 | --- | --- | --- |
-| `start` | `version: 1`, resolved `base`, `head`, `total` | Initialize progress. |
+| `start` | `version: 1`, resolved `before`, `after`, `total` | Initialize progress. |
 | `file` | `file`, `diff` | Render immediately. |
 | `file_error` | `file`, `message` | Show the failure and continue reading. |
 | `complete` | `succeeded`, `failed` | Mark complete, including partial failures. |
 | `error` | `message` | Terminal worker failure; mark incomplete. |
 
 The file descriptor has nullable `old_path`, `new_path`, `class`, and a `status`
-of added/deleted/modified/renamed/type_changed/unchanged. Unchanged applies only to
-explicit paths. `diff` is the existing domain JSON: sources, token correspondence,
+of added/deleted/modified/renamed/type_changed/conflicted. `diff` is the existing domain JSON: sources, token correspondence,
 folds, and syntax-context hunks. Display alignment is computed by the client;
 layout is never included in the response.
 
-Invalid refs/paths return HTTP 400 with `{"error":"..."}` before streaming.
+Invalid refs or unsupported comparisons/pathspecs return HTTP 400 with `{"error":"..."}` before streaming.
 JSON extraction failures use the framework's non-200 error response. Preparation
 worker failures return HTTP 500. After streaming starts, failures use events.
 

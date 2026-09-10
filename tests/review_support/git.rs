@@ -54,9 +54,9 @@ impl Repo {
     }
     pub(crate) fn review(&self, base: &str, head: &str, path: &str) -> std::process::Output {
         Command::new(assert_cmd::cargo_bin!("difft"))
-            .args(["review", "--repo"])
+            .args(["--repo"])
             .arg(&self.0)
-            .args(["--base", base, "--head", head, "--path", path])
+            .args([base, head, "--format", "snapshot", "--", path])
             .env_remove("DFT_DBG_KEEP_UNCHANGED")
             .output()
             .unwrap()

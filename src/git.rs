@@ -1,48 +1,127 @@
-//! Git source loading shared by CLI and streaming callers.
-use git2::{Commit, ErrorCode, Repository};
-use std::path::Path;
+//! Git comparison selection and lazy source loading shared by CLI and server.
+use crate::config::Params;
+use crate::summary::DiffResult;
+use git2::{AttrCheckFlags, AttrValue, Delta, Diff, DiffFindOptions, DiffOptions, Oid, Repository};
+use serde::{Deserialize, Serialize};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 pub(crate) type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-pub(crate) fn read_blob(
-    repo: &Repository,
-    commit: &Commit<'_>,
-    path: &str,
-) -> Result<Option<String>> {
-    let tree = commit.tree()?;
-    let entry = match tree.get_path(Path::new(path)) {
-        Ok(entry) => entry,
-        Err(error) if error.code() == ErrorCode::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    if !matches!(entry.filemode(), 0o100644 | 0o100755) {
-        return Err(
-            "Review v0 requires a regular file path, not a directory, symlink or submodule".into(),
-        );
-    }
-    let blob = repo.find_blob(entry.id())?;
-    let bytes = blob.content();
-    if bytes.contains(&0) {
-        return Err("Review v0 supports text files only".into());
-    }
-    Ok(Some(std::str::from_utf8(bytes)?.to_owned()))
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum Operand {
+    Revision { r#ref: String },
+    Index,
+    WorkingTree,
+    EmptyTree,
 }
 
-use crate::config::Params;
-use crate::summary::DiffResult;
-use git2::{AttrCheckFlags, AttrValue, Delta, DiffFindOptions, DiffOptions, Oid};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+impl Operand {
+    pub(crate) fn revision(reference: impl Into<String>) -> Self {
+        Self::Revision {
+            r#ref: reference.into(),
+        }
+    }
+
+    fn resolve(&self, repo: &Repository) -> Result<Self> {
+        match self {
+            Self::Revision { r#ref } => {
+                let object = repo.revparse_single(r#ref)?;
+                // Retain commit identity where possible, while accepting tree objects too.
+                let id = match object.peel_to_commit() {
+                    Ok(commit) => commit.id(),
+                    Err(_) => object.peel_to_tree()?.id(),
+                };
+                Ok(Self::revision(id.to_string()))
+            }
+            _ => Ok(self.clone()),
+        }
+    }
+
+    fn tree<'a>(&self, repo: &'a Repository) -> Result<Option<git2::Tree<'a>>> {
+        match self {
+            Self::Revision { r#ref } => Ok(Some(repo.revparse_single(r#ref)?.peel_to_tree()?)),
+            Self::EmptyTree => Ok(None),
+            _ => Err("expected a revision or empty tree".into()),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct Comparison {
+    pub(crate) before: Operand,
+    pub(crate) after: Operand,
+}
+
+impl Comparison {
+    pub(crate) fn resolve(&self, repo: &Repository) -> Result<Self> {
+        Ok(Self {
+            before: self.before.resolve(repo)?,
+            after: self.after.resolve(repo)?,
+        })
+    }
+
+    pub(crate) fn reverse(&mut self) {
+        std::mem::swap(&mut self.before, &mut self.after);
+    }
+
+    pub(crate) fn diff<'a>(&self, repo: &'a Repository, files: &FileParams) -> Result<Diff<'a>> {
+        use Operand::*;
+        let (before, after, reverse) = match (&self.before, &self.after) {
+            (WorkingTree, _) | (Index, Revision { .. } | EmptyTree) => {
+                (&self.after, &self.before, true)
+            }
+            _ => (&self.before, &self.after, false),
+        };
+        let mut options = DiffOptions::new();
+        options.include_typechange(true).reverse(reverse);
+        for path in &files.paths {
+            // libgit2 supports directory prefixes and wildcards, but not Git's magic pathspec DSL.
+            if path.starts_with(':') {
+                return Err(
+                    "magic pathspecs are not supported yet; use paths or wildcard patterns".into(),
+                );
+            }
+            options.pathspec(path);
+        }
+        let mut diff = match (before, after) {
+            (Revision { .. } | EmptyTree, Revision { .. } | EmptyTree) => repo.diff_tree_to_tree(
+                before.tree(repo)?.as_ref(),
+                after.tree(repo)?.as_ref(),
+                Some(&mut options),
+            )?,
+            (Revision { .. } | EmptyTree, Index) => {
+                repo.diff_tree_to_index(before.tree(repo)?.as_ref(), None, Some(&mut options))?
+            }
+            (Index, WorkingTree) => repo.diff_index_to_workdir(None, Some(&mut options))?,
+            (Revision { .. } | EmptyTree, WorkingTree) => repo
+                .diff_tree_to_workdir_with_index(before.tree(repo)?.as_ref(), Some(&mut options))?,
+            _ => {
+                return Err(
+                    "compare two revisions, a revision and index/worktree, or index and worktree"
+                        .into(),
+                )
+            }
+        };
+        if files.renames {
+            diff.find_similar(Some(DiffFindOptions::new().renames(true)))?;
+        }
+        Ok(diff)
+    }
+}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum FileStatus {
-    Unchanged,
     Added,
     Deleted,
     Modified,
     Renamed,
     TypeChanged,
+    Conflicted,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -62,22 +141,89 @@ impl FileChange {
     }
 }
 
-/// Client selection and ordering; omitted order leaves files in path order.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileParams {
     pub(crate) order: Vec<String>,
-    /// Exact repository-relative paths; empty selects all changed files.
+    /// Repository-relative paths or wildcard patterns; empty selects all changed files.
     pub(crate) paths: Vec<String>,
+    pub(crate) renames: bool,
 }
 
-/// Owns pinned revisions and descriptors, not precomputed patches.
+impl Default for FileParams {
+    fn default() -> Self {
+        Self {
+            order: Vec::new(),
+            paths: Vec::new(),
+            renames: true,
+        }
+    }
+}
+
+/// Blob IDs pin revision/index content without retaining every file's source text.
+enum Source {
+    Absent,
+    Blob { id: Oid, mode: git2::FileMode },
+    WorkingFile { path: PathBuf, mode: git2::FileMode },
+}
+
+impl Source {
+    fn from_delta(
+        file: git2::DiffFile<'_>,
+        operand: &Operand,
+        workspace: Option<&Path>,
+        absent: bool,
+    ) -> Result<Self> {
+        if absent {
+            return Ok(Self::Absent);
+        }
+        if matches!(operand, Operand::WorkingTree) {
+            return Ok(Self::WorkingFile {
+                path: workspace
+                    .ok_or("working-tree comparison requires a working tree")?
+                    .join(file.path().ok_or("missing file path")?),
+                mode: file.mode(),
+            });
+        }
+        Ok(Self::Blob {
+            id: file.id(),
+            mode: file.mode(),
+        })
+    }
+
+    fn read(&self, repo: &Repository) -> Result<String> {
+        let mode = match self {
+            Self::Absent => return Ok(String::new()),
+            Self::Blob { mode, .. } | Self::WorkingFile { mode, .. } => mode,
+        };
+        if !matches!(mode, git2::FileMode::Blob | git2::FileMode::BlobExecutable) {
+            return Err("structural diffs currently require regular text files (not symlinks or submodules)".into());
+        }
+        let bytes = match self {
+            Self::Blob { id, .. } => repo.find_blob(*id)?.content().to_vec(),
+            Self::WorkingFile { path, .. } => std::fs::read(path)?,
+            Self::Absent => unreachable!(),
+        };
+        if bytes.contains(&0) {
+            return Err("structural diffs currently support text files only".into());
+        }
+        Ok(String::from_utf8(bytes)?)
+    }
+}
+
+struct PendingFile {
+    file: FileChange,
+    before: Source,
+    after: Source,
+}
+
 pub(crate) struct DiffSession {
     repo: Repository,
-    pub(crate) base: Oid,
-    pub(crate) head: Oid,
+    pub(crate) comparison: Comparison,
     params: Arc<Params>,
-    files: std::vec::IntoIter<FileChange>,
+    files: std::vec::IntoIter<PendingFile>,
+    pub(crate) context_lines: u32,
+    pub(crate) diff_options: crate::options::DiffOptions,
 }
 
 impl DiffSession {
@@ -87,152 +233,116 @@ impl DiffSession {
 
     pub(crate) fn open(
         workspace: &Path,
-        base: &str,
-        head: &str,
+        comparison: Comparison,
         params: Arc<Params>,
         files: &FileParams,
     ) -> Result<Self> {
         let repo = Repository::open(workspace)?;
-        let base = repo.revparse_single(base)?.peel_to_commit()?.id();
-        let head = repo.revparse_single(head)?.peel_to_commit()?.id();
-        let files = discover(&repo, base, head, &files.order, &files.paths)?;
+        let comparison = comparison.resolve(&repo)?;
+        let pending = {
+            let diff = comparison.diff(&repo, files)?;
+            let mut pending = Vec::new();
+            for delta in diff.deltas() {
+                let status = match delta.status() {
+                    Delta::Added => FileStatus::Added,
+                    Delta::Deleted => FileStatus::Deleted,
+                    Delta::Modified => FileStatus::Modified,
+                    Delta::Renamed => FileStatus::Renamed,
+                    Delta::Typechange => FileStatus::TypeChanged,
+                    Delta::Conflicted => FileStatus::Conflicted,
+                    _ => continue,
+                };
+                let path = |file: git2::DiffFile<'_>| -> Result<String> {
+                    Ok(file
+                        .path()
+                        .and_then(Path::to_str)
+                        .ok_or("non-UTF-8 Git paths are unsupported")?
+                        .to_owned())
+                };
+                let mut file = FileChange {
+                    old_path: if delta.status() == Delta::Added {
+                        None
+                    } else {
+                        Some(path(delta.old_file())?)
+                    },
+                    new_path: if delta.status() == Delta::Deleted {
+                        None
+                    } else {
+                        Some(path(delta.new_file())?)
+                    },
+                    status,
+                    class: None,
+                };
+                file.class = match AttrValue::from_string(repo.get_attr(
+                    Path::new(file.path()),
+                    "diffr-classify",
+                    AttrCheckFlags::FILE_THEN_INDEX,
+                )?) {
+                    AttrValue::String(value) => Some(value.to_owned()),
+                    _ => None,
+                };
+                pending.push(PendingFile {
+                    before: Source::from_delta(
+                        delta.old_file(),
+                        &comparison.before,
+                        repo.workdir(),
+                        file.old_path.is_none(),
+                    )?,
+                    after: Source::from_delta(
+                        delta.new_file(),
+                        &comparison.after,
+                        repo.workdir(),
+                        file.new_path.is_none(),
+                    )?,
+                    file,
+                });
+            }
+            let rank = |file: &FileChange| {
+                file.class
+                    .as_ref()
+                    .and_then(|class| files.order.iter().position(|item| item == class))
+                    .unwrap_or(files.order.len())
+            };
+            pending.sort_by(|a, b| {
+                rank(&a.file)
+                    .cmp(&rank(&b.file))
+                    .then_with(|| a.file.path().cmp(b.file.path()))
+            });
+            pending
+        };
         Ok(Self {
             repo,
-            base,
-            head,
+            comparison,
             params,
-            files: files.into_iter(),
+            files: pending.into_iter(),
+            context_lines: 3,
+            diff_options: crate::options::DiffOptions::default(),
         })
     }
 }
 
 impl Iterator for DiffSession {
     type Item = (FileChange, Result<DiffResult>);
-
     fn next(&mut self) -> Option<Self::Item> {
-        let file = self.files.next()?;
+        let pending = self.files.next()?;
         let result = (|| {
-            let base = self.repo.find_commit(self.base)?;
-            let head = self.repo.find_commit(self.head)?;
-            let lhs = file
-                .old_path
-                .as_deref()
-                .map(|path| read_blob(&self.repo, &base, path))
-                .transpose()?
-                .flatten();
-            let rhs = file
-                .new_path
-                .as_deref()
-                .map(|path| read_blob(&self.repo, &head, path))
-                .transpose()?
-                .flatten();
-            Ok(DiffResult::from_sources_with_params(
-                file.path(),
-                lhs.as_deref().unwrap_or_default(),
-                rhs.as_deref().unwrap_or_default(),
+            if matches!(pending.file.status, FileStatus::Conflicted) {
+                return Err("unmerged index entry: resolve the conflict before requesting a structural diff".into());
+            }
+            let before = pending.before.read(&self.repo)?;
+            let after = pending.after.read(&self.repo)?;
+            Ok(DiffResult::from_sources_with_options(
+                pending.file.path(),
+                &before,
+                &after,
                 &self.params,
+                &crate::options::DisplayOptions {
+                    num_context_lines: self.context_lines,
+                    ..Default::default()
+                },
+                &self.diff_options,
             ))
         })();
-        Some((file, result))
+        Some((pending.file, result))
     }
-}
-
-fn discover(
-    repo: &Repository,
-    base: Oid,
-    head: Oid,
-    order: &[String],
-    paths: &[String],
-) -> Result<Vec<FileChange>> {
-    let base = repo.find_commit(base)?.tree()?;
-    let head = repo.find_commit(head)?.tree()?;
-    let mut diff = repo.diff_tree_to_tree(
-        Some(&base),
-        Some(&head),
-        Some(DiffOptions::new().include_typechange(true)),
-    )?;
-    diff.find_similar(Some(DiffFindOptions::new().renames(true)))?;
-    let mut files = Vec::new();
-    for delta in diff.deltas() {
-        let status = match delta.status() {
-            Delta::Added => FileStatus::Added,
-            Delta::Deleted => FileStatus::Deleted,
-            Delta::Modified => FileStatus::Modified,
-            Delta::Renamed => FileStatus::Renamed,
-            Delta::Typechange => FileStatus::TypeChanged,
-            _ => continue,
-        };
-        let path = |file: git2::DiffFile<'_>| -> Result<String> {
-            Ok(file
-                .path()
-                .and_then(Path::to_str)
-                .ok_or("non-UTF-8 Git paths are unsupported")?
-                .to_owned())
-        };
-        let old_path = if delta.status() == Delta::Added {
-            None
-        } else {
-            Some(path(delta.old_file())?)
-        };
-        let new_path = if delta.status() == Delta::Deleted {
-            None
-        } else {
-            Some(path(delta.new_file())?)
-        };
-        if !paths.is_empty()
-            && !paths
-                .iter()
-                .any(|path| old_path.as_ref() == Some(path) || new_path.as_ref() == Some(path))
-        {
-            continue;
-        }
-        files.push(FileChange {
-            old_path,
-            new_path,
-            status,
-            class: None,
-        });
-    }
-    // An explicitly selected unchanged file is still a valid single-file diff.
-    for path in paths {
-        if path.is_empty()
-            || Path::new(path)
-                .components()
-                .any(|part| !matches!(part, std::path::Component::Normal(_)))
-        {
-            return Err("expected a repository-relative path".into());
-        }
-        if files.iter().any(|file| {
-            file.old_path.as_ref() == Some(path) || file.new_path.as_ref() == Some(path)
-        }) {
-            continue;
-        }
-        base.get_path(Path::new(path))?;
-        head.get_path(Path::new(path))?;
-        files.push(FileChange {
-            old_path: Some(path.clone()),
-            new_path: Some(path.clone()),
-            status: FileStatus::Unchanged,
-            class: None,
-        });
-    }
-    for file in &mut files {
-        let attr = repo.get_attr(
-            Path::new(file.path()),
-            "diffr-classify",
-            AttrCheckFlags::FILE_THEN_INDEX,
-        )?;
-        file.class = match AttrValue::from_string(attr) {
-            AttrValue::String(value) => Some(value.to_owned()),
-            _ => None,
-        };
-    }
-    let rank = |file: &FileChange| {
-        file.class
-            .as_ref()
-            .and_then(|class| order.iter().position(|item| item == class))
-            .unwrap_or(order.len())
-    };
-    files.sort_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| a.path().cmp(b.path())));
-    Ok(files)
 }

@@ -1,6 +1,6 @@
 //! One-workspace HTTP adapter over the file iterator.
 use crate::config::{Config, Params};
-use crate::git::{DiffSession, FileChange, FileParams, Result};
+use crate::git::{Comparison, DiffSession, FileChange, FileParams, Operand, Result};
 use axum::{
     body::Body,
     extract::State,
@@ -23,8 +23,8 @@ use tower_http::services::ServeDir;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DiffRequest {
-    base: String,
-    head: String,
+    before: Operand,
+    after: Operand,
     #[serde(default)]
     files: FileParams,
 }
@@ -34,8 +34,8 @@ struct DiffRequest {
 enum Event {
     Start {
         version: u32,
-        base: String,
-        head: String,
+        before: Operand,
+        after: Operand,
         total: usize,
     },
     File {
@@ -70,8 +70,10 @@ async fn diff(State(server): State<Arc<Server>>, Json(request): Json<DiffRequest
     let prepared = tokio::task::spawn_blocking(move || {
         DiffSession::open(
             &server.workspace,
-            &request.base,
-            &request.head,
+            Comparison {
+                before: request.before,
+                after: request.after,
+            },
             Arc::clone(&server.params),
             &request.files,
         )
@@ -95,7 +97,7 @@ async fn diff(State(server): State<Arc<Server>>, Json(request): Json<DiffRequest
         }
     };
     let stream = async_stream::stream! {
-        yield line(Event::Start { version: 1, base: session.base.to_string(), head: session.head.to_string(), total: session.remaining() });
+        yield line(Event::Start { version: 1, before: session.comparison.before.clone(), after: session.comparison.after.clone(), total: session.remaining() });
         let mut succeeded = 0;
         let mut failed = 0;
         while session.remaining() > 0 {

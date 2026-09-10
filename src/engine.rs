@@ -25,11 +25,30 @@ impl DiffResult {
         Self::from_sources_with_params(path, lhs, rhs, &Params::default())
     }
 
+    #[cfg(test)]
     pub(crate) fn from_sources_with_params(
         path: &str,
         lhs: &str,
         rhs: &str,
         params: &Params,
+    ) -> Self {
+        Self::from_sources_with_options(
+            path,
+            lhs,
+            rhs,
+            params,
+            &DisplayOptions::default(),
+            &DiffOptions::default(),
+        )
+    }
+
+    pub(crate) fn from_sources_with_options(
+        path: &str,
+        lhs: &str,
+        rhs: &str,
+        params: &Params,
+        display: &DisplayOptions,
+        options: &DiffOptions,
     ) -> Self {
         let file = crate::options::FileArgument::NamedPath(path.into());
         diff_file_content(
@@ -40,8 +59,8 @@ impl DiffResult {
             &file,
             lhs,
             rhs,
-            &crate::options::DisplayOptions::default(),
-            &crate::options::DiffOptions::default(),
+            display,
+            options,
             &[],
         )
     }

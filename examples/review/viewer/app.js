@@ -1,3 +1,4 @@
+import { deriveLayout } from "./layout.mjs";
 import { diffEvents } from "./stream.mjs";
 import { foldLine } from "./inline-folds.mjs";
 const $ = (id) => document.getElementById(id);
@@ -310,7 +311,7 @@ async function select(id) {
     if (event.type === "file_error") throw Error(event.message);
     if (event.type !== "file") continue;
     received = true;
-    show({ ...data, domain: event.diff, layout: event.layout });
+    show({ ...data, domain: event.diff, layout: deriveLayout(event.diff) });
     $("status").textContent = "File received; waiting for stream completion…";
   }
   if (!received) throw Error("No file returned");

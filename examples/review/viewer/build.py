@@ -61,7 +61,7 @@ for directory in sorted((ROOT / 'examples/review/real').iterdir()):
                 title=provenance['pr_title'], url=provenance['pr_url'], language=provenance['language'],
                 path=path, summary=case['summary'])
     view['meta'] = meta
-    view['request'] = {'paths': [served_path], 'include_layout': True}
+    view['request'] = {'files': {'paths': [served_path]}}
     (OUT / f'{directory.name}.json').write_text(json.dumps(view))
     index.append(meta)
     print(directory.name)

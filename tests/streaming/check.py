@@ -83,6 +83,8 @@ with tempfile.TemporaryDirectory(prefix="diffr-stream-test-") as temp:
         _, events = request(port, dict(base=base, head=head, files=dict(order=["generated"])))
         assert events[1]["type"] == "file_error" and events[-1]["succeeded"] == 4
         _, events = request(port, dict(base=base, head=head))
+        _, empty = request(port, dict(base=base, head=head, files=dict(order=[], paths=[])))
+        assert empty == events, "empty file options select all changed files without class priority"
         names = [e["file"]["new_path"] or e["file"]["old_path"] for e in events[1:-1]]
         assert names == sorted(names), "omitted file order uses path order"
         _, events = request(port, dict(base=head, head=head))

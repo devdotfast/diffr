@@ -1,9 +1,0 @@
-{
-  "name": "hunk-vim-navigation-extension",
-  "private": true,
-  "hunk": {
-    "extensions": [
-      "./index.ts"
-    ]
-  }
-}

@@ -1,9 +1,0 @@
-{
-  "name": "hunk-inline-edit-extension",
-  "private": true,
-  "hunk": {
-    "extensions": [
-      "./index.ts"
-    ]
-  }
-}

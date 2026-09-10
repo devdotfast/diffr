@@ -1,9 +1,0 @@
-**
-!Dockerfile
-!controller.sh
-!vm-shell-controller.sh
-!pins.json
-!scenarios.json
-!controller-deps/**
-!guest/**
-!scenarios/**

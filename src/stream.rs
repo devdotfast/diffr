@@ -1,9 +1,12 @@
 //! Incremental stdout protocol over the shared file iterator.
-use crate::git::{DiffSession, FileChange, Operand, Result};
+use crate::git::{DiffSession, FileChange, LoadedFile, Operand, Result};
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use serde::Serialize;
 use serde_json::Value;
 use std::io::{BufWriter, Write};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{sync_channel, SendError, SyncSender};
+use std::sync::Arc;
 use std::thread;
 
 #[derive(Serialize)]
@@ -30,13 +33,19 @@ enum Event {
     },
 }
 
-/// Returns whether any file failed. The queue holds at most one ready event;
-/// computation can overlap output without retaining the whole diff.
-pub(crate) fn write(session: DiffSession, output: &mut impl Write) -> Result<bool> {
+/// Returns whether any file failed. Files are diffed on `jobs` workers and
+/// emitted as they finish, so results arrive in completion order. The queue
+/// holds at most one ready event; computation can overlap output without
+/// retaining the whole diff.
+pub(crate) fn write(session: DiffSession, jobs: usize, output: &mut impl Write) -> Result<bool> {
     let (sender, receiver) = sync_channel(1);
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(jobs)
+        .thread_name(|index| format!("diffr-worker-{index}"))
+        .build()?;
     let worker = thread::spawn(move || {
-        // A disconnected consumer cancels production after the current file.
-        let _ = produce(session, sender);
+        // A disconnected consumer cancels production after the files in flight.
+        let _ = produce(session, &pool, sender);
     });
     let mut output = BufWriter::new(output);
     let result: Result<bool> = (|| {
@@ -61,6 +70,7 @@ pub(crate) fn write(session: DiffSession, output: &mut impl Write) -> Result<boo
 
 fn produce(
     session: DiffSession,
+    pool: &rayon::ThreadPool,
     sender: SyncSender<Event>,
 ) -> std::result::Result<(), SendError<Event>> {
     sender.send(Event::Start {
@@ -70,28 +80,58 @@ fn produce(
         total: session.remaining(),
         files: session.file_manifest(),
     })?;
-    let mut succeeded = 0;
-    let mut failed = 0;
-    for (file, result) in session {
-        let event = match result {
-            Ok(diff) => {
-                succeeded += 1;
-                Event::File {
-                    file,
-                    diff: diff.domain_json(),
+    let succeeded = AtomicUsize::new(0);
+    let failed = AtomicUsize::new(0);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let loader = Loader {
+        session,
+        cancelled: Arc::clone(&cancelled),
+    };
+    pool.install(|| {
+        loader.par_bridge().for_each(|(file, loaded)| {
+            let event = match loaded {
+                Ok(loaded) => {
+                    let diff = loaded.diff();
+                    succeeded.fetch_add(1, Ordering::Relaxed);
+                    Event::File {
+                        file,
+                        diff: diff.domain_json(),
+                    }
                 }
-            }
-            Err(error) => {
-                failed += 1;
-                Event::FileError {
-                    file,
-                    message: error.to_string(),
+                Err(error) => {
+                    failed.fetch_add(1, Ordering::Relaxed);
+                    Event::FileError {
+                        file,
+                        message: error.to_string(),
+                    }
                 }
+            };
+            if sender.send(event).is_err() {
+                cancelled.store(true, Ordering::Relaxed);
             }
-        };
-        sender.send(event)?;
+        });
+    });
+    sender.send(Event::Complete {
+        succeeded: succeeded.into_inner(),
+        failed: failed.into_inner(),
+    })
+}
+
+/// Reads sources serially on whichever worker pulls next; diffing then
+/// proceeds on that worker while others pull further files.
+struct Loader {
+    session: DiffSession,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Iterator for Loader {
+    type Item = (FileChange, crate::git::Result<LoadedFile>);
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.cancelled.load(Ordering::Relaxed) {
+            return None;
+        }
+        self.session.load()
     }
-    sender.send(Event::Complete { succeeded, failed })
 }
 
 /// Stream a standalone file comparison through the same file/completion events.

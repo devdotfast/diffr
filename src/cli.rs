@@ -34,6 +34,14 @@ pub(crate) fn run() -> Result<i32> {
         .about("Structural diffs with Git-style comparison inputs")
         .arg(Arg::new("repo").long("repo").default_value("."))
         .arg(Arg::new("config").long("config"))
+        .arg(
+            Arg::new("jobs")
+                .long("jobs")
+                .short('j')
+                .value_parser(clap::value_parser!(usize))
+                .default_value("16")
+                .help("Concurrent file diffs for --format ndjson; results are emitted as each finishes"),
+        )
         .arg(Arg::new("order").long("order").value_delimiter(',').action(ArgAction::Append).help("File class priority from diffr-classify attributes"))
         .arg(flag("cached").visible_alias("staged"))
         .arg(flag("merge-base"))
@@ -162,7 +170,11 @@ pub(crate) fn run() -> Result<i32> {
         session.diff_options = diff_options;
         let changed = session.remaining() > 0;
         if streaming {
-            let failed = crate::stream::write(session, &mut io::stdout().lock())?;
+            let jobs = *args.get_one::<usize>("jobs").unwrap();
+            if jobs == 0 {
+                return Err("--jobs must be at least 1".into());
+            }
+            let failed = crate::stream::write(session, jobs, &mut io::stdout().lock())?;
             return Ok(if failed {
                 2
             } else {

@@ -58,15 +58,18 @@ with tempfile.TemporaryDirectory(prefix="diffr-stream-") as temp:
     events = stream(repo, base, head, "--order", "test,source,generated", code=2)
     assert events[0]["before"] == dict(kind="revision", ref=base)
     assert events[0]["after"] == dict(kind="revision", ref=head)
-    assert [e["file"]["class"] for e in events[1:-1]] == ["test", "test", "test", "source", "generated"]
+    # Results arrive in completion order; --order governs computation priority only.
+    assert sorted(e["file"]["class"] for e in events[1:-1]) == ["generated", "source", "test", "test", "test"]
     renamed = next(e["file"] for e in events[1:-1] if e["file"]["status"] == "renamed")
     assert renamed["old_path"] == "rename.py" and renamed["new_path"] == "renamed.py"
     rust = next(e for e in events[1:-1] if e["file"]["new_path"] == "a.rs")
     assert rust["diff"]["rhs_folds"] == []
     # An early file failure must not prevent the later successes.
     events = stream(repo, base, head, "--order", "generated", code=2)
-    assert events[1]["type"] == "file_error" and events[-1]["succeeded"] == 4
+    assert sum(e["type"] == "file_error" for e in events) == 1 and events[-1]["succeeded"] == 4
     events = stream(repo, base, head, "--", "a.rs", "z.py")
+    assert sorted(e["file"]["new_path"] for e in events[1:-1]) == ["a.rs", "z.py"]
+    events = stream(repo, base, head, "--jobs", "1", "--", "a.rs", "z.py")
     assert [e["file"]["new_path"] for e in events[1:-1]] == ["a.rs", "z.py"]
     assert len(stream(repo, head, head)) == 2
     assert len(stream(repo, base, head, "--", "missing.rs")) == 2

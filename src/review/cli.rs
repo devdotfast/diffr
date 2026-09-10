@@ -1,31 +1,10 @@
 //! Git ref input for the experimental review snapshot command.
+use super::git::{read_blob, Result};
 use crate::config::Params;
 use crate::summary::DiffResult;
 use clap::{Arg, Command as App};
-use git2::{Commit, ErrorCode, Repository};
+use git2::Repository;
 use std::path::{Component, Path};
-
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-
-fn read_blob(repo: &Repository, commit: &Commit<'_>, path: &str) -> Result<Option<String>> {
-    let tree = commit.tree()?;
-    let entry = match tree.get_path(Path::new(path)) {
-        Ok(entry) => entry,
-        Err(error) if error.code() == ErrorCode::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    if !matches!(entry.filemode(), 0o100644 | 0o100755) {
-        return Err(
-            "Review v0 requires a regular file path, not a directory, symlink or submodule".into(),
-        );
-    }
-    let blob = repo.find_blob(entry.id())?;
-    let bytes = blob.content();
-    if bytes.contains(&0) {
-        return Err("Review v0 supports text files only".into());
-    }
-    Ok(Some(std::str::from_utf8(bytes)?.to_owned()))
-}
 
 pub(crate) fn run() -> Result<()> {
     let params = Params::default();

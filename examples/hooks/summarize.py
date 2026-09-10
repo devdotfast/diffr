@@ -16,6 +16,7 @@ Environment:
   DIFFR_SUMMARY_MODEL    default gemini-3.8-flash
   DIFFR_SUMMARY_WORKERS  concurrent model requests, default 16
 """
+
 import asyncio
 import json
 import os
@@ -53,7 +54,9 @@ limit = asyncio.Semaphore(WORKERS)
 
 
 def prompt(path, language, src, folds):
-    numbered = "\n".join(f"{n:5d} | {line}" for n, line in enumerate(src.splitlines(), 1))
+    numbered = "\n".join(
+        f"{n:5d} | {line}" for n, line in enumerate(src.splitlines(), 1)
+    )
     ranges = "\n".join(
         f"- fold {fold['id']}: lines {fold['range']['start']['line'] + 1}-"
         f"{fold['range']['end']['line'] + 1}"
@@ -65,7 +68,9 @@ def prompt(path, language, src, folds):
 async def complete(path, language, src, folds):
     body = {
         "systemInstruction": {"parts": [{"text": SYSTEM}]},
-        "contents": [{"role": "user", "parts": [{"text": prompt(path, language, src, folds)}]}],
+        "contents": [
+            {"role": "user", "parts": [{"text": prompt(path, language, src, folds)}]}
+        ],
         "generationConfig": {
             "temperature": 0,
             "maxOutputTokens": 160 * len(folds) + 100,
@@ -82,7 +87,9 @@ async def complete(path, language, src, folds):
     texts = {}
     for item in json.loads(content):
         if item["id"] not in expected:
-            raise ValueError(f"model answered for unknown fold {item['id']}: {content[:200]}")
+            raise ValueError(
+                f"model answered for unknown fold {item['id']}: {content[:200]}"
+            )
         if item["pseudocode"].strip():
             texts[str(item["id"])] = item["pseudocode"].strip()
     return texts
@@ -93,13 +100,18 @@ async def summarize(path, language, src, folds) -> Result:
     try:
         return Success(await complete(path, language, src, folds))
     except httpx.HTTPStatusError as error:
-        return Error(-32000, f"{MODEL}: HTTP {error.response.status_code} {error.response.text[:200]}")
+        return Error(
+            -32000,
+            f"{MODEL}: HTTP {error.response.status_code} {error.response.text[:200]}",
+        )
     except (httpx.HTTPError, ValueError, KeyError) as error:
         return Error(-32000, f"{MODEL}: {error}")
 
 
 async def handle(request: web.Request) -> web.Response:
-    return web.Response(text=await async_dispatch(await request.text()), content_type="application/json")
+    return web.Response(
+        text=await async_dispatch(await request.text()), content_type="application/json"
+    )
 
 
 app = web.Application()

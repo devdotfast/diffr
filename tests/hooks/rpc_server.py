@@ -9,6 +9,7 @@ Listens on 127.0.0.1:$DIFFR_HOOK_PORT. The first argument selects a behavior:
   cwd    answer fold 0 with the working directory and assert DIFFR_WORKSPACE
   bad    return a non-JSON body
 """
+
 import json
 import os
 import sys
@@ -29,19 +30,30 @@ class Handler(BaseHTTPRequestHandler):
         if MODE == "bad":
             body = b"not json"
         elif MODE == "error":
-            body = json.dumps({"jsonrpc": "2.0", "id": request["id"],
-                               "error": {"code": -32000, "message": "declined"}}).encode()
+            body = json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request["id"],
+                    "error": {"code": -32000, "message": "declined"},
+                }
+            ).encode()
         else:
             if MODE == "echo":
-                texts = {str(f["id"]): "pseudo " + f["placeholder"] for f in params["folds"]}
+                texts = {
+                    str(f["id"]): "pseudo " + f["placeholder"] for f in params["folds"]
+                }
             elif MODE == "first":
                 texts = {"0": "summary of f"}
             elif MODE == "cwd":
-                assert os.environ["DIFFR_WORKSPACE"] == sys.argv[2], os.environ["DIFFR_WORKSPACE"]
+                assert os.environ["DIFFR_WORKSPACE"] == sys.argv[2], os.environ[
+                    "DIFFR_WORKSPACE"
+                ]
                 texts = {"0": os.getcwd()}
             else:
                 raise SystemExit(f"unknown mode {MODE}")
-            body = json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": texts}).encode()
+            body = json.dumps(
+                {"jsonrpc": "2.0", "id": request["id"], "result": texts}
+            ).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -54,4 +66,6 @@ class Handler(BaseHTTPRequestHandler):
 
 if MODE == "exit":
     raise SystemExit(3)
-ThreadingHTTPServer(("127.0.0.1", int(os.environ["DIFFR_HOOK_PORT"])), Handler).serve_forever()
+ThreadingHTTPServer(
+    ("127.0.0.1", int(os.environ["DIFFR_HOOK_PORT"])), Handler
+).serve_forever()

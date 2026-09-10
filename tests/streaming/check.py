@@ -1,33 +1,57 @@
 #!/usr/bin/env python3
 """Exercise the CLI stream against real Git repositories and partial staging."""
+
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 EXE = ROOT / "target/debug/diffr"
-ENV = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1",
-           GIT_AUTHOR_NAME="Test", GIT_AUTHOR_EMAIL="test@example.invalid",
-           GIT_COMMITTER_NAME="Test", GIT_COMMITTER_EMAIL="test@example.invalid")
+ENV = dict(
+    os.environ,
+    GIT_CONFIG_GLOBAL="/dev/null",
+    GIT_CONFIG_NOSYSTEM="1",
+    GIT_AUTHOR_NAME="Test",
+    GIT_AUTHOR_EMAIL="test@example.invalid",
+    GIT_COMMITTER_NAME="Test",
+    GIT_COMMITTER_EMAIL="test@example.invalid",
+)
+
 
 def git(repo, *args):
-    return subprocess.check_output(["git", "-C", str(repo), *args], env=ENV).decode().strip()
+    return (
+        subprocess.check_output(["git", "-C", str(repo), *args], env=ENV)
+        .decode()
+        .strip()
+    )
+
 
 def commit(repo, message):
     git(repo, "add", ".")
     git(repo, "commit", "-qm", message)
     return git(repo, "rev-parse", "HEAD")
 
+
 def cli(repo, *args):
-    return subprocess.run([str(EXE), "--repo", str(repo), *args], capture_output=True, env=ENV)
+    return subprocess.run(
+        [str(EXE), "--repo", str(repo), *args],
+        capture_output=True,
+        env=ENV,
+        check=False,
+    )
+
 
 def stream(repo, *args, code=0):
-    with subprocess.Popen([str(EXE), "--repo", str(repo), "--format", "ndjson", *args],
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=ENV) as process:
+    with subprocess.Popen(
+        [str(EXE), "--repo", str(repo), "--format", "ndjson", *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=ENV,
+    ) as process:
         first = json.loads(process.stdout.readline())
         assert first["type"] == "start" and first["version"] == 1
         assert len(first["files"]) == first["total"]
@@ -37,10 +61,11 @@ def stream(repo, *args, code=0):
     assert events[-1]["type"] == "complete"
     succeeded = sum(e["type"] == "file" for e in events)
     failed = sum(e["type"] == "file_error" for e in events)
-    assert events[-1] == dict(type="complete", succeeded=succeeded, failed=failed)
+    assert events[-1] == {"type": "complete", "succeeded": succeeded, "failed": failed}
     assert succeeded + failed == first["total"]
     assert all("layout" not in e for e in events)
     return events
+
 
 with tempfile.TemporaryDirectory(prefix="diffr-stream-") as temp:
     repo = Path(temp)
@@ -55,20 +80,31 @@ with tempfile.TemporaryDirectory(prefix="diffr-stream-") as temp:
     (repo / "binary.bin").write_bytes(b"a\0b")
     (repo / "z.py").write_text("print('new')\n")
     head = commit(repo, "head")
-    (repo / ".gitattributes").write_text("*.rs diffr-classify=source\n*.py diffr-classify=test\n*.bin diffr-classify=generated\n")
+    (repo / ".gitattributes").write_text(
+        "*.rs diffr-classify=source\n*.py diffr-classify=test\n*.bin diffr-classify=generated\n"
+    )
     (repo / "diffr.toml").write_text('[languages.rust]\nfolds = ""\n')
     events = stream(repo, base, head, "--order", "test,source,generated", code=2)
-    assert events[0]["before"] == dict(kind="revision", ref=base)
-    assert events[0]["after"] == dict(kind="revision", ref=head)
+    assert events[0]["before"] == {"kind": "revision", "ref": base}
+    assert events[0]["after"] == {"kind": "revision", "ref": head}
     # Results arrive in completion order; --order governs computation priority only.
-    assert sorted(e["file"]["class"] for e in events[1:-1]) == ["generated", "source", "test", "test", "test"]
+    assert sorted(e["file"]["class"] for e in events[1:-1]) == [
+        "generated",
+        "source",
+        "test",
+        "test",
+        "test",
+    ]
     renamed = next(e["file"] for e in events[1:-1] if e["file"]["status"] == "renamed")
     assert renamed["old_path"] == "rename.py" and renamed["new_path"] == "renamed.py"
     rust = next(e for e in events[1:-1] if e["file"]["new_path"] == "a.rs")
     assert rust["diff"]["rhs_folds"] == []
     # An early file failure must not prevent the later successes.
     events = stream(repo, base, head, "--order", "generated", code=2)
-    assert sum(e["type"] == "file_error" for e in events) == 1 and events[-1]["succeeded"] == 4
+    assert (
+        sum(e["type"] == "file_error" for e in events) == 1
+        and events[-1]["succeeded"] == 4
+    )
     events = stream(repo, base, head, "--", "a.rs", "z.py")
     assert sorted(e["file"]["new_path"] for e in events[1:-1]) == ["a.rs", "z.py"]
     events = stream(repo, base, head, "--jobs", "1", "--", "a.rs", "z.py")
@@ -76,7 +112,12 @@ with tempfile.TemporaryDirectory(prefix="diffr-stream-") as temp:
     assert len(stream(repo, head, head)) == 2
     assert len(stream(repo, base, head, "--", "missing.rs")) == 2
     stream(repo, base, head, "--exit-code", "--", "a.rs", code=1)
-    for args in (["bad-ref", head], [base, head, "--quiet"], ["--no-index", "a", "b"], [base, head, "--stat"]):
+    for args in (
+        ["bad-ref", head],
+        [base, head, "--quiet"],
+        ["--no-index", "a", "b"],
+        [base, head, "--stat"],
+    ):
         result = cli(repo, "--format", "ndjson", *args)
         assert result.returncode == 2 and not result.stdout and result.stderr
     (repo / "diffr.toml").write_text("invalid toml")
@@ -98,12 +139,18 @@ with tempfile.TemporaryDirectory(prefix="diffr-operands-") as temp:
     source.write_text(staged)
     git(repo, "add", "a.rs")
     source.write_text(working)
-    for selection, left, right in (([], staged, working), (["--cached"], initial, staged), ([base], initial, working)):
+    for selection, left, right in (
+        ([], staged, working),
+        (["--cached"], initial, staged),
+        ([base], initial, working),
+    ):
         for reverse in (False, True):
             args = [*selection, *(["-R"] if reverse else [])]
             for output in ("--name-only", "--numstat"):
                 actual = cli(repo, *args, output)
-                expected = subprocess.check_output(["git", "-C", str(repo), "diff", *args, output], env=ENV)
+                expected = subprocess.check_output(
+                    ["git", "-C", str(repo), "diff", *args, output], env=ENV
+                )
                 assert actual.returncode == 0 and actual.stdout == expected
             diff = stream(repo, *args)[1]["diff"]
             assert diff["lhs_src"]["Text"] == (right if reverse else left)
@@ -121,7 +168,7 @@ with tempfile.TemporaryDirectory(prefix="diffr-unborn-") as temp:
     (repo / "new.rs").write_text("fn new() {}\n")
     git(repo, "add", ".")
     events = stream(repo, "--cached")
-    assert events[0]["before"] == dict(kind="empty_tree")
+    assert events[0]["before"] == {"kind": "empty_tree"}
     assert events[1]["file"]["status"] == "added"
 # A configured fold hook fills summaries before each file event; its failures
 # are reported per file without losing the diff.
@@ -136,14 +183,18 @@ with tempfile.TemporaryDirectory(prefix="diffr-hook-") as temp:
     (repo / "bad.py").write_text(large)
     (repo / "small.py").write_text("def h():\n    e()\n")
     head = commit(repo, "additions")
+
     def hook_config(mode, *extra):
         command = [sys.executable, str(rpc_server), mode, *extra]
         return f"[folds.hook]\ncommand = {json.dumps(command)}\ntags = ['body']\nmin_lines = 3\n"
+
     (repo / "diffr.toml").write_text(hook_config("echo"))
     events = {e["file"]["new_path"]: e for e in stream(repo, base, head)[1:-1]}
     good = events["good.py"]
     assert "hook_error" not in good
-    assert [f["summary"] for f in good["diff"]["rhs_folds"] if f["tags"] == ["body"]] == ["pseudo Body", None]
+    assert [
+        f["summary"] for f in good["diff"]["rhs_folds"] if f["tags"] == ["body"]
+    ] == ["pseudo Body", None]
     assert all(f["summary"] is None for f in events["small.py"]["diff"]["rhs_folds"])
     (repo / "diffr.toml").write_text(hook_config("error"))
     events = {e["file"]["new_path"]: e for e in stream(repo, base, head)[1:-1]}
@@ -157,9 +208,20 @@ with tempfile.TemporaryDirectory(prefix="diffr-hook-") as temp:
     with tempfile.TemporaryDirectory(prefix="diffr-hook-config-") as elsewhere:
         shutil.copy(rpc_server, Path(elsewhere) / "hook.py")
         (Path(elsewhere) / "hook.toml").write_text(
-            f"[folds.hook]\ncommand = [{json.dumps(sys.executable)}, 'hook.py', 'cwd', {json.dumps(str(repo.resolve()) + os.sep)}]\ntags = ['body']\n")
-        events = stream(repo, base, head, "--config", str(Path(elsewhere) / "hook.toml"), "--", "good.py")
-        assert events[1]["diff"]["rhs_folds"][0]["summary"] == str(Path(elsewhere).resolve())
+            f"[folds.hook]\ncommand = [{json.dumps(sys.executable)}, 'hook.py', 'cwd', {json.dumps(str(repo.resolve()) + os.sep)}]\ntags = ['body']\n"
+        )
+        events = stream(
+            repo,
+            base,
+            head,
+            "--config",
+            str(Path(elsewhere) / "hook.toml"),
+            "--",
+            "good.py",
+        )
+        assert events[1]["diff"]["rhs_folds"][0]["summary"] == str(
+            Path(elsewhere).resolve()
+        )
 
 # Closing the pipe while a multi-file producer is active must not leave it
 # blocked forever on a full queue. Unix CLI output retains normal SIGPIPE behavior.
@@ -172,8 +234,12 @@ if os.name == "posix":
         for index in range(8):
             (repo / f"{index}.txt").write_text("some new text\n" * 4096)
         head = commit(repo, "large additions")
-        with subprocess.Popen([str(EXE), "--repo", str(repo), base, head, "--format", "ndjson"],
-                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=ENV) as process:
+        with subprocess.Popen(
+            [str(EXE), "--repo", str(repo), base, head, "--format", "ndjson"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=ENV,
+        ) as process:
             assert json.loads(process.stdout.readline())["type"] == "start"
             process.stdout.close()
             assert process.wait(timeout=30) != 0

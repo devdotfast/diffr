@@ -1,0 +1,147 @@
+[languages.rust]
+folds = '''
+(block) @fold.body
+(field_declaration_list) @fold.body
+(declaration_list) @fold.body
+(match_block) @fold.body
+(array_expression) @fold.collection
+(field_initializer_list) @fold.collection
+(use_declaration) @fold.import
+(line_comment) @fold.comment
+(block_comment) @fold.comment
+(string_literal) @fold.string
+(raw_string_literal) @fold.string
+((attribute_item) @attribute . (function_item body: (block) @fold.test)
+  (#match? @attribute "test"))
+'''
+context = '''
+(function_item body: (block "}" @context.close) @context.body) @context.scope
+(impl_item body: (declaration_list "}" @context.close) @context.body) @context.scope
+(mod_item body: (declaration_list "}" @context.close) @context.body) @context.scope
+(struct_item body: (field_declaration_list "}" @context.close) @context.body) @context.scope
+[(for_expression) (loop_expression) (match_expression) (return_expression)] @context.boundary
+(function_item body: (block (_expression) @context.boundary .))
+'''
+
+[languages.python]
+folds = '''
+(block) @fold.body
+(list) @fold.collection
+(dictionary) @fold.collection
+(set) @fold.collection
+(tuple) @fold.collection
+(import_statement) @fold.import
+(import_from_statement) @fold.import
+(comment) @fold.comment
+(string) @fold.string
+(function_definition name: (identifier) @name body: (block) @fold.test
+  (#match? @name "^test_"))
+'''
+context = '''
+[(function_definition body: (block) @context.indented_body)
+ (class_definition body: (block) @context.indented_body)] @context.scope
+[(for_statement) (return_statement)] @context.boundary
+'''
+
+[languages.go]
+folds = '''
+(block) @fold.body
+(literal_value) @fold.collection
+(field_declaration_list) @fold.body
+(import_declaration) @fold.import
+(comment) @fold.comment
+(raw_string_literal) @fold.string
+(interpreted_string_literal) @fold.string
+(function_declaration name: (identifier) @name body: (block) @fold.test
+  (#match? @name "^Test"))
+'''
+context = '''
+[(function_declaration body: (block "}" @context.close) @context.body)
+ (method_declaration body: (block "}" @context.close) @context.body)] @context.scope
+[(for_statement) (expression_switch_statement) (return_statement)] @context.boundary
+'''
+
+[languages.javascript]
+folds = '''
+(statement_block) @fold.body
+(class_body) @fold.body
+(switch_body) @fold.body
+(object) @fold.collection
+(array) @fold.collection
+(import_statement) @fold.import
+(comment) @fold.comment
+(string) @fold.string
+(template_string) @fold.string
+'''
+context = '''
+[(function_declaration body: (statement_block "}" @context.close) @context.body)
+ (method_definition body: (statement_block "}" @context.close) @context.body)
+ (arrow_function body: (statement_block "}" @context.close) @context.body)
+ (class_declaration body: (class_body "}" @context.close) @context.body)] @context.scope
+[(for_statement) (switch_statement) (return_statement)] @context.boundary
+(arrow_function body: (_) @context.body) @context.scope
+'''
+
+[languages.javascriptjsx]
+folds = '''
+(statement_block) @fold.body
+(class_body) @fold.body
+(switch_body) @fold.body
+(object) @fold.collection
+(array) @fold.collection
+(import_statement) @fold.import
+(comment) @fold.comment
+(string) @fold.string
+(template_string) @fold.string
+'''
+context = '''
+[(function_declaration body: (statement_block "}" @context.close) @context.body)
+ (method_definition body: (statement_block "}" @context.close) @context.body)
+ (arrow_function body: (statement_block "}" @context.close) @context.body)
+ (class_declaration body: (class_body "}" @context.close) @context.body)] @context.scope
+[(for_statement) (switch_statement) (return_statement)] @context.boundary
+(arrow_function body: (_) @context.body) @context.scope
+'''
+
+[languages.typescript]
+folds = '''
+(statement_block) @fold.body
+(class_body) @fold.body
+(switch_body) @fold.body
+(object) @fold.collection
+(array) @fold.collection
+(import_statement) @fold.import
+(comment) @fold.comment
+(string) @fold.string
+(template_string) @fold.string
+'''
+context = '''
+[(function_declaration body: (statement_block "}" @context.close) @context.body)
+ (method_definition body: (statement_block "}" @context.close) @context.body)
+ (arrow_function body: (statement_block "}" @context.close) @context.body)
+ (class_declaration body: (class_body "}" @context.close) @context.body)] @context.scope
+[(for_statement) (switch_statement) (return_statement)] @context.boundary
+(arrow_function body: (_) @context.body) @context.scope
+'''
+
+[languages.typescripttsx]
+folds = '''
+(statement_block) @fold.body
+(class_body) @fold.body
+(switch_body) @fold.body
+(object) @fold.collection
+(array) @fold.collection
+(import_statement) @fold.import
+(comment) @fold.comment
+(string) @fold.string
+(template_string) @fold.string
+'''
+context = '''
+[(function_declaration body: (statement_block "}" @context.close) @context.body)
+ (method_definition body: (statement_block "}" @context.close) @context.body)
+ (arrow_function body: (statement_block "}" @context.close) @context.body)
+ (class_declaration body: (class_body "}" @context.close) @context.body)] @context.scope
+[(for_statement) (switch_statement) (return_statement)] @context.boundary
+(arrow_function body: (_) @context.body) @context.scope
+'''
+

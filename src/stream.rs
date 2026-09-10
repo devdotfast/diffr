@@ -1,5 +1,7 @@
 //! Incremental stdout protocol over the shared file iterator.
 use crate::git::{DiffSession, FileChange, LoadedFile, Operand, Result};
+use crate::hook::Hook;
+use crate::summary::DiffResult;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use serde::Serialize;
 use serde_json::Value;
@@ -22,6 +24,9 @@ enum Event {
     File {
         file: FileChange,
         diff: Value,
+        /// The fold hook failed for this file; its folds keep their placeholders.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        hook_error: Option<String>,
     },
     FileError {
         file: FileChange,
@@ -37,7 +42,12 @@ enum Event {
 /// emitted as they finish, so results arrive in completion order. The queue
 /// holds at most one ready event; computation can overlap output without
 /// retaining the whole diff.
-pub(crate) fn write(session: DiffSession, jobs: usize, output: &mut impl Write) -> Result<bool> {
+pub(crate) fn write(
+    session: DiffSession,
+    jobs: usize,
+    hook: Option<Arc<Hook>>,
+    output: &mut impl Write,
+) -> Result<bool> {
     let (sender, receiver) = sync_channel(1);
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(jobs)
@@ -45,7 +55,7 @@ pub(crate) fn write(session: DiffSession, jobs: usize, output: &mut impl Write) 
         .build()?;
     let worker = thread::spawn(move || {
         // A disconnected consumer cancels production after the files in flight.
-        let _ = produce(session, &pool, sender);
+        let _ = produce(session, &pool, hook.as_deref(), sender);
     });
     let mut output = BufWriter::new(output);
     let result: Result<bool> = (|| {
@@ -71,6 +81,7 @@ pub(crate) fn write(session: DiffSession, jobs: usize, output: &mut impl Write) 
 fn produce(
     session: DiffSession,
     pool: &rayon::ThreadPool,
+    hook: Option<&Hook>,
     sender: SyncSender<Event>,
 ) -> std::result::Result<(), SendError<Event>> {
     sender.send(Event::Start {
@@ -91,12 +102,8 @@ fn produce(
         loader.par_bridge().for_each(|(file, loaded)| {
             let event = match loaded {
                 Ok(loaded) => {
-                    let diff = loaded.diff();
                     succeeded.fetch_add(1, Ordering::Relaxed);
-                    Event::File {
-                        file,
-                        diff: diff.domain_json(),
-                    }
+                    file_event(file, loaded.diff(), hook)
                 }
                 Err(error) => {
                     failed.fetch_add(1, Ordering::Relaxed);
@@ -115,6 +122,16 @@ fn produce(
         succeeded: succeeded.into_inner(),
         failed: failed.into_inner(),
     })
+}
+
+/// Summaries are filled in before the event so clients never see a fold change.
+fn file_event(file: FileChange, mut diff: DiffResult, hook: Option<&Hook>) -> Event {
+    let hook_error = hook.and_then(|hook| hook.summarize(&mut diff).err());
+    Event::File {
+        file,
+        diff: diff.domain_json(),
+        hook_error,
+    }
 }
 
 /// Reads sources serially on whichever worker pulls next; diffing then
@@ -139,7 +156,8 @@ impl Iterator for Loader {
 pub(crate) fn write_file(
     before: &str,
     after: &str,
-    compute: impl FnOnce() -> crate::summary::DiffResult,
+    compute: impl FnOnce() -> DiffResult,
+    hook: Option<&Hook>,
     output: &mut impl Write,
 ) -> Result<()> {
     let file = FileChange {
@@ -165,14 +183,7 @@ pub(crate) fn write_file(
     )?;
     output.write_all(b"\n")?;
     output.flush()?;
-    let diff = compute();
-    serde_json::to_writer(
-        &mut output,
-        &Event::File {
-            file,
-            diff: diff.domain_json(),
-        },
-    )?;
+    serde_json::to_writer(&mut output, &file_event(file, compute(), hook))?;
     output.write_all(b"\n")?;
     serde_json::to_writer(
         &mut output,
@@ -207,6 +218,7 @@ mod tests {
             "before.rs",
             "after.rs",
             || panic!("must not compute after manifest flush fails"),
+            None,
             &mut output,
         );
         assert!(result.is_err());

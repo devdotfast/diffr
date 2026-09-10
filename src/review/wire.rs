@@ -51,7 +51,7 @@ fn position(position: &MatchedPos) -> Value {
     json!({"pos": span(&position.pos), "kind": kind})
 }
 
-fn range(range: &SourceRange) -> Value {
+pub(crate) fn range(range: &SourceRange) -> Value {
     json!({
         "start": {
             "line": range.start.line.0,

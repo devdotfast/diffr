@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -121,6 +122,39 @@ with tempfile.TemporaryDirectory(prefix="diffr-unborn-") as temp:
     events = stream(repo, "--cached")
     assert events[0]["before"] == dict(kind="empty_tree")
     assert events[1]["file"]["status"] == "added"
+# A configured fold hook fills summaries before each file event; its failures
+# are reported per file without losing the diff.
+with tempfile.TemporaryDirectory(prefix="diffr-hook-") as temp:
+    repo = Path(temp)
+    git(repo, "init", "-q")
+    git(repo, "commit", "--allow-empty", "-qm", "empty")
+    base = git(repo, "rev-parse", "HEAD")
+    (repo / "hook.py").write_text(
+        "import json, sys\n"
+        "for line in sys.stdin:\n"
+        "    request = json.loads(line)\n"
+        "    assert request['language'] == 'Python' and request['src']\n"
+        "    if request['path'] == 'bad.py':\n"
+        "        reply = {'id': request['id'], 'error': 'declined'}\n"
+        "    else:\n"
+        "        reply = {'id': request['id'], 'texts': {str(f['id']): 'pseudo ' + f['placeholder'] for f in request['folds']}}\n"
+        "    print(json.dumps(reply), flush=True)\n")
+    large = "def f():\n    a()\n    b()\n    c()\n\ndef g():\n    d()\n"
+    (repo / "good.py").write_text(large)
+    (repo / "bad.py").write_text(large)
+    (repo / "small.py").write_text("def h():\n    e()\n")
+    head = commit(repo, "additions")
+    (repo / "diffr.toml").write_text(
+        f"[folds.hook]\ncommand = [{json.dumps(sys.executable)}, 'hook.py']\ntags = ['body']\nmin_lines = 3\n")
+    events = {e["file"]["new_path"]: e for e in stream(repo, base, head)[1:-1]}
+    good = events["good.py"]
+    assert "hook_error" not in good
+    assert [f["summary"] for f in good["diff"]["rhs_folds"] if f["tags"] == ["body"]] == ["pseudo Body", None]
+    assert events["bad.py"]["hook_error"] == "fold hook reported: declined"
+    assert all(f["summary"] is None for f in events["small.py"]["diff"]["rhs_folds"])
+    (repo / "diffr.toml").write_text("[folds.hook]\ncommand = ['./missing-hook']\n")
+    assert cli(repo, "--format", "ndjson", base, head).returncode == 2
+
 # Closing the pipe while a multi-file producer is active must not leave it
 # blocked forever on a full queue. Unix CLI output retains normal SIGPIPE behavior.
 if os.name == "posix":

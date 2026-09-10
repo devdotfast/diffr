@@ -3,4 +3,4 @@
 mod render;
 #[cfg(test)]
 mod tests;
-mod wire;
+pub(crate) mod wire;

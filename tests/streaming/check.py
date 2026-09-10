@@ -62,10 +62,10 @@ with tempfile.TemporaryDirectory(prefix="diffr-stream-test-") as temp:
     head = commit(repo, "head")
     # Uncommitted workspace attributes and config must apply to these pinned refs.
     (repo / ".gitattributes").write_text("*.rs diffr-classify=source\n*.py diffr-classify=test\n*.bin diffr-classify=generated\n")
-    (repo / "diffr.toml").write_text('[files]\norder = ["test", "source", "generated"]\n[languages.rust]\nfolds = ""\n')
+    (repo / "diffr.toml").write_text('[languages.rust]\nfolds = ""\n')
     process, port = serve(repo)
     try:
-        status, events = request(port, dict(base=base, head=head, include_layout=True))
+        status, events = request(port, dict(base=base, head=head, files=dict(order=["test", "source", "generated"])))
         assert status == 200
         assert events[0]["base"] == base and events[0]["head"] == head
         files = [e for e in events if e["type"] in ("file", "file_error")]
@@ -76,29 +76,32 @@ with tempfile.TemporaryDirectory(prefix="diffr-stream-test-") as temp:
         renamed = next(e["file"] for e in files if e["file"]["status"] == "renamed")
         assert renamed["old_path"] == "rename.py" and renamed["new_path"] == "renamed.py"
         rust = next(e for e in files if e["file"]["new_path"] == "a.rs")
-        assert rust["diff"]["rhs_folds"] == [] and "layout" in rust
-        _, events = request(port, dict(base=base, head=head, order=["source"], paths=["a.rs", "z.py"]))
+        assert rust["diff"]["rhs_folds"] == [] and "layout" not in rust
+        _, events = request(port, dict(base=base, head=head, files=dict(order=["source"], paths=["a.rs", "z.py"])))
         assert events[1]["file"]["new_path"] == "a.rs"
         assert "layout" not in events[1]
-        _, events = request(port, dict(base=base, head=head, order=["generated"]))
+        _, events = request(port, dict(base=base, head=head, files=dict(order=["generated"])))
         assert events[1]["type"] == "file_error" and events[-1]["succeeded"] == 4
+        _, events = request(port, dict(base=base, head=head))
+        names = [e["file"]["new_path"] or e["file"]["old_path"] for e in events[1:-1]]
+        assert names == sorted(names), "omitted file order uses path order"
         _, events = request(port, dict(base=head, head=head))
         assert [e["type"] for e in events] == ["start", "complete"]
-        _, events = request(port, dict(base=head, head=head, paths=["a.rs"]))
+        _, events = request(port, dict(base=head, head=head, files=dict(paths=["a.rs"])))
         assert events[1]["file"]["status"] == "unchanged"
         assert request(port, dict(base="missing-ref", head=head))[0] == 400
-        assert request(port, dict(base=base, head=head, paths=["missing.rs"]))[0] == 400
+        assert request(port, dict(base=base, head=head, files=dict(paths=["missing.rs"])))[0] == 400
         # The server keeps its compiled config even if the file changes.
         (repo / "diffr.toml").write_text("invalid toml")
-        assert request(port, dict(base=base, head=head, paths=["a.rs"]))[0] == 200
+        assert request(port, dict(base=base, head=head, files=dict(paths=["a.rs"])))[0] == 200
     finally:
         process.terminate()
         process.wait(timeout=10)
     explicit = repo / "custom.toml"
-    explicit.write_text('[files]\norder = ["source"]\n')
+    explicit.write_text('')
     process, port = serve(repo, explicit)
     try:
-        _, events = request(port, dict(base=base, head=head, paths=["a.rs"]))
+        _, events = request(port, dict(base=base, head=head, files=dict(paths=["a.rs"])))
         assert events[1]["diff"]["rhs_folds"], "explicit config replaces repo config; default Rust folds survive"
     finally:
         process.terminate()

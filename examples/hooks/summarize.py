@@ -1,28 +1,31 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["httpx>=0.27"]
+# dependencies = ["aiohttp>=3.9", "httpx>=0.27", "jsonrpcserver>=5"]
 # ///
 """Reference diffr fold hook: rewrite large novel folds as Python-style pseudocode.
 
-diffr writes one NDJSON request per file on stdin and reads one reply per request
-on stdout, matched by id. Requests are answered concurrently on one event loop
-with a shared HTTP client, so replies arrive in whatever order the model
-finishes; diffr routes them by id.
+diffr starts this server once per invocation with the port in DIFFR_HOOK_PORT and
+calls the JSON-RPC 2.0 method `summarize` once per file, concurrently. Each call
+awaits one Gemini request on a shared httpx client. Log to stderr; stdout is
+discarded by diffr.
 
 Environment:
+  DIFFR_HOOK_PORT        set by diffr
   GOOGLE_API_KEY         required
   DIFFR_SUMMARY_MODEL    default gemini-3.8-flash
-  DIFFR_SUMMARY_WORKERS  concurrent requests, default 16
+  DIFFR_SUMMARY_WORKERS  concurrent model requests, default 16
 """
 import asyncio
 import json
 import os
-import sys
 
 import httpx
+from aiohttp import web
+from jsonrpcserver import Error, Result, Success, async_dispatch, method
 
 API_KEY = os.environ["GOOGLE_API_KEY"]
+PORT = int(os.environ["DIFFR_HOOK_PORT"])
 MODEL = os.environ.get("DIFFR_SUMMARY_MODEL", "gemini-3.8-flash")
 WORKERS = int(os.environ.get("DIFFR_SUMMARY_WORKERS", "16"))
 URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
@@ -45,36 +48,37 @@ SCHEMA = {
     },
 }
 
+client = httpx.AsyncClient(headers={"x-goog-api-key": API_KEY}, timeout=60)
+limit = asyncio.Semaphore(WORKERS)
 
-def prompt(request):
-    numbered = "\n".join(
-        f"{number:5d} | {line}" for number, line in enumerate(request["src"].splitlines(), 1)
-    )
-    folds = "\n".join(
+
+def prompt(path, language, src, folds):
+    numbered = "\n".join(f"{n:5d} | {line}" for n, line in enumerate(src.splitlines(), 1))
+    ranges = "\n".join(
         f"- fold {fold['id']}: lines {fold['range']['start']['line'] + 1}-"
         f"{fold['range']['end']['line'] + 1}"
-        for fold in request["folds"]
+        for fold in folds
     )
-    language = request["language"] or "unknown language"
-    return f"File {request['path']} ({language}):\n\n{numbered}\n\nFolds:\n{folds}"
+    return f"File {path} ({language or 'unknown language'}):\n\n{numbered}\n\nFolds:\n{ranges}"
 
 
-async def complete(client, request):
+async def complete(path, language, src, folds):
     body = {
         "systemInstruction": {"parts": [{"text": SYSTEM}]},
-        "contents": [{"role": "user", "parts": [{"text": prompt(request)}]}],
+        "contents": [{"role": "user", "parts": [{"text": prompt(path, language, src, folds)}]}],
         "generationConfig": {
             "temperature": 0,
-            "maxOutputTokens": 160 * len(request["folds"]) + 100,
+            "maxOutputTokens": 160 * len(folds) + 100,
             "thinkingConfig": {"thinkingBudget": 0},
             "responseMimeType": "application/json",
             "responseSchema": SCHEMA,
         },
     }
-    response = await client.post(URL, json=body)
+    async with limit:
+        response = await client.post(URL, json=body)
     response.raise_for_status()
     content = response.json()["candidates"][0]["content"]["parts"][-1]["text"]
-    expected = {fold["id"] for fold in request["folds"]}
+    expected = {fold["id"] for fold in folds}
     texts = {}
     for item in json.loads(content):
         if item["id"] not in expected:
@@ -84,35 +88,22 @@ async def complete(client, request):
     return texts
 
 
-async def answer(client, limit, line):
-    request = json.loads(line)
-    async with limit:
-        try:
-            reply = {"id": request["id"], "texts": await complete(client, request)}
-        except httpx.HTTPStatusError as error:
-            reply = {
-                "id": request["id"],
-                "error": f"{MODEL}: HTTP {error.response.status_code} {error.response.text[:200]}",
-            }
-        except (httpx.HTTPError, ValueError, KeyError) as error:
-            reply = {"id": request["id"], "error": f"{MODEL}: {error}"}
-    # Single-threaded: a whole line is written between awaits, never interleaved.
-    sys.stdout.write(json.dumps(reply) + "\n")
-    sys.stdout.flush()
+@method
+async def summarize(path, language, src, folds) -> Result:
+    try:
+        return Success(await complete(path, language, src, folds))
+    except httpx.HTTPStatusError as error:
+        return Error(-32000, f"{MODEL}: HTTP {error.response.status_code} {error.response.text[:200]}")
+    except (httpx.HTTPError, ValueError, KeyError) as error:
+        return Error(-32000, f"{MODEL}: {error}")
 
 
-async def main():
-    reader = asyncio.StreamReader()
-    await asyncio.get_running_loop().connect_read_pipe(
-        lambda: asyncio.StreamReaderProtocol(reader), sys.stdin
-    )
-    limit = asyncio.Semaphore(WORKERS)
-    async with httpx.AsyncClient(headers={"x-goog-api-key": API_KEY}, timeout=60) as client:
-        async with asyncio.TaskGroup() as tasks:
-            while line := await reader.readline():
-                if line.strip():
-                    tasks.create_task(answer(client, limit, line))
+async def handle(request: web.Request) -> web.Response:
+    return web.Response(text=await async_dispatch(await request.text()), content_type="application/json")
 
+
+app = web.Application()
+app.router.add_post("/", handle)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    web.run_app(app, host="127.0.0.1", port=PORT, print=None, access_log=None)

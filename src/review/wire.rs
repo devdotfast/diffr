@@ -70,7 +70,7 @@ fn fold(fold: &Fold) -> Value {
         FoldMatch::Novel => json!("Novel"),
     };
     json!({
-        "kind": fold.kind,
+        "tags": fold.tags,
         "range": range(&fold.range),
         "match_kind": match_kind,
         "placeholder": fold.placeholder,

@@ -139,7 +139,7 @@ function indexFolds(folds) {
   folds.forEach((fold, index) => {
     const sides = regions(fold.regions);
     const isInline =
-      fold.kind !== "Import" &&
+      !fold.tags.includes("import") &&
       sides.some(
         (range) =>
           range && (range.start.byte_column > 0 || range.end.byte_column > 0),
@@ -304,7 +304,7 @@ async function select(id) {
   expanded = new Set();
   closed = new Set(
     viewFolds.flatMap((f, i) =>
-      f.kind === "Import" ? [i] : [],
+      f.tags.includes("import") ? [i] : [],
     ),
   );
   source = [data.domain.lhs_src.Text, data.domain.rhs_src.Text].map(

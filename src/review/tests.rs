@@ -20,7 +20,7 @@ fn text<'a>(source: &'a str, range: &SourceRange) -> &'a str {
 mod folds {
     use super::text;
     use crate::lines::SourceRange;
-    use crate::parse::folds::{Fold, FoldKind, FoldMatch};
+    use crate::parse::folds::{Fold, FoldMatch};
     use crate::summary::DiffResult;
     use std::fmt::Write as _;
 
@@ -104,7 +104,7 @@ mod folds {
                 }
                 assert_eq!(folds.len(), 2);
                 for (fold, expected) in folds.iter().zip(["import os", "import sys"]) {
-                    assert_eq!(fold.kind, FoldKind::Import);
+                    assert_eq!(fold.tags, ["import"]);
                     assert_eq!(text(own, &fold.range), expected);
                     match &fold.match_kind {
                         FoldMatch::Unchanged { opposite: range } => {

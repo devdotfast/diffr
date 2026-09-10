@@ -31,7 +31,7 @@ impl FoldKind {
 
 #[derive(Debug)]
 pub(crate) struct Fold {
-    pub(crate) kind: FoldKind,
+    pub(crate) tags: Vec<String>,
     /// Source on this side; may span multiple syntax nodes.
     pub(crate) range: SourceRange,
     pub(crate) match_kind: FoldMatch,
@@ -149,7 +149,7 @@ pub(crate) fn project(node: &Syntax<'_>, change: ChangeKind<'_>) -> Option<Fold>
         None => FoldMatch::Novel,
     };
     Some(Fold {
-        kind: own.kind,
+        tags: vec![own.kind.placeholder().to_lowercase()],
         range: own_range,
         match_kind,
         placeholder: own.kind.placeholder().into(),

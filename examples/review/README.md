@@ -148,7 +148,7 @@ remain outside this v0.
 - Fold candidates are generated but ignored by this printer. Visible import
   lines stay expanded; no placeholders are emitted.
 - Left/right line numbers, grouped deletions/additions and explicit gaps. `~` marks matched syntax whose indentation differs; both exact source lines are retained in text snapshots. This
-  is a review snapshot, not an applyable Git patch. Token-level colors and split
+  is a review snapshot, not an applicable Git patch. Token-level colors and split
   view are not implemented.
 - Unsupported languages or Difftastic limit fallbacks retain a textual diff
   without syntax annotations. The context rules currently target the corpus's

@@ -5,6 +5,8 @@ extend-exclude = [
   "homepage/home_img",
   "demo_files/",
   "difft.1",
+  # Git index lines carry blob hashes that can spell words.
+  "examples/review/real/*/change.patch",
 ]
 
 [default.extend-words]

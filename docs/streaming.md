@@ -89,54 +89,60 @@ on Unix.
 
 ## Fold hooks
 
-A trusted hook subprocess can replace fold placeholders with richer text, such
-as pseudocode, before each `file` event is emitted:
+A trusted hook can replace fold placeholders with richer text, such as
+pseudocode, before each `file` event is emitted. A hook is a JSON-RPC 2.0
+server over HTTP that diffr starts once per invocation and calls on loopback:
 
 ```toml
 [folds.hook]
 command = ["uv", "run", "--script", "examples/hooks/summarize.py"]
-tags = ["body"]     # optional; any listed tag qualifies. Omit to send every fold.
-min_lines = 12      # optional; default 0
-timeout_ms = 5000   # optional; per request
+tags = ["body"]            # optional; any listed tag qualifies. Omit to send every fold.
+min_lines = 12             # optional; default 0
+timeout_ms = 5000          # optional; per call
+startup_timeout_ms = 30000 # optional; time allowed to start listening
 ```
 
-The command starts once per invocation with the caller's environment. It runs
-in the directory containing the config file, so relative paths in `command`
-resolve against the config wherever it lives, including one given by
-`--config` outside the repository. `DIFFR_WORKSPACE` carries the diffed
-repository's root. Only novel folds on the after side qualify: bodies that
-exist in the after source with no counterpart in the before source. Files with
-no qualifying fold never reach the hook. Streaming is the only output mode that
-runs hooks; the terminal frontend streams, so it does too.
+The command starts with the caller's environment plus `DIFFR_HOOK_PORT`, the
+loopback port it must listen on, and `DIFFR_WORKSPACE`, the diffed repository's
+root. It runs in the directory containing the config file, so relative paths in
+`command` resolve against the config wherever it lives, including one given by
+`--config` outside the repository. Its stdout is discarded because diffr's own
+stdout carries the event stream; log to stderr. diffr polls the port until the
+hook accepts connections, exits 2 before `start` if the hook exits or misses
+`startup_timeout_ms`, and kills the hook when the comparison ends.
 
-Requests are one JSON line per file on the hook's stdin, and replies are one JSON
-line per request on its stdout, matched by `id` and accepted in any order. The
-worker diffing a file blocks on that file's reply; other workers keep going, so
-a hook must answer requests concurrently rather than one at a time.
+Only novel folds on the after side qualify: bodies that exist in the after
+source with no counterpart in the before source. Files with no qualifying fold
+never reach the hook. Streaming is the only output mode that runs hooks; the
+terminal frontend streams, so it does too.
+
+One call per file, method `summarize`, params by name. The worker diffing that
+file blocks on the reply; other workers keep calling, so a hook must serve
+requests concurrently rather than one at a time.
 
 ```jsonc
-// diffr -> hook
-{"id": 7, "path": "src/auth.py", "language": "Python", "src": "<after source>",
- "folds": [{"id": 0, "range": {"start": {"line": 40, "byte_column": 0}, "end": {"line": 88, "byte_column": 1}},
-            "tags": ["body"], "placeholder": "Body"}]}
+// diffr -> hook   POST / with a JSON-RPC 2.0 request
+{"jsonrpc": "2.0", "id": 7, "method": "summarize", "params": {
+  "path": "src/auth.py", "language": "Python", "src": "<after source>",
+  "folds": [{"id": 0, "range": {"start": {"line": 40, "byte_column": 0}, "end": {"line": 88, "byte_column": 1}},
+             "tags": ["body"], "placeholder": "Body"}]}}
 // hook -> diffr
-{"id": 7, "texts": {"0": "def refresh_token(session):\n    ..."}}
-{"id": 8, "error": "rate limited"}
+{"jsonrpc": "2.0", "id": 7, "result": {"0": "def refresh_token(session):\n    ..."}}
+{"jsonrpc": "2.0", "id": 8, "error": {"code": -32000, "message": "rate limited"}}
 ```
 
 `language` is null for plain text. A fold `id` indexes `rhs_folds` in that file's
 `diff`; the matching fold gains a non-null `summary` while `placeholder` is
-unchanged. Folds missing from `texts` keep a null `summary`. An `error` reply, a
-timeout, an unknown fold id, a malformed line, or hook exit leaves every summary
-in that file null and adds `hook_error` to its `file` event. A malformed line or
-exit also fails every later request, since ids can no longer be trusted. Hook
-stderr passes through to diffr's stderr. Failing to start the command exits 2
-before `start`.
+unchanged. Folds missing from the result keep a null `summary`. An error
+object, a timeout, an unknown fold id, or an invalid response leaves every
+summary in that file null and adds `hook_error` to its `file` event.
 
-`examples/hooks/summarize.py` is a reference hook that asks Gemini 3.8 Flash,
-with thinking disabled, for Python-style pseudocode. It needs `GOOGLE_API_KEY`
-and answers up to 16 files at once on one asyncio loop with a shared httpx
-client, which `uv run --script` installs on first use.
+`examples/hooks/summarize.py` is a reference hook: an aiohttp server that hands
+each request to jsonrpcserver and asks Gemini 3.8 Flash, with thinking disabled,
+for Python-style pseudocode. It needs `GOOGLE_API_KEY` and answers up to 16
+files at once on one asyncio loop with a shared httpx client. `uv run --script`
+installs its dependencies on first use. `tests/hooks/rpc_server.py` is a
+dependency-free hook used by the tests.
 
 ## Fixture viewer
 

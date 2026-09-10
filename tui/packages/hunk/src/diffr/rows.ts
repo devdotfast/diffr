@@ -1,4 +1,4 @@
-/** Project Rust hunk correspondence into Hunk terminal cells; never compute a second diff. */
+/** Project Rust full-file correspondence into Hunk terminal cells; never compute a second diff. */
 import type { DiffFile, DiffResult, Highlight, MatchedPos } from "./wire";
 import type {
   RenderSpan,
@@ -11,6 +11,7 @@ export interface ViewerRow {
   key: string;
   fileIndex: number;
   hunkIndex?: number;
+  hunkStart?: boolean;
   label?: string;
   left?: SplitLineCell;
   right?: SplitLineCell;
@@ -25,7 +26,6 @@ export interface Palette {
   addWord: string;
   deleteWord: string;
   keyword: string;
-  string: string;
   type: string;
   comment: string;
 }
@@ -38,7 +38,6 @@ export const dark: Palette = {
   addWord: "#24583a",
   deleteWord: "#74333c",
   keyword: "#ff7b72",
-  string: "#a5d6ff",
   type: "#79c0ff",
   comment: "#8b949e",
 };
@@ -51,7 +50,6 @@ export const light: Palette = {
   addWord: "#aceebb",
   deleteWord: "#ffcecb",
   keyword: "#cf222e",
-  string: "#0a3069",
   type: "#0550ae",
   comment: "#6e7781",
 };
@@ -61,7 +59,7 @@ function color(token: Highlight, theme: Palette) {
   if (token === "Delimiter") return theme.fg;
   const atom = token.Atom;
   return typeof atom === "object"
-    ? theme.string
+    ? theme.fg
     : atom === "Keyword"
       ? theme.keyword
       : atom === "Type"
@@ -129,12 +127,13 @@ export function lineSpans(
       .join(""),
   }));
 }
-/** Render selected hunk rows in their supplied order, retaining all source identities. */
+/** Render the complete Rust alignment; hunks supply change flags and navigation only. */
 export function rowsForFile(
   file: DiffFile,
   fileIndex: number,
   layout: Layout,
   theme: Palette,
+  fullContext = false,
 ): ViewerRow[] {
   const d = file.diff;
   const rows: ViewerRow[] = [
@@ -164,7 +163,7 @@ export function rowsForFile(
     if (line === null) return { kind: "empty", sign: " ", spans: [] };
     const text = (side ? right : left)[line];
     if (text === undefined)
-      throw new Error(`diffr hunk references missing line ${line}`);
+      throw new Error(`diffr alignment references missing line ${line}`);
     let spans = caches[side].get(line);
     if (!spans) {
       spans = lineSpans(
@@ -183,101 +182,95 @@ export function rowsForFile(
       spans,
     };
   };
-  let previousLeft = -1,
-    previousRight = -1;
-  for (const [hunkIndex, hunk] of d.hunks.entries()) {
-    rows.push({
-      key: `${fileIndex}:${hunkIndex}:hunk`,
-      fileIndex,
-      hunkIndex,
-      label: `@@ ${hunkIndex + 1} @@`,
-    });
-    const novelLeft = new Set(hunk.novel_lhs),
-      novelRight = new Set(hunk.novel_rhs);
-    let pendingOld: ViewerRow[] = [],
-      pendingNew: ViewerRow[] = [];
-    const flush = () => {
-      rows.push(...pendingOld, ...pendingNew);
-      pendingOld = [];
-      pendingNew = [];
-    };
+  const novelLeft = new Set(d.hunks.flatMap(h => h.novel_lhs));
+  const novelRight = new Set(d.hunks.flatMap(h => h.novel_rhs));
+  const hunkLeft = new Map<number, number>(), hunkRight = new Map<number, number>();
+  for (const [index, hunk] of d.hunks.entries()) {
     for (const [l, r] of hunk.lines) {
-      // Adjacent hunks can share context. Don't duplicate source lines in the review stream.
-      if (
-        (l === null || l <= previousLeft) &&
-        (r === null || r <= previousRight)
-      )
-        continue;
-      if (
-        (l !== null && l <= previousLeft) ||
-        (r !== null && r <= previousRight)
-      )
-        throw new Error("Conflicting diffr hunk correspondence");
-      const a = cell(l, 0, novelLeft),
-        b = cell(r, 1, novelRight);
-      const key = `${fileIndex}:${l ?? "_"}:${r ?? "_"}`;
-      if (layout === "split")
-        rows.push({ key, fileIndex, hunkIndex, left: a, right: b });
-      else {
-        const shared =
-          l !== null &&
-          r !== null &&
-          !novelLeft.has(l) &&
-          !novelRight.has(r) &&
-          left[l] === right[r];
-        if (shared) {
-          flush();
-          rows.push({
-            key,
+      if (l !== null && !hunkLeft.has(l)) hunkLeft.set(l, index);
+      if (r !== null && !hunkRight.has(r)) hunkRight.set(r, index);
+    }
+  }
+  let pendingOld: ViewerRow[] = [],
+    pendingNew: ViewerRow[] = [];
+  const flush = () => {
+    rows.push(...pendingOld, ...pendingNew);
+    pendingOld = [];
+    pendingNew = [];
+  };
+  for (const [l, r] of d.aligned_rows) {
+    const hunkIndex = (l === null ? undefined : hunkLeft.get(l))
+      ?? (r === null ? undefined : hunkRight.get(r));
+    // Rust's hunk selection includes nearby lines and enclosing syntax context.
+    // Keep both cells of a selected alignment row; never realign after hiding.
+    if (!fullContext && hunkIndex === undefined) {
+      flush();
+      if (rows.at(-1)?.label !== "…") {
+        rows.push({ key: `${fileIndex}:gap:${l ?? "_"}:${r ?? "_"}`, fileIndex, label: "…" });
+      }
+      continue;
+    }
+    const a = cell(l, 0, novelLeft),
+      b = cell(r, 1, novelRight);
+    const key = `${fileIndex}:${l ?? "_"}:${r ?? "_"}`;
+    if (layout === "split")
+      rows.push({ key, fileIndex, hunkIndex, left: a, right: b });
+    else {
+      // Correspondence and novelty come from diffr, including formatting-only changes.
+      const shared =
+        l !== null &&
+        r !== null &&
+        !novelLeft.has(l) &&
+        !novelRight.has(r);
+      if (shared) {
+        flush();
+        rows.push({
+          key,
+          fileIndex,
+          hunkIndex,
+          cell: {
+            kind: "context",
+            sign: " ",
+            oldLineNumber: l + 1,
+            newLineNumber: r + 1,
+            spans: b.spans,
+          },
+        });
+      } else {
+        if (l !== null)
+          pendingOld.push({
+            key: `${key}:old`,
             fileIndex,
             hunkIndex,
             cell: {
-              kind: "context",
-              sign: " ",
+              kind: a.kind === "deletion" ? "deletion" : "context",
+              sign: a.sign,
               oldLineNumber: l + 1,
+              spans: a.spans,
+            },
+          });
+        if (r !== null)
+          pendingNew.push({
+            key: `${key}:new`,
+            fileIndex,
+            hunkIndex,
+            cell: {
+              kind: b.kind === "addition" ? "addition" : "context",
+              sign: b.sign,
               newLineNumber: r + 1,
               spans: b.spans,
             },
           });
-        } else {
-          if (l !== null)
-            pendingOld.push({
-              key: `${key}:old`,
-              fileIndex,
-              hunkIndex,
-              cell: {
-                kind: "deletion",
-                sign: "-",
-                oldLineNumber: l + 1,
-                spans: a.spans,
-              },
-            });
-          if (r !== null)
-            pendingNew.push({
-              key: `${key}:new`,
-              fileIndex,
-              hunkIndex,
-              cell: {
-                kind: "addition",
-                sign: "+",
-                newLineNumber: r + 1,
-                spans: b.spans,
-              },
-            });
-        }
       }
-      if (l !== null) previousLeft = l;
-      if (r !== null) previousRight = r;
     }
-    flush();
   }
-  if (!d.hunks.length)
-    rows.push({
-      key: `${fileIndex}:unchanged`,
-      fileIndex,
-      label: d.has_byte_changes
-        ? "No structural changes (source formatting differs)"
-        : "No changes",
-    });
+  flush();
+  const visited = new Set<number>();
+  for (const row of rows) {
+    if (row.hunkIndex !== undefined && !visited.has(row.hunkIndex)) {
+      row.hunkStart = true;
+      visited.add(row.hunkIndex);
+    }
+  }
   return rows;
 }

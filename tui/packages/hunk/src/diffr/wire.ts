@@ -66,6 +66,7 @@ export const diffResultSchema = z.object({
   rhs_positions: z.array(position),
   lhs_folds: z.array(fold),
   rhs_folds: z.array(fold),
+  aligned_rows: z.array(z.tuple([uint.nullable(), uint.nullable()])),
   hunks: z.array(
     z.object({
       novel_lhs: z.array(uint),
@@ -103,11 +104,14 @@ export const eventSchema = z.discriminatedUnion("type", [
     before: operand,
     after: operand,
     total: uint,
+    files: z.array(file),
   }),
   z.object({ type: z.literal("file"), file, diff: diffResultSchema }),
   z.object({ type: z.literal("file_error"), file, message: z.string() }),
   z.object({ type: z.literal("complete"), succeeded: uint, failed: uint }),
 ]);
+export type FileChange = z.infer<typeof file>;
+export const fileIdentity = (file: FileChange) => JSON.stringify([file.old_path, file.new_path]);
 export type DiffResult = z.infer<typeof diffResultSchema>;
 export type DiffEvent = z.infer<typeof eventSchema>;
 export type DiffFile = Extract<DiffEvent, { type: "file" }>;

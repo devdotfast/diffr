@@ -34,7 +34,12 @@ Saved streams use the same reader:
 - Wheel, arrows, j/k, Page Up/Down, Home/End: scroll.
 - Sidebar click: jump to a file in the continuous review stream.
 - File header click or Enter: collapse/expand the file.
+- `\` / Cmd-B (when forwarded by the terminal): toggle the file tree.
+- Click folders to expand/collapse them; click files to navigate. The active file is highlighted and revealed as the diff scrolls.
+- File headers stay pinned while scrolling and show unique novel-line counts (`+added −removed`) from Rust hunks.
+- File, View, Navigate, Theme and Help menus expose the supported controls.
 - `[` / `]`: previous/next hunk.
+- `c`: toggle compact/all context. Compact uses Rust-selected nearby and enclosing syntax context, with an ellipsis for each omitted stretch.
 - `s`: split/unified; initial mode is responsive to width.
 - `w`: wrap; Left/Right: horizontal scrolling when unwrapped.
 - `t`: dark/light theme.
@@ -49,7 +54,7 @@ Saved streams use the same reader:
 Rust CLI -- implicit interactive output --> Bun frontend
 Bun frontend -- same comparison arguments + --format ndjson --> Rust subprocess
 Rust stdout --> validated events --> file store
-file source + token spans + hunk pairs --> split/unified rows
+file source + token spans + full-file alignment --> split/unified rows
 rows + width + wrapping --> measured row bounds
 row bounds + viewport --> mounted OpenTUI rows
 mouse/keyboard --> viewer state --> updated projection
@@ -66,7 +71,7 @@ mouse/keyboard --> viewer state --> updated projection
   arbitrary chunk boundaries, and rejects truncated streams.
 - `diffr/store.ts` holds completed files and errors. The UI can display files while
   subsequent results are arriving. Quit terminates the comparison subprocess.
-- `diffr/rows.ts` consumes the exact hunk line pairs. It adds empty split cells where
+- `diffr/rows.ts` consumes the exact full-file line pairs. It adds empty split cells where
   Rust supplies null, and groups unified removals before additions between shared
   context lines. Syntax colors and novelty emphasis come from Rust token spans.
   There is no patch parser, second diff algorithm or frontend syntax highlighter.
@@ -84,8 +89,7 @@ changes, with a source-row anchor used to retain scroll position where possible.
 
 ## Deliberately deferred
 
-Interactive structural folds (including inline folds and paired toggles), expansion of
-omitted hunk context, character-level source selection, drag autoscroll, full Hunk theme
+Interactive structural folds (including inline folds and paired toggles), character-level source selection, drag autoscroll, full Hunk theme
 catalog, distribution packaging, and shared web presentation code. The first pass has
 no broker, agent sessions, annotations, extensions, VCS adapters, or alternate Pierre path.
 
@@ -110,3 +114,20 @@ Unix PTY test for interactive launch, layout switching, mouse file toggles and c
 shutdown. They require Python 3 and the debug Rust binary. Set `DIFFR_TEST_BIN` to test
 another binary. OpenTUI tests verify drag-copy, split/unified rendering, and bounded
 mounted widgets while scrolling a 5,000-line file.
+
+Full-file alignment is supplied by Rust as `aligned_rows` (zero-based line pairs, null for padding). Hunks supply the default context selection and navigation; omitted stretches become ellipsis rows without changing alignment. Press `c` to reveal all source. Older saved streams must be regenerated.
+
+
+
+Drag the vertical divider at the right edge of the tree to resize it. The chosen
+width survives hiding and reopening the tree and is clamped on terminal resize.
+
+Navigation uses Hunk's key matcher and defaults: j/k or arrows scroll lines;
+d/u or Ctrl-D/Ctrl-U scroll half pages; f/b, PageDown/PageUp, or Ctrl-F/Ctrl-B
+scroll full pages; Space/Shift-Space also page; g (or gg)/G go to start/end.
+h/l or arrows pan horizontally. Cmd-B toggles the tree; backslash is its fallback.
+
+The first NDJSON event includes `files: FileChange[]` in comparison order.
+The tree renders this manifest immediately; pending files are marked ◌ and failures !.
+Selecting a pending file jumps to its diff when it arrives. Rust emits and flushes
+the manifest before structural comparison, including for `--no-index`.

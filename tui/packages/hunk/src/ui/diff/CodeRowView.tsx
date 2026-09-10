@@ -114,7 +114,7 @@ export const CodeRowView = memo(function CodeRowView({
           row.cell,
           measured.cell[visualLine] ?? [],
           geometry.leftWidth + geometry.rightWidth + 1,
-          row.cell.kind === "deletion" ? "left" : "right",
+          row.cell.newLineNumber === undefined ? "left" : "right",
           true,
         )
       ) : (

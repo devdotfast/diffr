@@ -227,6 +227,14 @@ pub(crate) struct DiffSession {
 }
 
 impl DiffSession {
+    pub(crate) fn file_manifest(&self) -> Vec<FileChange> {
+        self.files
+            .as_slice()
+            .iter()
+            .map(|pending| pending.file.clone())
+            .collect()
+    }
+
     pub(crate) fn remaining(&self) -> usize {
         self.files.len()
     }

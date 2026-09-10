@@ -28,6 +28,7 @@ def stream(repo, *args, code=0):
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=ENV) as process:
         first = json.loads(process.stdout.readline())
         assert first["type"] == "start" and first["version"] == 1
+        assert len(first["files"]) == first["total"]
         events = [first, *[json.loads(line) for line in process.stdout]]
         stderr = process.stderr.read()
         assert process.wait(timeout=30) == code, stderr

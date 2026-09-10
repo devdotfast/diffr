@@ -31,6 +31,7 @@ export function createTestDiffFile(): DiffFile {
           },
         },
       ],
+      aligned_rows: [[0, 0], [1, 1], [null, 2], [2, 3]],
       hunks: [
         {
           novel_lhs: [1],

@@ -1,5 +1,4 @@
 //! Lossless JSON encoding of the domain model, not Difftastic's display JSON.
-#[cfg(test)]
 use crate::display::line_layout as layout;
 use crate::lines::SourceRange;
 use crate::parse::folds::{Fold, FoldMatch};
@@ -114,6 +113,12 @@ fn hunk(hunk: &crate::display::hunks::Hunk) -> Value {
 impl DiffResult {
     pub(crate) fn domain_json(&self) -> Value {
         let hunks: Vec<_> = self.hunks.iter().map(hunk).collect();
+        let aligned_rows = match (&self.lhs_src, &self.rhs_src) {
+            (FileContent::Text(lhs), FileContent::Text(rhs)) => {
+                layout::aligned_rows((lhs, rhs), (&self.lhs_positions, &self.rhs_positions))
+            }
+            _ => vec![],
+        };
         json!({
             "display_path": self.display_path,
             "extra_info": self.extra_info,
@@ -123,6 +128,7 @@ impl DiffResult {
             "lhs_positions": self.lhs_positions.iter().map(position).collect::<Vec<_>>(),
             "rhs_positions": self.rhs_positions.iter().map(position).collect::<Vec<_>>(),
             "hunks": hunks,
+            "aligned_rows": aligned_rows,
             "has_byte_changes": self.has_byte_changes,
             "has_syntactic_changes": self.has_syntactic_changes,
             "lhs_folds": self.lhs_folds.iter().map(fold).collect::<Vec<_>>(),

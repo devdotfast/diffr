@@ -54,7 +54,7 @@ pub(crate) fn aligned_rows(
     let rhs_lines: Vec<_> = rhs_src.split_terminator('\n').collect();
     let mut lhs_seen = BTreeSet::new();
     let mut rhs_seen = BTreeSet::new();
-    all_matched_lines_filled(lhs_positions, rhs_positions, &lhs_lines, &rhs_lines)
+    let anchors = all_matched_lines_filled(lhs_positions, rhs_positions, &lhs_lines, &rhs_lines)
         .into_iter()
         .filter_map(|(lhs, rhs)| {
             let lhs = lhs
@@ -68,7 +68,37 @@ pub(crate) fn aligned_rows(
             }
             Some((lhs, rhs))
         })
-        .collect()
+        .collect::<Vec<_>>();
+    // Token positions need not cover blank-only or one-sided files. Complete
+    // source coverage without changing any correspondence supplied above.
+    let mut rows = Vec::new();
+    let (mut left, mut right) = (0, 0);
+    for (lhs, rhs) in anchors
+        .into_iter()
+        .chain([(Some(lhs_lines.len()), Some(rhs_lines.len()))])
+    {
+        let lhs_end = lhs.unwrap_or(left);
+        let rhs_end = rhs.unwrap_or(right);
+        while left < lhs_end || right < rhs_end {
+            let l = (left < lhs_end).then_some(left);
+            let r = (right < rhs_end).then_some(right);
+            rows.push((l, r));
+            left += usize::from(l.is_some());
+            right += usize::from(r.is_some());
+        }
+        let l = lhs.filter(|&line| line < lhs_lines.len());
+        let r = rhs.filter(|&line| line < rhs_lines.len());
+        if l.is_some() || r.is_some() {
+            rows.push((l, r));
+        }
+        if let Some(line) = l {
+            left = line + 1;
+        }
+        if let Some(line) = r {
+            right = line + 1;
+        }
+    }
+    rows
 }
 
 /// Only treat indentation as formatting when the matcher confirms a pairing
@@ -103,4 +133,28 @@ pub(crate) fn reindented_pairs(diff: &DiffResult) -> BTreeSet<(usize, usize)> {
         }
     }
     pairs
+}
+
+#[cfg(test)]
+mod full_file_tests {
+    use super::*;
+    #[test]
+    fn includes_blank_and_one_sided_sources_without_tokens() {
+        for (lhs, rhs) in [
+            ("", "\nhello\n\n"),
+            ("hello\n\n", ""),
+            ("\n\n", "\n"),
+            ("a\nb\n", "c\n"),
+        ] {
+            let rows = aligned_rows((lhs, rhs), (&[], &[]));
+            assert_eq!(
+                rows.iter().filter_map(|row| row.0).collect::<Vec<_>>(),
+                (0..lhs.split_terminator('\n').count()).collect::<Vec<_>>()
+            );
+            assert_eq!(
+                rows.iter().filter_map(|row| row.1).collect::<Vec<_>>(),
+                (0..rhs.split_terminator('\n').count()).collect::<Vec<_>>()
+            );
+        }
+    }
 }

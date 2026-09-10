@@ -1,5 +1,5 @@
 /** Decode stdout incrementally; reject truncated, reordered, or inconsistent streams. */
-import { eventSchema, type DiffEvent } from "./wire";
+import { fileIdentity, eventSchema, type DiffEvent } from "./wire";
 export async function* readDiffStream(
   chunks: AsyncIterable<Uint8Array>,
 ): AsyncGenerator<DiffEvent> {
@@ -10,6 +10,7 @@ export async function* readDiffStream(
     succeeded = 0,
     failed = 0,
     total = 0;
+  let inventory: string[] = [];
   function parse(line: string): DiffEvent {
     if (line.length > 128 * 1024 * 1024)
       throw new Error("diffr event exceeds 128 MiB");
@@ -19,8 +20,15 @@ export async function* readDiffStream(
       if (started) throw new Error("Duplicate diffr start");
       started = true;
       total = event.total;
+      inventory = event.files.map(fileIdentity);
+      if (inventory.length !== total || new Set(inventory).size !== total)
+        throw new Error("Inconsistent diffr file manifest");
     } else {
       if (!started) throw new Error("Missing diffr start");
+      if (event.type === "file" || event.type === "file_error") {
+        if (fileIdentity(event.file) !== inventory[succeeded + failed])
+          throw new Error("File result does not match diffr manifest order");
+      }
       if (event.type === "file") succeeded++;
       if (event.type === "file_error") failed++;
       if (event.type === "complete") {

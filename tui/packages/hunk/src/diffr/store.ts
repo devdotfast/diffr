@@ -1,7 +1,9 @@
 /** Hold streamed files separately from presentation state and notify React in batches. */
-import type { DiffEvent, DiffFile } from "./wire";
+import { fileIdentity, type FileChange, type DiffEvent, type DiffFile } from "./wire";
 export interface Snapshot {
   files: DiffFile[];
+  inventory: FileChange[];
+  failedFiles: Map<string, string>;
   errors: string[];
   total: number;
   complete: boolean;
@@ -9,6 +11,8 @@ export interface Snapshot {
 export class DiffStore {
   private value: Snapshot = {
     files: [],
+    inventory: [],
+    failedFiles: new Map(),
     errors: [],
     total: 0,
     complete: false,
@@ -23,12 +27,15 @@ export class DiffStore {
   getSnapshot = () => this.value;
   accept(event: DiffEvent) {
     if (event.type === "start")
-      this.value = { ...this.value, total: event.total };
+      this.value = { ...this.value, total: event.total, inventory: event.files };
     if (event.type === "file")
-      this.value = { ...this.value, files: [...this.value.files, event] };
+      this.value = { ...this.value, files: [...this.value.files, event],
+        inventory: this.value.inventory.some(f => fileIdentity(f) === fileIdentity(event.file))
+          ? this.value.inventory : [...this.value.inventory, event.file] };
     if (event.type === "file_error")
       this.value = {
         ...this.value,
+        failedFiles: new Map(this.value.failedFiles).set(fileIdentity(event.file), event.message),
         errors: [
           ...this.value.errors,
           `${event.file.new_path ?? event.file.old_path}: ${event.message}`,

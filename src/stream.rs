@@ -14,6 +14,7 @@ enum Event {
         before: Operand,
         after: Operand,
         total: usize,
+        files: Vec<FileChange>,
     },
     File {
         file: FileChange,
@@ -67,6 +68,7 @@ fn produce(
         before: session.comparison.before.clone(),
         after: session.comparison.after.clone(),
         total: session.remaining(),
+        files: session.file_manifest(),
     })?;
     let mut succeeded = 0;
     let mut failed = 0;
@@ -97,34 +99,37 @@ fn produce(
 pub(crate) fn write_file(
     before: &str,
     after: &str,
-    diff: &crate::summary::DiffResult,
+    compute: impl FnOnce() -> crate::summary::DiffResult,
     output: &mut impl Write,
 ) -> Result<()> {
+    let file = FileChange {
+        old_path: (before != "/dev/null").then(|| before.into()),
+        new_path: (after != "/dev/null").then(|| after.into()),
+        status: if before == "/dev/null" {
+            crate::git::FileStatus::Added
+        } else if after == "/dev/null" {
+            crate::git::FileStatus::Deleted
+        } else {
+            crate::git::FileStatus::Modified
+        },
+        class: None,
+    };
     let mut output = BufWriter::new(output);
     serde_json::to_writer(
         &mut output,
         &serde_json::json!({
-            "type": "start", "version": 1, "total": 1,
+            "type": "start", "version": 1, "total": 1, "files": [&file],
             "before": {"kind": "file", "path": before},
             "after": {"kind": "file", "path": after}
         }),
     )?;
     output.write_all(b"\n")?;
+    output.flush()?;
+    let diff = compute();
     serde_json::to_writer(
         &mut output,
         &Event::File {
-            file: FileChange {
-                old_path: (before != "/dev/null").then(|| before.into()),
-                new_path: (after != "/dev/null").then(|| after.into()),
-                status: if before == "/dev/null" {
-                    crate::git::FileStatus::Added
-                } else if after == "/dev/null" {
-                    crate::git::FileStatus::Deleted
-                } else {
-                    crate::git::FileStatus::Modified
-                },
-                class: None,
-            },
+            file,
             diff: diff.domain_json(),
         },
     )?;
@@ -139,4 +144,34 @@ pub(crate) fn write_file(
     output.write_all(b"\n")?;
     output.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn standalone_manifest_is_flushed_before_computation() {
+        struct Disconnected(Vec<u8>);
+        impl Write for Disconnected {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+            }
+        }
+        let mut output = Disconnected(vec![]);
+        let result = write_file(
+            "before.rs",
+            "after.rs",
+            || panic!("must not compute after manifest flush fails"),
+            &mut output,
+        );
+        assert!(result.is_err());
+        let start: Value = serde_json::from_slice(&output.0).unwrap();
+        assert_eq!(start["type"], "start");
+        assert_eq!(start["files"][0]["new_path"], "after.rs");
+    }
 }

@@ -7,6 +7,7 @@ const start = {
   before: { kind: "index" },
   after: { kind: "working_tree" },
   total: 1,
+  files: [createTestDiffFile().file],
 };
 async function decode(events: unknown[]) {
   const text = events.map((e) => JSON.stringify(e)).join("\n"),
@@ -30,7 +31,7 @@ test("decode byte-fragmented Unicode stream and preserve fold metadata", async (
       match_kind: "Novel",
     },
   ];
-  const events = [start, file, { type: "complete", succeeded: 1, failed: 0 }];
+  const events = [{...start, files: [file.file]}, file, { type: "complete", succeeded: 1, failed: 0 }];
   expect((await decode(events)) as unknown).toEqual(events);
 });
 test("reject missing completion, counts, unknown version and invalid ordering", async () => {
@@ -45,14 +46,25 @@ test("reject missing completion, counts, unknown version and invalid ordering", 
 });
 test("file errors complete without discarding earlier successful results", async () => {
   const file = createTestDiffFile();
+  const failedFile = {...file.file, old_path: "failed.ts", new_path: "failed.ts"};
   expect(
     (
       await decode([
-        { ...start, total: 2 },
+        { ...start, total: 2, files: [file.file, failedFile] },
         file,
-        { type: "file_error", file: file.file, message: "unreadable" },
+        { type: "file_error", file: failedFile, message: "unreadable" },
         { type: "complete", succeeded: 1, failed: 1 },
       ])
     ).length,
   ).toBe(4);
+});
+
+test("manifest validates count, unique identities and result ordering", async () => {
+  const a = createTestDiffFile(), b = createTestDiffFile();
+  b.file = {...b.file, old_path: "b.ts", new_path: "b.ts"};
+  for (const events of [
+    [{...start, files: []}],
+    [{...start, total: 2, files: [a.file, a.file]}],
+    [{...start, total: 2, files: [a.file, b.file]}, b],
+  ]) await expect(decode(events)).rejects.toThrow();
 });

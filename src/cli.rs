@@ -430,30 +430,32 @@ fn no_index(
     .compile()?;
     let lhs = crate::options::FileArgument::from_path_argument(&paths[0]);
     let rhs = crate::options::FileArgument::from_path_argument(&paths[1]);
-    let diff = crate::diff_file(
-        &config,
-        &paths[1].to_string_lossy(),
-        None,
-        &lhs,
-        &rhs,
-        lhs.permissions().as_ref(),
-        rhs.permissions().as_ref(),
-        display,
-        options,
-        false,
-        &[],
-        &[],
-    );
+    let compute = || {
+        crate::diff_file(
+            &config,
+            &paths[1].to_string_lossy(),
+            None,
+            &lhs,
+            &rhs,
+            lhs.permissions().as_ref(),
+            rhs.permissions().as_ref(),
+            display,
+            options,
+            false,
+            &[],
+            &[],
+        )
+    };
     if args.get_one::<String>("format").map(String::as_str) == Some("ndjson") {
         crate::stream::write_file(
             &paths[0].to_string_lossy(),
             &paths[1].to_string_lossy(),
-            &diff,
+            compute,
             &mut io::stdout().lock(),
         )?;
         Ok(i32::from(changed && args.get_flag("exit-code")))
     } else {
-        render(&diff, args, display)?;
+        render(&compute(), args, display)?;
         Ok(i32::from(changed))
     }
 }

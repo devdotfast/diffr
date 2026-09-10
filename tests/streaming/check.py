@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -129,41 +130,34 @@ with tempfile.TemporaryDirectory(prefix="diffr-hook-") as temp:
     git(repo, "init", "-q")
     git(repo, "commit", "--allow-empty", "-qm", "empty")
     base = git(repo, "rev-parse", "HEAD")
-    (repo / "hook.py").write_text(
-        "import json, sys\n"
-        "for line in sys.stdin:\n"
-        "    request = json.loads(line)\n"
-        "    assert request['language'] == 'Python' and request['src']\n"
-        "    if request['path'] == 'bad.py':\n"
-        "        reply = {'id': request['id'], 'error': 'declined'}\n"
-        "    else:\n"
-        "        reply = {'id': request['id'], 'texts': {str(f['id']): 'pseudo ' + f['placeholder'] for f in request['folds']}}\n"
-        "    print(json.dumps(reply), flush=True)\n")
+    rpc_server = ROOT / "tests/hooks/rpc_server.py"
     large = "def f():\n    a()\n    b()\n    c()\n\ndef g():\n    d()\n"
     (repo / "good.py").write_text(large)
     (repo / "bad.py").write_text(large)
     (repo / "small.py").write_text("def h():\n    e()\n")
     head = commit(repo, "additions")
-    (repo / "diffr.toml").write_text(
-        f"[folds.hook]\ncommand = [{json.dumps(sys.executable)}, 'hook.py']\ntags = ['body']\nmin_lines = 3\n")
+    def hook_config(mode, *extra):
+        command = [sys.executable, str(rpc_server), mode, *extra]
+        return f"[folds.hook]\ncommand = {json.dumps(command)}\ntags = ['body']\nmin_lines = 3\n"
+    (repo / "diffr.toml").write_text(hook_config("echo"))
     events = {e["file"]["new_path"]: e for e in stream(repo, base, head)[1:-1]}
     good = events["good.py"]
     assert "hook_error" not in good
     assert [f["summary"] for f in good["diff"]["rhs_folds"] if f["tags"] == ["body"]] == ["pseudo Body", None]
-    assert events["bad.py"]["hook_error"] == "fold hook reported: declined"
     assert all(f["summary"] is None for f in events["small.py"]["diff"]["rhs_folds"])
+    (repo / "diffr.toml").write_text(hook_config("error"))
+    events = {e["file"]["new_path"]: e for e in stream(repo, base, head)[1:-1]}
+    assert events["bad.py"]["hook_error"] == "fold hook reported: declined"
+    assert all(f["summary"] is None for f in events["good.py"]["diff"]["rhs_folds"])
     (repo / "diffr.toml").write_text("[folds.hook]\ncommand = ['./missing-hook']\n")
+    assert cli(repo, "--format", "ndjson", base, head).returncode == 2
+    (repo / "diffr.toml").write_text(hook_config("exit"))
     assert cli(repo, "--format", "ndjson", base, head).returncode == 2
     # Relative hook paths resolve against the config file, not the repository.
     with tempfile.TemporaryDirectory(prefix="diffr-hook-config-") as elsewhere:
-        (Path(elsewhere) / "hook.py").write_text(
-            "import json, os, sys\n"
-            "assert os.environ['DIFFR_WORKSPACE'] == sys.argv[1], os.environ['DIFFR_WORKSPACE']\n"
-            "for line in sys.stdin:\n"
-            "    request = json.loads(line)\n"
-            "    print(json.dumps({'id': request['id'], 'texts': {'0': os.getcwd()}}), flush=True)\n")
+        shutil.copy(rpc_server, Path(elsewhere) / "hook.py")
         (Path(elsewhere) / "hook.toml").write_text(
-            f"[folds.hook]\ncommand = [{json.dumps(sys.executable)}, 'hook.py', {json.dumps(str(repo.resolve()) + os.sep)}]\ntags = ['body']\n")
+            f"[folds.hook]\ncommand = [{json.dumps(sys.executable)}, 'hook.py', 'cwd', {json.dumps(str(repo.resolve()) + os.sep)}]\ntags = ['body']\n")
         events = stream(repo, base, head, "--config", str(Path(elsewhere) / "hook.toml"), "--", "good.py")
         assert events[1]["diff"]["rhs_folds"][0]["summary"] == str(Path(elsewhere).resolve())
 

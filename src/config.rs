@@ -35,12 +35,20 @@ pub(crate) struct HookConfig {
     pub(crate) tags: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) min_lines: usize,
+    /// Per-call limit once the hook is listening.
     #[serde(default = "default_timeout_ms")]
     pub(crate) timeout_ms: u64,
+    /// How long the hook may take to start listening on its port.
+    #[serde(default = "default_startup_timeout_ms")]
+    pub(crate) startup_timeout_ms: u64,
 }
 
 fn default_timeout_ms() -> u64 {
     5000
+}
+
+fn default_startup_timeout_ms() -> u64 {
+    30_000
 }
 
 #[derive(Default, Deserialize)]
@@ -120,8 +128,8 @@ impl Config {
             if hook.command.is_empty() {
                 return Err(ConfigError("folds.hook.command must not be empty".into()));
             }
-            if hook.timeout_ms == 0 {
-                return Err(ConfigError("folds.hook.timeout_ms must be positive".into()));
+            if hook.timeout_ms == 0 || hook.startup_timeout_ms == 0 {
+                return Err(ConfigError("folds.hook timeouts must be positive".into()));
             }
         }
         let defaults = Self::from_toml(include_str!("config/defaults.toml"))?;
@@ -291,7 +299,10 @@ mod tests {
         let hook = params.hook.unwrap();
         assert_eq!(hook.command, ["uv", "run", "summarize.py"]);
         assert_eq!(hook.tags.as_deref(), Some(&["body".to_owned()][..]));
-        assert_eq!((hook.min_lines, hook.timeout_ms), (30, 5000));
+        assert_eq!(
+            (hook.min_lines, hook.timeout_ms, hook.startup_timeout_ms),
+            (30, 5000, 30_000)
+        );
         assert!(Config::from_toml("")
             .unwrap()
             .compile()

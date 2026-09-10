@@ -29,6 +29,7 @@ import {
   type SourceSelection,
 } from "../diffr/selection";
 import { fileIdentity, type DiffFile } from "../diffr/wire";
+import { foldRegions, nestedRegions, type FoldRegion, type RowFold } from "../diffr/folds";
 import type { DiffStore } from "../diffr/store";
 import { sanitizeTerminalLine } from "../lib/terminalText";
 import { sliceTextByWidth } from "./lib/text";
@@ -54,6 +55,8 @@ export function App({
     [closed, setClosed] = useState<Set<number>>(new Set());
   const [selection, setSelection] = useState<SourceSelection | null>(null),
     [message, setMessage] = useState("");
+  // Fold ids collapsed per loaded file; VS Code keeps this per editor model.
+  const [collapsed, setCollapsed] = useState<Map<number, ReadonlySet<string>>>(new Map());
   const [closedDirectories, setClosedDirectories] = useState<Set<string>>(new Set());
   const [treeScroll, setTreeScroll] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(28);
@@ -85,10 +88,11 @@ export function App({
   const rows = useMemo(() => {
     const all = fileOrder.flatMap(index => {
       const file = snapshot.files[index];
-      const key = `${index}:${layout}:${isLight}:${fullContext}`;
+      const folds = collapsed.get(index) ?? new Set<string>();
+      const key = `${index}:${layout}:${isLight}:${fullContext}:${[...folds].sort().join(",")}`;
       let cached = rowCache.current.get(file);
       if (cached?.key !== key) {
-        cached = { key, rows: rowsForFile(file, index, layout, theme, fullContext) };
+        cached = { key, rows: rowsForFile(file, index, layout, theme, fullContext, folds) };
         rowCache.current.set(file, cached);
       }
       return closed.has(index) ? cached.rows.slice(0, 1) : cached.rows;
@@ -96,7 +100,7 @@ export function App({
     for (const [i, error] of snapshot.errors.entries())
       all.push({ key: `error:${i}`, fileIndex: -1, label: error });
     return all;
-  }, [snapshot.files, snapshot.errors, layout, theme, closed, fullContext, fileOrder]);
+  }, [snapshot.files, snapshot.errors, layout, theme, closed, fullContext, fileOrder, collapsed]);
   const geometry = useMemo(
     () => measureRows(rows, contentWidth, wrap, horizontal),
     [rows, contentWidth, wrap, horizontal],
@@ -129,6 +133,42 @@ export function App({
       return next;
     });
   };
+  const regionCache = useRef(new WeakMap<DiffFile, FoldRegion[]>());
+  const regionsOf = (file: DiffFile) => {
+    let regions = regionCache.current.get(file);
+    if (!regions) {
+      regions = foldRegions(file.diff);
+      regionCache.current.set(file, regions);
+    }
+    return regions;
+  };
+  const setFolds = (fileIndex: number, ids: string[], collapse: boolean) =>
+    setCollapsed((old) => {
+      const next = new Set(old.get(fileIndex) ?? []);
+      for (const id of ids) if (collapse) next.add(id); else next.delete(id);
+      return new Map(old).set(fileIndex, next);
+    });
+  // Alt-click folds or unfolds every region nested inside, as in VS Code.
+  const toggleFold = (fileIndex: number, fold: RowFold, recursive: boolean) => {
+    const regions = regionsOf(snapshot.files[fileIndex]);
+    const region = regions.find((r) => r.id === fold.id);
+    if (!region) throw new Error(`Unknown fold ${fold.id}`);
+    const ids = recursive
+      ? [fold.id, ...nestedRegions(regions, region).map((r) => r.id)]
+      : [fold.id];
+    setFolds(fileIndex, ids, !fold.collapsed);
+  };
+  const rowFold = (row: ViewerRow) => row.cell?.fold ?? row.right?.fold ?? row.left?.fold;
+  const foldAll = (collapse: boolean) => {
+    const byFile = new Map<number, string[]>();
+    for (const row of rows) {
+      const fold = rowFold(row);
+      if (fold) byFile.set(row.fileIndex, [...(byFile.get(row.fileIndex) ?? []), fold.id]);
+    }
+    if (collapse) for (const [fileIndex, ids] of byFile) setFolds(fileIndex, ids, true);
+    else setCollapsed(new Map());
+  };
+  const anyCollapsed = [...collapsed.values()].some((ids) => ids.size > 0);
   const jump = (index: number) => {
     const row = geometry.rows.find((r) => r.row.fileIndex === index);
     if (row) setScroll(Math.min(maxScroll, row.top));
@@ -180,7 +220,11 @@ export function App({
       const current = visibleRows(geometry, top, 1)[0];
       if (current && current.row.fileIndex >= 0)
         toggleFile(current.row.fileIndex);
-    }
+    } else if (is("z")) {
+      const current = visibleRows(geometry, top, 1)[0]?.row;
+      const fold = current && rowFold(current);
+      if (current && fold) toggleFold(current.fileIndex, fold, false);
+    } else if (is("Z")) foldAll(!anyCollapsed);
   });
   const [selectionStart, selectionEnd] = useMemo(
     () => selectionBounds(rows, selection),
@@ -292,6 +336,7 @@ export function App({
               if (dragging.current)
                 setSelection((s) => (s ? { ...s, end: row.key } : s));
             }}
+            onFold={(fold, recursive) => toggleFold(row.fileIndex, fold, recursive)}
           />,
         );
     }
@@ -322,14 +367,16 @@ export function App({
     File: [["Toggle file tree  ⌘B / \\", () => setShowSidebar(v => !v)], ["Copy selection  y", copy], ["Quit  q", onQuit]],
     View: [[`Layout: ${layout}  s`, () => { setMode(layout === "split" ? "unified" : "split"); setSelection(null); }],
       [`Wrap: ${wrap ? "on" : "off"}  w`, () => setWrap(v => !v)],
-      [`Context: ${fullContext ? "all" : "compact"}  c`, () => { setFullContext(v => !v); setSelection(null); }]],
+      [`Context: ${fullContext ? "all" : "compact"}  c`, () => { setFullContext(v => !v); setSelection(null); }],
+      ["Fold all  Z", () => foldAll(true)], ["Unfold all  Z", () => foldAll(false)]],
     Navigate: [["Previous change  [", () => navigateHunk(-1)], ["Next change  ]", () => navigateHunk(1)],
       ["First file  Home", () => setScroll(0)], ["Last file  End", () => setScroll(maxScroll)]],
     Theme: [["Dark", () => setLight(false)], ["Light", () => setLight(true)]],
     Help: [["Scroll: j/k · h/l · gg/G", () => setMessage("j/k scroll · h/l pan · gg first · G last")],
       ["Half page: Ctrl-D / Ctrl-U", () => setMessage("d / Ctrl-D: half down · u / Ctrl-U: half up")],
       ["Full page: Ctrl-F / Ctrl-B", () => setMessage("Ctrl-F: page down · Ctrl-B: page up")],
-      ["Drag to select · y to copy", () => setMessage("Drag source lines; y copies original source")]],
+      ["Drag to select · y to copy", () => setMessage("Drag source lines; y copies original source")],
+      ["Folds: click ▸ · z · Alt-click", () => setMessage("Click the gutter chevron or ⋯ · z toggles the top fold · Alt-click folds nested regions · Z folds/unfolds all")]],
   };
   return (
     <box
@@ -481,7 +528,7 @@ export function App({
       </box>}
       <text height={1} fg={theme.muted} selectable={false}>
         {fit(
-          `${snapshot.files.length}/${snapshot.total} files ${snapshot.complete ? "" : "loading…"} ${snapshot.errors.length ? `${snapshot.errors.length} errors` : ""}  [/] hunks · drag selects lines · y copy · q quit ${message}`,
+          `${snapshot.files.length}/${snapshot.total} files ${snapshot.complete ? "" : "loading…"} ${snapshot.errors.length ? `${snapshot.errors.length} errors` : ""}  [/] hunks · z fold · drag selects lines · y copy · q quit ${message}`,
           width,
         )}
       </text>

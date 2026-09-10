@@ -6,6 +6,7 @@
  * column math, the highlight worker, geometry — can share these types without importing
  * the builders themselves.
  */
+import type { RowFold } from "../../diffr/folds";
 type DiffLineMoveKind = "moved";
 
 export interface RenderSpan {
@@ -21,6 +22,8 @@ export interface SplitLineCell {
   sign: string;
   lineNumber?: number;
   moveKind?: DiffLineMoveKind;
+  /** This cell starts a fold region; the chevron and placeholder come from here. */
+  fold?: RowFold;
   spans: RenderSpan[];
 }
 
@@ -30,5 +33,6 @@ export interface UnifiedLineCell {
   oldLineNumber?: number;
   newLineNumber?: number;
   moveKind?: DiffLineMoveKind;
+  fold?: RowFold;
   spans: RenderSpan[];
 }

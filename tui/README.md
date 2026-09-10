@@ -39,6 +39,13 @@ Saved streams use the same reader:
 - File headers stay pinned while scrolling and show unique novel-line counts (`+added −removed`) from Rust hunks.
 - File, View, Navigate, Theme and Help menus expose the supported controls.
 - `[` / `]`: previous/next hunk.
+- Folds follow VS Code with controls always shown: a foldable row shows `▾` in the
+  gutter, and a collapsed fold shows `▸` plus a `⋯ Placeholder` after the header line.
+  Click either to toggle. Alt-click also folds or unfolds every nested region. `z` toggles
+  the fold on the top row; `Z` (and View > Fold all / Unfold all) folds or unfolds every
+  visible fold. The header and closing delimiter stay visible; paired unchanged folds
+  collapse on both sides. A fold on one side only blanks that side's cells, keeping the
+  other side's lines in Rust's alignment.
 - `c`: toggle compact/all context. Compact uses Rust-selected nearby and enclosing syntax context, with an ellipsis for each omitted stretch.
 - `s`: split/unified; initial mode is responsive to width.
 - `w`: wrap; Left/Right: horizontal scrolling when unwrapped.
@@ -66,7 +73,11 @@ mouse/keyboard --> viewer state --> updated projection
   wire format. Standalone comparisons add start-event operands `{kind: "file", path}`.
 - `packages/hunk/src/diffr/wire.ts` validates the Rust field shapes. Source positions
   remain zero-based UTF-8 byte offsets. Fold metadata, tags, pairings and placeholders
-  are retained intact, but no structural fold state is applied yet.
+  are retained intact.
+- `diffr/folds.ts` turns fold ranges into VS Code-style regions: one region per header
+  line (the outermost wins), unchanged pairs share one id, and a trailing line hides only
+  when nothing follows the range on it. Collapsed ids live in viewer state; folded lines
+  are masked per side before row building, so no realignment happens.
 - `diffr/stream.ts` validates event ordering, versions and completion counts, handles
   arbitrary chunk boundaries, and rejects truncated streams.
 - `diffr/store.ts` holds completed files and errors. The UI can display files while
@@ -89,7 +100,7 @@ changes, with a source-row anchor used to retain scroll position where possible.
 
 ## Deliberately deferred
 
-Interactive structural folds (including inline folds and paired toggles), character-level source selection, drag autoscroll, full Hunk theme
+Copying the hidden lines of a collapsed fold, character-level source selection, drag autoscroll, full Hunk theme
 catalog, distribution packaging, and shared web presentation code. The first pass has
 no broker, agent sessions, annotations, extensions, VCS adapters, or alternate Pierre path.
 

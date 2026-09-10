@@ -6,6 +6,8 @@ import type {
   UnifiedLineCell,
 } from "../ui/diff/diffRowModel";
 import { measureTextWidth } from "../ui/lib/text";
+import { foldHeaders, foldRegions, hiddenLines, sourceLines } from "./folds";
+export { sourceLines };
 export type Layout = "split" | "unified";
 export interface ViewerRow {
   key: string;
@@ -28,6 +30,9 @@ export interface Palette {
   keyword: string;
   type: string;
   comment: string;
+  /** VS Code's editor.foldBackground and foldPlaceholderForeground. */
+  foldBackground: string;
+  foldPlaceholder: string;
 }
 export const dark: Palette = {
   bg: "#0d1117",
@@ -40,6 +45,8 @@ export const dark: Palette = {
   keyword: "#ff7b72",
   type: "#79c0ff",
   comment: "#8b949e",
+  foldBackground: "#152434",
+  foldPlaceholder: "#808080",
 };
 export const light: Palette = {
   bg: "#ffffff",
@@ -52,9 +59,9 @@ export const light: Palette = {
   keyword: "#cf222e",
   type: "#0550ae",
   comment: "#6e7781",
+  foldBackground: "#e6f3ff",
+  foldPlaceholder: "#808080",
 };
-export const sourceLines = (text: string) =>
-  text === "" ? [] : text.replace(/\n$/, "").split("\n");
 function color(token: Highlight, theme: Palette) {
   if (token === "Delimiter") return theme.fg;
   const atom = token.Atom;
@@ -134,6 +141,7 @@ export function rowsForFile(
   layout: Layout,
   theme: Palette,
   fullContext = false,
+  collapsed: ReadonlySet<string> = new Set(),
 ): ViewerRow[] {
   const d = file.diff;
   const rows: ViewerRow[] = [
@@ -191,6 +199,13 @@ export function rowsForFile(
       if (r !== null && !hunkRight.has(r)) hunkRight.set(r, index);
     }
   }
+  const regions = foldRegions(d);
+  const shown = (index: number) => {
+    const [l, r] = d.aligned_rows[index];
+    return fullContext || (l !== null && hunkLeft.has(l)) || (r !== null && hunkRight.has(r));
+  };
+  const hidden = hiddenLines(d.aligned_rows, regions, collapsed, shown);
+  const headers = foldHeaders(d.aligned_rows, regions, collapsed);
   let pendingOld: ViewerRow[] = [],
     pendingNew: ViewerRow[] = [];
   const flush = () => {
@@ -198,9 +213,14 @@ export function rowsForFile(
     pendingOld = [];
     pendingNew = [];
   };
-  for (const [l, r] of d.aligned_rows) {
-    const hunkIndex = (l === null ? undefined : hunkLeft.get(l))
-      ?? (r === null ? undefined : hunkRight.get(r));
+  for (const [index, pair] of d.aligned_rows.entries()) {
+    const hunkIndex = (pair[0] === null ? undefined : hunkLeft.get(pair[0]))
+      ?? (pair[1] === null ? undefined : hunkRight.get(pair[1]));
+    // Folded lines lose their cell; a row folded on one side keeps the other side's
+    // line beside a blank cell, and a row folded on both sides disappears.
+    const l = pair[0] !== null && hidden[0].has(pair[0]) ? null : pair[0],
+      r = pair[1] !== null && hidden[1].has(pair[1]) ? null : pair[1];
+    if (l === null && r === null) continue;
     // Rust's hunk selection includes nearby lines and enclosing syntax context.
     // Keep both cells of a selected alignment row; never realign after hiding.
     if (!fullContext && hunkIndex === undefined) {
@@ -210,8 +230,8 @@ export function rowsForFile(
       }
       continue;
     }
-    const a = cell(l, 0, novelLeft),
-      b = cell(r, 1, novelRight);
+    const a = { ...cell(l, 0, novelLeft), fold: headers[0].get(index) },
+      b = { ...cell(r, 1, novelRight), fold: headers[1].get(index) };
     const key = `${fileIndex}:${l ?? "_"}:${r ?? "_"}`;
     if (layout === "split")
       rows.push({ key, fileIndex, hunkIndex, left: a, right: b });
@@ -233,6 +253,7 @@ export function rowsForFile(
             sign: " ",
             oldLineNumber: l + 1,
             newLineNumber: r + 1,
+            fold: b.fold ?? a.fold,
             spans: b.spans,
           },
         });
@@ -246,6 +267,7 @@ export function rowsForFile(
               kind: a.kind === "deletion" ? "deletion" : "context",
               sign: a.sign,
               oldLineNumber: l + 1,
+              fold: a.fold,
               spans: a.spans,
             },
           });
@@ -258,6 +280,7 @@ export function rowsForFile(
               kind: b.kind === "addition" ? "addition" : "context",
               sign: b.sign,
               newLineNumber: r + 1,
+              fold: b.fold,
               spans: b.spans,
             },
           });

@@ -6,6 +6,7 @@ import { TextRenderable, type BaseRenderable } from "@opentui/core";
 import { App } from "./App";
 import { DiffStore } from "../diffr/store";
 import { createTestDiffFile } from "../diffr/fixture";
+import { createFoldedDiffFile } from "../diffr/folds.test";
 test("render real OpenTUI rows, switch layout, collapse and reopen file with mouse", async () => {
   const store = new DiffStore();
   store.accept(createTestDiffFile());
@@ -284,6 +285,55 @@ test(`stream arrivals preserve code in every commit (wrap=${wrap}, unified=${uni
     }
   } finally {
     capture = undefined;
+    await act(async () => { t.renderer.destroy(); });
+  }
+});
+test("folds collapse from the gutter chevron and expand from the placeholder", async () => {
+  const store = new DiffStore();
+  const file = createFoldedDiffFile();
+  // Pad the file past the viewport so the z key can act on a scrolled-to row.
+  const text = (file.diff.rhs_src as { Text: string }).Text;
+  const tail = Array.from({ length: 20 }, (_, i) => `tail ${i}`);
+  file.diff.lhs_src = file.diff.rhs_src = { Text: text + tail.join("\n") + "\n" };
+  const rows = file.diff.aligned_rows.length;
+  file.diff.aligned_rows.push(...tail.map((_, i): [number, number] => [rows + i, rows + i]));
+  file.diff.hunks[0].lines = file.diff.aligned_rows;
+  store.accept(file);
+  const t = await testRender(<App store={store} onQuit={() => {}} />, { width: 150, height: 20 });
+  try {
+    await act(async () => { await t.renderOnce(); });
+    await t.waitForFrame((f) => f.includes("inner(|| {"));
+    const lines = () => t.captureCharFrame().split("\n");
+    const rowOf = (needle: string) => lines().findIndex((l) => l.includes(needle));
+    const inner = rowOf("inner(|| {");
+    // Every foldable row shows its chevron without hovering.
+    const chevronX = lines()[inner].indexOf("▾");
+    expect(chevronX).toBeGreaterThan(0);
+    await act(async () => { await t.mockMouse.click(chevronX, inner); });
+    await t.waitForFrame((f) => !f.includes("a();") && f.includes("⋯ Body"));
+    expect(t.captureCharFrame()).toContain("});");
+    expect(lines()[inner]).toContain("▸");
+    const folded = lines()[inner];
+    await act(async () => { await t.mockMouse.click(folded.lastIndexOf("⋯") + 1, inner); });
+    await t.waitForFrame((f) => f.includes("a();"));
+    // z toggles the fold on the top row once "fn outer() {" is scrolled to the top.
+    await act(async () => { t.mockInput.pressKey("j"); });
+    await t.waitForFrame((f) => !f.includes("fn outer() {"));
+    await act(async () => { t.mockInput.pressKey("z"); });
+    await t.waitForFrame((f) => !f.includes("inner(|| {") && !f.includes("a();"));
+    await act(async () => { t.mockInput.pressKey("z"); });
+    await t.waitForFrame((f) => f.includes("inner(|| {"));
+    await act(async () => { t.mockInput.pressKey("k"); });
+    await t.waitForFrame((f) => f.includes("fn outer() {"));
+    // Alt-click on the outer chevron folds nested regions too, so reopening keeps them folded.
+    const outer = rowOf("fn outer() {");
+    await act(async () => { await t.mockMouse.click(chevronX, outer, 0, { modifiers: { alt: true } }); });
+    await t.waitForFrame((f) => !f.includes("inner(|| {"));
+    await act(async () => { await t.mockMouse.click(chevronX, outer); });
+    await t.waitForFrame((f) => f.includes("inner(|| {") && !f.includes("a();"));
+    await act(async () => { t.mockInput.pressKey("Z"); });
+    await t.waitForFrame((f) => f.includes("a();"));
+  } finally {
     await act(async () => { t.renderer.destroy(); });
   }
 });

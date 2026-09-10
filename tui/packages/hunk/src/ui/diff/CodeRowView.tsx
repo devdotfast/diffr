@@ -8,6 +8,8 @@ import type {
 } from "./diffRowModel";
 import type { Geometry, MeasuredRow } from "../../diffr/geometry";
 import type { Palette } from "../../diffr/rows";
+import type { RowFold } from "../../diffr/folds";
+import { measureTextWidth } from "../lib/text";
 const colors = new Map<string, ReturnType<typeof parseColor>>();
 function color(value: string) {
   let c = colors.get(value);
@@ -27,6 +29,13 @@ function styled(spans: RenderSpan[], theme: Palette, bg: string) {
     })),
   );
 }
+/** VS Code's showFoldingControls "always": expandable rows keep their chevron visible. */
+function chevron(fold: RowFold | undefined) {
+  if (!fold) return " ";
+  return fold.collapsed ? "▸" : "▾";
+}
+const placeholderText = (fold: RowFold) =>
+  fold.placeholder === "…" ? " ⋯" : ` ⋯ ${fold.placeholder}`;
 export const CodeRowView = memo(function CodeRowView({
   measured,
   visualLine,
@@ -35,6 +44,7 @@ export const CodeRowView = memo(function CodeRowView({
   selectedSide,
   onSelect,
   onExtend,
+  onFold,
 }: {
   measured: MeasuredRow;
   visualLine: number;
@@ -43,8 +53,10 @@ export const CodeRowView = memo(function CodeRowView({
   selectedSide?: "left" | "right";
   onSelect: (side: "left" | "right") => void;
   onExtend: () => void;
+  onFold: (fold: RowFold, recursive: boolean) => void;
 }) {
   const row = measured.row;
+  const lastLine = visualLine === measured.height - 1;
   function cell(
     value: SplitLineCell | UnifiedLineCell,
     spans: RenderSpan[],
@@ -52,6 +64,7 @@ export const CodeRowView = memo(function CodeRowView({
     side: "left" | "right",
     unified = false,
   ) {
+    const fold = value.fold;
     const bg =
       selectedSide === side
         ? "#264f78"
@@ -59,22 +72,26 @@ export const CodeRowView = memo(function CodeRowView({
           ? theme.addition
           : value.kind === "deletion"
             ? theme.deletion
-            : theme.bg;
+            : fold?.collapsed
+              ? theme.foldBackground
+              : theme.bg;
     const number = "lineNumber" in value ? value.lineNumber : undefined;
-    const gutter = unified
+    const numbers = unified
       ? `${visualLine ? "" : ((value as UnifiedLineCell).oldLineNumber ?? "")}`.padStart(
-          geometry.gutter - 1,
+          geometry.gutter - 2,
         ) +
         " " +
         `${visualLine ? "" : ((value as UnifiedLineCell).newLineNumber ?? "")}`.padStart(
           geometry.gutter - 2,
-        ) +
-        (visualLine ? " " : value.sign) +
-        " "
-      : `${visualLine ? "" : (number ?? "")}`.padStart(geometry.gutter - 2) +
-        (visualLine ? " " : value.sign) +
-        " ";
+        )
+      : `${visualLine ? "" : (number ?? "")}`.padStart(geometry.gutter - 3);
     const gutterWidth = unified ? geometry.gutter * 2 : geometry.gutter;
+    const available = Math.max(1, width - gutterWidth);
+    const collapsed = fold?.collapsed && lastLine ? fold : undefined;
+    const used = collapsed
+      ? Math.min(available, spans.reduce((n, s) => n + measureTextWidth(s.text), 0))
+      : available;
+    const fill = available - used;
     return (
       <box
         width={width}
@@ -86,16 +103,31 @@ export const CodeRowView = memo(function CodeRowView({
         }}
         onMouseMove={onExtend}
       >
+        <text width={numbers.length} height={1} fg={theme.muted} selectable={false}>
+          {numbers}
+        </text>
         <text
-          width={gutterWidth}
+          width={1}
           height={1}
           fg={theme.muted}
           selectable={false}
+          onMouseDown={(event) => {
+            if (fold && !visualLine) event.stopPropagation();
+          }}
+          onMouseUp={(event) => {
+            if (fold && !visualLine && event.button === 0) {
+              event.stopPropagation();
+              onFold(fold, event.modifiers.alt);
+            }
+          }}
         >
-          {gutter}
+          {visualLine ? " " : chevron(fold)}
+        </text>
+        <text width={2} height={1} fg={theme.muted} selectable={false}>
+          {(visualLine ? " " : value.sign) + " "}
         </text>
         <text
-          width={Math.max(1, width - gutterWidth)}
+          width={used}
           height={1}
           content={styled(
             selectedSide === side ? spans.map((s) => ({ ...s, bg })) : spans,
@@ -104,6 +136,23 @@ export const CodeRowView = memo(function CodeRowView({
           )}
           selectable={false}
         />
+        {collapsed && fill > 0 && (
+          <text
+            width={fill}
+            height={1}
+            fg={theme.foldPlaceholder}
+            selectable={false}
+            onMouseDown={(event) => event.stopPropagation()}
+            onMouseUp={(event) => {
+              if (event.button === 0) {
+                event.stopPropagation();
+                onFold(collapsed, event.modifiers.alt);
+              }
+            }}
+          >
+            {placeholderText(collapsed)}
+          </text>
+        )}
       </box>
     );
   }

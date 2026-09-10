@@ -35,7 +35,8 @@ export function measureRows(
       ),
     1,
   );
-  const gutter = String(maxLine).length + 2;
+  // Line number, fold chevron, change sign, space.
+  const gutter = String(maxLine).length + 3;
   const leftWidth = Math.floor((width - 1) / 2),
     rightWidth = width - leftWidth - 1;
   const measure = (spans: RenderSpan[] | undefined, available: number) => {

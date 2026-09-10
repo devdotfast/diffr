@@ -31,7 +31,12 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 pub(crate) struct Params {
-    queries: DftHashMap<Language, AnnotationQuery>,
+    queries: DftHashMap<Language, LanguageParams>,
+}
+
+pub(crate) struct LanguageParams {
+    pub(crate) folds: AnnotationQuery,
+    pub(crate) context: AnnotationQuery,
 }
 
 impl Config {
@@ -56,21 +61,24 @@ impl Config {
                 .find(|language| format!("{language:?}").to_lowercase() == name)
                 .ok_or_else(|| ConfigError(format!("unknown language: {name}")))?;
             let grammar = tree_sitter_parser::from_language(language).language.clone();
-            let source = format!(
-                "{}\n{}",
-                config.folds.as_deref().unwrap_or_default(),
-                config.context.as_deref().unwrap_or_default(),
+            let compile = |feature, source: Option<String>| {
+                AnnotationQuery::compile(&grammar, source.as_deref().unwrap_or_default())
+                    .map_err(|error| ConfigError(format!("languages.{name}.{feature}: {error}")))
+            };
+            queries.insert(
+                language,
+                LanguageParams {
+                    folds: compile("folds", config.folds)?,
+                    context: compile("context", config.context)?,
+                },
             );
-            let query = AnnotationQuery::compile(&grammar, &source)
-                .map_err(|error| ConfigError(format!("languages.{name}: {error}")))?;
-            queries.insert(language, query);
         }
         Ok(Params { queries })
     }
 }
 
 impl Params {
-    pub(crate) fn query(&self, language: Language) -> Option<&AnnotationQuery> {
+    pub(crate) fn query(&self, language: Language) -> Option<&LanguageParams> {
         self.queries.get(&language)
     }
 }
@@ -190,7 +198,7 @@ mod query_tests {
                 Ok(_) => panic!("accepted {query}"),
                 Err(error) => error,
             };
-            assert!(error.to_string().contains("languages.rust:"));
+            assert!(error.to_string().contains("languages.rust.folds:"));
         }
     }
 
@@ -204,7 +212,7 @@ mod query_tests {
 
     #[test]
     fn neovim_header_end_and_final_have_distinct_endpoints() {
-        use crate::parse::{annotations, guess_language::Language, tree_sitter_parser as parser};
+        use crate::parse::{context, guess_language::Language, tree_sitter_parser as parser};
         let src = "fn f(\n    x: i32,\n) {\n    work(x);\n}\n";
         let grammar = parser::from_language(Language::Rust);
         let tree = parser::to_tree(src, grammar);
@@ -214,14 +222,12 @@ mod query_tests {
             ("(function_item) @context", 0),
         ] {
             let params = configured("", query);
-            let annotations = annotations::collect(&tree, src, params.query(grammar.language_id));
-            let context = annotations
-                .contexts
-                .values()
-                .next()
-                .unwrap()
-                .first()
-                .unwrap();
+            let contexts = context::classify(
+                &tree,
+                src,
+                params.query(grammar.language_id).map(|q| &q.context),
+            );
+            let context = contexts.values().next().unwrap().first().unwrap();
             assert_eq!(context.header, 0..=last_header);
         }
     }

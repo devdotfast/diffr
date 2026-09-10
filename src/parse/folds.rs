@@ -42,7 +42,8 @@ pub(crate) fn interior_range(
 }
 
 fn range(node: &Syntax<'_>) -> Option<SourceRange> {
-    let metadata = node.info().fold.borrow().clone()?;
+    let metadata = node.info().fold.borrow();
+    let metadata = metadata.as_ref()?;
     let region = match (metadata.range_override, node) {
         (Some(region), _) => region,
         (
@@ -104,4 +105,54 @@ pub(crate) fn project(node: &Syntax<'_>, change: ChangeKind<'_>) -> Option<Fold>
             })
             .unwrap_or_else(|| "…".into()),
     })
+}
+
+/// Interpret configurable fold captures in their own query traversal.
+pub(crate) fn classify(
+    tree: &tree_sitter::Tree,
+    src: &str,
+    compiled: Option<&crate::config::query::AnnotationQuery>,
+) -> crate::hash::DftHashMap<usize, super::syntax::FoldMetadata> {
+    use super::{query::adjusted_range, syntax::FoldMetadata};
+    use crate::hash::{DftHashMap, DftHashSet};
+    use streaming_iterator::StreamingIterator as _;
+    let mut result = DftHashMap::default();
+    let Some(compiled) = compiled else {
+        return result;
+    };
+    let query = &compiled.query;
+    let lines: Vec<_> = src.split('\n').collect();
+    let mut ambiguous_folds = DftHashSet::default();
+    let mut cursor = tree_sitter::QueryCursor::new();
+    let mut matches = cursor.matches(query, tree.root_node(), src.as_bytes());
+    while let Some(matched) = matches.next() {
+        let pattern = &compiled.patterns[matched.pattern_index];
+        for fold in matched
+            .captures
+            .iter()
+            .filter(|capture| query.capture_names()[capture.index as usize] == "fold")
+        {
+            let Some(region) = adjusted_range(fold, pattern, &lines) else {
+                continue;
+            };
+            if region.start == region.end || ambiguous_folds.contains(&fold.node.id()) {
+                continue;
+            }
+            let metadata = result
+                .entry(fold.node.id())
+                .or_insert_with(|| FoldMetadata {
+                    tags: Vec::new(),
+                    range_override: Some(region),
+                });
+            if metadata.range_override != Some(region) {
+                result.remove(&fold.node.id());
+                ambiguous_folds.insert(fold.node.id());
+                continue;
+            }
+            metadata.tags.extend(pattern.tags.iter().cloned());
+            metadata.tags.sort();
+            metadata.tags.dedup();
+        }
+    }
+    result
 }

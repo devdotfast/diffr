@@ -1,7 +1,8 @@
 # Syntax annotation configuration
 
 The caller parses TOML with `Config::from_toml`, then calls `compile()` once.
-The resulting `Params` owns compiled Tree-sitter queries and is borrowed by each diff.
+The resulting `Params` owns separately compiled fold and context queries and is borrowed by each diff.
+Each classifier runs its own traversal. Combining them is a separate optimization.
 File discovery and server configuration loading are not part of this module.
 
 ```rust

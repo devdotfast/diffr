@@ -1520,10 +1520,10 @@ fn tree_highlights(
         }
     }
 
-    let annotations = super::annotations::collect(tree, src, params.query(config.language_id));
+    let queries = params.query(config.language_id);
     HighlightedNodeIds {
-        fold_kinds: annotations.folds,
-        contexts: annotations.contexts,
+        fold_kinds: super::folds::classify(tree, src, queries.map(|q| &q.folds)),
+        contexts: super::context::classify(tree, src, queries.map(|q| &q.context)),
         comment_ids,
         keyword_ids,
         string_ids,

@@ -5,7 +5,7 @@ use crate::parse::{guess_language::Language, tree_sitter_parser};
 use query::AnnotationQuery;
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use strum::IntoEnumIterator;
 
@@ -26,6 +26,9 @@ pub(crate) struct FoldsConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct HookConfig {
+    /// Relative command paths resolve against the config file, wherever it lives.
+    #[serde(skip)]
+    pub(crate) dir: PathBuf,
     pub(crate) command: Vec<String>,
     /// None sends every tagged fold; otherwise a fold needs one of these tags.
     #[serde(default)]
@@ -91,7 +94,16 @@ impl Config {
             .map(Path::to_path_buf)
             .unwrap_or_else(|| workspace.join("diffr.toml"));
         match std::fs::read_to_string(&path) {
-            Ok(source) => Self::from_toml(&source),
+            Ok(source) => {
+                let mut config = Self::from_toml(&source)?;
+                if let Some(hook) = &mut config.folds.hook {
+                    hook.dir = path
+                        .parent()
+                        .expect("config file has a parent")
+                        .to_path_buf();
+                }
+                Ok(config)
+            }
             Err(error) if explicit.is_none() && error.kind() == std::io::ErrorKind::NotFound => {
                 Ok(Self::default())
             }

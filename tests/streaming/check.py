@@ -154,6 +154,18 @@ with tempfile.TemporaryDirectory(prefix="diffr-hook-") as temp:
     assert all(f["summary"] is None for f in events["small.py"]["diff"]["rhs_folds"])
     (repo / "diffr.toml").write_text("[folds.hook]\ncommand = ['./missing-hook']\n")
     assert cli(repo, "--format", "ndjson", base, head).returncode == 2
+    # Relative hook paths resolve against the config file, not the repository.
+    with tempfile.TemporaryDirectory(prefix="diffr-hook-config-") as elsewhere:
+        (Path(elsewhere) / "hook.py").write_text(
+            "import json, os, sys\n"
+            "assert os.environ['DIFFR_WORKSPACE'] == sys.argv[1], os.environ['DIFFR_WORKSPACE']\n"
+            "for line in sys.stdin:\n"
+            "    request = json.loads(line)\n"
+            "    print(json.dumps({'id': request['id'], 'texts': {'0': os.getcwd()}}), flush=True)\n")
+        (Path(elsewhere) / "hook.toml").write_text(
+            f"[folds.hook]\ncommand = [{json.dumps(sys.executable)}, 'hook.py', {json.dumps(str(repo.resolve()) + os.sep)}]\ntags = ['body']\n")
+        events = stream(repo, base, head, "--config", str(Path(elsewhere) / "hook.toml"), "--", "good.py")
+        assert events[1]["diff"]["rhs_folds"][0]["summary"] == str(Path(elsewhere).resolve())
 
 # Closing the pipe while a multi-file producer is active must not leave it
 # blocked forever on a full queue. Unix CLI output retains normal SIGPIPE behavior.

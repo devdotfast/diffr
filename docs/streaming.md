@@ -100,8 +100,11 @@ min_lines = 12      # optional; default 0
 timeout_ms = 5000   # optional; per request
 ```
 
-The command starts once per invocation, in the workspace directory, with the
-caller's environment. Only novel folds on the after side qualify: bodies that
+The command starts once per invocation with the caller's environment. It runs
+in the directory containing the config file, so relative paths in `command`
+resolve against the config wherever it lives, including one given by
+`--config` outside the repository. `DIFFR_WORKSPACE` carries the diffed
+repository's root. Only novel folds on the after side qualify: bodies that
 exist in the after source with no counterpart in the before source. Files with
 no qualifying fold never reach the hook. Streaming is the only output mode that
 runs hooks; the terminal frontend streams, so it does too.

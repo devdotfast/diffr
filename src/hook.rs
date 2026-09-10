@@ -67,7 +67,8 @@ impl Hook {
     pub(crate) fn spawn(config: &HookConfig, workspace: &Path) -> crate::git::Result<Self> {
         let mut child = Command::new(&config.command[0])
             .args(&config.command[1..])
-            .current_dir(workspace)
+            .current_dir(&config.dir)
+            .env("DIFFR_WORKSPACE", workspace)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -250,6 +251,7 @@ mod tests {
 
     fn hook(script: &str, timeout_ms: u64) -> Hook {
         let config = HookConfig {
+            dir: ".".into(),
             command: vec!["sh".into(), "-c".into(), script.into()],
             tags: Some(vec!["body".into()]),
             min_lines: 2,

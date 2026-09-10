@@ -5,6 +5,7 @@ use crate::parse::{guess_language::Language, tree_sitter_parser};
 use query::AnnotationQuery;
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 use strum::IntoEnumIterator;
 
 #[derive(Default, Deserialize)]
@@ -31,10 +32,11 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 pub(crate) struct Params {
-    queries: DftHashMap<Language, LanguageParams>,
+    languages: DftHashMap<Language, OnceLock<LanguageParams>>,
 }
 
 pub(crate) struct LanguageParams {
+    pub(crate) parser: &'static tree_sitter_parser::TreeSitterConfig,
     pub(crate) folds: AnnotationQuery,
     pub(crate) context: AnnotationQuery,
 }
@@ -55,31 +57,44 @@ impl Config {
                 target.context = overrides.context;
             }
         }
-        let mut queries = DftHashMap::default();
+        let mut languages: DftHashMap<_, _> = Language::iter()
+            .map(|language| (language, OnceLock::new()))
+            .collect();
         for (name, config) in resolved {
             let language = Language::iter()
                 .find(|language| format!("{language:?}").to_lowercase() == name)
                 .ok_or_else(|| ConfigError(format!("unknown language: {name}")))?;
-            let grammar = tree_sitter_parser::from_language(language).language.clone();
+            let parser = tree_sitter_parser::from_language(language);
             let compile = |feature, source: Option<String>| {
-                AnnotationQuery::compile(&grammar, source.as_deref().unwrap_or_default())
+                AnnotationQuery::compile(&parser.language, source.as_deref().unwrap_or_default())
                     .map_err(|error| ConfigError(format!("languages.{name}.{feature}: {error}")))
             };
-            queries.insert(
+            languages.insert(
                 language,
-                LanguageParams {
+                OnceLock::from(LanguageParams {
+                    parser,
                     folds: compile("folds", config.folds)?,
                     context: compile("context", config.context)?,
-                },
+                }),
             );
         }
-        Ok(Params { queries })
+        Ok(Params { languages })
     }
 }
 
 impl Params {
-    pub(crate) fn query(&self, language: Language) -> Option<&LanguageParams> {
-        self.queries.get(&language)
+    pub(crate) fn language(&self, language: Language) -> &LanguageParams {
+        self.languages[&language].get_or_init(|| {
+            // Languages without annotation rules still support structural diffing.
+            // Keep their grammars lazy, as in the existing parser registry.
+            let parser = tree_sitter_parser::from_language(language);
+            LanguageParams {
+                parser,
+                folds: AnnotationQuery::compile(&parser.language, "").expect("empty fold query"),
+                context: AnnotationQuery::compile(&parser.language, "")
+                    .expect("empty context query"),
+            }
+        })
     }
 }
 
@@ -110,6 +125,24 @@ mod tests {
         assert!(!default_result.rhs_folds.is_empty());
         let python = DiffResult::from_sources_with_params("a.py", "", "import os\n", &custom);
         assert!(!python.rhs_folds.is_empty());
+    }
+
+    #[test]
+    fn language_without_annotation_rules_keeps_structural_diffing() {
+        let params = Params::default();
+        let result = DiffResult::from_sources_with_params(
+            "a.c",
+            "int run() { return 1; }",
+            "int run() { return 2; }",
+            &params,
+        );
+        assert!(matches!(
+            result.file_format,
+            crate::summary::FileFormat::SupportedLanguage(Language::C)
+        ));
+        assert!(result.has_syntactic_changes);
+        assert!(!result.rhs_positions.is_empty());
+        assert!(result.rhs_folds.is_empty());
     }
 
     #[test]
@@ -252,7 +285,7 @@ mod query_tests {
             let contexts = context::classify(
                 &tree,
                 src,
-                params.query(grammar.language_id).map(|q| &q.context),
+                Some(&params.language(grammar.language_id).context),
             );
             let context = contexts.values().next().unwrap().first().unwrap();
             assert_eq!(context.header, 0..=last_header);

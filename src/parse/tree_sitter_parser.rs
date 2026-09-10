@@ -1,6 +1,6 @@
 //! Load and configure parsers written with tree-sitter.
 
-use crate::config::Params;
+use crate::config::{LanguageParams, Params};
 use std::sync::{LazyLock, Mutex};
 
 use line_numbers::{LineNumber, LinePositions};
@@ -1414,19 +1414,19 @@ pub(crate) fn parse_subtrees(
                 continue;
             }
 
-            let subconfig = from_language(language.parse_as);
+            let subconfig = params.language(language.parse_as);
             let mut parser = ts::Parser::new();
             parser
-                .set_language(&subconfig.language)
+                .set_language(&subconfig.parser.language)
                 .expect("Incompatible tree-sitter version");
             parser
                 .set_included_ranges(&[node.range()])
                 .expect("Incompatible tree-sitter version");
 
             let tree = parser.parse(src, None).unwrap();
-            let sub_highlights = tree_highlights(params, &tree, src, subconfig);
+            let sub_highlights = tree_highlights(&tree, src, subconfig);
 
-            subtrees.insert(node.id(), (tree, subconfig, sub_highlights));
+            subtrees.insert(node.id(), (tree, subconfig.parser, sub_highlights));
         }
     }
 
@@ -1436,10 +1436,9 @@ pub(crate) fn parse_subtrees(
 /// Calculate which tree-sitter node IDs should have which syntax
 /// highlighting.
 fn tree_highlights(
-    params: &Params,
     tree: &tree_sitter::Tree,
     src: &str,
-    config: &TreeSitterConfig,
+    config: &LanguageParams,
 ) -> HighlightedNodeIds {
     let mut keyword_ish_capture_ids: Vec<u32> = vec![];
     let mut string_capture_ids = vec![];
@@ -1452,7 +1451,7 @@ fn tree_highlights(
     //
     // We support e.g. arbitrary @constant.foo so we get the benefit
     // of all the relevant highlighting queries.
-    let cn = config.highlight_query.capture_names();
+    let cn = config.parser.highlight_query.capture_names();
     for (idx, name) in cn.iter().enumerate() {
         let name = *name;
         if name == "type"
@@ -1499,7 +1498,11 @@ fn tree_highlights(
     }
 
     let mut qc = ts::QueryCursor::new();
-    let mut q_matches = qc.matches(&config.highlight_query, tree.root_node(), src.as_bytes());
+    let mut q_matches = qc.matches(
+        &config.parser.highlight_query,
+        tree.root_node(),
+        src.as_bytes(),
+    );
 
     let mut comment_ids = DftHashSet::default();
     let mut keyword_ids = DftHashSet::default();
@@ -1520,10 +1523,9 @@ fn tree_highlights(
         }
     }
 
-    let queries = params.query(config.language_id);
     HighlightedNodeIds {
-        fold_kinds: super::folds::classify(tree, src, queries.map(|q| &q.folds)),
-        contexts: super::context::classify(tree, src, queries.map(|q| &q.context)),
+        fold_kinds: super::folds::classify(tree, src, Some(&config.folds)),
+        contexts: super::context::classify(tree, src, Some(&config.context)),
         comment_ids,
         keyword_ids,
         string_ids,
@@ -1569,7 +1571,7 @@ pub(crate) fn comment_positions(
     params: &Params,
     tree: &tree_sitter::Tree,
     src: &str,
-    config: &TreeSitterConfig,
+    config: &LanguageParams,
 ) -> Vec<MatchedPos> {
     let arena = Arena::new();
     let ignore_comments = false;
@@ -1626,7 +1628,7 @@ pub(crate) fn to_syntax_with_limit<'a>(
     lhs_tree: &tree_sitter::Tree,
     rhs_tree: &tree_sitter::Tree,
     arena: &'a Arena<Syntax<'a>>,
-    config: &TreeSitterConfig,
+    config: &LanguageParams,
     diff_options: &DiffOptions,
 ) -> Result<(Vec<&'a Syntax<'a>>, Vec<&'a Syntax<'a>>), ExceededParseErrorLimit> {
     let (lhs_nodes, lhs_errors) = to_syntax(
@@ -1671,7 +1673,7 @@ pub(crate) fn to_syntax<'a>(
     tree: &tree_sitter::Tree,
     src: &str,
     arena: &'a Arena<Syntax<'a>>,
-    config: &TreeSitterConfig,
+    config: &LanguageParams,
     ignore_comments: bool,
 ) -> (Vec<&'a Syntax<'a>>, ParseErrors) {
     // Don't return anything on an empty input. Most parsers return a
@@ -1681,11 +1683,11 @@ pub(crate) fn to_syntax<'a>(
         return (vec![], ParseErrors::default());
     }
 
-    let highlights = tree_highlights(params, tree, src, config);
+    let highlights = tree_highlights(tree, src, config);
 
     // Parse sub-languages, if any, which will be used both for
     // highlighting and for more precise Syntax nodes where applicable.
-    let subtrees = parse_subtrees(params, src, config, tree);
+    let subtrees = parse_subtrees(params, src, config.parser, tree);
 
     let nl_pos = LinePositions::from(src);
     let mut cursor = tree.walk();
@@ -1706,7 +1708,7 @@ pub(crate) fn to_syntax<'a>(
         &nl_pos,
         &mut cursor,
         &mut errors,
-        config,
+        config.parser,
         &highlights,
         &subtrees,
         ignore_comments,
@@ -1722,12 +1724,13 @@ pub(crate) fn parse<'a>(
     ignore_comments: bool,
 ) -> Vec<&'a Syntax<'a>> {
     let tree = to_tree(src, config);
+    let params = Params::default();
     let (nodes, _errors) = to_syntax(
-        &Params::default(),
+        &params,
         &tree,
         src,
         arena,
-        config,
+        params.language(config.language_id),
         ignore_comments,
     );
     nodes

@@ -645,7 +645,7 @@ fn diff_file_content(
     };
 
     let language = guess(Path::new(display_path), guess_src, overrides);
-    let lang_config = language.map(|lang| (lang, tsp::from_language(lang)));
+    let lang_config = language.map(|lang| (lang, params.language(lang)));
 
     if lhs_src == rhs_src {
         let file_format = match language {
@@ -685,7 +685,7 @@ fn diff_file_content(
         }
         Some((language, lang_config)) => {
             let arena = Arena::new();
-            match tsp::to_tree_with_limit(diff_options, lang_config, lhs_src, rhs_src) {
+            match tsp::to_tree_with_limit(diff_options, lang_config.parser, lhs_src, rhs_src) {
                 Ok((lhs_tree, rhs_tree)) => {
                     match tsp::to_syntax_with_limit(
                         params,

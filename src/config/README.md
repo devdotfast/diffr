@@ -68,20 +68,22 @@ This module implements `#set!` with the `tag` property. It does not implement ar
 Helper captures must begin with `_`. Unsupported captures, properties, directives,
 invalid TOML, and invalid query syntax fail during `compile()`.
 
-## MVP configuration tradeoff
+## Resolved language configuration
 
-Language configuration currently lives in two separate parts:
+There are two inputs to language configuration:
 
 - **How to parse a file:** [`guess_language.rs`](../parse/guess_language.rs)
   detects the language; [`TreeSitterConfig` / `build_config`](../parse/tree_sitter_parser.rs)
-  selects its built-in Tree-sitter grammar and parsing/highlighting rules.
-- **What syntax to expose in a diff:** [`Config` → `Params`](../config.rs)
-  supplies queries for that language identifying foldable AST regions, their tags,
-  and extra syntax context worth showing around changes. Bundled rules live in
-  [`defaults.toml`](defaults.toml). These rules do not set UI collapse state.
+  supplies its built-in Tree-sitter grammar and parsing/highlighting rules.
+- **What syntax to expose in a diff:** [`Config`](../config.rs) supplies
+  queries identifying foldable AST regions, their tags, and useful extra context.
+  Bundled rules live in [`defaults.toml`](defaults.toml).
 
-These parts are coupled: annotation queries must use the selected grammar's node
-names. `Config::compile` validates queries against that grammar, but we retain
-separate configuration structures for the MVP. A later refactor should resolve
-both into one per-language entry in `Params`, while keeping annotation rules
-user-configurable.
+[`Params::language`](../config.rs) resolves both into one `LanguageParams`:
+the parser configuration plus fold and context queries compiled against its grammar.
+Parsing receives this entry directly. Embedded languages use the same lookup.
+
+Every supported language has an entry, even without annotation rules. Those
+languages retain structural diffing and highlighting with empty annotation queries;
+their grammar is initialized on first use. Custom queries are validated during
+`Config::compile`. Files without a supported language still use textual diffing.

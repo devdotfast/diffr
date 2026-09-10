@@ -1,0 +1,291 @@
+name: CI
+
+on:
+  pull_request:
+
+env:
+  SKIP_INSTALL_SIMPLE_GIT_HOOKS: "1"
+
+concurrency:
+  group: pr-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect code changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.detect.outputs.code_changed }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Detect code changes
+        id: detect
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: .github/scripts/detect-code-changes.sh "$BASE_SHA" "$HEAD_SHA"
+
+  changeset-status:
+    name: Release-note changeset
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+
+      - name: Verify release-note changeset
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: bun run ./scripts/release/verify-pr-release-notes.ts "$BASE_SHA" "$HEAD_SHA"
+
+  windows-compat:
+    name: Windows compatibility
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: windows-latest
+    steps:
+      - name: Disable automatic CRLF conversion
+        run: git config --global core.autocrlf false
+
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Install Jujutsu
+        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+        with:
+          tool: jj-cli
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Format check
+        run: bun run format:check
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Module boundary check
+        run: bun run deps:check
+
+      - name: Theme contrast check
+        run: bun run test:theme-contrast
+
+      - name: Windows platform test suite
+        run: bun run test:windows
+
+  compiled-headless-portability:
+    name: Compiled headless portability (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            executable: dist/hunk
+          - os: windows-latest
+            executable: dist/hunk.exe
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build binary
+        run: bun run build:bin
+
+      - name: Verify compiled headless commands skip OpenTUI
+        run: bun test ./test/cli/compiled-headless-native-lib.test.ts
+        env:
+          HUNK_TEST_EXECUTABLE: ${{ github.workspace }}/${{ matrix.executable }}
+
+  linux-validate:
+    name: Linux validation and packaging
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Install Jujutsu
+        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+        with:
+          tool: jj-cli
+
+      - name: Install Sapling
+        run: |
+          sudo apt-get install -y xz-utils
+          sudo mkdir -p /opt/sapling
+          SAPLING_URL="https://github.com/facebook/sapling/releases/download/0.2.20260317-201835%2B0234c21f/sapling-0.2.20260317-201835%2B0234c21f-linux-x64.tar.xz"
+          SAPLING_SHA256="2dca0b964a2f3e2e3ad3f4f01794dc7e829de4aedddb2798a7bae883ce6cd71f"
+          curl -fsSL "$SAPLING_URL" -o /tmp/sapling.tar.xz
+          echo "$SAPLING_SHA256  /tmp/sapling.tar.xz" | sha256sum --check
+          sudo tar -xJf /tmp/sapling.tar.xz -C /opt/sapling
+          sudo ln -s /opt/sapling/sl /usr/local/bin/sl
+          sl version
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Format check
+        run: bun run format:check
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Module boundary check
+        run: bun run deps:check
+
+      - name: Theme contrast check
+        run: bun run test:theme-contrast
+
+      - name: Test suite
+        run: bun run test
+
+      - name: Real Node broker adapter tests
+        run: bun run test:session-broker-node
+
+      - name: TTY smoke tests
+        run: bun run test:tty-smoke
+
+      - name: Build npm runtime bundle
+        run: bun run build:npm
+
+      - name: Verify npm pack output
+        run: bun run check:pack
+
+      - name: Simulate global npm install
+        run: |
+          pkg_dir="$(mktemp -d)"
+          install_dir="$(mktemp -d)"
+          node_dir="$(dirname "$(command -v node)")"
+          npm pack ./packages/hunk --ignore-scripts --pack-destination "$pkg_dir" >/dev/null
+          pkg="$(find "$pkg_dir" -maxdepth 1 -name 'hunkdiff-*.tgz' | head -n1)"
+          npm install -g --prefix "$install_dir" "$pkg"
+          PATH="$install_dir/bin:$node_dir:/usr/bin:/bin"
+          if command -v bun >/dev/null 2>&1; then
+            echo "bun unexpectedly available on the sanitized PATH" >&2
+            exit 1
+          fi
+          hunk --help | grep 'Usage: hunk'
+
+      - name: Stage prebuilt npm packages
+        # Reuse the runtime bundle built and packed above; only the native binary
+        # and prebuilt package layout remain for this validation pass.
+        run: bun run build:bin && bun run ./scripts/packaging/stage-prebuilt-npm.ts
+
+      - name: Verify compiled headless commands skip OpenTUI
+        run: bun test ./test/cli/compiled-headless-native-lib.test.ts
+        env:
+          HUNK_TEST_EXECUTABLE: ${{ github.workspace }}/dist/hunk
+
+      - name: Verify compiled binary watch mode
+        run: bun test ./test/pty/watch.test.ts
+        env:
+          HUNK_TEST_EXECUTABLE: ${{ github.workspace }}/dist/hunk
+
+      - name: Verify staged prebuilt packs
+        run: bun run check:prebuilt-pack
+
+      - name: Smoke test prebuilt global install
+        run: bun run smoke:prebuilt-install
+
+  pty-integration:
+    name: PTY integration tests
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify terminal tools
+        run: |
+          command -v script
+          command -v timeout
+
+      - name: PTY integration tests
+        run: bun run test:integration
+
+  pr-validate:
+    name: Typecheck + Test + Smoke
+    needs:
+      - changes
+      - linux-validate
+      - pty-integration
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify validation jobs
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CODE_CHANGED: ${{ needs.changes.outputs.code }}
+          LINUX_RESULT: ${{ needs.linux-validate.result }}
+          PTY_RESULT: ${{ needs.pty-integration.result }}
+        run: |
+          if [[ "$CHANGES_RESULT" != "success" ]]; then
+            echo "Change detection: $CHANGES_RESULT" >&2
+            exit 1
+          fi
+          if [[ "$CODE_CHANGED" != "true" ]]; then
+            echo "No code changes require validation."
+            exit 0
+          fi
+          if [[ "$LINUX_RESULT" != "success" || "$PTY_RESULT" != "success" ]]; then
+            echo "Linux validation: $LINUX_RESULT" >&2
+            echo "PTY integration: $PTY_RESULT" >&2
+            exit 1
+          fi

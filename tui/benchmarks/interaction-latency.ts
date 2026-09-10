@@ -1,0 +1,74 @@
+// Benchmark first-class interaction latency: per-press `]` hunk navigation and
+// per-tick scrolling on the large review stream, plus RSS/heap ceilings before
+// and after navigation (the default-suite slice of memory.ts).
+import { performance } from "node:perf_hooks";
+import { testRender } from "@opentui/react/test-utils";
+import React from "react";
+import { BenchmarkAppHost as AppHost } from "./lib/appHost";
+import {
+  createLargeSplitStreamBootstrap,
+  DEFAULT_FILE_COUNT,
+  DEFAULT_LINES_PER_FILE,
+} from "./large-stream-fixture";
+import {
+  destroyRenderer,
+  INTERACTION_VIEWPORT,
+  measureKeyPressLatencies,
+  measureScrollTickLatencies,
+  printLatencyMetrics,
+  printMemoryMetrics,
+  renderPass,
+  settleInteractionRenderer,
+} from "./lib/interaction";
+
+const NAVIGATION_PRESSES = 6;
+const SCROLL_TICKS = 8;
+
+/** Measure `]` per-press latency plus memory ceilings on a fresh renderer. */
+async function measureNavigation() {
+  const setup = await testRender(
+    React.createElement(AppHost, { bootstrap: createLargeSplitStreamBootstrap() }),
+    INTERACTION_VIEWPORT,
+  );
+
+  try {
+    const firstFrameStart = performance.now();
+    await renderPass(setup);
+    console.log(`METRIC first_frame_ms=${(performance.now() - firstFrameStart).toFixed(2)}`);
+    printMemoryMetrics("after_first_frame");
+
+    // Settle initial selection and syntax highlighting so the press latencies
+    // measure navigation rather than runtime-dependent startup spillover.
+    await settleInteractionRenderer(setup);
+
+    const pressLatencies = await measureKeyPressLatencies(setup, "]", NAVIGATION_PRESSES);
+    printLatencyMetrics("hunk_nav_press", pressLatencies);
+    printMemoryMetrics("after_navigation");
+  } finally {
+    await destroyRenderer(setup);
+  }
+}
+
+/** Measure per-scroll-tick latency on a fresh renderer (no navigation state). */
+async function measureScrolling() {
+  const setup = await testRender(
+    React.createElement(AppHost, { bootstrap: createLargeSplitStreamBootstrap() }),
+    INTERACTION_VIEWPORT,
+  );
+
+  try {
+    await settleInteractionRenderer(setup);
+    const tickLatencies = await measureScrollTickLatencies(setup, SCROLL_TICKS);
+    printLatencyMetrics("scroll_tick", tickLatencies);
+  } finally {
+    await destroyRenderer(setup);
+  }
+}
+
+await measureNavigation();
+await measureScrolling();
+
+console.log(`METRIC navigation_presses=${NAVIGATION_PRESSES}`);
+console.log(`METRIC scroll_ticks=${SCROLL_TICKS}`);
+console.log(`METRIC files=${DEFAULT_FILE_COUNT}`);
+console.log(`METRIC lines_per_file=${DEFAULT_LINES_PER_FILE}`);

@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "stripInternal": true,
+    "outDir": "./packages/hunk/dist/npm-types",
+    "rootDir": "./packages"
+  },
+  "include": [],
+  "files": ["packages/hunk/src/opentui/index.ts"]
+}

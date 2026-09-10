@@ -1,0 +1,98 @@
+diff --git a/src/components/ReviewSummaryCard.tsx b/src/components/ReviewSummaryCard.tsx
+index 73a5e7f..9136307 100644
+--- a/src/components/ReviewSummaryCard.tsx
++++ b/src/components/ReviewSummaryCard.tsx
+@@ -1,18 +1,20 @@
+-type ChangeSummaryCardProps = {
+-  title: string;
+-  note: string;
+-  changes: number;
+-  lastSynced: string;
+-  onOpen: () => void;
++import { reviewButtonLabel, reviewTimestampLabel } from "../lib/reviewCopy";
++
++type ReviewSummaryCardProps = {
++  heading: string;
++  supportingText: string;
++  fileCount: number;
++  lastUpdated: string;
++  onReview: () => void;
+ };
+ 
+-export function ChangeSummaryCard({
+-  title,
+-  note,
+-  changes,
+-  lastSynced,
+-  onOpen,
+-}: ChangeSummaryCardProps) {
++export function ReviewSummaryCard({
++  heading,
++  supportingText,
++  fileCount,
++  lastUpdated,
++  onReview,
++}: ReviewSummaryCardProps) {
+   return (
+     <box
+       style={{
+@@ -21,19 +23,20 @@ export function ChangeSummaryCard({
+         borderColor: "#334155",
+         backgroundColor: "#0f172a",
+         flexDirection: "column",
++        gap: 1,
+       }}
+     >
+-      <box style={{ flexDirection: "column", gap: 0 }}>
+-        <text fg="#f8fafc">{title}</text>
+-        <text fg="#94a3b8">{note}</text>
++      <box style={{ flexDirection: "column", gap: 1 }}>
++        <text fg="#f8fafc">{heading}</text>
++        <text fg="#94a3b8">{supportingText}</text>
+       </box>
+ 
+-      <box style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 1 }}>
+-        <text fg="#38bdf8">{changes} files changed</text>
+-        <text fg="#64748b">Synced {lastSynced}</text>
++      <box style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
++        <text fg="#38bdf8">{fileCount} files ready for review</text>
++        <text fg="#64748b">{reviewTimestampLabel(lastUpdated)}</text>
+       </box>
+ 
+-      <button label="Open diff" onPress={onOpen} />
++      <button label={reviewButtonLabel(fileCount)} onPress={onReview} />
+     </box>
+   );
+ }
+diff --git a/src/lib/reviewCopy.ts b/src/lib/reviewCopy.ts
+new file mode 100644
+index 0000000..d211039
+--- /dev/null
++++ b/src/lib/reviewCopy.ts
+@@ -0,0 +1,7 @@
++export function reviewButtonLabel(fileCount: number) {
++  return fileCount === 1 ? "Review 1 file" : `Review ${fileCount} files`;
++}
++
++export function reviewTimestampLabel(lastUpdated: string) {
++  return `Updated ${lastUpdated}`;
++}
+diff --git a/test/reviewSummaryCard.demo.ts b/test/reviewSummaryCard.demo.ts
+index 5acb770..03f9616 100644
+--- a/test/reviewSummaryCard.demo.ts
++++ b/test/reviewSummaryCard.demo.ts
+@@ -1,8 +1,9 @@
+ import { expect, test } from "bun:test";
+-import { ChangeSummaryCard } from "../src/components/ReviewSummaryCard";
++import { ReviewSummaryCard } from "../src/components/ReviewSummaryCard";
++import { reviewButtonLabel, reviewTimestampLabel } from "../src/lib/reviewCopy";
+ 
+-test("keeps the old sync-oriented labels", () => {
+-  expect(ChangeSummaryCard).toBeDefined();
+-  expect("Open diff").toContain("diff");
+-  expect("Synced 2m ago").toContain("Synced");
++test("switches the card copy to review-oriented labels", () => {
++  expect(ReviewSummaryCard).toBeDefined();
++  expect(reviewButtonLabel(3)).toBe("Review 3 files");
++  expect(reviewTimestampLabel("2m ago")).toBe("Updated 2m ago");
+ });

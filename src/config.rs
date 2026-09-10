@@ -5,6 +5,7 @@ use crate::parse::{guess_language::Language, tree_sitter_parser};
 use query::AnnotationQuery;
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use strum::IntoEnumIterator;
 
@@ -59,6 +60,19 @@ impl LanguageParams {
 }
 
 impl Config {
+    pub(crate) fn load(workspace: &Path, explicit: Option<&Path>) -> Result<Self, ConfigError> {
+        let path = explicit
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| workspace.join("diffr.toml"));
+        match std::fs::read_to_string(&path) {
+            Ok(source) => Self::from_toml(&source),
+            Err(error) if explicit.is_none() && error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(Self::default())
+            }
+            Err(error) => Err(ConfigError(format!("{}: {error}", path.display()))),
+        }
+    }
+
     pub(crate) fn from_toml(source: &str) -> Result<Self, ConfigError> {
         toml::from_str(source).map_err(|error| ConfigError(error.to_string()))
     }

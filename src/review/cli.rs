@@ -1,13 +1,12 @@
 //! Git ref input for the experimental review snapshot command.
 use super::git::{read_blob, Result};
-use crate::config::Params;
+use crate::config::Config;
 use crate::summary::DiffResult;
 use clap::{Arg, Command as App};
 use git2::Repository;
 use std::path::{Component, Path};
 
 pub(crate) fn run() -> Result<()> {
-    let params = Params::default();
     let args = App::new("difft review")
         .about("Experimental syntax-context diff snapshot; fold candidates stay expanded")
         .arg(
@@ -16,6 +15,7 @@ pub(crate) fn run() -> Result<()> {
                 .value_parser(["text", "json", "viewer"])
                 .default_value("text"),
         )
+        .arg(Arg::new("config").long("config"))
         .arg(Arg::new("repo").long("repo").required(true))
         .arg(Arg::new("base").long("base").required(true))
         .arg(Arg::new("head").long("head").required(true))
@@ -25,6 +25,9 @@ pub(crate) fn run() -> Result<()> {
                 .chain(std::env::args_os().skip(2)),
         );
     let repo = Repository::discover(args.get_one::<String>("repo").unwrap())?;
+    let workspace = repo.workdir().unwrap_or(repo.path());
+    let params =
+        Config::load(workspace, args.get_one::<String>("config").map(Path::new))?.compile()?;
     let path = args.get_one::<String>("path").unwrap();
     if path.is_empty()
         || Path::new(path)

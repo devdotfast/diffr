@@ -41,6 +41,7 @@
 #![warn(clippy::todo)]
 #![warn(clippy::dbg_macro)]
 
+mod config;
 mod conflicts;
 mod constants;
 mod diff;
@@ -154,6 +155,8 @@ fn main() {
         return;
     }
 
+    let params = &crate::config::Params::default();
+
     match options::parse_args() {
         Mode::DumpTreeSitter {
             path,
@@ -264,6 +267,7 @@ fn main() {
             binary_overrides,
         } => {
             let diff_result = diff_conflicts_file(
+                params,
                 &display_path,
                 &path,
                 &display_options,
@@ -317,6 +321,7 @@ fn main() {
                 ) if lhs_path.is_dir() && rhs_path.is_dir() => {
                     // Diffs in parallel when iterating this iterator.
                     let diff_iter = diff_directories(
+                        params,
                         lhs_path,
                         rhs_path,
                         &display_options,
@@ -370,6 +375,7 @@ fn main() {
                 }
                 _ => {
                     let diff_result = diff_file(
+                        params,
                         &display_path,
                         renamed,
                         &lhs_path,
@@ -412,6 +418,7 @@ fn main() {
 
 /// Print a diff between two files.
 fn diff_file(
+    params: &crate::config::Params,
     display_path: &str,
     renamed: Option<String>,
     lhs_path: &FileArgument,
@@ -497,6 +504,7 @@ fn diff_file(
     }
 
     diff_file_content(
+        params,
         display_path,
         extra_info,
         lhs_path,
@@ -510,6 +518,7 @@ fn diff_file(
 }
 
 fn diff_conflicts_file(
+    params: &crate::config::Params,
     display_path: &str,
     path: &FileArgument,
     display_options: &DisplayOptions,
@@ -574,6 +583,7 @@ fn diff_conflicts_file(
     );
 
     diff_file_content(
+        params,
         display_path,
         Some(extra_info),
         path,
@@ -616,6 +626,7 @@ fn check_only_text(
 }
 
 fn diff_file_content(
+    params: &crate::config::Params,
     display_path: &str,
     extra_info: Option<String>,
     _lhs_path: &FileArgument,
@@ -676,6 +687,7 @@ fn diff_file_content(
             match tsp::to_tree_with_limit(diff_options, lang_config, lhs_src, rhs_src) {
                 Ok((lhs_tree, rhs_tree)) => {
                     match tsp::to_syntax_with_limit(
+                        params,
                         lhs_src,
                         rhs_src,
                         &lhs_tree,
@@ -757,12 +769,20 @@ fn diff_file_content(
                                     syntax::change_positions(&rhs, &change_map, &mut rhs_folds);
 
                                 if diff_options.ignore_comments {
-                                    let lhs_comments =
-                                        tsp::comment_positions(&lhs_tree, lhs_src, lang_config);
+                                    let lhs_comments = tsp::comment_positions(
+                                        params,
+                                        &lhs_tree,
+                                        lhs_src,
+                                        lang_config,
+                                    );
                                     lhs_positions.extend(lhs_comments);
 
-                                    let rhs_comments =
-                                        tsp::comment_positions(&rhs_tree, rhs_src, lang_config);
+                                    let rhs_comments = tsp::comment_positions(
+                                        params,
+                                        &rhs_tree,
+                                        rhs_src,
+                                        lang_config,
+                                    );
                                     rhs_positions.extend(rhs_comments);
                                 }
 
@@ -899,6 +919,7 @@ fn diff_file_content(
 /// When more than one file is modified, the hg extdiff extension passes directory
 /// paths with all the modified files.
 fn diff_directories<'a>(
+    params: &'a crate::config::Params,
     lhs_dir: &'a Path,
     rhs_dir: &'a Path,
     display_options: &DisplayOptions,
@@ -923,6 +944,7 @@ fn diff_directories<'a>(
         let rhs_path = FileArgument::NamedPath(Path::new(rhs_dir).join(&rel_path));
 
         diff_file(
+            params,
             &rel_path.display().to_string(),
             None,
             &lhs_path,
@@ -1101,6 +1123,7 @@ mod tests {
     fn test_diff_identical_content() {
         let s = "foo";
         let res = diff_file_content(
+            &crate::config::Params::default(),
             "foo.el",
             None,
             &FileArgument::from_path_argument(OsStr::new("foo.el")),

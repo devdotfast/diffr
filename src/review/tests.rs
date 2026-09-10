@@ -521,6 +521,7 @@ mod hunk_tests {
             ..Default::default()
         };
         let diff = crate::diff_file_content(
+            &crate::config::Params::default(),
             "a.py",
             None,
             &file,
@@ -548,6 +549,7 @@ fn selection_without_padding(
         ..Default::default()
     };
     let diff = crate::diff_file_content(
+        &crate::config::Params::default(),
         &diff.display_path,
         None,
         &file,

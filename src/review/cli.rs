@@ -27,6 +27,7 @@ fn read_blob(repo: &Repository, commit: &Commit<'_>, path: &str) -> Result<Optio
 }
 
 pub(crate) fn run() -> Result<()> {
+    let params = crate::config::Params::default();
     let args = App::new("difft review")
         .about("Experimental syntax-context diff snapshot; fold candidates stay expanded")
         .arg(
@@ -66,7 +67,12 @@ pub(crate) fn run() -> Result<()> {
         return Err(format!("{path} is absent at both refs").into());
     }
     // A missing side of an added/deleted file is represented by empty source.
-    let result = DiffResult::from_sources(path, &lhs.unwrap_or_default(), &rhs.unwrap_or_default());
+    let result = DiffResult::from_sources_with_params(
+        path,
+        &lhs.unwrap_or_default(),
+        &rhs.unwrap_or_default(),
+        &params,
+    );
     match args.get_one::<String>("format").unwrap().as_str() {
         "json" => println!("{}", serde_json::to_string_pretty(&result.domain_json())?),
         "viewer" => println!("{}", serde_json::to_string(&result.viewer_json())?),

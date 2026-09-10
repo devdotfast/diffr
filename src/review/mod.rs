@@ -9,9 +9,20 @@ mod wire;
 use crate::summary::DiffResult;
 
 impl DiffResult {
+    #[cfg(test)]
     pub(crate) fn from_sources(path: &str, lhs: &str, rhs: &str) -> Self {
+        Self::from_sources_with_params(path, lhs, rhs, &crate::config::Params::default())
+    }
+
+    pub(crate) fn from_sources_with_params(
+        path: &str,
+        lhs: &str,
+        rhs: &str,
+        params: &crate::config::Params,
+    ) -> Self {
         let file = crate::options::FileArgument::NamedPath(path.into());
         crate::diff_file_content(
+            params,
             path,
             None,
             &file,

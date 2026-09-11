@@ -60,7 +60,7 @@ mod lines;
 mod options;
 mod parse;
 #[allow(dead_code)]
-mod protocol;
+pub(crate) mod protocol;
 mod review;
 mod stream;
 mod summary;

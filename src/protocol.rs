@@ -18,14 +18,18 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// The current wire version. Changes within a version are additive.
-pub(crate) const VERSION: u32 = 2;
+pub const VERSION: u32 = 2;
+
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
 
 // ── stream ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[allow(clippy::large_enum_variant)]
-pub(crate) enum Event {
+pub enum Event {
     /// The header. Sent once, before any result, so a frontend can lay out
     /// every file up front.
     Start {
@@ -47,22 +51,41 @@ pub(crate) enum Event {
         succeeded: u32,
         failed: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        aborted: Option<Error>,
+        aborted: Option<Problem>,
     },
 }
 
-/// Exactly one of `diff` or `error` appears on a `file` record.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Exactly one of `diff` or `error` appears on a `file` record. This is
+/// `Result<Diff, Problem>` in the shape serde needs; convert with `into`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
-pub(crate) enum Outcome {
+pub enum Outcome {
     Diff { diff: Diff },
-    Error { error: Error },
+    Error { error: Problem },
+}
+
+impl From<Result<Diff, Problem>> for Outcome {
+    fn from(result: Result<Diff, Problem>) -> Self {
+        match result {
+            Ok(diff) => Self::Diff { diff },
+            Err(error) => Self::Error { error },
+        }
+    }
+}
+
+impl From<Outcome> for Result<Diff, Problem> {
+    fn from(outcome: Outcome) -> Self {
+        match outcome {
+            Outcome::Diff { diff } => Ok(diff),
+            Outcome::Error { error } => Err(error),
+        }
+    }
 }
 
 /// What one end of the comparison is.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(crate) enum Snapshot {
+pub enum Snapshot {
     Revision {
         rev: String,
     },
@@ -77,29 +100,48 @@ pub(crate) enum Snapshot {
 
 /// The one error shape, used for a file failure, a run abort, and a
 /// structural fallback. `code` is an open snake_case set.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Error {
-    pub(crate) code: String,
-    pub(crate) message: String,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Problem {
+    pub code: String,
+    pub message: String,
 }
 
 /// Which sides a thing exists on. Serializes by presence.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Pairing<T> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Pairing<T> {
     Both { lhs: T, rhs: T },
     LeftOnly { lhs: T },
     RightOnly { rhs: T },
 }
 
 impl<T> Pairing<T> {
-    pub(crate) fn lhs(&self) -> Option<&T> {
+    pub fn as_ref(&self) -> Pairing<&T> {
+        match self {
+            Self::Both { lhs, rhs } => Pairing::Both { lhs, rhs },
+            Self::LeftOnly { lhs } => Pairing::LeftOnly { lhs },
+            Self::RightOnly { rhs } => Pairing::RightOnly { rhs },
+        }
+    }
+
+    pub fn map<U>(self, mut f: impl FnMut(T) -> U) -> Pairing<U> {
+        match self {
+            Self::Both { lhs, rhs } => Pairing::Both {
+                lhs: f(lhs),
+                rhs: f(rhs),
+            },
+            Self::LeftOnly { lhs } => Pairing::LeftOnly { lhs: f(lhs) },
+            Self::RightOnly { rhs } => Pairing::RightOnly { rhs: f(rhs) },
+        }
+    }
+
+    pub fn lhs(&self) -> Option<&T> {
         match self {
             Self::Both { lhs, .. } | Self::LeftOnly { lhs } => Some(lhs),
             Self::RightOnly { .. } => None,
         }
     }
 
-    pub(crate) fn rhs(&self) -> Option<&T> {
+    pub fn rhs(&self) -> Option<&T> {
         match self {
             Self::Both { rhs, .. } | Self::RightOnly { rhs } => Some(rhs),
             Self::LeftOnly { .. } => None,
@@ -161,25 +203,25 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Pairing<T> {
 // ── manifest entry ────────────────────────────────────────────────────────
 
 /// One changed file, known before any diffing.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct FileChange {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileChange {
     /// `LeftOnly` is a deletion, `RightOnly` an addition.
-    pub(crate) file: Pairing<FileRef>,
-    pub(crate) status: FileStatus,
+    pub file: Pairing<FileRef>,
+    pub status: FileStatus,
     /// `source`, `test`, `generated`, `docs`, or a repository's own class,
     /// from git attributes and built-in path rules.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) category: Option<String>,
+    pub category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) language: Option<String>,
-    #[serde(default, skip_serializing_if = "Visibility::is_default")]
-    pub(crate) visibility: Visibility,
+    pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub visibility: Visibility,
 }
 
 /// libgit2's delta status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum FileStatus {
+pub enum FileStatus {
     Added,
     Deleted,
     Modified,
@@ -190,42 +232,32 @@ pub(crate) enum FileStatus {
 
 /// One side of a git delta.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct FileRef {
-    pub(crate) path: String,
-    pub(crate) oid: String,
+pub struct FileRef {
+    pub path: String,
+    pub oid: String,
     /// Git's octal mode text, e.g. `100644`.
-    pub(crate) mode: String,
+    pub mode: String,
 }
 
 /// How a file or region starts out. `label` is shown while collapsed: a
 /// reason for a file, a placeholder or pseudocode summary for a region.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub(crate) struct Visibility {
+pub struct Visibility {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub(crate) collapsed: bool,
+    pub collapsed: bool,
     #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub(crate) label: String,
-}
-
-impl Visibility {
-    fn is_default(&self) -> bool {
-        *self == Self::default()
-    }
+    pub label: String,
 }
 
 // ── per-file result ───────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(crate) enum Diff {
+pub enum Diff {
     Text {
         #[serde(flatten)]
         sides: Pairing<Source>,
         stats: Stats,
-        /// Present when tree-sitter did not run and this is a line diff:
-        /// no folds, and `stats.structural` is absent.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        fallback: Option<Error>,
     },
     /// Either side being binary makes the whole diff binary.
     Binary {
@@ -235,30 +267,30 @@ pub(crate) enum Diff {
 }
 
 /// One side's text, colors, and regions.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Source {
-    pub(crate) text: String,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Source {
+    pub text: String,
     /// Every token with its tree-sitter capture name. Per line, sorted,
     /// non-overlapping. Empty unless the run asked for syntax.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) syntax: Vec<SyntaxSpan>,
+    pub syntax: Vec<SyntaxSpan>,
     /// The largest regions, in order. Leaves tile the file.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) regions: Vec<Region>,
+    pub regions: Vec<Region>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct BinaryRef {
-    pub(crate) size: u64,
+pub struct BinaryRef {
+    pub size: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct SyntaxSpan {
-    pub(crate) line: u32,
-    pub(crate) start_column: u32,
-    pub(crate) end_column: u32,
+pub struct SyntaxSpan {
+    pub line: u32,
+    pub start_column: u32,
+    pub end_column: u32,
     /// A tree-sitter capture name such as `keyword` or `function.method`.
-    pub(crate) capture: String,
+    pub capture: String,
 }
 
 /// A range on one side. The same `id` on the other side is its
@@ -266,24 +298,24 @@ pub(crate) struct SyntaxSpan {
 /// same line count on both sides and its rows pair line for line; a paired
 /// leaf whose counterpart is behind the reading cursor is a move, and the
 /// frontend chooses how to show it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Region {
-    pub(crate) id: u32,
-    pub(crate) start: SourcePos,
-    pub(crate) end: SourcePos,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Region {
+    pub id: u32,
+    #[serde(flatten)]
+    pub range: SourceRange,
     /// `body`, `import`, `test`, `unchanged`, or hook-supplied tags.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) tags: Vec<String>,
+    pub tags: Vec<String>,
     /// A collapsed leaf is a context gap. A collapsed fold is a folded body.
-    #[serde(default, skip_serializing_if = "Visibility::is_default")]
-    pub(crate) visibility: Visibility,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub visibility: Visibility,
     #[serde(flatten)]
-    pub(crate) node: Node,
+    pub node: Node,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum Node {
+pub enum Node {
     /// Tiles the file. `changed` holds the byte ranges painted as changed
     /// within it; a fully new line carries one span covering it.
     Leaf {
@@ -295,31 +327,96 @@ pub(crate) enum Node {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct Span {
-    pub(crate) line: u32,
-    pub(crate) start_column: u32,
-    pub(crate) end_column: u32,
+pub struct Span {
+    pub line: u32,
+    pub start_column: u32,
+    pub end_column: u32,
+}
+
+/// Half-open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceRange {
+    pub start: SourcePos,
+    pub end: SourcePos,
+}
+
+impl SourceRange {
+    /// The lines this range touches, half-open. A range ending at column
+    /// zero does not touch its end line.
+    pub fn lines(&self) -> std::ops::Range<u32> {
+        let end = if self.end.column == 0 {
+            self.end.line
+        } else {
+            self.end.line + 1
+        };
+        self.start.line..end
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct SourcePos {
-    pub(crate) line: u32,
-    pub(crate) column: u32,
+pub struct SourcePos {
+    pub line: u32,
+    pub column: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct Stats {
+/// `structural` is `Ok` when tree-sitter compared both sides and `Err`
+/// when this is a line diff, carrying why. On the wire that is a
+/// `structural` key or a `fallback` key, never both.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stats {
     /// Lines with any byte change.
-    pub(crate) textual: LineCounts,
-    /// Lines with a syntactic change. Absent when `fallback` is present.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) structural: Option<LineCounts>,
+    pub textual: LineCounts,
+    /// Lines with a syntactic change.
+    pub structural: Result<LineCounts, Problem>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct StatsRepr {
+    textual: LineCounts,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    structural: Option<LineCounts>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fallback: Option<Problem>,
+}
+
+impl Serialize for Stats {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let (structural, fallback) = match &self.structural {
+            Ok(counts) => (Some(*counts), None),
+            Err(problem) => (None, Some(problem.clone())),
+        };
+        StatsRepr {
+            textual: self.textual,
+            structural,
+            fallback,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Stats {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let repr = StatsRepr::deserialize(deserializer)?;
+        let structural = match (repr.structural, repr.fallback) {
+            (Some(counts), None) => Ok(counts),
+            (None, Some(problem)) => Err(problem),
+            _ => {
+                return Err(D::Error::custom(
+                    "stats need exactly one of structural or fallback",
+                ))
+            }
+        };
+        Ok(Self {
+            textual: repr.textual,
+            structural,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct LineCounts {
-    pub(crate) added: u32,
-    pub(crate) removed: u32,
+pub struct LineCounts {
+    pub added: u32,
+    pub removed: u32,
 }
 
 #[cfg(test)]
@@ -334,8 +431,10 @@ mod tests {
     fn leaf(id: u32, start: u32, end: u32, changed: Vec<Span>) -> Region {
         Region {
             id,
-            start: pos(start, 0),
-            end: pos(end, 0),
+            range: SourceRange {
+                start: pos(start, 0),
+                end: pos(end, 0),
+            },
             tags: vec![],
             visibility: Visibility::default(),
             node: Node::Leaf { changed },
@@ -355,8 +454,10 @@ mod tests {
             syntax: vec![],
             regions: vec![Region {
                 id: 1,
-                start: pos(0, 0),
-                end: pos(3, 0),
+                range: SourceRange {
+                    start: pos(0, 0),
+                    end: pos(3, 0),
+                },
                 tags: vec!["body".to_owned()],
                 visibility: Visibility::default(),
                 node: Node::Fold {
@@ -373,32 +474,30 @@ mod tests {
                 lhs: file_ref("3b18e5"),
                 rhs: file_ref("9be2c1"),
             },
-            outcome: Outcome::Diff {
-                diff: Diff::Text {
-                    sides: Pairing::Both {
-                        lhs: side("fn f() {\n    1\n}\n", vec![]),
-                        rhs: side(
-                            "fn f() {\n    1 + 2\n}\n",
-                            vec![Span {
-                                line: 1,
-                                start_column: 5,
-                                end_column: 9,
-                            }],
-                        ),
-                    },
-                    stats: Stats {
-                        textual: LineCounts {
-                            added: 1,
-                            removed: 1,
-                        },
-                        structural: Some(LineCounts {
-                            added: 1,
-                            removed: 0,
-                        }),
-                    },
-                    fallback: None,
+            outcome: Ok(Diff::Text {
+                sides: Pairing::Both {
+                    lhs: side("fn f() {\n    1\n}\n", vec![]),
+                    rhs: side(
+                        "fn f() {\n    1 + 2\n}\n",
+                        vec![Span {
+                            line: 1,
+                            start_column: 5,
+                            end_column: 9,
+                        }],
+                    ),
                 },
-            },
+                stats: Stats {
+                    textual: LineCounts {
+                        added: 1,
+                        removed: 1,
+                    },
+                    structural: Ok(LineCounts {
+                        added: 1,
+                        removed: 0,
+                    }),
+                },
+            })
+            .into(),
         }
     }
 
@@ -493,7 +592,7 @@ mod tests {
                     },
                 },
                 outcome: Outcome::Error {
-                    error: Error {
+                    error: Problem {
                         code: "not_utf8".to_owned(),
                         message: "a.txt is not valid UTF-8".to_owned(),
                     },
@@ -502,7 +601,7 @@ mod tests {
             Event::Complete {
                 succeeded: 2,
                 failed: 1,
-                aborted: Some(Error {
+                aborted: Some(Problem {
                     code: "hook_failed".to_owned(),
                     message: "summarizer returned 503 after 4 attempts".to_owned(),
                 }),

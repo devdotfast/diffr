@@ -59,7 +59,6 @@ mod line_parser;
 mod lines;
 mod options;
 mod parse;
-#[allow(dead_code)]
 pub(crate) mod protocol;
 mod review;
 mod stream;

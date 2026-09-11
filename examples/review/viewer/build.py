@@ -82,7 +82,7 @@ for meta in index:
     stream_path = OUT / (meta['id'] + '.ndjson')
     with stream_path.open('wb') as output:
         subprocess.run([str(ROOT / 'target/debug/diffr'), '--repo', str(REPO),
-                        *commits, '--format', 'ndjson', '--', *paths],
+                        *commits, '--format', 'ndjson-v1', '--', *paths],
                        stdout=output, env=ENV, check=True)
     view['request'] = 'data/' + stream_path.name
     path.write_text(json.dumps(view))

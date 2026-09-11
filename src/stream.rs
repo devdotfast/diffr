@@ -1,5 +1,5 @@
 //! Incremental stdout protocol over the shared file iterator.
-use crate::git::{DiffSession, FileChange, LoadedFile, Operand, Result};
+use crate::git::{DiffSession, FileChange, LoadedFile, Operand};
 use crate::hook::Hook;
 use crate::summary::DiffResult;
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -47,7 +47,7 @@ pub(crate) fn write(
     jobs: usize,
     hook: Option<Arc<Hook>>,
     output: &mut impl Write,
-) -> Result<bool> {
+) -> crate::git::Result<bool> {
     let (sender, receiver) = sync_channel(1);
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(jobs)
@@ -58,7 +58,7 @@ pub(crate) fn write(
         let _ = produce(session, &pool, hook.as_deref(), sender);
     });
     let mut output = BufWriter::new(output);
-    let result: Result<bool> = (|| {
+    let result: crate::git::Result<bool> = (|| {
         let mut failed = false;
         for event in &receiver {
             if let Event::Complete { failed: count, .. } = &event {
@@ -142,7 +142,7 @@ struct Loader {
 }
 
 impl Iterator for Loader {
-    type Item = (FileChange, crate::git::Result<LoadedFile>);
+    type Item = (FileChange, Result<LoadedFile, crate::git::FileProblem>);
     fn next(&mut self) -> Option<Self::Item> {
         if self.cancelled.load(Ordering::Relaxed) {
             return None;
@@ -159,19 +159,8 @@ pub(crate) fn write_file(
     compute: impl FnOnce() -> DiffResult,
     hook: Option<&Hook>,
     output: &mut impl Write,
-) -> Result<()> {
-    let file = FileChange {
-        old_path: (before != "/dev/null").then(|| before.into()),
-        new_path: (after != "/dev/null").then(|| after.into()),
-        status: if before == "/dev/null" {
-            crate::git::FileStatus::Added
-        } else if after == "/dev/null" {
-            crate::git::FileStatus::Deleted
-        } else {
-            crate::git::FileStatus::Modified
-        },
-        class: None,
-    };
+) -> crate::git::Result<()> {
+    let file = FileChange::standalone(before, after);
     let mut output = BufWriter::new(output);
     serde_json::to_writer(
         &mut output,

@@ -1,0 +1,1098 @@
+//! Projection from the internal `DiffResult` onto the wire types.
+//!
+//! Leaves come from the full-file row alignment: consecutive rows of one
+//! kind (paired unchanged, paired novel, one-sided) become one leaf on each
+//! side they touch, and a paired leaf shares its id across sides. Folds
+//! come from the per-side fold lists; a fold with a counterpart shares its
+//! id too. Leaves are split wherever a fold starts or ends so that every
+//! fold's children tile its line span exactly, and a split on one side of
+//! a paired leaf is mirrored on the other so paired leaves stay equal in
+//! length. Long unchanged paired runs are trimmed to the context width and
+//! their middle becomes a collapsed leaf tagged `unchanged`.
+use super::{
+    BinaryRef, Diff, FileRef, LineCounts, Node, Pairing, Problem, Region, Source, SourcePos,
+    SourceRange, Span, Stats, SyntaxSpan, Visibility,
+};
+use crate::display::line_layout::{aligned_rows, novel_lines};
+use crate::hash::DftHashMap;
+use crate::line_parser;
+use crate::lines;
+use crate::parse::folds::{Fold, FoldMatch};
+use crate::parse::syntax::{MatchKind, MatchedPos};
+use crate::parse::tree_sitter_parser::{highlight_captures, TreeSitterConfig};
+use crate::summary::{DiffResult, FileContent, FileFormat};
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Everything the projection needs besides the diff itself.
+pub(crate) struct Inputs<'a> {
+    /// Which sides the file exists on; a one-sided file gets one source.
+    pub(crate) file: &'a Pairing<FileRef>,
+    /// Byte length of each side's content, for binary files.
+    pub(crate) sizes: (u64, u64),
+    /// Unchanged lines kept open on either side of a change.
+    pub(crate) context_lines: usize,
+    /// Highlight spans per side; empty when the run did not ask for syntax.
+    pub(crate) syntax: (Vec<SyntaxSpan>, Vec<SyntaxSpan>),
+}
+
+pub(crate) fn diff(result: &DiffResult, inputs: Inputs<'_>) -> Result<Diff, Problem> {
+    let (lhs_src, rhs_src) = match (&result.lhs_src, &result.rhs_src) {
+        (FileContent::Text(lhs), FileContent::Text(rhs)) => (lhs.as_str(), rhs.as_str()),
+        _ => {
+            let sides = pair(
+                inputs.file,
+                BinaryRef {
+                    size: inputs.sizes.0,
+                },
+                BinaryRef {
+                    size: inputs.sizes.1,
+                },
+            );
+            return Ok(Diff::Binary { sides });
+        }
+    };
+    let (lhs_regions, rhs_regions) = regions(result, lhs_src, rhs_src, inputs.context_lines)?;
+    let (lhs_syntax, rhs_syntax) = inputs.syntax;
+    let sides = pair(
+        inputs.file,
+        Source {
+            text: lhs_src.to_owned(),
+            syntax: lhs_syntax,
+            regions: lhs_regions,
+        },
+        Source {
+            text: rhs_src.to_owned(),
+            syntax: rhs_syntax,
+            regions: rhs_regions,
+        },
+    );
+    Ok(Diff::Text {
+        sides,
+        stats: stats(result, lhs_src, rhs_src),
+    })
+}
+
+fn pair<T>(file: &Pairing<FileRef>, lhs: T, rhs: T) -> Pairing<T> {
+    match file {
+        Pairing::Both { .. } => Pairing::Both { lhs, rhs },
+        Pairing::LeftOnly { .. } => Pairing::LeftOnly { lhs },
+        Pairing::RightOnly { .. } => Pairing::RightOnly { rhs },
+    }
+}
+
+fn stats(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> Stats {
+    let (lhs_lines, rhs_lines) = line_parser::change_positions(lhs_src, rhs_src);
+    let textual = LineCounts {
+        added: novel_lines(&rhs_lines).len() as u32,
+        removed: novel_lines(&lhs_lines).len() as u32,
+    };
+    let structural = match &result.file_format {
+        FileFormat::SupportedLanguage(_) => Ok(LineCounts {
+            added: novel_lines(&result.rhs_positions).len() as u32,
+            removed: novel_lines(&result.lhs_positions).len() as u32,
+        }),
+        FileFormat::PlainText => Err(Problem {
+            code: "unsupported_language".to_owned(),
+            message: "no tree-sitter grammar for this file".to_owned(),
+        }),
+        FileFormat::TextFallback { reason } => Err(Problem {
+            code: fallback_code(reason).to_owned(),
+            message: reason.clone(),
+        }),
+        FileFormat::Binary => unreachable!("binary files never reach text stats"),
+    };
+    Stats {
+        textual,
+        structural,
+    }
+}
+
+/// difftastic reports its fallbacks as prose; the wire wants a code.
+fn fallback_code(reason: &str) -> &'static str {
+    if reason.contains("DFT_BYTE_LIMIT") {
+        "too_large"
+    } else if reason.contains("DFT_GRAPH_LIMIT") {
+        "too_complex"
+    } else if reason.contains("parse error") {
+        "parse_error"
+    } else {
+        "text_fallback"
+    }
+}
+
+/// Highlight spans for one side, per line, sorted, non-overlapping. Where
+/// captures nest the innermost wins.
+pub(crate) fn syntax_spans(src: &str, parser: &'static TreeSitterConfig) -> Vec<SyntaxSpan> {
+    let mut captures = highlight_captures(src, parser);
+    // Paint larger captures first so smaller (inner) ones overwrite them.
+    captures.sort_by_key(|(start, end, _)| std::cmp::Reverse(end - start));
+    let mut owner: Vec<Option<&'static str>> = vec![None; src.len()];
+    for (start, end, name) in captures {
+        for slot in &mut owner[start..end] {
+            *slot = Some(name);
+        }
+    }
+    let mut spans = Vec::new();
+    let mut line_start = 0;
+    for (line, text) in src.split_inclusive('\n').enumerate() {
+        let content_len = text.trim_end_matches('\n').len();
+        let mut run: Option<(usize, &'static str)> = None;
+        for column in 0..=content_len {
+            let current = (column < content_len)
+                .then(|| owner[line_start + column])
+                .flatten();
+            match (run, current) {
+                (Some((_, name)), Some(now)) if now == name => {}
+                (Some((start, name)), _) => {
+                    spans.push(SyntaxSpan {
+                        line: line as u32,
+                        start_column: start as u32,
+                        end_column: column as u32,
+                        capture: name.to_owned(),
+                    });
+                    run = current.map(|name| (column, name));
+                }
+                (None, Some(name)) => run = Some((column, name)),
+                (None, None) => {}
+            }
+        }
+        line_start += text.len();
+    }
+    spans
+}
+
+// ── regions ───────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RunKind {
+    Unchanged,
+    Novel,
+}
+
+/// A maximal run of aligned rows of one kind before fold splitting.
+#[derive(Clone, Debug)]
+struct Run {
+    kind: RunKind,
+    lhs: Option<(usize, usize)>,
+    rhs: Option<(usize, usize)>,
+    collapsed: bool,
+}
+
+impl Run {
+    fn len(&self) -> usize {
+        let (start, end) = self.lhs.or(self.rhs).expect("a run has a side");
+        end - start
+    }
+}
+
+/// A leaf after splitting. `key` identifies its counterpart on the other
+/// side, when it has one.
+#[derive(Clone, Debug)]
+struct Leaf {
+    lines: (usize, usize),
+    key: Option<LeafKey>,
+    collapsed: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum PairKey {
+    Leaf(LeafKey),
+    Fold(usize),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct LeafKey {
+    run: usize,
+    piece: usize,
+}
+
+struct SideFold<'a> {
+    fold: &'a Fold,
+    lines: (usize, usize),
+    /// Index of the lhs fold this pairs with, on either side.
+    pair: Option<usize>,
+}
+
+fn regions(
+    result: &DiffResult,
+    lhs_src: &str,
+    rhs_src: &str,
+    context_lines: usize,
+) -> Result<(Vec<Region>, Vec<Region>), Problem> {
+    let lhs_lines: Vec<&str> = lhs_src.split_terminator('\n').collect();
+    let rhs_lines: Vec<&str> = rhs_src.split_terminator('\n').collect();
+    let lhs_novel = novel_lines(&result.lhs_positions);
+    let rhs_novel = novel_lines(&result.rhs_positions);
+    let rows = aligned_rows(
+        (lhs_src, rhs_src),
+        (&result.lhs_positions, &result.rhs_positions),
+    );
+    let runs = trim_context(runs(&rows, &lhs_novel, &rhs_novel), context_lines);
+
+    let lhs_folds = side_folds(&result.lhs_folds, &result.rhs_folds, Side::Left, &lhs_lines)?;
+    let rhs_folds = side_folds(
+        &result.lhs_folds,
+        &result.rhs_folds,
+        Side::Right,
+        &rhs_lines,
+    )?;
+    let lhs_splits = split_lines(&lhs_folds);
+    let rhs_splits = split_lines(&rhs_folds);
+    let (lhs_leaves, rhs_leaves) = split_runs(&runs, &lhs_splits, &rhs_splits);
+
+    let mut ids = Ids::default();
+    let lhs = tree(
+        &lhs_folds,
+        &lhs_leaves,
+        &result.lhs_positions,
+        &lhs_novel,
+        &lhs_lines,
+        &mut ids,
+    );
+    let rhs = tree(
+        &rhs_folds,
+        &rhs_leaves,
+        &result.rhs_positions,
+        &rhs_novel,
+        &rhs_lines,
+        &mut ids,
+    );
+    Ok((lhs, rhs))
+}
+
+#[derive(Clone, Copy)]
+enum Side {
+    Left,
+    Right,
+}
+
+/// Rows in order, run-length encoded by kind and side presence.
+fn runs(
+    rows: &[(Option<usize>, Option<usize>)],
+    lhs_novel: &BTreeSet<usize>,
+    rhs_novel: &BTreeSet<usize>,
+) -> Vec<Run> {
+    let mut runs: Vec<Run> = Vec::new();
+    for &(lhs, rhs) in rows {
+        let kind = match (lhs, rhs) {
+            (Some(l), Some(r)) if !lhs_novel.contains(&l) && !rhs_novel.contains(&r) => {
+                RunKind::Unchanged
+            }
+            _ => RunKind::Novel,
+        };
+        let extends = runs.last().is_some_and(|run| {
+            run.kind == kind
+                && run.lhs.is_some() == lhs.is_some()
+                && run.rhs.is_some() == rhs.is_some()
+                && lhs.is_none_or(|l| run.lhs.is_some_and(|(_, end)| end == l))
+                && rhs.is_none_or(|r| run.rhs.is_some_and(|(_, end)| end == r))
+        });
+        if extends {
+            let run = runs.last_mut().expect("checked above");
+            if let (Some((_, end)), Some(_)) = (&mut run.lhs, lhs) {
+                *end += 1;
+            }
+            if let (Some((_, end)), Some(_)) = (&mut run.rhs, rhs) {
+                *end += 1;
+            }
+        } else {
+            runs.push(Run {
+                kind,
+                lhs: lhs.map(|l| (l, l + 1)),
+                rhs: rhs.map(|r| (r, r + 1)),
+                collapsed: false,
+            });
+        }
+    }
+    runs
+}
+
+/// Keep `context` lines of every unchanged run on the side that faces a
+/// change; collapse the rest. A run at the file start faces no change
+/// before it, one at the end none after, and a file with a single run has
+/// no change at all.
+fn trim_context(runs: Vec<Run>, context: usize) -> Vec<Run> {
+    let last = runs.len().saturating_sub(1);
+    let mut out = Vec::new();
+    for (index, run) in runs.into_iter().enumerate() {
+        if run.kind != RunKind::Unchanged {
+            out.push(run);
+            continue;
+        }
+        let lead = if index == 0 { 0 } else { context };
+        let trail = if index == last { 0 } else { context };
+        let len = run.len();
+        if len <= lead + trail {
+            out.push(run);
+            continue;
+        }
+        let (lhs_start, _) = run.lhs.expect("unchanged runs are paired");
+        let (rhs_start, _) = run.rhs.expect("unchanged runs are paired");
+        let piece = |offset: usize, count: usize, collapsed: bool| Run {
+            kind: RunKind::Unchanged,
+            lhs: Some((lhs_start + offset, lhs_start + offset + count)),
+            rhs: Some((rhs_start + offset, rhs_start + offset + count)),
+            collapsed,
+        };
+        if lead > 0 {
+            out.push(piece(0, lead, false));
+        }
+        out.push(piece(lead, len - lead - trail, true));
+        if trail > 0 {
+            out.push(piece(len - trail, trail, false));
+        }
+    }
+    out
+}
+
+fn line_span(range: &lines::SourceRange, line_count: usize) -> (usize, usize) {
+    let start = range.start.line.as_usize();
+    let end = if range.end.byte_column == 0 {
+        range.end.line.as_usize()
+    } else {
+        range.end.line.as_usize() + 1
+    };
+    (
+        start.min(line_count),
+        end.min(line_count).max(start.min(line_count)),
+    )
+}
+
+fn side_folds<'a>(
+    lhs_folds: &'a [Fold],
+    rhs_folds: &'a [Fold],
+    side: Side,
+    lines: &[&str],
+) -> Result<Vec<SideFold<'a>>, Problem> {
+    let (own, other) = match side {
+        Side::Left => (lhs_folds, rhs_folds),
+        Side::Right => (rhs_folds, lhs_folds),
+    };
+    let by_range: DftHashMap<lines::SourceRange, usize> = other
+        .iter()
+        .enumerate()
+        .map(|(index, fold)| (fold.range, index))
+        .collect();
+    own.iter()
+        .enumerate()
+        // A fold on a single line hides nothing; it is not a region.
+        .filter(|(_, fold)| {
+            let (start, end) = line_span(&fold.range, lines.len());
+            end - start >= 2
+        })
+        .map(|(index, fold)| {
+            let pair = match &fold.match_kind {
+                FoldMatch::Novel => None,
+                FoldMatch::Unchanged { opposite } => {
+                    let other_index = *by_range.get(opposite).ok_or_else(|| Problem {
+                        code: "fold_pairing".to_owned(),
+                        message: format!(
+                            "fold at line {} has no counterpart at {:?}",
+                            fold.range.start.line.as_usize() + 1,
+                            opposite
+                        ),
+                    })?;
+                    Some(match side {
+                        Side::Left => index,
+                        Side::Right => other_index,
+                    })
+                }
+            };
+            Ok(SideFold {
+                fold,
+                lines: line_span(&fold.range, lines.len()),
+                pair,
+            })
+        })
+        .collect()
+}
+
+fn split_lines(folds: &[SideFold<'_>]) -> BTreeSet<usize> {
+    folds
+        .iter()
+        .flat_map(|fold| [fold.lines.0, fold.lines.1])
+        .collect()
+}
+
+/// Split every run at its side's fold boundaries, mirroring splits across
+/// paired runs so both sides keep equal-length pieces.
+fn split_runs(
+    runs: &[Run],
+    lhs_splits: &BTreeSet<usize>,
+    rhs_splits: &BTreeSet<usize>,
+) -> (Vec<Leaf>, Vec<Leaf>) {
+    let mut lhs_leaves = Vec::new();
+    let mut rhs_leaves = Vec::new();
+    for (index, run) in runs.iter().enumerate() {
+        let len = run.len();
+        let mut offsets: BTreeSet<usize> = BTreeSet::new();
+        if let Some((start, end)) = run.lhs {
+            offsets.extend(lhs_splits.range(start + 1..end).map(|line| line - start));
+        }
+        if let Some((start, end)) = run.rhs {
+            offsets.extend(rhs_splits.range(start + 1..end).map(|line| line - start));
+        }
+        let paired = run.lhs.is_some() && run.rhs.is_some();
+        let mut at = 0;
+        for (piece, cut) in offsets.into_iter().chain([len]).enumerate() {
+            let key = paired.then_some(LeafKey { run: index, piece });
+            if let Some((start, _)) = run.lhs {
+                lhs_leaves.push(Leaf {
+                    lines: (start + at, start + cut),
+                    key,
+                    collapsed: run.collapsed,
+                });
+            }
+            if let Some((start, _)) = run.rhs {
+                rhs_leaves.push(Leaf {
+                    lines: (start + at, start + cut),
+                    key,
+                    collapsed: run.collapsed,
+                });
+            }
+            at = cut;
+        }
+    }
+    (lhs_leaves, rhs_leaves)
+}
+
+#[derive(Default)]
+struct Ids {
+    next: u32,
+    shared: DftHashMap<PairKey, u32>,
+}
+
+impl Ids {
+    fn get(&mut self, key: Option<PairKey>) -> u32 {
+        if let Some(key) = key {
+            if let Some(&id) = self.shared.get(&key) {
+                return id;
+            }
+        }
+        let id = self.next;
+        self.next += 1;
+        if let Some(key) = key {
+            self.shared.insert(key, id);
+        }
+        id
+    }
+}
+
+enum Item<'a> {
+    Fold(&'a SideFold<'a>),
+    Leaf(&'a Leaf),
+}
+
+impl Item<'_> {
+    fn lines(&self) -> (usize, usize) {
+        match self {
+            Self::Fold(fold) => fold.lines,
+            Self::Leaf(leaf) => leaf.lines,
+        }
+    }
+
+    /// Outer before inner: earlier start, then later end, then folds before
+    /// leaves, then the wider byte range.
+    fn order(
+        &self,
+    ) -> (
+        usize,
+        std::cmp::Reverse<usize>,
+        u8,
+        (usize, usize),
+        std::cmp::Reverse<(usize, usize)>,
+    ) {
+        let (start, end) = self.lines();
+        match self {
+            Self::Fold(fold) => (
+                start,
+                std::cmp::Reverse(end),
+                0,
+                (
+                    fold.fold.range.start.line.as_usize(),
+                    fold.fold.range.start.byte_column,
+                ),
+                std::cmp::Reverse((
+                    fold.fold.range.end.line.as_usize(),
+                    fold.fold.range.end.byte_column,
+                )),
+            ),
+            Self::Leaf(_) => (
+                start,
+                std::cmp::Reverse(end),
+                1,
+                (0, 0),
+                std::cmp::Reverse((0, 0)),
+            ),
+        }
+    }
+}
+
+/// Nest folds and leaves by containment on line spans and assign ids in
+/// document order.
+fn tree(
+    folds: &[SideFold<'_>],
+    leaves: &[Leaf],
+    positions: &[MatchedPos],
+    novel: &BTreeSet<usize>,
+    lines: &[&str],
+    ids: &mut Ids,
+) -> Vec<Region> {
+    let mut items: Vec<Item<'_>> = folds
+        .iter()
+        .map(Item::Fold)
+        .chain(leaves.iter().map(Item::Leaf))
+        .collect();
+    items.sort_by_key(Item::order);
+    let by_line = positions_by_line(positions);
+
+    // Build bottom-up with an explicit stack of open folds.
+    struct Open<'a> {
+        fold: &'a SideFold<'a>,
+        id: u32,
+        children: Vec<Region>,
+    }
+    let mut root: Vec<Region> = Vec::new();
+    let mut stack: Vec<Open<'_>> = Vec::new();
+    let close = |stack: &mut Vec<Open<'_>>, root: &mut Vec<Region>| {
+        let open = stack.pop().expect("closing an open fold");
+        let fold = open.fold.fold;
+        let region = Region {
+            id: open.id,
+            range: source_range(&fold.range),
+            tags: fold.tags.clone(),
+            visibility: Visibility {
+                collapsed: false,
+                label: fold
+                    .summary
+                    .clone()
+                    .unwrap_or_else(|| fold.placeholder.clone()),
+            },
+            node: Node::Fold {
+                children: open.children,
+            },
+        };
+        match stack.last_mut() {
+            Some(parent) => parent.children.push(region),
+            None => root.push(region),
+        }
+    };
+    for item in items {
+        let (start, _) = item.lines();
+        while stack.last().is_some_and(|open| open.fold.lines.1 <= start) {
+            close(&mut stack, &mut root);
+        }
+        match item {
+            Item::Fold(fold) => {
+                let id = ids.get(fold.pair.map(PairKey::Fold));
+                stack.push(Open {
+                    fold,
+                    id,
+                    children: Vec::new(),
+                });
+            }
+            Item::Leaf(leaf) => {
+                if leaf.lines.0 == leaf.lines.1 {
+                    continue;
+                }
+                let region = leaf_region(leaf, ids, &by_line, novel, lines);
+                match stack.last_mut() {
+                    Some(parent) => parent.children.push(region),
+                    None => root.push(region),
+                }
+            }
+        }
+    }
+    while !stack.is_empty() {
+        close(&mut stack, &mut root);
+    }
+    root
+}
+
+fn leaf_region(
+    leaf: &Leaf,
+    ids: &mut Ids,
+    by_line: &BTreeMap<usize, Vec<&MatchedPos>>,
+    novel: &BTreeSet<usize>,
+    lines: &[&str],
+) -> Region {
+    let (start, end) = leaf.lines;
+    let mut changed = Vec::new();
+    for line in novel.range(start..end) {
+        let tokens = by_line.get(line).map(Vec::as_slice).unwrap_or(&[]);
+        let all_novel = tokens.iter().all(|token| {
+            matches!(
+                token.kind,
+                MatchKind::Novel { .. } | MatchKind::NovelWord { .. }
+            )
+        });
+        if all_novel {
+            // A blank novel line has nothing to paint.
+            if !lines[*line].is_empty() {
+                changed.push(Span {
+                    line: *line as u32,
+                    start_column: 0,
+                    end_column: lines[*line].len() as u32,
+                });
+            }
+            continue;
+        }
+        for token in tokens {
+            if !matches!(
+                token.kind,
+                MatchKind::Novel { .. } | MatchKind::NovelWord { .. }
+            ) {
+                continue;
+            }
+            let span = Span {
+                line: *line as u32,
+                start_column: token.pos.start_col,
+                end_column: token.pos.end_col,
+            };
+            match changed.last_mut() {
+                Some(last) if last.line == span.line && last.end_column == span.start_column => {
+                    last.end_column = span.end_column;
+                }
+                _ => changed.push(span),
+            }
+        }
+    }
+    let (tags, visibility) = if leaf.collapsed {
+        (
+            vec!["unchanged".to_owned()],
+            Visibility {
+                collapsed: true,
+                label: match end - start {
+                    1 => "1 unchanged line".to_owned(),
+                    count => format!("{count} unchanged lines"),
+                },
+            },
+        )
+    } else {
+        (Vec::new(), Visibility::default())
+    };
+    Region {
+        id: ids.get(leaf.key.map(PairKey::Leaf)),
+        range: SourceRange {
+            start: SourcePos {
+                line: start as u32,
+                column: 0,
+            },
+            end: SourcePos {
+                line: end as u32,
+                column: 0,
+            },
+        },
+        tags,
+        visibility,
+        node: Node::Leaf { changed },
+    }
+}
+
+fn positions_by_line(positions: &[MatchedPos]) -> BTreeMap<usize, Vec<&MatchedPos>> {
+    let mut by_line: BTreeMap<usize, Vec<&MatchedPos>> = BTreeMap::new();
+    for position in positions {
+        by_line
+            .entry(position.pos.line.as_usize())
+            .or_default()
+            .push(position);
+    }
+    for tokens in by_line.values_mut() {
+        tokens.sort_by_key(|token| token.pos.start_col);
+    }
+    by_line
+}
+
+fn source_range(range: &lines::SourceRange) -> SourceRange {
+    SourceRange {
+        start: SourcePos {
+            line: range.start.line.as_usize() as u32,
+            column: range.start.byte_column as u32,
+        },
+        end: SourcePos {
+            line: range.end.line.as_usize() as u32,
+            column: range.end.byte_column as u32,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Params;
+    use crate::options::{DiffOptions, DisplayOptions};
+
+    fn refs(lhs: bool, rhs: bool) -> Pairing<FileRef> {
+        let file_ref = FileRef {
+            path: "a.py".to_owned(),
+            oid: String::new(),
+            mode: String::new(),
+        };
+        match (lhs, rhs) {
+            (true, true) => Pairing::Both {
+                lhs: file_ref.clone(),
+                rhs: file_ref,
+            },
+            (true, false) => Pairing::LeftOnly { lhs: file_ref },
+            (false, true) => Pairing::RightOnly { rhs: file_ref },
+            (false, false) => panic!("a file has a side"),
+        }
+    }
+
+    fn project(path: &str, lhs: &str, rhs: &str, context: usize) -> Diff {
+        let result = DiffResult::from_sources_with_options(
+            path,
+            lhs,
+            rhs,
+            &Params::default(),
+            &DisplayOptions {
+                num_context_lines: context as u32,
+                ..DisplayOptions::default()
+            },
+            &DiffOptions::default(),
+        );
+        diff(
+            &result,
+            Inputs {
+                file: &refs(!lhs.is_empty(), !rhs.is_empty()),
+                sizes: (lhs.len() as u64, rhs.len() as u64),
+                context_lines: context,
+                syntax: (Vec::new(), Vec::new()),
+            },
+        )
+        .unwrap()
+    }
+
+    fn sources(diff: &Diff) -> (Option<&Source>, Option<&Source>) {
+        match diff {
+            Diff::Text { sides, .. } => (sides.lhs(), sides.rhs()),
+            Diff::Binary { .. } => panic!("text diff"),
+        }
+    }
+
+    fn leaves(regions: &[Region]) -> Vec<&Region> {
+        let mut out = Vec::new();
+        for region in regions {
+            match &region.node {
+                Node::Leaf { .. } => out.push(region),
+                Node::Fold { children } => out.extend(leaves(children)),
+            }
+        }
+        out
+    }
+
+    fn all(regions: &[Region]) -> Vec<&Region> {
+        let mut out = Vec::new();
+        for region in regions {
+            out.push(region);
+            if let Node::Fold { children } = &region.node {
+                out.extend(all(children));
+            }
+        }
+        out
+    }
+
+    fn line_count(text: &str) -> u32 {
+        text.split_terminator('\n').count() as u32
+    }
+
+    fn assert_tiles(source: &Source) {
+        let mut at = 0;
+        for leaf in leaves(&source.regions) {
+            assert_eq!(leaf.range.start.line, at, "gap before {leaf:?}");
+            assert_eq!(leaf.range.start.column, 0);
+            assert_eq!(leaf.range.end.column, 0);
+            assert!(leaf.range.end.line > at, "empty leaf {leaf:?}");
+            at = leaf.range.end.line;
+        }
+        assert_eq!(at, line_count(&source.text));
+    }
+
+    fn assert_folds_hold_children(regions: &[Region]) {
+        for region in regions {
+            if let Node::Fold { children } = &region.node {
+                assert!(!children.is_empty(), "fold without children {region:?}");
+                let (start, end) = region.range.lines_spanned();
+                let mut at = start;
+                for child in children {
+                    let (child_start, child_end) = child.range.lines_spanned();
+                    assert_eq!(child_start, at, "hole inside {region:?}");
+                    at = child_end;
+                }
+                assert_eq!(at, end, "fold {region:?} not tiled by its children");
+                assert_folds_hold_children(children);
+            }
+        }
+    }
+
+    impl SourceRange {
+        fn lines_spanned(&self) -> (u32, u32) {
+            let range = self.lines();
+            (range.start, range.end)
+        }
+    }
+
+    #[test]
+    fn leaves_tile_both_sides_and_paired_leaves_share_ids() {
+        let lhs = "import os\n\ndef f():\n    x = 1\n    return x\n";
+        let rhs =
+            "import os\n\ndef f():\n    x = 2\n    return x\n\ndef g():\n    y = 3\n    return y\n";
+        let diff = project("a.py", lhs, rhs, 3);
+        let (lhs, rhs) = sources(&diff);
+        let (lhs, rhs) = (lhs.unwrap(), rhs.unwrap());
+        assert_tiles(lhs);
+        assert_tiles(rhs);
+        assert_folds_hold_children(&lhs.regions);
+        assert_folds_hold_children(&rhs.regions);
+        let lhs_ids: BTreeSet<u32> = all(&lhs.regions).iter().map(|r| r.id).collect();
+        let rhs_ids: BTreeSet<u32> = all(&rhs.regions).iter().map(|r| r.id).collect();
+        // Ids are dense and assigned lhs first.
+        let max = lhs_ids.iter().chain(&rhs_ids).max().copied().unwrap();
+        assert_eq!(
+            lhs_ids.union(&rhs_ids).copied().collect::<Vec<_>>(),
+            (0..=max).collect::<Vec<_>>()
+        );
+        for (lhs_leaf, rhs_leaf) in leaves(&lhs.regions).iter().zip(leaves(&rhs.regions)) {
+            if lhs_leaf.id == rhs_leaf.id {
+                assert_eq!(
+                    lhs_leaf.range.lines_spanned().1 - lhs_leaf.range.lines_spanned().0,
+                    rhs_leaf.range.lines_spanned().1 - rhs_leaf.range.lines_spanned().0,
+                    "paired leaves have equal length"
+                );
+            }
+        }
+        // The new function exists on the rhs only.
+        let rhs_only: Vec<_> = rhs_ids.difference(&lhs_ids).collect();
+        assert!(!rhs_only.is_empty());
+        // Python's body fold is the block, which starts on the line after `def`.
+        let new_fold = all(&rhs.regions)
+            .into_iter()
+            .find(|r| matches!(r.node, Node::Fold { .. }) && r.range.start.line == 7)
+            .expect("the added function is a fold");
+        assert!(rhs_only.contains(&&new_fold.id));
+        assert_eq!(new_fold.tags, vec!["body"]);
+        assert_eq!(new_fold.visibility.label, "Body");
+    }
+
+    #[test]
+    fn the_changed_body_is_a_paired_fold_with_a_novel_leaf_inside() {
+        let lhs = "def f():\n    a = 1\n    b = 2\n    return a\n";
+        let rhs = "def f():\n    a = 1\n    b = 3\n    return a\n";
+        let diff = project("a.py", lhs, rhs, 3);
+        let (lhs, rhs) = sources(&diff);
+        let (lhs, rhs) = (lhs.unwrap(), rhs.unwrap());
+        let fold = |source: &Source| {
+            let folds: Vec<_> = all(&source.regions)
+                .into_iter()
+                .filter(|r| matches!(r.node, Node::Fold { .. }))
+                .collect();
+            assert_eq!(folds.len(), 1);
+            folds[0].clone()
+        };
+        let lhs_fold = fold(lhs);
+        let rhs_fold = fold(rhs);
+        assert_eq!(lhs_fold.id, rhs_fold.id);
+        assert_eq!(lhs_fold.range.lines_spanned(), (1, 4));
+        let novel: Vec<_> = leaves(&rhs.regions)
+            .into_iter()
+            .filter(|leaf| matches!(&leaf.node, Node::Leaf { changed } if !changed.is_empty()))
+            .collect();
+        assert_eq!(novel.len(), 1);
+        assert_eq!(novel[0].range.lines_spanned(), (2, 3));
+        let Node::Leaf { changed } = &novel[0].node else {
+            unreachable!()
+        };
+        // Only the changed token is painted, not the whole line.
+        assert_eq!(
+            changed,
+            &[Span {
+                line: 2,
+                start_column: 8,
+                end_column: 9
+            }]
+        );
+    }
+
+    #[test]
+    fn a_fully_new_line_is_painted_whole_and_blank_lines_not_at_all() {
+        let diff = project("a.py", "x = 1\n", "x = 1\n\ny = 2\n", 3);
+        let (_, rhs) = sources(&diff);
+        let changed: Vec<Span> = leaves(&rhs.unwrap().regions)
+            .into_iter()
+            .filter_map(|leaf| match &leaf.node {
+                Node::Leaf { changed } => Some(changed.clone()),
+                Node::Fold { .. } => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(
+            changed,
+            vec![Span {
+                line: 2,
+                start_column: 0,
+                end_column: 5
+            }]
+        );
+    }
+
+    #[test]
+    fn long_unchanged_runs_collapse_to_the_context_width() {
+        let body = (0..20)
+            .map(|i| format!("x{i} = {i}\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        let lhs = format!("{body}changed = 1\n{body}");
+        let rhs = format!("{body}changed = 2\n{body}");
+        let diff = project("a.py", &lhs, &rhs, 3);
+        let (lhs, _) = sources(&diff);
+        let leaves = leaves(&lhs.unwrap().regions);
+        let spans: Vec<_> = leaves
+            .iter()
+            .map(|leaf| {
+                (
+                    leaf.range.lines_spanned(),
+                    leaf.visibility.collapsed,
+                    leaf.tags.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            spans,
+            vec![
+                ((0, 17), true, vec!["unchanged".to_owned()]),
+                ((17, 20), false, vec![]),
+                ((20, 21), false, vec![]),
+                ((21, 24), false, vec![]),
+                ((24, 41), true, vec!["unchanged".to_owned()]),
+            ]
+        );
+        assert_eq!(leaves[0].visibility.label, "17 unchanged lines");
+    }
+
+    #[test]
+    fn a_fold_edge_splits_paired_leaves_on_both_sides() {
+        // The unchanged function inside the gap forces a split on both sides
+        // at the same offset, even though only the rhs shifted.
+        let lhs = "a = 1\n\ndef f():\n    return 1\n\nz = 1\n";
+        let rhs = "a = 2\n\ndef f():\n    return 1\n\nz = 1\n";
+        let diff = project("a.py", lhs, rhs, 1);
+        let (lhs, rhs) = sources(&diff);
+        let (lhs, rhs) = (lhs.unwrap(), rhs.unwrap());
+        assert_tiles(lhs);
+        assert_tiles(rhs);
+        assert_folds_hold_children(&lhs.regions);
+        assert_folds_hold_children(&rhs.regions);
+        let lhs_leaves: Vec<_> = leaves(&lhs.regions)
+            .iter()
+            .map(|l| (l.id, l.range.lines_spanned()))
+            .collect();
+        let rhs_leaves: Vec<_> = leaves(&rhs.regions)
+            .iter()
+            .map(|l| (l.id, l.range.lines_spanned()))
+            .collect();
+        assert_eq!(lhs_leaves, rhs_leaves);
+    }
+
+    #[test]
+    fn stats_count_text_and_syntax_lines_separately() {
+        let diff = project("a.py", "x = 1\n", "x = 1 # same\n", 3);
+        let Diff::Text { stats, .. } = &diff else {
+            panic!("text")
+        };
+        assert_eq!(
+            stats.textual,
+            LineCounts {
+                added: 1,
+                removed: 1
+            }
+        );
+        let structural = stats.structural.as_ref().unwrap();
+        assert_eq!(structural.added, 1);
+        let diff = project("a.unknownext", "x\n", "y\n", 3);
+        let Diff::Text { stats, .. } = &diff else {
+            panic!("text")
+        };
+        assert_eq!(
+            stats.structural.as_ref().unwrap_err().code,
+            "unsupported_language"
+        );
+    }
+
+    #[test]
+    fn one_sided_files_have_one_source_and_no_shared_ids() {
+        let diff = project("a.py", "", "def f():\n    return 1\n", 3);
+        let (lhs, rhs) = sources(&diff);
+        assert!(lhs.is_none());
+        let rhs = rhs.unwrap();
+        assert_tiles(rhs);
+        assert!(leaves(&rhs.regions)
+            .iter()
+            .all(|leaf| !leaf.visibility.collapsed));
+    }
+
+    #[test]
+    fn identical_files_are_one_collapsed_leaf() {
+        let diff = project("a.py", "x = 1\ny = 2\n", "x = 1\ny = 2\n", 3);
+        let (lhs, rhs) = sources(&diff);
+        let lhs = lhs.unwrap();
+        assert_eq!(leaves(&lhs.regions).len(), 1);
+        assert!(leaves(&lhs.regions)[0].visibility.collapsed);
+        assert_eq!(lhs.regions[0].id, rhs.unwrap().regions[0].id);
+    }
+
+    #[test]
+    fn binary_sides_carry_sizes() {
+        let result = DiffResult {
+            display_path: "a.bin".to_owned(),
+            extra_info: None,
+            file_format: FileFormat::Binary,
+            lhs_src: FileContent::Binary,
+            rhs_src: FileContent::Binary,
+            hunks: vec![],
+            lhs_folds: vec![],
+            rhs_folds: vec![],
+            lhs_positions: vec![],
+            rhs_positions: vec![],
+            has_byte_changes: Some((3, 5)),
+            has_syntactic_changes: false,
+        };
+        let diff = diff(
+            &result,
+            Inputs {
+                file: &refs(true, true),
+                sizes: (3, 5),
+                context_lines: 3,
+                syntax: (Vec::new(), Vec::new()),
+            },
+        )
+        .unwrap();
+        match diff {
+            Diff::Binary { sides } => {
+                assert_eq!(sides.lhs().unwrap().size, 3);
+                assert_eq!(sides.rhs().unwrap().size, 5);
+            }
+            Diff::Text { .. } => panic!("binary"),
+        }
+    }
+
+    #[test]
+    fn syntax_spans_are_per_line_sorted_and_innermost() {
+        let parser = crate::parse::tree_sitter_parser::from_language(
+            crate::parse::guess_language::Language::Python,
+        );
+        let spans = syntax_spans("def f(x):\n    return \"a\"\n", parser);
+        for pair in spans.windows(2) {
+            assert!(
+                pair[0].line < pair[1].line
+                    || (pair[0].line == pair[1].line && pair[0].end_column <= pair[1].start_column),
+                "{pair:?}"
+            );
+        }
+        assert!(spans
+            .iter()
+            .any(|span| span.capture == "keyword" && span.line == 0));
+        assert!(spans
+            .iter()
+            .any(|span| span.capture.starts_with("string") && span.line == 1));
+    }
+}

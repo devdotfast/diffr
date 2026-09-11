@@ -17,6 +17,9 @@
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+pub(crate) mod project;
+pub(crate) mod stream;
+
 /// The current wire version. Changes within a version are additive.
 pub const VERSION: u32 = 2;
 

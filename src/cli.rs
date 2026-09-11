@@ -60,7 +60,8 @@ pub(crate) fn run() -> Result<i32> {
         .arg(flag("no-renames"))
         .arg(flag("find-renames").short('M').conflicts_with("no-renames"))
         .arg(Arg::new("unified").short('U').long("unified").default_value("3").value_parser(clap::value_parser!(u32)))
-        .arg(Arg::new("format").long("format").value_parser(["text", "json", "ndjson", "snapshot"]).default_value("text"))
+        .arg(Arg::new("format").long("format").value_parser(["text", "json", "ndjson", "ndjson-v1", "snapshot"]).default_value("text"))
+        .arg(flag("syntax").help("Include every token's tree-sitter capture name in --format ndjson output"))
         .arg(Arg::new("display").long("display").value_parser(["inline", "side-by-side", "side-by-side-show-both"]).default_value("side-by-side"))
         .arg(Arg::new("color").long("color").num_args(0..=1).require_equals(true).default_missing_value("always").default_value("auto").value_parser(["auto", "always", "never"]))
         .arg(flag("no-color"))
@@ -79,10 +80,14 @@ pub(crate) fn run() -> Result<i32> {
     ) {
         return launch_tui(&frontend_args);
     }
-    let streaming = args.get_one::<String>("format").unwrap() == "ndjson";
+    let format = args.get_one::<String>("format").unwrap().as_str();
+    let streaming = matches!(format, "ndjson" | "ndjson-v1");
     if streaming && (args.get_flag("quiet") || args.contains_id("metadata")) {
         return Err("--format ndjson cannot be combined with --quiet or metadata output".into());
     }
+    let stream_options = crate::protocol::stream::Options {
+        syntax: args.get_flag("syntax"),
+    };
     let items: Vec<OsString> = args
         .get_many::<OsString>("items")
         .into_iter()
@@ -129,6 +134,7 @@ pub(crate) fn run() -> Result<i32> {
             items.into_iter().chain(explicit_paths).collect(),
             &display,
             &diff_options,
+            stream_options,
         );
     }
     if args.get_flag("null") && !args.get_flag("name-only") && !args.get_flag("name-status") {
@@ -176,7 +182,18 @@ pub(crate) fn run() -> Result<i32> {
             if jobs == 0 {
                 return Err("--jobs must be at least 1".into());
             }
-            let failed = crate::stream::write(session, jobs, hook, &mut io::stdout().lock())?;
+            let failed = if format == "ndjson-v1" {
+                crate::stream::write(session, jobs, hook, &mut io::stdout().lock())?
+            } else {
+                let ended = crate::protocol::stream::write(
+                    session,
+                    jobs,
+                    hook,
+                    stream_options,
+                    &mut io::stdout().lock(),
+                )?;
+                ended.failed || ended.aborted
+            };
             return Ok(if failed {
                 2
             } else {
@@ -410,6 +427,7 @@ fn no_index(
     paths: Vec<OsString>,
     display: &DisplayOptions,
     options: &DiffOptions,
+    stream_options: crate::protocol::stream::Options,
 ) -> Result<i32> {
     if paths.len() != 2 {
         return Err("--no-index requires two file paths".into());
@@ -460,19 +478,41 @@ fn no_index(
             &[],
         )
     };
-    if args.get_one::<String>("format").map(String::as_str) == Some("ndjson") {
-        let hook = fold_hook(&config, Path::new(args.get_one::<String>("repo").unwrap()))?;
-        crate::stream::write_file(
-            &paths[0].to_string_lossy(),
-            &paths[1].to_string_lossy(),
-            compute,
-            hook.as_deref(),
-            &mut io::stdout().lock(),
-        )?;
-        Ok(i32::from(changed && args.get_flag("exit-code")))
-    } else {
-        render(&compute(), args, display)?;
-        Ok(i32::from(changed))
+    match args.get_one::<String>("format").map(String::as_str) {
+        Some("ndjson-v1") => {
+            let hook = fold_hook(&config, Path::new(args.get_one::<String>("repo").unwrap()))?;
+            crate::stream::write_file(
+                &paths[0].to_string_lossy(),
+                &paths[1].to_string_lossy(),
+                compute,
+                hook.as_deref(),
+                &mut io::stdout().lock(),
+            )?;
+            Ok(i32::from(changed && args.get_flag("exit-code")))
+        }
+        Some("ndjson") => {
+            let hook = fold_hook(&config, Path::new(args.get_one::<String>("repo").unwrap()))?;
+            let ended = crate::protocol::stream::write_file(
+                &paths[0].to_string_lossy(),
+                &paths[1].to_string_lossy(),
+                (before.len() as u64, after.len() as u64),
+                compute,
+                &config,
+                display.num_context_lines as usize,
+                hook.as_deref(),
+                stream_options,
+                &mut io::stdout().lock(),
+            )?;
+            Ok(if ended.failed || ended.aborted {
+                2
+            } else {
+                i32::from(changed && args.get_flag("exit-code"))
+            })
+        }
+        _ => {
+            render(&compute(), args, display)?;
+            Ok(i32::from(changed))
+        }
     }
 }
 

@@ -1468,6 +1468,33 @@ fn tree_highlights(
     }
 }
 
+/// Every highlight capture in `src` as byte intervals with the capture
+/// name from the language's highlights query. Intervals may nest; the
+/// caller decides precedence.
+pub(crate) fn highlight_captures(
+    src: &str,
+    config: &'static TreeSitterConfig,
+) -> Vec<(usize, usize, &'static str)> {
+    let tree = to_tree(src, config);
+    let names = config.highlight_query.capture_names();
+    let mut cursor = ts::QueryCursor::new();
+    let mut matches = cursor.matches(&config.highlight_query, tree.root_node(), src.as_bytes());
+    let mut captures = Vec::new();
+    while let Some(matched) = matches.next() {
+        for capture in matched.captures {
+            let node = capture.node;
+            if node.start_byte() < node.end_byte() {
+                captures.push((
+                    node.start_byte(),
+                    node.end_byte(),
+                    names[capture.index as usize],
+                ));
+            }
+        }
+    }
+    captures
+}
+
 pub(crate) fn print_tree(src: &str, tree: &tree_sitter::Tree) {
     let mut cursor = tree.walk();
     print_cursor(src, &mut cursor, 0);

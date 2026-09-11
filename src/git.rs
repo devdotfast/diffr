@@ -1,9 +1,12 @@
 //! Git comparison selection and lazy source loading used by the CLI and its stdout stream.
 use crate::config::Params;
+use crate::parse::guess_language::{guess, language_name};
+use crate::protocol;
 use crate::summary::DiffResult;
 use git2::{AttrCheckFlags, AttrValue, Delta, Diff, DiffFindOptions, DiffOptions, Oid, Repository};
 use serde::{Deserialize, Serialize};
 use std::{
+    fmt,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -130,6 +133,11 @@ pub(crate) struct FileChange {
     pub(crate) new_path: Option<String>,
     pub(crate) status: FileStatus,
     pub(crate) class: Option<String>,
+    /// Git's delta sides. Only the v2 wire carries them.
+    #[serde(skip)]
+    pub(crate) sides: protocol::Pairing<protocol::FileRef>,
+    #[serde(skip)]
+    pub(crate) language: Option<String>,
 }
 
 impl FileChange {
@@ -138,6 +146,101 @@ impl FileChange {
             .as_deref()
             .or(self.old_path.as_deref())
             .expect("changed file has a path")
+    }
+
+    /// A standalone comparison of two paths, outside any repository.
+    pub(crate) fn standalone(before: &str, after: &str) -> Self {
+        let file_ref = |path: &str| protocol::FileRef {
+            path: path.to_owned(),
+            oid: String::new(),
+            mode: String::new(),
+        };
+        let old_path = (before != "/dev/null").then(|| before.to_owned());
+        let new_path = (after != "/dev/null").then(|| after.to_owned());
+        let (status, sides) = match (&old_path, &new_path) {
+            (Some(old), Some(new)) => (
+                FileStatus::Modified,
+                protocol::Pairing::Both {
+                    lhs: file_ref(old),
+                    rhs: file_ref(new),
+                },
+            ),
+            (Some(old), None) => (
+                FileStatus::Deleted,
+                protocol::Pairing::LeftOnly { lhs: file_ref(old) },
+            ),
+            (None, Some(new)) => (
+                FileStatus::Added,
+                protocol::Pairing::RightOnly { rhs: file_ref(new) },
+            ),
+            (None, None) => panic!("a standalone comparison needs at least one path"),
+        };
+        let language = language_of(new_path.as_deref().or(old_path.as_deref()).expect("a path"));
+        Self {
+            old_path,
+            new_path,
+            status,
+            class: None,
+            sides,
+            language,
+        }
+    }
+
+    pub(crate) fn manifest_entry(&self) -> protocol::FileChange {
+        protocol::FileChange {
+            file: self.sides.clone(),
+            status: match self.status {
+                FileStatus::Added => protocol::FileStatus::Added,
+                FileStatus::Deleted => protocol::FileStatus::Deleted,
+                FileStatus::Modified => protocol::FileStatus::Modified,
+                FileStatus::Renamed => protocol::FileStatus::Renamed,
+                FileStatus::TypeChanged => protocol::FileStatus::TypeChanged,
+                // Both sides exist; the file record carries the unmerged error.
+                FileStatus::Conflicted => protocol::FileStatus::Modified,
+            },
+            category: self.class.clone(),
+            language: self.language.clone(),
+            visibility: protocol::Visibility::default(),
+        }
+    }
+}
+
+fn language_of(path: &str) -> Option<String> {
+    guess(Path::new(path), "", &[]).map(|language| language_name(language).to_owned())
+}
+
+/// Why one file could not be diffed. `code` is stable on the wire.
+#[derive(Debug)]
+pub(crate) struct FileProblem {
+    pub(crate) code: &'static str,
+    pub(crate) message: String,
+}
+
+impl FileProblem {
+    fn new(code: &'static str, message: impl fmt::Display) -> Self {
+        Self {
+            code,
+            message: message.to_string(),
+        }
+    }
+}
+
+impl fmt::Display for FileProblem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for FileProblem {}
+
+impl From<&Operand> for protocol::Snapshot {
+    fn from(operand: &Operand) -> Self {
+        match operand {
+            Operand::Revision { r#ref } => Self::Revision { rev: r#ref.clone() },
+            Operand::Index => Self::Index,
+            Operand::WorkingTree => Self::WorkingTree,
+            Operand::EmptyTree => Self::EmptyTree,
+        }
     }
 }
 
@@ -191,23 +294,35 @@ impl Source {
         })
     }
 
-    fn read(&self, repo: &Repository) -> Result<String> {
+    fn read(&self, repo: &Repository) -> std::result::Result<String, FileProblem> {
         let mode = match self {
             Self::Absent => return Ok(String::new()),
             Self::Blob { mode, .. } | Self::WorkingFile { mode, .. } => mode,
         };
         if !matches!(mode, git2::FileMode::Blob | git2::FileMode::BlobExecutable) {
-            return Err("structural diffs currently require regular text files (not symlinks or submodules)".into());
+            return Err(FileProblem::new(
+                "unsupported_file_type",
+                "structural diffs currently require regular text files (not symlinks or submodules)",
+            ));
         }
         let bytes = match self {
-            Self::Blob { id, .. } => repo.find_blob(*id)?.content().to_vec(),
-            Self::WorkingFile { path, .. } => std::fs::read(path)?,
+            Self::Blob { id, .. } => repo
+                .find_blob(*id)
+                .map_err(|error| FileProblem::new("read_failed", error))?
+                .content()
+                .to_vec(),
+            Self::WorkingFile { path, .. } => {
+                std::fs::read(path).map_err(|error| FileProblem::new("read_failed", error))?
+            }
             Self::Absent => unreachable!(),
         };
         if bytes.contains(&0) {
-            return Err("structural diffs currently support text files only".into());
+            return Err(FileProblem::new(
+                "binary",
+                "structural diffs currently support text files only",
+            ));
         }
-        Ok(String::from_utf8(bytes)?)
+        String::from_utf8(bytes).map_err(|error| FileProblem::new("not_utf8", error))
     }
 }
 
@@ -267,19 +382,43 @@ impl DiffSession {
                         .ok_or("non-UTF-8 Git paths are unsupported")?
                         .to_owned())
                 };
+                let old_path = if delta.status() == Delta::Added {
+                    None
+                } else {
+                    Some(path(delta.old_file())?)
+                };
+                let new_path = if delta.status() == Delta::Deleted {
+                    None
+                } else {
+                    Some(path(delta.new_file())?)
+                };
+                let file_ref = |file: git2::DiffFile<'_>, path: &str| protocol::FileRef {
+                    path: path.to_owned(),
+                    oid: file.id().to_string(),
+                    mode: format!("{:o}", u32::from(file.mode())),
+                };
+                let sides = match (&old_path, &new_path) {
+                    (Some(old), Some(new)) => protocol::Pairing::Both {
+                        lhs: file_ref(delta.old_file(), old),
+                        rhs: file_ref(delta.new_file(), new),
+                    },
+                    (Some(old), None) => protocol::Pairing::LeftOnly {
+                        lhs: file_ref(delta.old_file(), old),
+                    },
+                    (None, Some(new)) => protocol::Pairing::RightOnly {
+                        rhs: file_ref(delta.new_file(), new),
+                    },
+                    (None, None) => unreachable!("a delta has a path"),
+                };
+                let language =
+                    language_of(new_path.as_deref().or(old_path.as_deref()).expect("a path"));
                 let mut file = FileChange {
-                    old_path: if delta.status() == Delta::Added {
-                        None
-                    } else {
-                        Some(path(delta.old_file())?)
-                    },
-                    new_path: if delta.status() == Delta::Deleted {
-                        None
-                    } else {
-                        Some(path(delta.new_file())?)
-                    },
+                    old_path,
+                    new_path,
                     status,
                     class: None,
+                    sides,
+                    language,
                 };
                 file.class = match AttrValue::from_string(repo.get_attr(
                     Path::new(file.path()),
@@ -334,12 +473,16 @@ pub(crate) struct LoadedFile {
     pub(crate) file: FileChange,
     before: String,
     after: String,
-    params: Arc<Params>,
-    context_lines: u32,
+    pub(crate) params: Arc<Params>,
+    pub(crate) context_lines: u32,
     diff_options: crate::options::DiffOptions,
 }
 
 impl LoadedFile {
+    pub(crate) fn sizes(&self) -> (u64, u64) {
+        (self.before.len() as u64, self.after.len() as u64)
+    }
+
     pub(crate) fn diff(&self) -> DiffResult {
         DiffResult::from_sources_with_options(
             self.file.path(),
@@ -357,11 +500,16 @@ impl LoadedFile {
 
 impl DiffSession {
     /// Read the next file's sources without diffing them.
-    pub(crate) fn load(&mut self) -> Option<(FileChange, Result<LoadedFile>)> {
+    pub(crate) fn load(
+        &mut self,
+    ) -> Option<(FileChange, std::result::Result<LoadedFile, FileProblem>)> {
         let pending = self.files.next()?;
         let result = (|| {
             if matches!(pending.file.status, FileStatus::Conflicted) {
-                return Err("unmerged index entry: resolve the conflict before requesting a structural diff".into());
+                return Err(FileProblem::new(
+                    "unmerged",
+                    "unmerged index entry: resolve the conflict before requesting a structural diff",
+                ));
             }
             Ok(LoadedFile {
                 before: pending.before.read(&self.repo)?,
@@ -380,6 +528,11 @@ impl Iterator for DiffSession {
     type Item = (FileChange, Result<DiffResult>);
     fn next(&mut self) -> Option<Self::Item> {
         let (file, loaded) = self.load()?;
-        Some((file, loaded.map(|loaded| loaded.diff())))
+        Some((
+            file,
+            loaded
+                .map(|loaded| loaded.diff())
+                .map_err(|problem| Box::new(problem) as _),
+        ))
     }
 }

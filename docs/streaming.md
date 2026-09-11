@@ -2,14 +2,19 @@
 
 ```sh
 diffr main HEAD --format ndjson
-diffr --cached --format ndjson --order source,test -- src/
+diffr --cached --format ndjson --syntax --order source,test -- src/
+diffr --no-index --format ndjson -- before.rs after.rs
 ```
 
 Spawn one process per comparison and consume stdout line by line. The comparison
 arguments are the same as the [ordinary CLI](cli.md). There is no HTTP server.
-`--format json` remains the bare domain-object output; `ndjson` adds file metadata,
-progress, recoverable errors and a completion record. NDJSON currently requires a
-repository comparison; it rejects `--no-index`, `--quiet` and metadata output flags.
+`--format json` remains the bare domain-object output; `ndjson` is the stream
+described here. `ndjson-v1` is the previous stream and will be removed once every
+frontend reads this one. NDJSON requires a repository comparison or `--no-index`;
+it rejects `--quiet` and metadata output flags.
+
+The Rust types behind this document are `src/protocol/mod.rs`; the projection
+from the internal diff is `src/protocol/project.rs`.
 
 ## Configuration and ordering
 
@@ -17,7 +22,7 @@ Each invocation loads repository-root `diffr.toml` and compiles it once.
 `--config PATH` selects another file instead. Omitted keys retain bundled defaults;
 query strings replace whole values, and empty queries disable that feature.
 
-File classes come from the current workspace's Git attributes:
+File categories come from the current workspace's Git attributes:
 
 ```gitattributes
 *          diffr-classify=source
@@ -26,71 +31,185 @@ docs/**    diffr-classify=docs
 **/*.lock  diffr-classify=generated
 ```
 
-`--order source,test,docs` prioritizes those classes. It can also be repeated.
+`--order source,test,docs` prioritizes those categories. It can also be repeated.
 Unlisted and unclassified files follow, with path order breaking ties. Without
 `--order`, use path order. Renames classify by new path; deletions by old path.
-Only string attributes assign classes. Normal Git attribute precedence applies.
 
 Paths after `--` accept libgit2 directory prefixes and wildcard patterns, not Git
 magic pathspecs. Only changed files are selected. An unmatched path yields an empty
 stream. Filtering precedes rename detection, so selecting one side of a rename
 can appear as an addition or deletion. `--no-renames` skips rename detection.
 
-## Output contract
+## Conventions
 
-Stdout contains only UTF-8 newline-delimited JSON records. Read complete lines;
-pipe reads can split records or contain several.
+Stdout carries UTF-8 newline-delimited JSON, one record per line. Read complete
+lines; pipe reads can split records or contain several.
 
-| Event | Fields | Consumer action |
+- Every enum is tagged: `type` on records, snapshots and diffs; `kind` on regions.
+  Tags and enum values are `snake_case`.
+- Optional, empty, and default fields are omitted, never `null`. Read a missing
+  `visibility` as open, a missing `tags` as none, a missing `changed` as none.
+- Consumers ignore unknown fields and tolerate unknown enum strings. Additions
+  within a `version` never change the meaning of existing fields.
+- Sides are `lhs` (before) and `rhs` (after). Anything that can exist on one side
+  only is a *pairing*, written by presence: `{"lhs": …, "rhs": …}`, `{"lhs": …}`,
+  or `{"rhs": …}`.
+- Lines are 0-based and split on `\n` only: an empty file has zero lines, and a
+  file without a trailing newline still counts its last line. Columns are 0-based
+  byte offsets into the UTF-8 text on the wire. Ranges are half-open.
+
+## Records
+
+| Record | Fields | Consumer action |
 | --- | --- | --- |
-| `start` | `version: 1`, `before`, `after`, `total`, `files` | Lay out every file up front. |
-| `file` | `file`, `diff`, optional `hook_error` | Render a result. |
-| `file_error` | `file`, `message` | Report failure and keep reading. |
-| `complete` | `succeeded`, `failed` | Mark complete, including partial failures. |
+| `start` | `version: 2`, `lhs`, `rhs`, `files` | Lay out every file up front. |
+| `file` | `file`, then `diff` or `error` | Render a result, or mark the file failed. |
+| `complete` | `succeeded`, `failed`, optional `aborted` | Mark complete; `aborted` means the run stopped early. |
 
-`before` and `after` identify the operands: `{"kind":"revision","ref":"<oid>"}`,
-`{"kind":"index"}`, `{"kind":"working_tree"}`, or `{"kind":"empty_tree"}`.
-Revision refs resolve once. Index source is pinned by blob ID during discovery.
-Worktree files are read as results are computed, not as an atomic snapshot.
+`lhs` and `rhs` on `start` say what is being compared: `{"type":"revision","rev":"<oid>"}`,
+`{"type":"index"}`, `{"type":"working_tree"}`, `{"type":"empty_tree"}` for an unborn
+branch, or `{"type":"path","path":"…"}` for `--no-index`. Revisions resolve once.
+Index content is pinned by blob id during discovery; working-tree files are read
+as results are computed, not as an atomic snapshot.
 
-The file descriptor contains nullable `old_path`, `new_path`, `class`, and `status`
-(added/deleted/modified/renamed/type_changed/conflicted). `diff` is the existing
-domain JSON: complete sources, token correspondence, folds and context hunks.
-There is no display layout in the response.
+`files` lists every selected file in priority order:
 
-`files` lists every selected file descriptor in priority order. File results
-arrive in completion order, not manifest order, since files are diffed
-concurrently (`--jobs`, default 16). Match results to the manifest by identity.
+```jsonc
+{"file": {"lhs": {"path": "src/a.rs", "oid": "3b18…", "mode": "100644"},
+          "rhs": {"path": "src/a.rs", "oid": "9be2…", "mode": "100644"}},
+ "status": "modified",            // added | deleted | modified | renamed | copied | type_changed
+ "category": "source",            // from diffr-classify; absent when unset
+ "language": "Rust",              // guessed from the path; absent when unknown
+ "visibility": {"collapsed": true, "label": "Generated file"}}   // absent when open
+```
 
-At completion, `succeeded + failed == total`; every selected file has one result
-or file error. EOF without `complete` means interrupted/incomplete output.
-Setup failures write to stderr and exit 2 before producing any records.
-Per-file failures emit `file_error`, allow subsequent results, and finish with
-`complete` and exit 2. Success exits 0, or 1 with `--exit-code` if changes exist.
-Unexpected computation or output failures can terminate without `complete`.
+`file` is git's delta: a deleted file has `lhs` only, an added file `rhs` only. The
+path pair is the file's identity; each `file` record repeats it verbatim so the
+record can be matched back to the manifest. Working-tree sides carry git's
+all-zero oid. A `--no-index` comparison has empty `oid` and `mode`.
 
-Regular UTF-8 text files are supported. Binary/non-UTF-8 files, symlinks,
-submodules and unmerged index entries produce per-file errors. Non-UTF-8 paths
-fail discovery.
+Results arrive in completion order, not manifest order, since files are diffed
+concurrently (`--jobs`, default 16). `--jobs 1` restores priority order. At
+completion, `succeeded + failed` equals the manifest length unless `aborted` is
+present. EOF without `complete` means the output was cut off.
+
+### Errors
+
+One shape everywhere: `{"code": "<snake_case>", "message": "<prose>"}`.
+
+- On a `file` record, `error` replaces `diff` and the run continues. Codes:
+  `binary`, `not_utf8`, `unsupported_file_type` (symlinks, submodules),
+  `unmerged`, `read_failed`, `fold_pairing`.
+- On `complete`, `aborted` reports a run-level failure, currently only
+  `hook_failed`. diffr stops pulling files, lets the ones in flight finish, and
+  exits 2. Every `file` record already written stays valid.
+- Setup failures (bad revision, unreadable config, hook that never starts)
+  write to stderr and exit 2 before any record.
+
+Exit status is 0 on success, 1 with `--exit-code` when there are changes, 2 when
+any file failed or the run aborted.
+
+## The diff
+
+```jsonc
+{"type": "text",
+ "lhs": {"text": "…", "syntax": [...], "regions": [...]},
+ "rhs": {"text": "…", "syntax": [...], "regions": [...]},
+ "stats": {"textual": {"added": 4, "removed": 1},
+           "structural": {"added": 3, "removed": 1}}}      // or "fallback": {code, message}
+```
+
+A `binary` diff carries only `{"lhs": {"size": n}, "rhs": {"size": n}}`; either
+side being binary makes the whole diff binary. Text sides are a pairing too: a
+deleted file has `lhs` only.
+
+`text` is the complete source. `syntax` is present only with `--syntax`: every
+token as `{line, start_column, end_column, capture}`, where `capture` is the
+tree-sitter highlight capture name (`keyword`, `function.method`, …). Spans are
+per line, sorted, and non-overlapping; where captures nest, the innermost wins.
+Files that fell back to a line diff have no syntax.
+
+`stats.textual` counts lines with any byte change. `stats.structural` counts lines
+with a syntactic change and is replaced by `fallback` when tree-sitter did not run:
+`unsupported_language`, `too_large`, `too_complex`, `parse_error`. A fallback diff
+has leaves but no folds.
+
+### Regions
+
+Each side carries a tree of regions. A region is a line range on that side with
+an `id`, and the same `id` on the other side marks its counterpart.
+
+```jsonc
+{"id": 7, "kind": "fold",
+ "start": {"line": 18, "column": 4}, "end": {"line": 52, "column": 33},
+ "tags": ["body"],
+ "visibility": {"collapsed": false, "label": "Body"},
+ "children": [
+   {"id": 8, "kind": "leaf", "start": {"line": 18, "column": 0}, "end": {"line": 30, "column": 0}},
+   {"id": 9, "kind": "leaf", "start": {"line": 30, "column": 0}, "end": {"line": 31, "column": 0},
+    "changed": [{"line": 30, "start_column": 8, "end_column": 9}]},
+   {"id": 10, "kind": "leaf", "start": {"line": 31, "column": 0}, "end": {"line": 53, "column": 0}}]}
+```
+
+**Leaves** tile the file: read in order, their line ranges cover every line once.
+They always start and end at column 0. A leaf with an `id` on both sides is
+paired: the two have the same line count and their rows pair line for line. A
+leaf on one side only has no counterpart, and the other side shows blank rows
+against it. The row table is the walk over both sides' leaves, zipped by id.
+A paired leaf whose counterpart lies behind the reading cursor is a move; the
+frontend chooses how to show it.
+
+`changed` holds the byte ranges inside a leaf that should be painted as changed:
+a line that is entirely new carries one span covering it, a changed word inside
+an otherwise matching line carries just that word. A line with no span in a leaf
+that has spans is a changed line whose tokens all matched elsewhere. Blank
+changed lines carry no span.
+
+**Folds** are regions with `children`. Their line span is the hull of their
+children, which tile it exactly; `start` and `end` keep the byte-precise range
+the parser found, so the first line of a fold is its header and stays visible
+when it collapses. A fold with an `id` on both sides is the same syntax node on
+both sides; its contents may differ. Folds nest by containment. A syntactic
+region that spans a single line is not a region: it hides nothing.
+
+`tags` name what a region is (`body`, `import`, `test`, `unchanged`, or tags a
+hook adds). `visibility` is how it starts out: `collapsed` and the `label` to
+show while collapsed, a placeholder or pseudocode summary for a fold, or the
+count for a context gap. Absent means open.
+
+**Context** is expressed as leaves: an unchanged run longer than twice the
+`-U` width keeps that many lines open on each side that faces a change and
+collapses the rest into a leaf tagged `unchanged` with a label such as
+`"142 unchanged lines"`. A run at the start of the file keeps only its trailing
+lines, one at the end only its leading lines, and a file with no change is one
+collapsed leaf. Fold edges can split a gap into consecutive collapsed leaves;
+render adjacent collapsed leaves as one gap.
+
+Ids are per file, dense, and assigned in lhs preorder then rhs preorder. They
+mean nothing across files or runs.
 
 ## Computation and output
 
 Discovery and rename detection finish before `start`; syntax matching is lazy.
 A pool of `--jobs` workers pulls files from the iterator: each worker reads the
 next file's sources under a lock, then diffs them while other workers pull
-further files. The calling thread serializes, writes and flushes each event.
-A bounded queue holds one ready event, so computation overlaps slow writes
+further files. The calling thread serializes, writes and flushes each record.
+A bounded queue holds one ready record, so computation overlaps slow writes
 without collecting the entire comparison. In-flight files are bounded by the
-pool size, not their individual size. `--jobs 1` restores priority order.
+pool size, not their individual size.
 
 Closing stdout stops production once the files in flight finish. Terminate the
 process to cancel immediately. The CLI also retains its normal SIGPIPE behavior
 on Unix.
 
+Regular UTF-8 text files are supported. Binary and non-UTF-8 files, symlinks,
+submodules and unmerged index entries produce per-file errors. Non-UTF-8 paths
+fail discovery.
+
 ## Fold hooks
 
-A trusted hook can replace fold placeholders with richer text, such as
-pseudocode, before each `file` event is emitted. A hook is a JSON-RPC 2.0
+A trusted hook can replace a fold's collapsed label with richer text, such as
+pseudocode, before its `file` record is emitted. A hook is a JSON-RPC 2.0
 server over HTTP that diffr starts once per invocation and calls on loopback:
 
 ```toml
@@ -105,16 +224,14 @@ startup_timeout_ms = 30000 # optional; time allowed to start listening
 The command starts with the caller's environment plus `DIFFR_HOOK_PORT`, the
 loopback port it must listen on, and `DIFFR_WORKSPACE`, the diffed repository's
 root. It runs in the directory containing the config file, so relative paths in
-`command` resolve against the config wherever it lives, including one given by
-`--config` outside the repository. Its stdout is discarded because diffr's own
-stdout carries the event stream; log to stderr. diffr polls the port until the
-hook accepts connections, exits 2 before `start` if the hook exits or misses
-`startup_timeout_ms`, and kills the hook when the comparison ends.
+`command` resolve against the config wherever it lives. Its stdout is discarded
+because diffr's own stdout carries the stream; log to stderr. diffr polls the
+port until the hook accepts connections, exits 2 before `start` if the hook
+exits or misses `startup_timeout_ms`, and kills the hook when the comparison ends.
 
 Only novel folds on the after side qualify: bodies that exist in the after
 source with no counterpart in the before source. Files with no qualifying fold
-never reach the hook. Streaming is the only output mode that runs hooks; the
-terminal frontend streams, so it does too.
+never reach the hook. Streaming is the only output mode that runs hooks.
 
 One call per file, method `summarize`, params by name. The worker diffing that
 file blocks on the reply; other workers keep calling, so a hook must serve
@@ -128,17 +245,16 @@ requests concurrently rather than one at a time.
              "tags": ["body"], "placeholder": "Body"}]}}
 // hook -> diffr
 {"jsonrpc": "2.0", "id": 7, "result": {"0": "def refresh_token(session):\n    ..."}}
-{"jsonrpc": "2.0", "id": 8, "error": {"code": -32000, "message": "rate limited"}}
 ```
 
-`language` is null for plain text. A fold `id` indexes `rhs_folds` in that file's
-`diff`; the matching fold gains a non-null `summary` while `placeholder` is
-unchanged. Folds missing from the result keep a null `summary`. An error
-object, a timeout, an unknown fold id, or an invalid response leaves every
-summary in that file null and adds `hook_error` to its `file` event.
+A fold `id` indexes that file's after-side folds in the order the hook received
+them; the matching region's `visibility.label` becomes the returned text. Folds
+missing from the result keep their placeholder. An error object, a timeout, an
+unknown fold id, or an invalid response is a run-level failure: the stream ends
+with `complete.aborted` set to `hook_failed` and diffr exits 2.
 
 `examples/hooks/summarize.py` is a reference hook: an aiohttp server that hands
-each request to jsonrpcserver and asks Gemini 3.8 Flash, with thinking disabled,
+each request to jsonrpcserver and asks Gemini Flash, with thinking disabled,
 for Python-style pseudocode. It needs `GOOGLE_API_KEY` and answers up to 16
 files at once on one asyncio loop with a shared httpx client. `uv run --script`
 installs its dependencies on first use. `tests/hooks/rpc_server.py` is a
@@ -146,7 +262,8 @@ dependency-free hook used by the tests.
 
 ## Fixture viewer
 
-The viewer reads captured CLI streams from static files:
+The static viewer under `examples/review/viewer` still reads the v1 stream;
+its build script captures `--format ndjson-v1`:
 
 ```sh
 cargo build --locked

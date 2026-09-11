@@ -45,6 +45,11 @@ def cli(repo, *args):
     )
 
 
+def path_of(record):
+    file = record["file"]
+    return (file.get("rhs") or file["lhs"])["path"]
+
+
 def stream(repo, *args, code=0):
     with subprocess.Popen(
         [str(EXE), "--repo", str(repo), "--format", "ndjson", *args],
@@ -53,28 +58,65 @@ def stream(repo, *args, code=0):
         env=ENV,
     ) as process:
         first = json.loads(process.stdout.readline())
-        assert first["type"] == "start" and first["version"] == 1
-        assert len(first["files"]) == first["total"]
+        assert first["type"] == "start" and first["version"] == 2, first
         events = [first, *[json.loads(line) for line in process.stdout]]
         stderr = process.stderr.read()
         assert process.wait(timeout=30) == code, stderr
     assert events[-1]["type"] == "complete"
-    succeeded = sum(e["type"] == "file" for e in events)
-    failed = sum(e["type"] == "file_error" for e in events)
-    assert events[-1] == {"type": "complete", "succeeded": succeeded, "failed": failed}
-    assert succeeded + failed == first["total"]
-    assert all("layout" not in e for e in events)
+    files = events[1:-1]
+    assert all(e["type"] == "file" for e in files)
+    succeeded = sum("diff" in e for e in files)
+    failed = sum("error" in e for e in files)
+    assert all(("diff" in e) != ("error" in e) for e in files)
+    complete = events[-1]
+    assert complete["succeeded"] == succeeded, complete
+    if "aborted" in complete:
+        assert complete["failed"] >= failed and code == 2
+    else:
+        assert complete["failed"] == failed
+        assert succeeded + failed == len(first["files"])
+    manifest = {json.dumps(f["file"], sort_keys=True) for f in first["files"]}
+    for record in files:
+        assert json.dumps(record["file"], sort_keys=True) in manifest
+    for line in json.dumps(events).split('"'):
+        assert line != "null"
     return events
+
+
+def leaves(regions):
+    for region in regions:
+        if region["kind"] == "leaf":
+            yield region
+        else:
+            yield from leaves(region["children"])
+
+
+def all_regions(regions):
+    for region in regions:
+        yield region
+        if region["kind"] == "fold":
+            yield from all_regions(region["children"])
+
+
+def check_tiling(source):
+    at = 0
+    for leaf in leaves(source["regions"]):
+        assert leaf["start"] == {"line": at, "column": 0}, (leaf, at)
+        assert leaf["end"]["column"] == 0 and leaf["end"]["line"] > at
+        at = leaf["end"]["line"]
+    text = source["text"]
+    lines = text.count("\n") + (1 if text and not text.endswith("\n") else 0)
+    assert at == lines, (at, lines)
 
 
 with tempfile.TemporaryDirectory(prefix="diffr-stream-") as temp:
     repo = Path(temp)
     git(repo, "init", "-q")
-    (repo / "a.rs").write_text("fn run() { old(); }\n")
+    (repo / "a.rs").write_text("fn run() {\n    old();\n}\n")
     (repo / "remove.py").write_text("print('remove')\n")
     (repo / "rename.py").write_text("print('same content')\n")
     base = commit(repo, "base")
-    (repo / "a.rs").write_text("fn run() { old(); new(); }\n")
+    (repo / "a.rs").write_text("fn run() {\n    old();\n    new();\n}\n")
     (repo / "remove.py").unlink()
     (repo / "rename.py").rename(repo / "renamed.py")
     (repo / "binary.bin").write_bytes(b"a\0b")
@@ -85,30 +127,59 @@ with tempfile.TemporaryDirectory(prefix="diffr-stream-") as temp:
     )
     (repo / "diffr.toml").write_text('[languages.rust]\nfolds = ""\n')
     events = stream(repo, base, head, "--order", "test,source,generated", code=2)
-    assert events[0]["before"] == {"kind": "revision", "ref": base}
-    assert events[0]["after"] == {"kind": "revision", "ref": head}
+    assert events[0]["lhs"] == {"type": "revision", "rev": base}
+    assert events[0]["rhs"] == {"type": "revision", "rev": head}
+    manifest = events[0]["files"]
     # Results arrive in completion order; --order governs computation priority only.
-    assert sorted(e["file"]["class"] for e in events[1:-1]) == [
+    assert sorted(f["category"] for f in manifest) == [
         "generated",
         "source",
         "test",
         "test",
         "test",
     ]
-    renamed = next(e["file"] for e in events[1:-1] if e["file"]["status"] == "renamed")
-    assert renamed["old_path"] == "rename.py" and renamed["new_path"] == "renamed.py"
-    rust = next(e for e in events[1:-1] if e["file"]["new_path"] == "a.rs")
-    assert rust["diff"]["rhs_folds"] == []
+    renamed = next(f for f in manifest if f["status"] == "renamed")
+    assert renamed["file"]["lhs"]["path"] == "rename.py"
+    assert renamed["file"]["rhs"]["path"] == "renamed.py"
+    assert renamed["file"]["lhs"]["mode"] == "100644"
+    assert len(renamed["file"]["rhs"]["oid"]) == 40
+    assert next(f for f in manifest if path_of(f) == "a.rs")["language"] == "Rust"
+    assert next(f for f in manifest if path_of(f) == "remove.py")["status"] == "deleted"
+    assert "rhs" not in next(f for f in manifest if path_of(f) == "remove.py")["file"]
+    records = {path_of(e): e for e in events[1:-1]}
+    binary = records["binary.bin"]["error"]
+    assert binary["code"] == "binary" and binary["message"]
+    rust = records["a.rs"]["diff"]
+    assert rust["type"] == "text"
+    assert not any(r["kind"] == "fold" for r in all_regions(rust["rhs"]["regions"]))
+    assert "syntax" not in rust["rhs"]
+    assert rust["stats"]["textual"] == {"added": 1, "removed": 0}
+    assert rust["stats"]["structural"] == {"added": 1, "removed": 0}
+    check_tiling(rust["lhs"])
+    check_tiling(rust["rhs"])
+    changed = [leaf for leaf in leaves(rust["rhs"]["regions"]) if "changed" in leaf]
+    assert changed[0]["changed"] == [{"line": 2, "start_column": 0, "end_column": 10}]
+    removed = records["remove.py"]["diff"]
+    assert "rhs" not in removed and check_tiling(removed["lhs"]) is None
+    assert removed["stats"]["textual"] == {"added": 0, "removed": 1}
+    added = records["z.py"]["diff"]
+    assert "lhs" not in added and list(leaves(added["rhs"]["regions"]))[0]["changed"]
+    same = records["renamed.py"]["diff"]
+    only = list(leaves(same["lhs"]["regions"]))
+    assert only[0]["visibility"] == {"collapsed": True, "label": "1 unchanged line"}
+    assert only[0]["id"] == list(leaves(same["rhs"]["regions"]))[0]["id"]
+    # Syntax spans are opt-in and carry tree-sitter capture names.
+    events = stream(repo, base, head, "--syntax", "--", "a.rs")
+    syntax = events[1]["diff"]["rhs"]["syntax"]
+    assert {span["capture"] for span in syntax} >= {"keyword", "function"}, syntax
+    assert all(span["start_column"] < span["end_column"] for span in syntax)
     # An early file failure must not prevent the later successes.
     events = stream(repo, base, head, "--order", "generated", code=2)
-    assert (
-        sum(e["type"] == "file_error" for e in events) == 1
-        and events[-1]["succeeded"] == 4
-    )
+    assert sum("error" in e for e in events[1:-1]) == 1 and events[-1]["succeeded"] == 4
     events = stream(repo, base, head, "--", "a.rs", "z.py")
-    assert sorted(e["file"]["new_path"] for e in events[1:-1]) == ["a.rs", "z.py"]
+    assert sorted(path_of(e) for e in events[1:-1]) == ["a.rs", "z.py"]
     events = stream(repo, base, head, "--jobs", "1", "--", "a.rs", "z.py")
-    assert [e["file"]["new_path"] for e in events[1:-1]] == ["a.rs", "z.py"]
+    assert [path_of(e) for e in events[1:-1]] == ["a.rs", "z.py"]
     assert len(stream(repo, head, head)) == 2
     assert len(stream(repo, base, head, "--", "missing.rs")) == 2
     stream(repo, base, head, "--exit-code", "--", "a.rs", code=1)
@@ -125,7 +196,14 @@ with tempfile.TemporaryDirectory(prefix="diffr-stream-") as temp:
     custom = repo / "custom.toml"
     custom.write_text("")
     events = stream(repo, base, head, "--config", str(custom), "--", "a.rs")
-    assert events[1]["diff"]["rhs_folds"]
+    assert any(
+        r["kind"] == "fold" for r in all_regions(events[1]["diff"]["rhs"]["regions"])
+    )
+    # The previous stream stays available while frontends migrate.
+    v1 = cli(
+        repo, "--format", "ndjson-v1", "--config", str(custom), base, head, "--", "a.rs"
+    )
+    assert json.loads(v1.stdout.splitlines()[0])["version"] == 1
 
 with tempfile.TemporaryDirectory(prefix="diffr-operands-") as temp:
     repo = Path(temp)
@@ -153,13 +231,13 @@ with tempfile.TemporaryDirectory(prefix="diffr-operands-") as temp:
                 )
                 assert actual.returncode == 0 and actual.stdout == expected
             diff = stream(repo, *args)[1]["diff"]
-            assert diff["lhs_src"]["Text"] == (right if reverse else left)
-            assert diff["rhs_src"]["Text"] == (left if reverse else right)
+            assert diff["lhs"]["text"] == (right if reverse else left)
+            assert diff["rhs"]["text"] == (left if reverse else right)
     assert cli(repo, "--quiet").returncode == 1
     assert cli(repo, base, "HEAD", "--exit-code").returncode == 0
     git(repo, "rm", "-f", "a.rs")
     source.write_text(working)
-    assert stream(repo, base)[1]["file"]["status"] == "deleted"
+    assert stream(repo, base)[0]["files"][0]["status"] == "deleted"
     assert cli(repo, base, "--name-status").stdout == b"D\ta.rs\n"
 
 with tempfile.TemporaryDirectory(prefix="diffr-unborn-") as temp:
@@ -168,10 +246,29 @@ with tempfile.TemporaryDirectory(prefix="diffr-unborn-") as temp:
     (repo / "new.rs").write_text("fn new() {}\n")
     git(repo, "add", ".")
     events = stream(repo, "--cached")
-    assert events[0]["before"] == {"kind": "empty_tree"}
-    assert events[1]["file"]["status"] == "added"
-# A configured fold hook fills summaries before each file event; its failures
-# are reported per file without losing the diff.
+    assert events[0]["lhs"] == {"type": "empty_tree"}
+    assert events[0]["files"][0]["status"] == "added"
+
+# A standalone comparison streams the same three records.
+with tempfile.TemporaryDirectory(prefix="diffr-no-index-") as temp:
+    before = Path(temp) / "before.py"
+    after = Path(temp) / "after.py"
+    before.write_text("def f():\n    return 1\n")
+    after.write_text("def f():\n    return 2\n")
+    result = subprocess.run(
+        [str(EXE), "--no-index", "--format", "ndjson", "--", str(before), str(after)],
+        capture_output=True,
+        env=ENV,
+        check=True,
+    )
+    events = [json.loads(line) for line in result.stdout.splitlines()]
+    assert events[0]["lhs"] == {"type": "path", "path": str(before)}
+    assert events[1]["file"]["lhs"]["path"] == str(before)
+    assert events[1]["diff"]["stats"]["structural"] == {"added": 1, "removed": 1}
+    assert events[2] == {"type": "complete", "succeeded": 1, "failed": 0}
+
+# A configured fold hook fills fold labels before each file record; a hook
+# failure ends the run.
 with tempfile.TemporaryDirectory(prefix="diffr-hook-") as temp:
     repo = Path(temp)
     git(repo, "init", "-q")
@@ -188,18 +285,21 @@ with tempfile.TemporaryDirectory(prefix="diffr-hook-") as temp:
         command = [sys.executable, str(rpc_server), mode, *extra]
         return f"[folds.hook]\ncommand = {json.dumps(command)}\ntags = ['body']\nmin_lines = 3\n"
 
+    def fold_labels(record):
+        return [
+            r["visibility"]["label"]
+            for r in all_regions(record["diff"]["rhs"]["regions"])
+            if r["kind"] == "fold" and r["tags"] == ["body"]
+        ]
+
     (repo / "diffr.toml").write_text(hook_config("echo"))
-    events = {e["file"]["new_path"]: e for e in stream(repo, base, head)[1:-1]}
-    good = events["good.py"]
-    assert "hook_error" not in good
-    assert [
-        f["summary"] for f in good["diff"]["rhs_folds"] if f["tags"] == ["body"]
-    ] == ["pseudo Body", None]
-    assert all(f["summary"] is None for f in events["small.py"]["diff"]["rhs_folds"])
+    events = {path_of(e): e for e in stream(repo, base, head)[1:-1]}
+    assert fold_labels(events["good.py"]) == ["pseudo Body"]
+    assert fold_labels(events["small.py"]) == []
     (repo / "diffr.toml").write_text(hook_config("error"))
-    events = {e["file"]["new_path"]: e for e in stream(repo, base, head)[1:-1]}
-    assert events["bad.py"]["hook_error"] == "fold hook reported: declined"
-    assert all(f["summary"] is None for f in events["good.py"]["diff"]["rhs_folds"])
+    events = stream(repo, base, head, "--jobs", "1", code=2)
+    assert events[-1]["aborted"]["code"] == "hook_failed"
+    assert "declined" in events[-1]["aborted"]["message"]
     (repo / "diffr.toml").write_text("[folds.hook]\ncommand = ['./missing-hook']\n")
     assert cli(repo, "--format", "ndjson", base, head).returncode == 2
     (repo / "diffr.toml").write_text(hook_config("exit"))
@@ -219,9 +319,7 @@ with tempfile.TemporaryDirectory(prefix="diffr-hook-") as temp:
             "--",
             "good.py",
         )
-        assert events[1]["diff"]["rhs_folds"][0]["summary"] == str(
-            Path(elsewhere).resolve()
-        )
+        assert fold_labels(events[1])[0] == str(Path(elsewhere).resolve())
 
 # Closing the pipe while a multi-file producer is active must not leave it
 # blocked forever on a full queue. Unix CLI output retains normal SIGPIPE behavior.

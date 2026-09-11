@@ -67,6 +67,12 @@ def stream(repo, *args, code=0):
         first = json.loads(process.stdout.readline())
         assert first["type"] == "start" and first["version"] == 2, first
         events = [first, *[json.loads(line) for line in process.stdout]]
+        for event in events:
+            diff = event.get("diff") if event.get("type") == "file" else None
+            if diff and diff["type"] == "text":
+                for side in ("lhs", "rhs"):
+                    if side in diff:
+                        check_tree(diff[side])
         stderr = process.stderr.read()
         assert process.wait(timeout=30) == code, stderr
     assert events[-1]["type"] == "complete"
@@ -103,6 +109,30 @@ def all_regions(regions):
         yield region
         if region["kind"] == "fold":
             yield from all_regions(region["children"])
+
+
+def check_tree(source):
+    """Regions form a strict tree: children inside parents, siblings in order."""
+
+    def pos(point):
+        return (point["line"], point["column"])
+
+    def walk(regions, parent):
+        previous_end = None
+        for region in regions:
+            start, end = pos(region["start"]), pos(region["end"])
+            if parent is not None:
+                assert pos(parent["start"]) <= start and end <= pos(parent["end"]), (
+                    region,
+                    parent,
+                )
+            assert previous_end is None or previous_end <= start, (region, previous_end)
+            previous_end = end
+            if region["kind"] == "fold":
+                assert region["children"], region
+                walk(region["children"], region)
+
+    walk(source["regions"], None)
 
 
 def check_tiling(source):
@@ -165,7 +195,10 @@ with tempfile.TemporaryDirectory(prefix="diffr-stream-") as temp:
     assert rust["stats"]["visible"] == {"added": 1, "removed": 0}
     for record in records.values():
         if "diff" in record and record["diff"]["type"] == "text":
-            visible, textual = record["diff"]["stats"]["visible"], record["diff"]["stats"]["textual"]
+            visible, textual = (
+                record["diff"]["stats"]["visible"],
+                record["diff"]["stats"]["textual"],
+            )
             assert visible["added"] <= textual["added"], record["diff"]["stats"]
             assert visible["removed"] <= textual["removed"], record["diff"]["stats"]
     check_tiling(rust["lhs"])

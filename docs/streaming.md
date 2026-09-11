@@ -181,12 +181,15 @@ an otherwise matching line carries just that word. A line with no span in a leaf
 that has spans is a changed line whose tokens all matched elsewhere. Blank
 changed lines carry no span.
 
-**Folds** are regions with `children`. Their line span is the hull of their
-children, which tile it exactly; `start` and `end` keep the byte-precise range
-the parser found, so the first line of a fold is its header and stays visible
-when it collapses. A fold with an `id` on both sides is the same syntax node on
-both sides; its contents may differ. Folds nest by containment. A syntactic
-region that spans a single line is not a region: it hides nothing.
+**Folds** are regions with `children`. Their `start` and `end` are the hull of
+their children, which tile it exactly, so a fold's range is whole lines: the
+first line is its header and stays visible when it collapses. Regions form a
+strict tree: every child lies inside its parent's range and siblings never
+overlap. When the parser hands over two folds that cross on one line, such as a
+collection whose closer sits on the line that opens the next body, the earlier
+fold gives that line to the later one. A fold with an `id` on both sides is the
+same syntax node on both sides; its contents may differ. A syntactic region that
+spans a single line is not a region: it hides nothing.
 
 `tags` name what a region is (`body`, `import`, `test`, `unchanged`, or tags a
 hook adds). `visibility` is how it starts out: `collapsed` and the `label` to

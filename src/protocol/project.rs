@@ -272,7 +272,49 @@ fn regions(
         &rhs_lines,
         &mut ids,
     );
+    debug_assert_eq!(tree_violation(&lhs), None);
+    debug_assert_eq!(tree_violation(&rhs), None);
     Ok((lhs, rhs))
+}
+
+/// The first way `regions` fails to be a strict tree, if any: a child
+/// outside its parent's byte range, siblings out of order or overlapping,
+/// or a fold with no children.
+pub(crate) fn tree_violation(regions: &[Region]) -> Option<String> {
+    fn pos(position: SourcePos) -> (u32, u32) {
+        (position.line, position.column)
+    }
+    fn walk(regions: &[Region], parent: Option<&Region>) -> Option<String> {
+        let mut previous_end = None;
+        for region in regions {
+            let (start, end) = (pos(region.range.start), pos(region.range.end));
+            if let Some(parent) = parent {
+                if start < pos(parent.range.start) || end > pos(parent.range.end) {
+                    return Some(format!(
+                        "region {} outside its parent {}",
+                        region.id, parent.id
+                    ));
+                }
+            }
+            if previous_end.is_some_and(|previous| start < previous) {
+                return Some(format!(
+                    "region {} overlaps its previous sibling",
+                    region.id
+                ));
+            }
+            previous_end = Some(end);
+            if let Node::Fold { children } = &region.node {
+                if children.is_empty() {
+                    return Some(format!("fold {} has no children", region.id));
+                }
+                if let Some(problem) = walk(children, Some(region)) {
+                    return Some(problem);
+                }
+            }
+        }
+        None
+    }
+    walk(regions, None)
 }
 
 /// Rows in order, run-length encoded by kind and side presence.
@@ -409,19 +451,68 @@ fn line_span(range: &lines::SourceRange, line_count: usize) -> (usize, usize) {
 }
 
 fn side_folds<'a>(folds: &'a [Fold], lines: &[&str]) -> Vec<SideFold<'a>> {
+    let spans: Vec<(usize, usize)> = folds
+        .iter()
+        .map(|fold| line_span(&fold.range, lines.len()))
+        .collect();
     folds
         .iter()
+        .zip(nested_spans(&spans))
         // A fold on a single line hides nothing; it is not a region.
-        .filter(|fold| {
-            let (start, end) = line_span(&fold.range, lines.len());
-            end - start >= 2
-        })
-        .map(|fold| SideFold {
-            fold,
-            lines: line_span(&fold.range, lines.len()),
-            pair: None,
+        .filter_map(|(fold, span)| {
+            span.map(|lines| SideFold {
+                fold,
+                lines,
+                pair: None,
+            })
         })
         .collect()
+}
+
+/// Make fold line spans a strict tree: nested or disjoint, never crossing.
+///
+/// Leaves tile whole lines, so two folds can share a line only if one
+/// contains the other. The parser can hand over folds that cross on one
+/// line, such as a collection whose closer sits on the line that opens the
+/// next body (`for x in [ … ] {`). The rule: the earlier fold gives the
+/// shared line to the later one, so its span ends where the later fold
+/// starts. A span left with fewer than two lines hides nothing and is
+/// dropped (`None`). Output is in input order.
+fn nested_spans(spans: &[(usize, usize)]) -> Vec<Option<(usize, usize)>> {
+    let mut order: Vec<usize> = (0..spans.len()).collect();
+    order.sort_by_key(|&index| (spans[index].0, std::cmp::Reverse(spans[index].1)));
+    let mut out: Vec<Option<(usize, usize)>> = spans.iter().map(|&span| Some(span)).collect();
+    let mut open: Vec<usize> = Vec::new();
+    let closed = |out: &[Option<(usize, usize)>], top: usize, start: usize| {
+        out[top].is_none_or(|(_, top_end)| top_end <= start)
+    };
+    for index in order {
+        let (start, end) = spans[index];
+        while open.last().is_some_and(|&top| closed(&out, top, start)) {
+            open.pop();
+        }
+        // Every open fold that ends before this one does crosses it: clip
+        // each to hand over the shared lines.
+        for &top in open.iter().rev() {
+            let Some((top_start, top_end)) = out[top] else {
+                continue;
+            };
+            if top_end >= end {
+                break;
+            }
+            out[top] = (start > top_start).then_some((top_start, start));
+        }
+        while open.last().is_some_and(|&top| closed(&out, top, start)) {
+            open.pop();
+        }
+        open.push(index);
+    }
+    for span in &mut out {
+        if span.is_some_and(|(start, end)| end - start < 2) {
+            *span = None;
+        }
+    }
+    out
 }
 
 /// Two folds correspond when the line alignment pairs their header lines
@@ -626,9 +717,19 @@ fn tree(
     let close = |stack: &mut Vec<Open<'_>>, root: &mut Vec<Region>| {
         let open = stack.pop().expect("closing an open fold");
         let fold = open.fold.fold;
+        // The wire range is the hull of the children, which tile whole
+        // lines; the parser's byte columns inside the header line are not
+        // carried, since nothing narrower than a line can be hidden.
+        let (Some(first), Some(last)) = (open.children.first(), open.children.last()) else {
+            return;
+        };
+        let range = SourceRange {
+            start: first.range.start,
+            end: last.range.end,
+        };
         let region = Region {
             id: open.id,
-            range: source_range(&fold.range),
+            range,
             tags: fold.tags.clone(),
             visibility: Visibility {
                 collapsed: false,
@@ -772,19 +873,6 @@ fn positions_by_line(positions: &[MatchedPos]) -> BTreeMap<usize, Vec<&MatchedPo
     by_line
 }
 
-fn source_range(range: &lines::SourceRange) -> SourceRange {
-    SourceRange {
-        start: SourcePos {
-            line: range.start.line.as_usize() as u32,
-            column: range.start.byte_column as u32,
-        },
-        end: SourcePos {
-            line: range.end.line.as_usize() as u32,
-            column: range.end.byte_column as u32,
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -889,6 +977,7 @@ mod tests {
     }
 
     fn assert_folds_hold_children(regions: &[Region]) {
+        assert_eq!(tree_violation(regions), None);
         for region in regions {
             if let Node::Fold { children } = &region.node {
                 assert!(!children.is_empty(), "fold without children {region:?}");
@@ -921,6 +1010,59 @@ mod tests {
             .filter(|r| matches!(r.node, Node::Fold { .. }))
             .map(|r| (r.range.start.line, r.id))
             .collect()
+    }
+
+    #[test]
+    fn crossing_folds_give_the_shared_line_to_the_later_fold() {
+        // A collection closing on line 5 where a body opens: `for x in [ … ] {`.
+        let spans = [(0, 6), (5, 9), (7, 8)];
+        assert_eq!(
+            nested_spans(&spans),
+            vec![Some((0, 5)), Some((5, 9)), None],
+            "the earlier fold ends where the later starts; one-line spans go"
+        );
+        // Clipping cascades through every open ancestor that would cross.
+        assert_eq!(
+            nested_spans(&[(0, 10), (2, 6), (4, 8)]),
+            vec![Some((0, 10)), Some((2, 4)), Some((4, 8))]
+        );
+        // An ancestor that is clipped down to its header line disappears.
+        assert_eq!(nested_spans(&[(3, 5), (4, 9)]), vec![None, Some((4, 9))]);
+        // Nested and disjoint spans are untouched, whatever their input order.
+        assert_eq!(
+            nested_spans(&[(5, 9), (0, 4), (1, 3)]),
+            vec![Some((5, 9)), Some((0, 4)), Some((1, 3))]
+        );
+    }
+
+    #[test]
+    fn a_closer_and_an_opener_on_one_line_yield_a_strict_tree() {
+        let lhs = "fn f() {\n    for x in [\n        1,\n        2,\n    ] {\n        use_it(x);\n        more(x);\n    }\n}\n";
+        let rhs = "fn f() {\n    for x in [\n        1,\n        2,\n        3,\n    ] {\n        use_it(x);\n        more(x);\n    }\n}\n";
+        let diff = project("a.rs", lhs, rhs, 3);
+        let (lhs, rhs) = sources(&diff);
+        for source in [lhs.unwrap(), rhs.unwrap()] {
+            assert_tiles(source);
+            assert_folds_hold_children(&source.regions);
+            let folds: Vec<&Region> = all(&source.regions)
+                .into_iter()
+                .filter(|region| matches!(region.node, Node::Fold { .. }))
+                .collect();
+            let collection = folds
+                .iter()
+                .find(|fold| fold.tags.iter().any(|tag| tag == "collection"))
+                .expect("the array is a fold");
+            let body = folds
+                .iter()
+                .find(|fold| fold.tags.iter().any(|tag| tag == "body") && fold.range.start.line > 0)
+                .expect("the loop body is a fold");
+            assert_eq!(
+                collection.range.end.line, body.range.start.line,
+                "the collection gives its closing line to the body that opens there"
+            );
+            assert_eq!(body.range.start.column, 0);
+            assert_eq!(collection.range.end.column, 0);
+        }
     }
 
     #[test]

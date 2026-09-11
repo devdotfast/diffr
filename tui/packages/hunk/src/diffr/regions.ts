@@ -54,7 +54,9 @@ export function flattenSide(source: Source, side: Side): { leaves: Leaf[]; folds
     const { start, end } = region;
     const endText = lines[end.line];
     if (endText === undefined) throw new Error(`diffr fold references missing line ${end.line}`);
-    const hideEnd = encoder.encode(endText.trimEnd()).length <= end.column;
+    // An end at column 0 does not touch its line; otherwise the end line is hidden when the
+    // range covers all of its text.
+    const hideEnd = end.column > 0 && encoder.encode(endText.trimEnd()).length <= end.column;
     const fold: Fold = { id: region.id, side, headerLine: start.line,
       lastHidden: end.line - (hideEnd ? 0 : 1), label: region.visibility.label, tags: region.tags,
       collapsed: region.visibility.collapsed, nested: [] };

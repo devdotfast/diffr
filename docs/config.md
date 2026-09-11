@@ -54,6 +54,11 @@ timeout_ms = 60000
 max_concurrency = 16       # requests in flight across files
 retries = 3                # on timeouts, rate limits and server errors
 
+[diff]
+byte_limit = 1000000       # larger files on either side get a line diff
+graph_limit = 30000000     # the largest AST matching graph explored per file
+parse_error_limit = 0      # more tree-sitter parse errors than this: line diff
+
 [theme]
 name = "default-dark"      # a bundled terminal theme
 path = "/path/to/theme.toml"  # or a Helix-style theme file
@@ -72,6 +77,16 @@ startup_timeout_ms = 30000
 
 `languages` and `folds.hook` are not in the schema, so the settings screen
 does not show them; `config set` still accepts their keys.
+
+When a file exceeds a `[diff]` limit it falls back to a line diff: no folds,
+no collapse rules, no summaries, and the file's `stats` carries a `fallback`
+with code `too_large`, `too_complex` or `parse_error` and a message naming
+the key to raise. `DFT_BYTE_LIMIT`, `DFT_GRAPH_LIMIT` and
+`DFT_PARSE_ERROR_LIMIT` override the file for one run, and `--byte-limit`,
+`--graph-limit` and `--parse-error-limit` override both. The graph limit is
+ten times difftastic's default because a large rewrite of a large file, such
+as replacing an HTTP client, exceeded the old one; that file takes about a
+second longer to compare and every other file is unaffected.
 
 ## File categories
 

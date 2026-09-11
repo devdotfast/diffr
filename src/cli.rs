@@ -137,25 +137,11 @@ pub(crate) fn run() -> Result<i32> {
         },
         ..DisplayOptions::default()
     };
-    let mut diff_options = DiffOptions {
-        ignore_comments: args.get_flag("ignore-comments"),
-        ..DiffOptions::default()
-    };
-    if let Some(limit) = args.get_one::<usize>("byte-limit") {
-        diff_options.byte_limit = *limit;
-    }
-    if let Some(limit) = args.get_one::<usize>("graph-limit") {
-        diff_options.graph_limit = *limit;
-    }
-    if let Some(limit) = args.get_one::<usize>("parse-error-limit") {
-        diff_options.parse_error_limit = *limit;
-    }
     if args.get_flag("no-index") {
         return no_index(
             &args,
             items.into_iter().chain(explicit_paths).collect(),
             &display,
-            &diff_options,
             stream_options,
         );
     }
@@ -192,6 +178,7 @@ pub(crate) fn run() -> Result<i32> {
         changed
     } else {
         let params = Arc::new(load_config(&args, workspace)?.compile()?);
+        let diff_options = diff_options(&args, &params)?;
         let context_lines = args
             .get_one::<u32>("unified")
             .copied()
@@ -458,7 +445,6 @@ fn no_index(
     args: &ArgMatches,
     paths: Vec<OsString>,
     display: &DisplayOptions,
-    options: &DiffOptions,
     stream_options: crate::protocol::stream::Options,
 ) -> Result<i32> {
     if paths.len() != 2 {
@@ -489,6 +475,7 @@ fn no_index(
     }
     let workspace = Path::new(args.get_one::<String>("repo").unwrap());
     let config = load_config(args, workspace)?.compile()?;
+    let options = &diff_options(args, &config)?;
     let display = &DisplayOptions {
         num_context_lines: args
             .get_one::<u32>("unified")
@@ -547,6 +534,22 @@ fn no_index(
             Ok(i32::from(changed))
         }
     }
+}
+
+/// The engine limits: the configured `[diff]` table, then the `DFT_*`
+/// variables, then the command-line flags.
+fn diff_options(args: &ArgMatches, params: &config::Params) -> Result<DiffOptions> {
+    let mut options = params.diff.options(args.get_flag("ignore-comments"))?;
+    if let Some(limit) = args.get_one::<usize>("byte-limit") {
+        options.byte_limit = *limit;
+    }
+    if let Some(limit) = args.get_one::<usize>("graph-limit") {
+        options.graph_limit = *limit;
+    }
+    if let Some(limit) = args.get_one::<usize>("parse-error-limit") {
+        options.parse_error_limit = *limit;
+    }
+    Ok(options)
 }
 
 /// Every layer: defaults, the global file (or `--config`), the repository's

@@ -5,6 +5,7 @@
 pub(crate) mod query;
 pub(crate) mod store;
 use crate::hash::DftHashMap;
+use crate::options::DiffOptions;
 use crate::parse::{guess_language::Language, tree_sitter_parser};
 use figment::providers::{Env, Format, Serialized, Toml};
 use figment::Figment;
@@ -30,6 +31,63 @@ pub(crate) struct Config {
     pub(crate) summarize: SummarizeConfig,
     /// Colors for the terminal frontend.
     pub(crate) theme: ThemeConfig,
+    /// Limits on the structural comparison itself.
+    pub(crate) diff: DiffConfig,
+}
+
+/// When a file exceeds one of these, diffr falls back to a line diff for
+/// it: no folds, no collapse rules, no summaries, and `stats.structural`
+/// carries the reason. The `DFT_BYTE_LIMIT`, `DFT_GRAPH_LIMIT` and
+/// `DFT_PARSE_ERROR_LIMIT` variables override the file, and the matching
+/// command-line flags override both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct DiffConfig {
+    /// Files larger than this many bytes on either side get a line diff.
+    pub(crate) byte_limit: usize,
+    /// The largest AST matching graph diffr will explore for one file.
+    /// A large change to a large file can exceed it; raising it costs time
+    /// and memory on those files only.
+    pub(crate) graph_limit: usize,
+    /// Files with more tree-sitter parse errors than this get a line diff.
+    pub(crate) parse_error_limit: usize,
+}
+
+impl Default for DiffConfig {
+    fn default() -> Self {
+        Self {
+            byte_limit: crate::options::DEFAULT_BYTE_LIMIT,
+            graph_limit: 30_000_000,
+            parse_error_limit: crate::options::DEFAULT_PARSE_ERROR_LIMIT,
+        }
+    }
+}
+
+impl DiffConfig {
+    /// The engine options for these limits, with the `DFT_*` variables
+    /// applied on top. A variable that is set but not a number is an error.
+    pub(crate) fn options(&self, ignore_comments: bool) -> Result<DiffOptions, ConfigError> {
+        let limit = |name: &str, configured: usize| -> Result<usize, ConfigError> {
+            match std::env::var(name) {
+                Ok(text) => text.trim().parse().map_err(|_| {
+                    ConfigError(format!(
+                        "{name} must be a non-negative integer, got {text:?}"
+                    ))
+                }),
+                Err(std::env::VarError::NotPresent) => Ok(configured),
+                Err(std::env::VarError::NotUnicode(_)) => {
+                    Err(ConfigError(format!("{name} is not valid UTF-8")))
+                }
+            }
+        };
+        Ok(DiffOptions {
+            byte_limit: limit("DFT_BYTE_LIMIT", self.byte_limit)?,
+            graph_limit: limit("DFT_GRAPH_LIMIT", self.graph_limit)?,
+            parse_error_limit: limit("DFT_PARSE_ERROR_LIMIT", self.parse_error_limit)?,
+            ignore_comments,
+            ..DiffOptions::default()
+        })
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -185,6 +243,7 @@ pub(crate) struct Params {
     pub(crate) folds: FoldsConfig,
     pub(crate) summarize: SummarizeConfig,
     pub(crate) hook: Option<HookConfig>,
+    pub(crate) diff: DiffConfig,
 }
 
 pub(crate) struct LanguageParams {
@@ -380,6 +439,7 @@ impl Config {
             languages,
             folds: self.folds.clone(),
             summarize: self.summarize,
+            diff: self.diff,
             hook: self.folds.hook,
         })
     }
@@ -423,6 +483,27 @@ impl Default for Params {
 mod tests {
     use super::*;
     use crate::summary::DiffResult;
+
+    #[test]
+    fn diff_limits_default_and_layer_from_the_file() {
+        let defaults = Config::default().diff;
+        assert_eq!(defaults.graph_limit, 30_000_000);
+        assert_eq!(defaults.byte_limit, crate::options::DEFAULT_BYTE_LIMIT);
+        let custom = Config::from_toml("[diff]\ngraph_limit = 5").unwrap();
+        assert_eq!(custom.diff.graph_limit, 5);
+        assert_eq!(custom.diff.byte_limit, defaults.byte_limit);
+        let options = custom.diff.options(true).unwrap();
+        assert_eq!(options.graph_limit, 5);
+        assert!(options.ignore_comments);
+        let compiled = custom.compile().unwrap();
+        assert_eq!(compiled.diff.graph_limit, 5);
+        let schema = Config::schema();
+        assert!(
+            schema["$defs"]["DiffConfig"]["properties"]["graph_limit"]["description"]
+                .as_str()
+                .is_some_and(|text| !text.is_empty())
+        );
+    }
 
     #[test]
     fn configuration_is_independent_and_omission_keeps_other_defaults() {

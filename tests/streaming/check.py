@@ -208,6 +208,17 @@ with tempfile.TemporaryDirectory(prefix="diffr-stream-") as temp:
     assert any(
         r["kind"] == "fold" for r in all_regions(events[1]["diff"]["rhs"]["regions"])
     )
+    # The structural limits come from [diff]; exceeding one names the key.
+    events = stream(repo, base, head, "--", "a.rs")
+    assert "structural" in events[1]["diff"]["stats"], events[1]["diff"]["stats"]
+    for args in (["--graph-limit", "1"], ["--set", "diff.graph_limit=1"]):
+        events = stream(repo, base, head, *args, "--", "a.rs")
+        fallback = events[1]["diff"]["stats"]["fallback"]
+        assert fallback["code"] == "too_complex", fallback
+        assert "diff.graph_limit (1)" in fallback["message"], fallback
+        assert not all_regions(events[1]["diff"]["rhs"]["regions"]) or all(
+            r["kind"] == "leaf" for r in all_regions(events[1]["diff"]["rhs"]["regions"])
+        )
     # The previous stream stays available while frontends migrate.
     v1 = cli(
         repo, "--format", "ndjson-v1", "--config", str(custom), base, head, "--", "a.rs"
@@ -364,7 +375,7 @@ with tempfile.TemporaryDirectory(prefix="diffr-config-") as temp:
         return result.stdout.decode()
 
     schema = json.loads(config("schema"))
-    assert schema["properties"]["folds"]
+    assert schema["properties"]["folds"] and schema["properties"]["diff"]
     shown = json.loads(config("show", "--json"))
     assert shown["folds"]["min_lines"] == 12 and shown["summarize"]["api_key"] is None
     config("set", "folds.min_lines", "3")

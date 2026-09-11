@@ -219,7 +219,8 @@ with tempfile.TemporaryDirectory(prefix="diffr-stream-") as temp:
         # The parse still stands in fallback: folds are present, paired
         # through the line alignment.
         assert any(
-            r["kind"] == "fold" for r in all_regions(events[1]["diff"]["rhs"]["regions"])
+            r["kind"] == "fold"
+            for r in all_regions(events[1]["diff"]["rhs"]["regions"])
         ), events[1]["diff"]["rhs"]["regions"]
     # The previous stream stays available while frontends migrate.
     v1 = cli(
@@ -311,7 +312,7 @@ with tempfile.TemporaryDirectory(prefix="diffr-hook-") as temp:
         return [
             r["visibility"]["label"]
             for r in all_regions(record["diff"]["rhs"]["regions"])
-            if r["kind"] == "fold" and r["tags"] == ["body"]
+            if r["kind"] == "fold" and "body" in r["tags"]
         ]
 
     (repo / "diffr.toml").write_text(hook_config("echo"))

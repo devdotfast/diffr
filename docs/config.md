@@ -37,8 +37,9 @@ through these three commands; the schema is the only contract.
 
 ```toml
 [folds]
-min_lines = 12             # bodies shorter than this are never summarized or collapsed
+min_lines = 12             # bodies shorter than this are never collapsed by a rule
 collapse_deleted = true    # deleted function bodies start collapsed, header visible
+collapse_test_bodies = true # test bodies start collapsed on both sides, header visible
 collapse_removed_lines = 5 # removed stretches this long collapse in the middle; 0 disables
 collapse_generated = true  # generated files start hidden
 collapse_tests = true      # test files start hidden
@@ -48,6 +49,7 @@ context_lines = 3          # unchanged lines kept around a change; -U overrides
 enabled = true             # off without an API key, silently
 provider = "gemini"
 model = "gemini-3.8-flash"
+min_lines = 20             # new function bodies shorter than this are shown as code
 api_key = "..."            # or GEMINI_API_KEY / GOOGLE_API_KEY in the environment
 endpoint = "https://..."   # optional base URL override, for proxies and tests
 timeout_ms = 60000
@@ -114,20 +116,25 @@ itself. In order:
 
 1. `collapse_generated`, `collapse_tests`: the file's `visibility` in the
    manifest, before `start` is written.
-2. `collapse_deleted`: deleted function bodies of at least `min_lines` lines,
-   labelled `"<n> lines removed"`.
-3. `collapse_removed_lines`: removed stretches with no counterpart on the
+2. `collapse_deleted`: deleted function bodies (folds tagged `function`) of
+   at least `min_lines` lines, labelled `"<n> lines removed"`.
+3. `collapse_test_bodies`: bodies of test functions (folds tagged `test`) of
+   three or more lines, on both sides, labelled `"test body"`.
+4. `collapse_removed_lines`: removed stretches with no counterpart on the
    after side and at least that many lines keep their first and last line
    open and collapse the middle, tagged `removed` and labelled
    `"<n> lines removed"`. Stretches under a fold that already starts
    collapsed are left alone.
-4. The built-in summarizer: new function bodies of at least `min_lines` lines
-   on the after side become Python-style pseudocode. The label starts with a
-   comment line in the file's own syntax, `# pseudocode` or `// pseudocode`,
-   then the text.
-5. `folds.hook`, when configured, over the same selection with its own tags
+5. The built-in summarizer: new function bodies (folds tagged `function`,
+   never a test, never one nested inside another selected body) of at least
+   `summarize.min_lines` lines on the after side become python-flavored
+   pseudocode. A summary with more than half the body's non-blank lines is
+   discarded and the body stays open. The label starts with a comment line
+   in the file's own syntax, `# pseudocode` or `// pseudocode`, then the
+   text.
+6. `folds.hook`, when configured, over the same selection with its own tags
    and threshold; its text gets the same comment line.
-6. Grouping, always on: adjacent context gaps merge into one, and a run of
+7. Grouping, always on: adjacent context gaps merge into one, and a run of
    two or more sibling folds that start collapsed is wrapped in one `group`
    fold labelled `"<n> functions removed"`, `"<n> functions summarized"`, or
    `"<n> folded regions"`. Expanding it reveals each child's own row.

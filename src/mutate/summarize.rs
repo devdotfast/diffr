@@ -1,22 +1,21 @@
 //! The built-in summarizer: large new function bodies become Python-style
 //! pseudocode, shown in place of the collapsed body.
-use super::{collapse, ids, is_fold, line_count, summary_label, walk, walk_mut, FoldMutation};
+#[cfg(test)]
+use super::walk;
+use super::{collapse, ids, is_fold, line_count, summary_label, walk_mut, FoldMutation};
 use crate::config::{Provider, SummarizeConfig};
 use crate::protocol::{FileChange, Pairing, Problem, Source};
+use crate::protocol::{Node, Region};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 
-const SYSTEM: &str =
-    "You rewrite regions of a source file as terse Python-style pseudocode for a diff \
-viewer that shows the pseudocode in place of the collapsed region. The user supplies \
-one numbered source file and a list of folds, each with an id and 1-based line range. \
-For each fold, write pseudocode covering only that fold's lines: keep the control flow \
-and the names that matter, drop types, error plumbing and boilerplate. Aim for about one \
-pseudocode line per five source lines, between one and eight lines per fold. Reply with \
-one {id, pseudocode} object per fold.";
+const SYSTEM: &str = "For each listed fold, rewrite that function body as short python-flavored \
+pseudocode. Keep the names. No prose, no comments, no code fences. Use as few lines as \
+possible: about one pseudocode line per five source lines, and never more than a third \
+of the body's lines. Answer with a JSON array of {\"id\", \"pseudocode\"} objects, one per fold.";
 
 const DEFAULT_ENDPOINT: &str = "https://generativelanguage.googleapis.com";
 
@@ -45,10 +44,7 @@ struct Answer {
 
 impl Summarizer {
     /// `None` when no API key resolves: the summarizer is then simply off.
-    pub(crate) fn new(
-        config: &SummarizeConfig,
-        min_lines: usize,
-    ) -> crate::git::Result<Option<Self>> {
+    pub(crate) fn new(config: &SummarizeConfig) -> crate::git::Result<Option<Self>> {
         let Some(api_key) = resolve_key(config) else {
             return Ok(None);
         };
@@ -62,7 +58,7 @@ impl Summarizer {
             .build()?;
         Ok(Some(Self {
             config: config.clone(),
-            min_lines,
+            min_lines: config.min_lines,
             api_key,
             endpoint: config
                 .endpoint
@@ -121,7 +117,7 @@ impl Summarizer {
             "contents": [{"role": "user", "parts": [{"text": self.prompt(path, language, src, folds)}]}],
             "generationConfig": {
                 "temperature": 0,
-                "maxOutputTokens": 160 * folds.len() + 100,
+                "maxOutputTokens": 600 * folds.len() + 200,
                 "thinkingConfig": {"thinkingBudget": 0},
                 "responseMimeType": "application/json",
                 "responseSchema": {
@@ -218,24 +214,54 @@ impl Summarizer {
     }
 }
 
-/// New function bodies on the after side of at least `min_lines` lines.
+/// New function bodies on the after side of at least `min_lines` lines:
+/// folds tagged `function` with no counterpart. Only the outermost
+/// qualifying body is taken, never one nested inside it; test bodies and
+/// folds that already start collapsed are skipped.
 pub(crate) fn select(sides: &Pairing<Source>, min_lines: usize) -> Vec<(u32, u32, u32)> {
     let Some(rhs) = sides.rhs() else {
         return Vec::new();
     };
     let lhs_ids = sides.lhs().map(|lhs| ids(&lhs.regions)).unwrap_or_default();
     let mut selected = Vec::new();
-    walk(&rhs.regions, &mut |region| {
-        if is_fold(region)
-            && region.tags.iter().any(|tag| tag == "body")
-            && !lhs_ids.contains(&region.id)
-            && line_count(region) >= min_lines
-        {
-            let lines = region.range.lines();
-            selected.push((region.id, lines.start + 1, lines.end));
+    fn visit(
+        regions: &[Region],
+        lhs_ids: &crate::hash::DftHashSet<u32>,
+        min_lines: usize,
+        selected: &mut Vec<(u32, u32, u32)>,
+    ) {
+        for region in regions {
+            let tag = |name: &str| region.tags.iter().any(|tag| tag == name);
+            if is_fold(region)
+                && tag("function")
+                && !tag("test")
+                && !region.visibility.collapsed
+                && !lhs_ids.contains(&region.id)
+                && line_count(region) >= min_lines
+            {
+                let lines = region.range.lines();
+                selected.push((region.id, lines.start + 1, lines.end));
+                continue;
+            }
+            if let Node::Fold { children } = &region.node {
+                visit(children, lhs_ids, min_lines, selected);
+            }
         }
-    });
+    }
+    visit(&rhs.regions, &lhs_ids, min_lines, &mut selected);
     selected
+}
+
+/// Pseudocode earns its place only when it is clearly shorter than the
+/// code: a summary with more than half the body's non-blank lines is
+/// dropped and the body stays open.
+fn compresses(summary: &str, body: &[&str]) -> bool {
+    let summary_lines = summary
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count();
+    let body_lines = body.iter().filter(|line| !line.trim().is_empty()).count();
+    summary_lines * 2 <= body_lines
 }
 
 fn resolve_key(config: &SummarizeConfig) -> Option<String> {
@@ -276,7 +302,17 @@ impl FoldMutation for Summarizer {
         let language = file.language.as_deref();
         let texts = {
             let rhs = sides.rhs().expect("selection found rhs regions");
-            self.complete(path, language, &rhs.text, &folds)?
+            let lines: Vec<&str> = rhs.text.split_terminator('\n').collect();
+            let mut texts = self.complete(path, language, &rhs.text, &folds)?;
+            texts.retain(|id, text| {
+                let fold = folds
+                    .iter()
+                    .find(|fold| fold.id == *id)
+                    .expect("answered fold");
+                let body = &lines[fold.first_line as usize - 1..fold.last_line as usize];
+                compresses(text, body)
+            });
+            texts
         };
         let (Pairing::Both { rhs, .. } | Pairing::RightOnly { rhs }) = sides else {
             unreachable!("selection found rhs regions");
@@ -413,9 +449,10 @@ pub(crate) mod tests {
             endpoint: Some(endpoint.to_owned()),
             retries,
             timeout_ms: 5000,
+            min_lines: 3,
             ..SummarizeConfig::default()
         };
-        Summarizer::new(&config, 3).unwrap().unwrap()
+        Summarizer::new(&config).unwrap().unwrap()
     }
 
     #[test]
@@ -444,6 +481,57 @@ pub(crate) mod tests {
         let selected = select(&sides, 3);
         assert_eq!(selected.len(), 1, "{selected:?}");
         assert_eq!((selected[0].1, selected[0].2), (7, 9));
+    }
+
+    #[test]
+    fn selection_takes_outermost_function_bodies_only() {
+        // A method inside an impl: the impl's declaration_list is a body but
+        // not a function, so the method is the outermost selection.
+        let after = "impl A {\n    fn m(&self) {\n        a();\n        b();\n        c();\n        let f = || {\n            d();\n            e();\n            g();\n        };\n        f();\n    }\n}\n";
+        let (_, sides) = project("a.rs", "", after);
+        let selected = select(&sides, 3);
+        assert_eq!(selected.len(), 1, "{selected:?}");
+        assert_eq!((selected[0].1, selected[0].2), (2, 12));
+        // Below the threshold, nothing.
+        assert!(select(&sides, 30).is_empty());
+    }
+
+    #[test]
+    fn selection_skips_test_bodies_and_collapsed_folds() {
+        let after = "#[test]\nfn t() {\n    a();\n    b();\n    c();\n}\n\nfn f() {\n    a();\n    b();\n    c();\n}\n";
+        let (file, mut sides) = project("a.rs", "", after);
+        let selected = select(&sides, 3);
+        assert_eq!(selected.len(), 1, "{selected:?}");
+        assert_eq!((selected[0].1, selected[0].2), (8, 11));
+        crate::mutate::collapse::TestBodies
+            .apply(&file, &mut sides)
+            .unwrap();
+        let (Pairing::Both { rhs, .. } | Pairing::RightOnly { rhs }) = &mut sides else {
+            panic!("rhs expected");
+        };
+        walk_mut(&mut rhs.regions, &mut |region| {
+            if region.range.start.line == 7 {
+                region.visibility.collapsed = true;
+            }
+        });
+        assert!(select(&sides, 3).is_empty());
+    }
+
+    #[test]
+    fn long_summaries_are_discarded_and_the_body_stays_open() {
+        let (file, mut sides) = project("a.py", "", LARGE);
+        let id = select(&sides, 3)[0].0;
+        let (endpoint, server) = serve(vec![(200, gemini_answer(&[(id, "a()\nb()\nc()")]))]);
+        summarizer(&endpoint, 0).apply(&file, &mut sides).unwrap();
+        server.join().unwrap();
+        let rhs = sides.rhs().unwrap();
+        let mut folds = Vec::new();
+        walk(&rhs.regions, &mut |region| {
+            if is_fold(region) {
+                folds.push((region.visibility.collapsed, region.visibility.label.clone()));
+            }
+        });
+        assert_eq!(folds, vec![(false, "Body".to_owned())]);
     }
 
     #[test]
@@ -518,9 +606,10 @@ call a, b, c"
         let config = SummarizeConfig {
             api_key: Some("k".to_owned()),
             endpoint: Some("http://127.0.0.1:1".to_owned()),
+            min_lines: 3,
             ..SummarizeConfig::default()
         };
-        Summarizer::new(&config, 3)
+        Summarizer::new(&config)
             .unwrap()
             .unwrap()
             .apply(&file, &mut sides)
@@ -537,7 +626,7 @@ call a, b, c"
         if std::env::var_os("GEMINI_API_KEY").is_none()
             && std::env::var_os("GOOGLE_API_KEY").is_none()
         {
-            assert!(Summarizer::new(&config, 3).unwrap().is_none());
+            assert!(Summarizer::new(&config).unwrap().is_none());
         }
     }
 }

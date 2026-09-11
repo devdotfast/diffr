@@ -105,6 +105,8 @@ pub(crate) struct FoldsConfig {
     pub(crate) collapse_generated: bool,
     /// Hide files classified as tests.
     pub(crate) collapse_tests: bool,
+    /// Collapse the bodies of test functions on both sides, header visible.
+    pub(crate) collapse_test_bodies: bool,
     /// Unchanged lines kept visible on either side of a change. `-U` overrides it.
     pub(crate) context_lines: u32,
     /// An external JSON-RPC summarizer, run after the built-in one.
@@ -120,6 +122,7 @@ impl Default for FoldsConfig {
             collapse_removed_lines: 5,
             collapse_generated: true,
             collapse_tests: true,
+            collapse_test_bodies: true,
             context_lines: 3,
             hook: None,
         }
@@ -136,6 +139,9 @@ pub(crate) struct SummarizeConfig {
     pub(crate) provider: Provider,
     /// The model name sent to the provider.
     pub(crate) model: String,
+    /// New function bodies shorter than this are shown as code, not
+    /// summarized: pseudocode only pays off once the body is long.
+    pub(crate) min_lines: usize,
     /// The provider's API key. `GEMINI_API_KEY` or `GOOGLE_API_KEY` in the
     /// environment is used when this is unset.
     pub(crate) api_key: Option<String>,
@@ -156,6 +162,7 @@ impl Default for SummarizeConfig {
             enabled: true,
             provider: Provider::Gemini,
             model: "gemini-3.8-flash".to_owned(),
+            min_lines: 20,
             api_key: None,
             endpoint: None,
             timeout_ms: 60_000,
@@ -823,8 +830,8 @@ mod tag_tests {
         );
         assert_eq!(result.lhs_folds.len(), 1);
         assert_eq!(result.rhs_folds.len(), 1);
-        assert_eq!(result.lhs_folds[0].tags, ["body", "test"]);
-        assert_eq!(result.rhs_folds[0].tags, ["body", "test"]);
+        assert_eq!(result.lhs_folds[0].tags, ["body", "function", "test"]);
+        assert_eq!(result.rhs_folds[0].tags, ["body", "function", "test"]);
         assert!(matches!(&result.lhs_folds[0].match_kind,
             FoldMatch::Unchanged { opposite } if *opposite == result.rhs_folds[0].range));
     }

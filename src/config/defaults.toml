@@ -7,6 +7,8 @@ folds = '''
   (match_block "{" @fold.open "}" @fold.close)
 ] @fold
   (#set! tag "body"))
+((function_item body: (block "{" @fold.open "}" @fold.close) @fold)
+  (#set! tag "function"))
 ([
   (array_expression "[" @fold.open "]" @fold.close)
   (field_initializer_list "{" @fold.open "}" @fold.close)
@@ -43,6 +45,8 @@ context = '''
 folds = '''
 ((block) @fold
   (#set! tag "body"))
+((function_definition body: (block) @fold)
+  (#set! tag "function"))
 ([
   (list "[" @fold.open "]" @fold.close)
   (dictionary "{" @fold.open "}" @fold.close)
@@ -75,6 +79,10 @@ folds = '''
   (field_declaration_list "{" @fold.open "}" @fold.close)
 ] @fold
   (#set! tag "body"))
+((function_declaration body: (block "{" @fold.open "}" @fold.close) @fold)
+  (#set! tag "function"))
+((method_declaration body: (block "{" @fold.open "}" @fold.close) @fold)
+  (#set! tag "function"))
 ((literal_value "{" @fold.open "}" @fold.close) @fold
   (#set! tag "collection"))
 ((import_declaration) @fold
@@ -105,6 +113,19 @@ folds = '''
   (switch_body "{" @fold.open "}" @fold.close)
 ] @fold
   (#set! tag "body"))
+((function_declaration body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+  (#set! tag "function"))
+((generator_function_declaration body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+  (#set! tag "function"))
+((method_definition body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+  (#set! tag "function"))
+((variable_declarator
+   name: (identifier)
+   value: [
+     (arrow_function body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+     (function_expression body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+   ])
+  (#set! tag "function"))
 ([
   (object "{" @fold.open "}" @fold.close)
   (array "[" @fold.open "]" @fold.close)
@@ -148,6 +169,19 @@ folds = '''
   (switch_body "{" @fold.open "}" @fold.close)
 ] @fold
   (#set! tag "body"))
+((function_declaration body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+  (#set! tag "function"))
+((generator_function_declaration body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+  (#set! tag "function"))
+((method_definition body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+  (#set! tag "function"))
+((variable_declarator
+   name: (identifier)
+   value: [
+     (arrow_function body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+     (function_expression body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+   ])
+  (#set! tag "function"))
 ([
   (object "{" @fold.open "}" @fold.close)
   (array "[" @fold.open "]" @fold.close)
@@ -191,6 +225,19 @@ folds = '''
   (switch_body "{" @fold.open "}" @fold.close)
 ] @fold
   (#set! tag "body"))
+((function_declaration body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+  (#set! tag "function"))
+((generator_function_declaration body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+  (#set! tag "function"))
+((method_definition body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+  (#set! tag "function"))
+((variable_declarator
+   name: (identifier)
+   value: [
+     (arrow_function body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+     (function_expression body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+   ])
+  (#set! tag "function"))
 ([
   (object "{" @fold.open "}" @fold.close)
   (array "[" @fold.open "]" @fold.close)
@@ -234,6 +281,19 @@ folds = '''
   (switch_body "{" @fold.open "}" @fold.close)
 ] @fold
   (#set! tag "body"))
+((function_declaration body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+  (#set! tag "function"))
+((generator_function_declaration body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+  (#set! tag "function"))
+((method_definition body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+  (#set! tag "function"))
+((variable_declarator
+   name: (identifier)
+   value: [
+     (arrow_function body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+     (function_expression body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+   ])
+  (#set! tag "function"))
 ([
   (object "{" @fold.open "}" @fold.close)
   (array "[" @fold.open "]" @fold.close)

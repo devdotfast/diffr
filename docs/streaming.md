@@ -227,8 +227,9 @@ fail discovery.
 ## Mutations and fold hooks
 
 After projection, mutations set what starts collapsed and what its label says:
-generated and test files in the manifest, deleted bodies, the middle of large
-removed stretches, and summaries for new bodies from the built-in summarizer. [config.md](config.md) lists them and
+generated and test files in the manifest, deleted function bodies, test
+bodies on both sides, the middle of large removed stretches, and summaries
+for large new function bodies from the built-in summarizer. [config.md](config.md) lists them and
 their order. Their output is ordinary `visibility` on files and regions;
 frontends need no knowledge of which mutation produced it.
 

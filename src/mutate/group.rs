@@ -144,7 +144,9 @@ const MAX_SEPARATOR_LINES: usize = 2;
 /// a couple of open leaf lines, as their child ids in document order.
 fn collapsed_fold_runs(regions: &[Region], out: &mut Vec<Vec<u32>>) {
     for region in regions {
-        if let Node::Fold { children } = &region.node {
+        // Nothing under a collapsed fold is visible, so nothing there
+        // needs grouping.
+        if let (Node::Fold { children }, false) = (&region.node, region.visibility.collapsed) {
             collapsed_fold_runs(children, out);
         }
     }
@@ -247,6 +249,11 @@ fn group(id: u32, children: Vec<Region>) -> Region {
         .all(|fold| fold.visibility.label.ends_with("lines removed"))
     {
         format!("{count} functions removed")
+    } else if folds
+        .iter()
+        .all(|fold| fold.visibility.label == "test body")
+    {
+        format!("{count} test bodies")
     } else if folds.iter().all(|fold| {
         fold.visibility
             .label

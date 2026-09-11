@@ -78,7 +78,7 @@ mod folds {
         assert_eq!(result.lhs_folds.len(), 1);
         assert_eq!(result.rhs_folds.len(), 1);
         let fold = &result.lhs_folds[0];
-        assert_eq!(fold.tags, ["body", "test"]);
+        assert_eq!(fold.tags, ["body", "function", "test"]);
         let (left, right) = paired(fold).expect("reuse the replaced-string correspondence");
         assert_eq!(text(lhs, left), "\"\"\"some shared words before\"\"\"");
         assert_eq!(text(rhs, right), "\"\"\"some shared words after\"\"\"");

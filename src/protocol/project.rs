@@ -999,7 +999,7 @@ mod tests {
         let rhs = rhs.unwrap();
         let bodies: Vec<_> = all(&rhs.regions)
             .into_iter()
-            .filter(|r| r.tags == ["body"])
+            .filter(|r| r.tags.iter().any(|tag| tag == "body"))
             .map(|r| r.range.start.line)
             .collect();
         // `keep` is untouched and lies inside a collapsed gap, so it is not a
@@ -1052,7 +1052,7 @@ mod tests {
             .find(|r| matches!(r.node, Node::Fold { .. }) && r.range.start.line == 7)
             .expect("the added function is a fold");
         assert!(rhs_only.contains(&&new_fold.id));
-        assert_eq!(new_fold.tags, vec!["body"]);
+        assert_eq!(new_fold.tags, vec!["body", "function"]);
         assert_eq!(new_fold.visibility.label, "Body");
     }
 

@@ -3,10 +3,10 @@
 //! region trees. diffr's diff internals never see them.
 //!
 //! Order: file mutations (hidden categories), then fold mutations in this
-//! sequence: deleted bodies, removed runs, the built-in summarizer, the
-//! JSON-RPC hook, and last the grouping pass that merges adjacent gaps and
-//! wraps runs of collapsed folds. A mutation failure aborts the run; retries belong
-//! inside a mutation.
+//! sequence: deleted function bodies, test bodies, removed runs, the
+//! built-in summarizer, the JSON-RPC hook, and last the grouping pass that
+//! merges adjacent gaps and wraps runs of collapsed folds. A mutation
+//! failure aborts the run; retries belong inside a mutation.
 pub(crate) mod collapse;
 pub(crate) mod group;
 pub(crate) mod summarize;
@@ -48,15 +48,16 @@ impl Mutations {
                 min_lines: folds.min_lines,
             }));
         }
+        if folds.collapse_test_bodies {
+            mutations.fold.push(Box::new(collapse::TestBodies));
+        }
         if folds.collapse_removed_lines > 0 {
             mutations.fold.push(Box::new(collapse::RemovedRuns {
                 min_lines: folds.collapse_removed_lines,
             }));
         }
         if params.summarize.enabled {
-            if let Some(summarizer) =
-                summarize::Summarizer::new(&params.summarize, folds.min_lines)?
-            {
+            if let Some(summarizer) = summarize::Summarizer::new(&params.summarize)? {
                 mutations.fold.push(Box::new(summarizer));
             }
         }

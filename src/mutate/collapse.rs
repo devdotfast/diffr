@@ -1,5 +1,5 @@
 //! Rules that start things collapsed: whole files by category, deleted
-//! function bodies, and the middle of large removed stretches.
+//! function bodies, test bodies, and the middle of large removed stretches.
 use super::group::next_id;
 use super::{collapse, ids, is_fold, line_count, walk_mut, FileMutation, FoldMutation};
 use crate::category;
@@ -27,8 +27,8 @@ impl FileMutation for HiddenCategories {
     }
 }
 
-/// Deleted bodies of at least `min_lines` start collapsed with a line count.
-/// The header line stays visible by fold semantics.
+/// Deleted function bodies of at least `min_lines` start collapsed with a
+/// line count. The header line stays visible by fold semantics.
 pub(crate) struct DeletedBodies {
     pub(crate) min_lines: usize,
 }
@@ -41,7 +41,7 @@ impl FoldMutation for DeletedBodies {
         };
         walk_mut(&mut lhs.regions, &mut |region| {
             if is_fold(region)
-                && region.tags.iter().any(|tag| tag == "body")
+                && region.tags.iter().any(|tag| tag == "function")
                 && !rhs_ids.contains(&region.id)
                 && line_count(region) >= self.min_lines
             {
@@ -49,6 +49,36 @@ impl FoldMutation for DeletedBodies {
                 collapse(region, format!("{count} lines removed"));
             }
         });
+        Ok(())
+    }
+}
+
+/// Test bodies start collapsed on both sides, paired or not, so a diff
+/// reads as the code under test first. The header stays visible and the
+/// fold expands like any other.
+pub(crate) struct TestBodies;
+
+/// A test body shorter than this stays open: a one-line assertion is
+/// cheaper to read than a fold row.
+const MIN_TEST_BODY_LINES: usize = 3;
+
+impl FoldMutation for TestBodies {
+    fn apply(&self, _file: &FileChange, sides: &mut Pairing<Source>) -> Result<(), Problem> {
+        let sources: Vec<&mut Source> = match sides {
+            Pairing::Both { lhs, rhs } => vec![lhs, rhs],
+            Pairing::LeftOnly { lhs } => vec![lhs],
+            Pairing::RightOnly { rhs } => vec![rhs],
+        };
+        for source in sources {
+            walk_mut(&mut source.regions, &mut |region| {
+                if is_fold(region)
+                    && region.tags.iter().any(|tag| tag == "test")
+                    && line_count(region) >= MIN_TEST_BODY_LINES
+                {
+                    collapse(region, "test body".to_owned());
+                }
+            });
+        }
         Ok(())
     }
 }
@@ -171,6 +201,43 @@ fn lhs_mut(sides: &mut Pairing<Source>) -> Option<&mut Source> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_bodies_collapse_on_both_sides_and_stay_expandable() {
+        let before = "#[test]\nfn t() {\n    a();\n    b();\n    c();\n}\n\nfn f() {\n    a();\n    b();\n    c();\n}\n";
+        let after = "#[test]\nfn t() {\n    a();\n    b();\n    changed();\n}\n\nfn f() {\n    a();\n    b();\n    c();\n}\n";
+        let (file, mut sides) = crate::mutate::summarize::tests::project("a.rs", before, after);
+        TestBodies.apply(&file, &mut sides).unwrap();
+        for source in [sides.lhs().unwrap(), sides.rhs().unwrap()] {
+            let mut folds = Vec::new();
+            walk(&source.regions, &mut |region| {
+                if is_fold(region) {
+                    folds.push((
+                        region.tags.contains(&"test".to_owned()),
+                        region.visibility.collapsed,
+                        region.visibility.label.clone(),
+                    ));
+                }
+            });
+            assert_eq!(
+                folds,
+                vec![
+                    (true, true, "test body".to_owned()),
+                    (false, false, "Body".to_owned())
+                ]
+            );
+        }
+        // A tiny test body stays open.
+        let (file, mut sides) = crate::mutate::summarize::tests::project(
+            "a.rs",
+            "",
+            "#[test]\nfn t() {\n    a();\n}\n",
+        );
+        TestBodies.apply(&file, &mut sides).unwrap();
+        walk(&sides.rhs().unwrap().regions, &mut |region| {
+            assert!(!region.visibility.collapsed);
+        });
+    }
     use crate::mutate::walk;
     use crate::protocol::{FileRef, FileStatus, Visibility};
 

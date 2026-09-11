@@ -379,12 +379,12 @@ test("the summary strip shows visible totals that follow fold state, and i opens
     await render();
     const frame = t.captureCharFrame();
     expect(frame).toContain("All files");
-    expect(frame).toContain("visible     +0 −0");
-    expect(frame).toContain("structural  +1 −0");
-    expect(frame).toContain("textual     +1 −0");
+    expect(frame).toContain("visible   +0 −0");
+    expect(frame).toContain("textual   +1 −0");
+    expect(frame).not.toContain("line diff");
     await act(async () => { t.mockInput.pressKey("ESCAPE"); await new Promise((resolve) => setTimeout(resolve, 100)); });
     await render();
-    expect(t.captureCharFrame()).not.toContain("visible     +0");
+    expect(t.captureCharFrame()).not.toContain("visible   +0");
   } finally {
     await act(async () => { t.renderer.destroy(); });
   }

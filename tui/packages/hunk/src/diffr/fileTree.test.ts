@@ -14,7 +14,7 @@ test("tree shares directories, retains file identities, and folds subtrees", () 
   ]);
   expect(flattenFileTree(tree, new Set(["/src"])).some(r => r.node.fileIndex === 0)).toBe(false);
   expect(parentDirectories(files[0])).toEqual(["/src", "/src/ui"]);
-  expect(lineCounts(files[0])).toEqual({ textual: { added: 2, removed: 1 }, visible: { added: 2, removed: 1 }, structural: { added: 2, removed: 1 } });
+  expect(lineCounts(files[0])).toEqual({ textual: { added: 2, removed: 1 }, visible: { added: 2, removed: 1 }, fallback: undefined });
   files[0].diff = { type: "binary", lhs: { size: 1 } };
   expect(lineCounts(files[0])).toEqual({ textual: { added: 0, removed: 0 }, visible: { added: 0, removed: 0 } });
 });

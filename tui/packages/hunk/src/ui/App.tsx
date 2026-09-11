@@ -289,10 +289,9 @@ export function App({
   const totals = useMemo(() => ({
     visible: visibleByFile.reduce(add, zero),
     textual: counts.reduce((sum, c) => add(sum, c.textual), zero),
-    structural: counts.reduce<LineCounts | null>((sum, c) => sum && c.structural ? add(sum, c.structural) : null, zero),
+    fallbacks: counts.filter((c) => c.fallback).length,
   }), [visibleByFile, counts]);
   const plusMinus = (c: LineCounts) => `+${c.added} −${c.removed}`;
-  const structuralText = (c: LineCounts | null | undefined) => (c ? plusMinus(c) : "line diff");
   useEffect(() => {
     const file = inventory[currentTreeFile];
     if (!file) return;
@@ -312,7 +311,6 @@ export function App({
     const file = snapshot.files[fileIndex], count = visibleByFile[fileIndex];
     if (!file) return null;
     const path = filePath(file.file);
-    const structural = "";
     const statsWidth = String(count.added).length + String(count.removed).length + 5;
     return <box key={key} height={1} width={contentWidth} flexDirection="row"
       backgroundColor={theme.chrome}
@@ -322,7 +320,6 @@ export function App({
       </text>
       <text fg={theme.addedText} selectable={false}>{` +${count.added}`}</text>
       <text fg={theme.removedText} selectable={false}>{` −${count.removed} `}</text>
-      {structural && <text fg={theme.muted} selectable={false}>{structural}</text>}
     </box>;
   };
   const rendered = [];
@@ -568,18 +565,21 @@ export function App({
       </box>
       {showBreakdown && (() => {
         const file = snapshot.files[currentFile];
-        const lines = [
-          ["All files", totals.visible, totals.structural, totals.textual],
-          ...(file ? [[filePath(file.file), visibleByFile[currentFile], counts[currentFile].structural ?? null, counts[currentFile].textual]] : []),
-        ] as [string, LineCounts, LineCounts | null, LineCounts][];
+        const fallback = file && counts[currentFile].fallback;
+        const sections: [string, LineCounts, LineCounts, string | null][] = [
+          ["All files", totals.visible, totals.textual, totals.fallbacks ? `line diff: ${totals.fallbacks} files` : null],
+          ...(file ? [[filePath(file.file), visibleByFile[currentFile], counts[currentFile].textual,
+            fallback ? `line diff: ${fallback.code}` : null] as [string, LineCounts, LineCounts, string | null]] : []),
+        ];
         const boxWidth = Math.min(width, 44);
+        const rowCount = sections.reduce((n, s) => n + 3 + (s[3] ? 1 : 0), 0);
         return <box position="absolute" top={2} left={Math.max(0, width - boxWidth - 1)} width={boxWidth}
-          height={lines.length * 4 + 1} flexDirection="column" zIndex={10} backgroundColor={theme.chrome}>
-          {lines.flatMap(([title, visible, structural, textual]) => [
+          height={rowCount + 1} flexDirection="column" zIndex={10} backgroundColor={theme.chrome}>
+          {sections.flatMap(([title, visible, textual, note]) => [
             <text key={`${title}:t`} height={1} fg={theme.fg} selectable={false}>{fit(` ${title}`, boxWidth)}</text>,
-            <text key={`${title}:v`} height={1} fg={theme.muted} selectable={false}>{fit(`   visible     ${plusMinus(visible)}`, boxWidth)}</text>,
-            <text key={`${title}:s`} height={1} fg={theme.muted} selectable={false}>{fit(`   structural  ${structuralText(structural)}`, boxWidth)}</text>,
-            <text key={`${title}:x`} height={1} fg={theme.muted} selectable={false}>{fit(`   textual     ${plusMinus(textual)}`, boxWidth)}</text>,
+            <text key={`${title}:v`} height={1} fg={theme.muted} selectable={false}>{fit(`   visible   ${plusMinus(visible)}`, boxWidth)}</text>,
+            <text key={`${title}:x`} height={1} fg={theme.muted} selectable={false}>{fit(`   textual   ${plusMinus(textual)}`, boxWidth)}</text>,
+            ...(note ? [<text key={`${title}:f`} height={1} fg={theme.muted} selectable={false}>{fit(`   ${note}`, boxWidth)}</text>] : []),
           ])}
           <text height={1} fg={theme.muted} selectable={false}>{fit(" esc close", boxWidth)}</text>
         </box>;

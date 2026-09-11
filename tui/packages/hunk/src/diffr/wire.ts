@@ -64,17 +64,13 @@ const source = z.object({
   regions: z.array(region).default([]),
 });
 const lineCounts = z.object({ added: uint, removed: uint });
-const stats = z
-  .object({
-    textual: lineCounts,
-    /** Changed lines shown under diffr's default fold state; the frontend adjusts it as folds toggle. */
-    visible: lineCounts,
-    structural: lineCounts.optional(),
-    fallback: problem.optional(),
-  })
-  .refine((value) => (value.structural === undefined) !== (value.fallback === undefined), {
-    message: "stats need exactly one of structural or fallback",
-  });
+const stats = z.object({
+  textual: lineCounts,
+  /** Changed lines shown under diffr's default fold state; the frontend adjusts it as folds toggle. */
+  visible: lineCounts,
+  /** Present when tree-sitter did not run and this is a line diff. */
+  fallback: problem.optional(),
+});
 const diff = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), lhs: source.optional(), rhs: source.optional(), stats })
     .refine((value) => value.lhs !== undefined || value.rhs !== undefined, {

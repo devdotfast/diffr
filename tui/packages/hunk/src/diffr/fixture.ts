@@ -49,7 +49,7 @@ export function createTestDiffFile(): DiffFile {
           leaf(4, 3, 4),
         ],
       },
-      stats: { textual: { added: 2, removed: 1 }, visible: { added: 2, removed: 1 }, structural: { added: 2, removed: 1 } },
+      stats: { textual: { added: 2, removed: 1 }, visible: { added: 2, removed: 1 } },
     },
   };
 }

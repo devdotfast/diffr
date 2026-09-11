@@ -90,8 +90,8 @@ list; Esc returns without saving. Both views carry a footer hint line.
   toggled, so lines hidden inside a collapsed region are not counted. While results are
   still arriving the total ends in `…`.
 - `i` (or clicking the totals) opens a breakdown for the whole comparison and the current
-  file: `visible`, `structural` (from tree-sitter, or `line diff` when it fell back), and
-  `textual`. Esc closes it.
+  file: `visible` and `textual`, plus a `line diff: <code>` line when tree-sitter fell
+  back to a line diff for that file. Esc closes it.
 - A file diffr marks hidden by default (generated, test) opens collapsed with a GitHub-style
   placeholder: `Load diff` and the reason line. Click it or press Enter to reveal.
 - File, View, Navigate, Theme and Help menus expose the supported controls.

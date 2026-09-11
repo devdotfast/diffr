@@ -55,5 +55,5 @@ export function parentDirectories(file: Pick<FileChange, "file">): string[] {
 /** Textual counts always; structural ones when tree-sitter compared the file. */
 export function lineCounts(file: DiffFile) {
   if (file.diff.type === "binary") return { textual: { added: 0, removed: 0 }, visible: { added: 0, removed: 0 } };
-  return { textual: file.diff.stats.textual, visible: file.diff.stats.visible, structural: file.diff.stats.structural };
+  return { textual: file.diff.stats.textual, visible: file.diff.stats.visible, fallback: file.diff.stats.fallback };
 }

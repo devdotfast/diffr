@@ -49,6 +49,10 @@ pub(crate) fn from_path(path: &str) -> Option<&'static str> {
         || TEST_FILES.contains(&name)
         || name.ends_with("_test.go")
         || name.ends_with("_test.py")
+        || name == "tests.rs"
+        || name == "test.rs"
+        || name.ends_with("_test.rs")
+        || name.ends_with("_tests.rs")
         || name.starts_with("test_") && name.ends_with(".py")
         || name.contains(".test.")
         || name.contains(".spec.")
@@ -89,6 +93,10 @@ mod tests {
             "pkg/conftest.py",
             "src/__tests__/a.js",
             "spec/models/user_spec.rb",
+            "src/review/tests.rs",
+            "src/parser/test.rs",
+            "src/git_test.rs",
+            "src/protocol_tests.rs",
         ] {
             assert_eq!(from_path(path), Some(TEST), "{path}");
         }

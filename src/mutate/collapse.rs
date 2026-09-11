@@ -54,8 +54,10 @@ impl FoldMutation for DeletedBodies {
 }
 
 /// Test bodies start collapsed on both sides, paired or not, so a diff
-/// reads as the code under test first. The header stays visible and the
-/// fold expands like any other.
+/// reads as the code under test first. A whole test module, such as a
+/// Rust `#[cfg(test)] mod tests`, collapses as one fold labelled
+/// "test module". The header stays visible and the fold expands like any
+/// other.
 pub(crate) struct TestBodies;
 
 /// A test body shorter than this stays open: a one-line assertion is
@@ -75,7 +77,12 @@ impl FoldMutation for TestBodies {
                     && region.tags.iter().any(|tag| tag == "test")
                     && line_count(region) >= MIN_TEST_BODY_LINES
                 {
-                    collapse(region, "test body".to_owned());
+                    let label = if region.tags.iter().any(|tag| tag == "module") {
+                        "test module"
+                    } else {
+                        "test body"
+                    };
+                    collapse(region, label.to_owned());
                 }
             });
         }
@@ -227,6 +234,21 @@ mod tests {
                 ]
             );
         }
+        // A `#[cfg(test)]` module collapses as one labelled fold; the test
+        // bodies inside keep their own label.
+        let (file, mut sides) = crate::mutate::summarize::tests::project(
+            "a.rs",
+            "",
+            "#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        a();\n        b();\n        c();\n    }\n}\n",
+        );
+        TestBodies.apply(&file, &mut sides).unwrap();
+        let mut labels = Vec::new();
+        walk(&sides.rhs().unwrap().regions, &mut |region| {
+            if is_fold(region) && region.visibility.collapsed {
+                labels.push(region.visibility.label.clone());
+            }
+        });
+        assert_eq!(labels, ["test module", "test body"]);
         // A tiny test body stays open.
         let (file, mut sides) = crate::mutate::summarize::tests::project(
             "a.rs",

@@ -29,6 +29,11 @@ folds = '''
 ((function_item attributes: (attributes (attribute_item) @_attribute) body: (block "{" @fold.open "}" @fold.close) @fold)
   (#match? @_attribute "test")
   (#set! tag "test"))
+((mod_item body: (declaration_list "{" @fold.open "}" @fold.close) @fold)
+  (#set! tag "module"))
+((mod_item attributes: (attributes (attribute_item) @_attribute) body: (declaration_list "{" @fold.open "}" @fold.close) @fold)
+  (#match? @_attribute "cfg\\(test\\)")
+  (#set! tag "test"))
 '''
 context = '''
 [

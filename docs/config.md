@@ -100,7 +100,8 @@ Every file in the manifest carries a `category`: `source`, `test`,
 3. Built-in path rules: lockfiles and `dist/`, `build/`, `vendor/`,
    `node_modules/`, `__generated__/`, `*.min.js`, `*.pb.go`, `*.generated.*`
    are generated; `tests/`, `test/`, `__tests__/`, `spec/`, `*_test.go`,
-   `*.test.*`, `*.spec.*`, `test_*.py`, `*_test.py`, `conftest.py` are tests;
+   `*.test.*`, `*.spec.*`, `test_*.py`, `*_test.py`, `conftest.py`, `tests.rs`,
+   `test.rs`, `*_test.rs`, `*_tests.rs` are tests;
    `docs/` and `*.md` are docs.
 
 ```gitattributes
@@ -119,7 +120,9 @@ itself. In order:
 2. `collapse_deleted`: deleted function bodies (folds tagged `function`) of
    at least `min_lines` lines, labelled `"<n> lines removed"`.
 3. `collapse_test_bodies`: bodies of test functions (folds tagged `test`) of
-   three or more lines, on both sides, labelled `"test body"`.
+   three or more lines, on both sides, labelled `"test body"`. A whole test
+   module such as a Rust `#[cfg(test)] mod tests` is one `test` fold too,
+   labelled `"test module"`, with the test bodies still foldable inside it.
 4. `collapse_removed_lines`: removed stretches with no counterpart on the
    after side and at least that many lines keep their first and last line
    open and collapse the middle, tagged `removed` and labelled

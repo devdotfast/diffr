@@ -168,7 +168,9 @@ fn file_outcome(
 ) -> Result<Outcome, Problem> {
     let diff = loaded.diff();
     let syntax = if options.syntax {
-        syntax_spans(&diff, &loaded.params)
+        let path = loaded.file.sides.rhs().or(loaded.file.sides.lhs());
+        let path = path.map(|side| side.path.as_str()).unwrap_or_default();
+        syntax_spans(&diff, &loaded.params, std::path::Path::new(path))
     } else {
         (Vec::new(), Vec::new())
     };
@@ -199,11 +201,25 @@ fn mutate(
     Ok(outcome.into())
 }
 
+/// Highlight spans for both sides. A line-diff fallback still has a
+/// language, guessed from the path, so its sides get colours too.
 pub(crate) fn syntax_spans(
     diff: &DiffResult,
     params: &crate::config::Params,
+    path: &std::path::Path,
 ) -> (Vec<SyntaxSpan>, Vec<SyntaxSpan>) {
-    let FileFormat::SupportedLanguage(language) = diff.file_format else {
+    let language = match &diff.file_format {
+        FileFormat::SupportedLanguage(language) => Some(*language),
+        FileFormat::TextFallback { .. } => {
+            let sample = match (&diff.lhs_src, &diff.rhs_src) {
+                (FileContent::Text(src), _) | (_, FileContent::Text(src)) => src.as_str(),
+                _ => "",
+            };
+            crate::parse::guess_language::guess(path, sample, &[])
+        }
+        FileFormat::PlainText | FileFormat::Binary => None,
+    };
+    let Some(language) = language else {
         return (Vec::new(), Vec::new());
     };
     let parser = params.language(language).parser;
@@ -265,7 +281,7 @@ pub(crate) fn write_file(
     output.flush()?;
     let diff = compute();
     let syntax = if options.syntax {
-        syntax_spans(&diff, params)
+        syntax_spans(&diff, params, std::path::Path::new(after))
     } else {
         (Vec::new(), Vec::new())
     };
@@ -317,4 +333,33 @@ pub(crate) fn write_file(
     output.write_all(b"\n")?;
     output.flush()?;
     Ok(ended)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fallback_files_still_get_syntax_spans() {
+        let params = crate::config::Config::from_toml("")
+            .unwrap()
+            .compile()
+            .unwrap();
+        let src = "fn f() {\n    let x = 1;\n}\n";
+        let diff = DiffResult::from_sources_with_options(
+            "a.rs",
+            "fn g() {\n    let y = 2;\n}\n",
+            src,
+            &params,
+            &crate::options::DisplayOptions::default(),
+            &crate::options::DiffOptions {
+                graph_limit: 1,
+                ..crate::options::DiffOptions::default()
+            },
+        );
+        assert!(matches!(diff.file_format, FileFormat::TextFallback { .. }));
+        let (lhs, rhs) = syntax_spans(&diff, &params, std::path::Path::new("a.rs"));
+        assert!(!lhs.is_empty() && !rhs.is_empty());
+        assert!(rhs.iter().any(|span| span.capture.starts_with("keyword")));
+    }
 }

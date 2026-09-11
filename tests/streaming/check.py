@@ -222,6 +222,10 @@ with tempfile.TemporaryDirectory(prefix="diffr-stream-") as temp:
             r["kind"] == "fold"
             for r in all_regions(events[1]["diff"]["rhs"]["regions"])
         ), events[1]["diff"]["rhs"]["regions"]
+    # So do highlight spans: the language is guessed from the path.
+    events = stream(repo, base, head, "--graph-limit", "1", "--syntax", "--", "a.rs")
+    for side in ("lhs", "rhs"):
+        assert events[1]["diff"][side]["syntax"], side
     # The previous stream stays available while frontends migrate.
     v1 = cli(
         repo, "--format", "ndjson-v1", "--config", str(custom), base, head, "--", "a.rs"

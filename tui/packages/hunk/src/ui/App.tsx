@@ -28,8 +28,9 @@ import {
   selectionBounds,
   type SourceSelection,
 } from "../diffr/selection";
-import { fileIdentity, type DiffFile } from "../diffr/wire";
-import { foldRegions, nestedRegions, type FoldRegion, type RowFold } from "../diffr/folds";
+import { fileIdentity, filePath, type DiffFile } from "../diffr/wire";
+import { defaultCollapsed, foldIds, gapIds, nestedIds, type RowFold } from "../diffr/regions";
+import { placeholderRows } from "../diffr/rows";
 import type { DiffStore } from "../diffr/store";
 import { sanitizeTerminalLine } from "../lib/terminalText";
 import { sliceTextByWidth } from "./lib/text";
@@ -48,15 +49,15 @@ export function App({
   const [mode, setMode] = useState<Layout | "auto">("auto"),
     [showSidebar, setShowSidebar] = useState(true),
     [wrap, setWrap] = useState(false),
-    [fullContext, setFullContext] = useState(false),
     [isLight, setLight] = useState(false);
   const [scroll, setScroll] = useState(0),
-    [horizontal, setHorizontal] = useState(0),
-    [closed, setClosed] = useState<Set<number>>(new Set());
+    [horizontal, setHorizontal] = useState(0);
+  // Files the user closed or opened; unset files follow the manifest's visibility.
+  const [closed, setClosed] = useState<Map<number, boolean>>(new Map());
   const [selection, setSelection] = useState<SourceSelection | null>(null),
     [message, setMessage] = useState("");
-  // Fold ids collapsed per loaded file; VS Code keeps this per editor model.
-  const [collapsed, setCollapsed] = useState<Map<number, ReadonlySet<string>>>(new Map());
+  // Fold ids collapsed per loaded file; unset files start where diffr's visibility says.
+  const [collapsed, setCollapsed] = useState<Map<number, ReadonlySet<number>>>(new Map());
   // Vim's z prefix: the next key names the fold command.
   const pendingZ = useRef(false);
   const [closedDirectories, setClosedDirectories] = useState<Set<string>>(new Set());
@@ -74,13 +75,19 @@ export function App({
   const layout =
     mode === "auto" ? (contentWidth >= 100 ? "split" : "unified") : mode;
   const loadedByIdentity = useMemo(() => new Map(snapshot.files.map((f, i) => [fileIdentity(f.file), i])), [snapshot.files]);
-  const inventory = useMemo(() => snapshot.inventory.map(file => ({file})), [snapshot.inventory]);
+  const inventory = snapshot.inventory;
+  const manifestOf = (file: DiffFile) => inventory.find(entry => fileIdentity(entry.file) === fileIdentity(file.file));
+  const foldsOf = (index: number): ReadonlySet<number> => {
+    const file = snapshot.files[index];
+    return collapsed.get(index) ?? (file.diff.type === "text" ? defaultCollapsed(file.diff) : new Set());
+  };
+  const isClosed = (index: number) => closed.get(index) ?? manifestOf(snapshot.files[index])?.visibility.collapsed ?? false;
   const tree = useMemo(() => buildFileTree(inventory), [inventory]);
   // Keep loaded indexes stable for row keys, selections and file expansion.
   // Present arriving diffs in tree order throughout loading.
   const fileOrder = useMemo(() => flattenFileTree(tree, new Set()).flatMap(({node}) => {
         if (node.fileIndex === undefined) return [];
-        const loaded = loadedByIdentity.get(fileIdentity(snapshot.inventory[node.fileIndex]));
+        const loaded = loadedByIdentity.get(fileIdentity(snapshot.inventory[node.fileIndex].file));
         return loaded === undefined ? [] : [loaded];
       }),
     [snapshot.inventory, tree, loadedByIdentity]);
@@ -90,19 +97,23 @@ export function App({
   const rows = useMemo(() => {
     const all = fileOrder.flatMap(index => {
       const file = snapshot.files[index];
-      const folds = collapsed.get(index) ?? new Set<string>();
-      const key = `${index}:${layout}:${isLight}:${fullContext}:${[...folds].sort().join(",")}`;
+      const folds = foldsOf(index);
+      const key = `${index}:${layout}:${isLight}:${[...folds].sort((a, b) => a - b).join(",")}`;
       let cached = rowCache.current.get(file);
       if (cached?.key !== key) {
-        cached = { key, rows: rowsForFile(file, index, layout, theme, fullContext, folds) };
+        cached = { key, rows: rowsForFile(file, index, layout, theme, folds) };
         rowCache.current.set(file, cached);
       }
-      return closed.has(index) ? cached.rows.slice(0, 1) : cached.rows;
+      if (!isClosed(index)) return cached.rows;
+      const manifest = manifestOf(file);
+      return manifest?.visibility.collapsed
+        ? [cached.rows[0], ...placeholderRows(index, manifest.visibility.label)]
+        : cached.rows.slice(0, 1);
     });
     for (const [i, error] of snapshot.errors.entries())
       all.push({ key: `error:${i}`, fileIndex: -1, label: error });
     return all;
-  }, [snapshot.files, snapshot.errors, layout, theme, closed, fullContext, fileOrder, collapsed]);
+  }, [snapshot.files, snapshot.errors, snapshot.inventory, layout, theme, closed, fileOrder, collapsed]);
   const geometry = useMemo(
     () => measureRows(rows, contentWidth, wrap, horizontal),
     [rows, contentWidth, wrap, horizontal],
@@ -127,38 +138,28 @@ export function App({
   }
   const move = (amount: number) =>
     setScroll((current) => Math.max(0, Math.min(maxScroll, current + amount)));
-  const toggleFile = (index: number) => {
-    setClosed((old) => {
-      const next = new Set(old);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
-      return next;
-    });
-  };
-  const regionCache = useRef(new WeakMap<DiffFile, FoldRegion[]>());
-  const regionsOf = (file: DiffFile) => {
-    let regions = regionCache.current.get(file);
-    if (!regions) {
-      regions = foldRegions(file.diff);
-      regionCache.current.set(file, regions);
-    }
-    return regions;
-  };
-  const setFolds = (fileIndex: number, ids: string[], collapse: boolean) =>
+  const toggleFile = (index: number) =>
+    setClosed((old) => new Map(old).set(index, !isClosed(index)));
+  const setFolds = (fileIndex: number, ids: number[], collapse: boolean) =>
     setCollapsed((old) => {
-      const next = new Set(old.get(fileIndex) ?? []);
+      const next = new Set(foldsOf(fileIndex));
       for (const id of ids) if (collapse) next.add(id); else next.delete(id);
       return new Map(old).set(fileIndex, next);
     });
-  // Recursive commands (Alt-click, zC, zO, zA) include every region nested inside.
+  // Recursive commands (Alt-click, zC, zO, zA) include every fold nested inside.
   const setFold = (fileIndex: number, fold: RowFold, collapse: boolean, recursive: boolean) => {
-    const regions = regionsOf(snapshot.files[fileIndex]);
-    const region = regions.find((r) => r.id === fold.id);
-    if (!region) throw new Error(`Unknown fold ${fold.id}`);
-    const ids = recursive
-      ? [fold.id, ...nestedRegions(regions, region).map((r) => r.id)]
-      : [fold.id];
+    const file = snapshot.files[fileIndex];
+    if (file.diff.type !== "text") throw new Error("Binary files have no folds");
+    const ids = recursive ? [fold.id, ...nestedIds(file.diff, fold.id)] : [fold.id];
     setFolds(fileIndex, ids, collapse);
+  };
+  // `c`: reveal every context gap, or hide them again.
+  const toggleContext = () => {
+    const opened = snapshot.files.some((file, index) =>
+      file.diff.type === "text" && gapIds(file.diff).some((id) => !foldsOf(index).has(id)));
+    snapshot.files.forEach((file, index) => {
+      if (file.diff.type === "text") setFolds(index, gapIds(file.diff), opened);
+    });
   };
   const toggleFold = (fileIndex: number, fold: RowFold, recursive: boolean) =>
     setFold(fileIndex, fold, !fold.collapsed, recursive);
@@ -186,15 +187,10 @@ export function App({
     else if (letter === "o") setFold(current.fileIndex, fold, false, recursive);
     else if (letter === "c") setFold(current.fileIndex, fold, true, recursive);
   };
-  const foldAll = (collapse: boolean) => {
-    const byFile = new Map<number, string[]>();
-    for (const row of rows) {
-      const fold = rowFold(row);
-      if (fold) byFile.set(row.fileIndex, [...(byFile.get(row.fileIndex) ?? []), fold.id]);
-    }
-    if (collapse) for (const [fileIndex, ids] of byFile) setFolds(fileIndex, ids, true);
-    else setCollapsed(new Map());
-  };
+  const foldAll = (collapse: boolean) =>
+    snapshot.files.forEach((file, index) => {
+      if (file.diff.type === "text") setFolds(index, foldIds(file.diff), collapse);
+    });
   const jump = (index: number) => {
     const row = geometry.rows.find((r) => r.row.fileIndex === index);
     if (row) setScroll(Math.min(maxScroll, row.top));
@@ -245,7 +241,7 @@ export function App({
       setMode(layout === "split" ? "unified" : "split");
       setSelection(null);
     } else if (key.name === "w") setWrap((v) => !v);
-    else if (key.name === "c") { setFullContext(v => !v); setSelection(null); }
+    else if (key.name === "c") { toggleContext(); setSelection(null); }
     else if (key.name === "t") setLight((v) => !v);
     else if (key.name === "y") copy();
     else if (key.name === "escape") { setSelection(null); setMenu(null); }
@@ -266,7 +262,7 @@ export function App({
   const viewport = visibleRows(geometry, top, viewportHeight);
   const currentFile = viewport[0]?.row.fileIndex ?? 0;
   const activeIdentity = pendingFile ?? (snapshot.files[currentFile] ? fileIdentity(snapshot.files[currentFile].file) : null);
-  const currentTreeFile = snapshot.inventory.findIndex(file => fileIdentity(file) === activeIdentity);
+  const currentTreeFile = snapshot.inventory.findIndex(entry => fileIdentity(entry.file) === activeIdentity);
   useEffect(() => {
     if (pendingFile === null) return;
     const index = loadedByIdentity.get(pendingFile);
@@ -298,16 +294,20 @@ export function App({
   const fileHeader = (fileIndex: number, key: string) => {
     const file = snapshot.files[fileIndex], count = counts[fileIndex];
     if (!file) return null;
-    const path = file.file.new_path ?? file.file.old_path ?? file.diff.display_path;
-    const statsWidth = String(count.added).length + String(count.removed).length + 5;
+    const path = filePath(file.file);
+    const structural = count.structural && (count.structural.added !== count.textual.added
+      || count.structural.removed !== count.textual.removed)
+      ? ` · syntax +${count.structural.added} -${count.structural.removed}` : "";
+    const statsWidth = String(count.textual.added).length + String(count.textual.removed).length + 5 + structural.length;
     return <box key={key} height={1} width={contentWidth} flexDirection="row"
       backgroundColor={isLight ? "#f0f2f5" : "#161b22"}
       onMouseUp={() => toggleFile(fileIndex)}>
       <text width={Math.max(1, contentWidth - statsWidth)} fg={theme.fg} selectable={false}>
-        {fit(sanitizeTerminalLine(`${closed.has(fileIndex) ? "▸" : "▾"} ${path}`), Math.max(1, contentWidth - statsWidth))}
+        {fit(sanitizeTerminalLine(`${isClosed(fileIndex) ? "▸" : "▾"} ${path}`), Math.max(1, contentWidth - statsWidth))}
       </text>
-      <text fg={isLight ? "#1a7f37" : "#7ee787"} selectable={false}>{` +${count.added}`}</text>
-      <text fg={isLight ? "#cf222e" : "#ffa198"} selectable={false}>{` -${count.removed} `}</text>
+      <text fg={isLight ? "#1a7f37" : "#7ee787"} selectable={false}>{` +${count.textual.added}`}</text>
+      <text fg={isLight ? "#cf222e" : "#ffa198"} selectable={false}>{` -${count.textual.removed} `}</text>
+      {structural && <text fg={theme.muted} selectable={false}>{structural}</text>}
     </box>;
   };
   const rendered = [];
@@ -328,20 +328,13 @@ export function App({
             key={row.key}
             height={1}
             width={contentWidth}
-            fg={theme.muted}
+            fg={row.loadDiff ? theme.type : theme.muted}
             selectable={false}
             onMouseUp={() => {
-              if (row.key.endsWith(":header")) toggleFile(row.fileIndex);
+              if (row.loadDiff) toggleFile(row.fileIndex);
             }}
           >
-            {fit(
-              sanitizeTerminalLine(
-                row.key.endsWith(":header")
-                  ? `${closed.has(row.fileIndex) ? "▸" : "▾"} ${row.label}`
-                  : row.label,
-              ),
-              contentWidth,
-            )}
+            {fit(sanitizeTerminalLine(row.loadDiff ? `    ${row.label}` : row.label), contentWidth)}
           </text>,
         );
       else
@@ -396,7 +389,7 @@ export function App({
     File: [["Toggle file tree  ⌘B / \\", () => setShowSidebar(v => !v)], ["Copy selection  y", copy], ["Quit  q", onQuit]],
     View: [[`Layout: ${layout}  s`, () => { setMode(layout === "split" ? "unified" : "split"); setSelection(null); }],
       [`Wrap: ${wrap ? "on" : "off"}  w`, () => setWrap(v => !v)],
-      [`Context: ${fullContext ? "all" : "compact"}  c`, () => { setFullContext(v => !v); setSelection(null); }],
+      ["Toggle context gaps  c", () => { toggleContext(); setSelection(null); }],
       ["Fold all  zM", () => foldAll(true)], ["Unfold all  zR", () => foldAll(false)]],
     Navigate: [["Previous change  [", () => navigateHunk(-1)], ["Next change  ]", () => navigateHunk(1)],
       ["First file  Home", () => setScroll(0)], ["Last file  End", () => setScroll(maxScroll)]],
@@ -477,7 +470,7 @@ export function App({
                 selectable={false}
                 onMouseUp={() => {
                   if (node.fileIndex !== undefined) {
-                    const identity = fileIdentity(snapshot.inventory[node.fileIndex]);
+                    const identity = fileIdentity(snapshot.inventory[node.fileIndex].file);
                     const loaded = loadedByIdentity.get(identity);
                     if (loaded !== undefined) { setPendingFile(null); setMessage(""); jump(loaded); }
                     else if (snapshot.failedFiles.has(identity)) setMessage(snapshot.failedFiles.get(identity)!);
@@ -490,8 +483,8 @@ export function App({
                   });
                 }}>
                 {fit(sanitizeTerminalLine("  ".repeat(depth) + (node.fileIndex === undefined
-                  ? (closedDirectories.has(node.key) ? "▸ " : "▾ ") : snapshot.failedFiles.has(fileIdentity(snapshot.inventory[node.fileIndex])) ? "! "
-                    : loadedByIdentity.has(fileIdentity(snapshot.inventory[node.fileIndex])) ? "  " : "◌ ") + node.name), sidebar - 1)}
+                  ? (closedDirectories.has(node.key) ? "▸ " : "▾ ") : snapshot.failedFiles.has(fileIdentity(snapshot.inventory[node.fileIndex].file)) ? "! "
+                    : loadedByIdentity.has(fileIdentity(snapshot.inventory[node.fileIndex].file)) ? "  " : "◌ ") + node.name), sidebar - 1)}
               </text>
             ))}
           </box>

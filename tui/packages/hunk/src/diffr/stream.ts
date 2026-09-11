@@ -20,27 +20,27 @@ export async function* readDiffStream(
     if (event.type === "start") {
       if (started) throw new Error("Duplicate diffr start");
       started = true;
-      total = event.total;
-      inventory = new Set(event.files.map(fileIdentity));
-      if (event.files.length !== total || inventory.size !== total)
+      total = event.files.length;
+      inventory = new Set(event.files.map((file) => fileIdentity(file.file)));
+      if (inventory.size !== total)
         throw new Error("Inconsistent diffr file manifest");
     } else {
       if (!started) throw new Error("Missing diffr start");
-      if (event.type === "file" || event.type === "file_error") {
+      if (event.type === "file") {
         const identity = fileIdentity(event.file);
         if (!inventory.has(identity) || received.has(identity))
           throw new Error("Unknown or duplicate diffr file result");
         received.add(identity);
+        if (event.diff) succeeded++;
+        else failed++;
       }
-      if (event.type === "file") succeeded++;
-      if (event.type === "file_error") failed++;
       if (event.type === "complete") {
-        if (
-          event.succeeded !== succeeded ||
-          event.failed !== failed ||
-          succeeded + failed !== total
-        )
+        const finished = succeeded + failed;
+        if (event.succeeded !== succeeded || event.failed !== failed)
           throw new Error("Inconsistent diffr completion counts");
+        // An abort ends the run early; every file already answered stays valid.
+        if ((finished < total) !== (event.aborted !== undefined))
+          throw new Error("Inconsistent diffr completion");
         complete = true;
       }
     }

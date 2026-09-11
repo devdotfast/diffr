@@ -6,9 +6,33 @@ import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { readDiffStream } from "./diffr/stream";
 import { DiffStore } from "./diffr/store";
+import { cliClient } from "./diffr/config";
 import { App } from "./ui/App";
+import { Settings } from "./ui/Settings";
 const args = process.argv.slice(2),
   store = new DiffStore();
+// `diffr config` opens the settings screen: bun run main.tsx --settings --diffr /path/to/diffr [query]
+if (args[0] === "--settings") {
+  if (args[1] !== "--diffr" || !args[2]) {
+    console.error("Usage: bun run start --settings --diffr /path/to/diffr [initial query]");
+    process.exit(2);
+  }
+  const settingsRenderer = await createCliRenderer({
+    useMouse: false,
+    exitOnCtrlC: false,
+    screenMode: "alternate-screen",
+  });
+  const quitSettings = () => {
+    settingsRenderer.destroy();
+    process.exit(0);
+  };
+  process.once("SIGTERM", quitSettings);
+  process.once("SIGINT", quitSettings);
+  createRoot(settingsRenderer).render(
+    <Settings client={cliClient(args[2])} onQuit={quitSettings} initialQuery={args.slice(3).join(" ")} />,
+  );
+  await new Promise(() => {});
+}
 let child: ReturnType<typeof spawn> | undefined;
 let chunks: AsyncIterable<Uint8Array>;
 let input: NodeJS.ReadStream = process.stdin;
@@ -27,13 +51,14 @@ if (args[0] === "--input" && args[1]) {
   expectsDifferenceExit = comparison
     .slice(0, separator < 0 ? comparison.length : separator)
     .includes("--exit-code");
-  child = spawn(args[1], ["--format", "ndjson", ...comparison], {
+  // The frontend has no tokenizer, so it asks Rust for syntax spans.
+  child = spawn(args[1], ["--format", "ndjson", "--syntax", ...comparison], {
     stdio: ["ignore", "pipe", "pipe"],
   });
   chunks = child.stdout!;
 } else {
   console.error(
-    "Usage: bun run start --diffr /path/to/diffr -- [comparison arguments]\n       bun run start --input recording.ndjson (or -)",
+    "Usage: bun run start --diffr /path/to/diffr -- [comparison arguments]\n       bun run start --input recording.ndjson (or -)\n       bun run start --settings --diffr /path/to/diffr [query]",
   );
   process.exit(2);
 }

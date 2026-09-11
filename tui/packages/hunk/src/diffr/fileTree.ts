@@ -1,4 +1,4 @@
-import type { DiffFile } from "./wire";
+import { filePath, type DiffFile, type FileChange } from "./wire";
 
 export interface TreeNode {
   key: string;
@@ -11,11 +11,11 @@ export interface TreeRow {
   depth: number;
 }
 /** Paths identify directory nodes; streamed file indexes preserve diff navigation. */
-export function buildFileTree(files: Pick<DiffFile, "file">[]): TreeNode[] {
+export function buildFileTree(files: Pick<FileChange, "file">[]): TreeNode[] {
   const roots: TreeNode[] = [];
   const directories = new Map<string, TreeNode>();
   files.forEach((file, fileIndex) => {
-    const path = file.file.new_path ?? file.file.old_path ?? "";
+    const path = filePath(file.file);
     const parts = path.split("/").filter(Boolean);
     let children = roots, prefix = "";
     parts.forEach((name, i) => {
@@ -48,14 +48,12 @@ export function flattenFileTree(nodes: TreeNode[], closed: Set<string>, depth = 
       ? flattenFileTree(node.children, closed, depth + 1) : []),
   ]);
 }
-export function parentDirectories(file: Pick<DiffFile, "file">): string[] {
-  const parts = (file.file.new_path ?? file.file.old_path ?? "").split("/").filter(Boolean);
+export function parentDirectories(file: Pick<FileChange, "file">): string[] {
+  const parts = filePath(file.file).split("/").filter(Boolean);
   return parts.slice(0, -1).map((_, i) => "/" + parts.slice(0, i + 1).join("/"));
 }
-/** Count novel source lines once even when context hunks overlap. */
+/** Textual counts always; structural ones when tree-sitter compared the file. */
 export function lineCounts(file: DiffFile) {
-  return {
-    added: new Set(file.diff.hunks.flatMap(h => h.novel_rhs)).size,
-    removed: new Set(file.diff.hunks.flatMap(h => h.novel_lhs)).size,
-  };
+  if (file.diff.type === "binary") return { textual: { added: 0, removed: 0 } };
+  return { textual: file.diff.stats.textual, structural: file.diff.stats.structural };
 }

@@ -8,7 +8,7 @@ import type {
 } from "./diffRowModel";
 import type { Geometry, MeasuredRow } from "../../diffr/geometry";
 import type { Palette } from "../../diffr/rows";
-import type { RowFold } from "../../diffr/folds";
+import type { RowFold } from "../../diffr/regions";
 import { measureTextWidth } from "../lib/text";
 const colors = new Map<string, ReturnType<typeof parseColor>>();
 function color(value: string) {
@@ -34,8 +34,9 @@ function chevron(fold: RowFold | undefined) {
   if (!fold) return " ";
   return fold.collapsed ? "▸" : "▾";
 }
+/** A multi-line label (pseudocode) hangs under the header, so the header shows only the ellipsis. */
 const placeholderText = (fold: RowFold) =>
-  fold.placeholder === "…" ? " ⋯" : ` ⋯ ${fold.placeholder}`;
+  fold.label === "" || fold.label.includes("\n") ? " ⋯" : ` ⋯ ${fold.label}`;
 export const CodeRowView = memo(function CodeRowView({
   measured,
   visualLine,
@@ -68,12 +69,12 @@ export const CodeRowView = memo(function CodeRowView({
     const bg =
       selectedSide === side
         ? "#264f78"
-        : value.kind === "addition"
-          ? theme.addition
-          : value.kind === "deletion"
-            ? theme.deletion
-            : fold?.collapsed
-              ? theme.foldBackground
+        : value.foldLabel || fold?.collapsed
+          ? theme.foldBackground
+          : value.kind === "addition"
+            ? theme.addition
+            : value.kind === "deletion"
+              ? theme.deletion
               : theme.bg;
     // Row colours carry addition and deletion, so the gutter holds numbers and the chevron only.
     const digits = geometry.gutter - 4;

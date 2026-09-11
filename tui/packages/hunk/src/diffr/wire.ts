@@ -1,120 +1,119 @@
-/** Validate the lossless Rust wire format without translating it through patch metadata. */
+/** Validate diffr's wire v2 (src/protocol.rs): tagged enums, pairings by presence, defaults omitted. */
 import { z } from "zod";
 const uint = z.number().int().nonnegative();
-const point = z.object({ line: uint, byte_column: uint });
-const range = z.object({ start: point, end: point });
-const span = z.object({ line: uint, start_col: uint, end_col: uint });
-const highlight = z.union([
-  z.literal("Delimiter"),
+/** `{lhs, rhs}`, `{lhs}` or `{rhs}`; never neither. */
+function pairing<T extends z.ZodTypeAny>(item: T) {
+  return z
+    .object({ lhs: item.optional(), rhs: item.optional() })
+    .refine((value) => value.lhs !== undefined || value.rhs !== undefined, {
+      message: "a pairing needs at least one side",
+    });
+}
+export type Pairing<T> = { lhs?: T; rhs?: T };
+const fileRef = z.object({ path: z.string(), oid: z.string(), mode: z.string() });
+const visibility = z.object({
+  collapsed: z.boolean().default(false),
+  label: z.string().default(""),
+});
+const problem = z.object({ code: z.string(), message: z.string() });
+const fileChange = z.object({
+  file: pairing(fileRef),
+  status: z.enum(["added", "deleted", "modified", "renamed", "copied", "type_changed"]),
+  category: z.string().optional(),
+  language: z.string().optional(),
+  visibility: visibility.default({ collapsed: false, label: "" }),
+});
+const snapshot = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("revision"), rev: z.string() }),
+  z.object({ type: z.literal("index") }),
+  z.object({ type: z.literal("working_tree") }),
+  z.object({ type: z.literal("empty_tree") }),
+  z.object({ type: z.literal("path"), path: z.string() }),
+]);
+const sourcePos = z.object({ line: uint, column: uint });
+const span = z.object({ line: uint, start_column: uint, end_column: uint });
+const syntaxSpan = span.extend({ capture: z.string() });
+export interface Region {
+  id: number;
+  start: { line: number; column: number };
+  end: { line: number; column: number };
+  tags: string[];
+  visibility: { collapsed: boolean; label: string };
+  kind: "leaf" | "fold";
+  changed: { line: number; start_column: number; end_column: number }[];
+  children: Region[];
+}
+const regionBase = z.object({
+  id: uint,
+  start: sourcePos,
+  end: sourcePos,
+  tags: z.array(z.string()).default([]),
+  visibility: visibility.default({ collapsed: false, label: "" }),
+});
+const region: z.ZodType<Region> = z.lazy(() =>
+  z.discriminatedUnion("kind", [
+    regionBase.extend({ kind: z.literal("leaf"), changed: z.array(span).default([]) })
+      .transform((leaf) => ({ ...leaf, children: [] as Region[] })),
+    regionBase.extend({ kind: z.literal("fold"), children: z.array(region) })
+      .transform((fold) => ({ ...fold, changed: [] as Region["changed"] })),
+  ]),
+);
+const source = z.object({
+  text: z.string(),
+  syntax: z.array(syntaxSpan).default([]),
+  regions: z.array(region).default([]),
+});
+const lineCounts = z.object({ added: uint, removed: uint });
+const stats = z
+  .object({
+    textual: lineCounts,
+    structural: lineCounts.optional(),
+    fallback: problem.optional(),
+  })
+  .refine((value) => (value.structural === undefined) !== (value.fallback === undefined), {
+    message: "stats need exactly one of structural or fallback",
+  });
+const diff = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text"), lhs: source.optional(), rhs: source.optional(), stats })
+    .refine((value) => value.lhs !== undefined || value.rhs !== undefined, {
+      message: "a text diff needs at least one side",
+    }),
   z.object({
-    Atom: z.union([
-      z.enum([
-        "Normal",
-        "Type",
-        "Keyword",
-        "Comment",
-        "TreeSitterError",
-        "CanIgnore",
-      ]),
-      z.object({ String: z.enum(["StringLiteral", "Text"]) }),
-    ]),
+    type: z.literal("binary"),
+    lhs: z.object({ size: uint }).optional(),
+    rhs: z.object({ size: uint }).optional(),
   }),
 ]);
-const position = z.object({
-  pos: span,
-  kind: z.union([
-    z.object({
-      UnchangedToken: z.object({
-        highlight,
-        self_pos: z.array(span),
-        opposite_pos: z.array(span),
-      }),
-    }),
-    z.object({
-      UnchangedPartOfNovelItem: z.object({
-        highlight,
-        self_pos: span,
-        opposite_pos: z.array(span),
-      }),
-    }),
-    z.object({ Novel: z.object({ highlight }) }),
-    z.object({ NovelWord: z.object({ highlight }) }),
-    z.object({ Ignored: z.object({ highlight }) }),
-  ]),
-});
-const fold = z.object({
-  tags: z.array(z.string()),
-  range,
-  match_kind: z.union([
-    z.literal("Novel"),
-    z.object({ Unchanged: z.object({ opposite: range }) }),
-  ]),
-  placeholder: z.string(),
-  summary: z.string().nullable(),
-});
-const source = z.union([z.literal("Binary"), z.object({ Text: z.string() })]);
-export const diffResultSchema = z.object({
-  display_path: z.string(),
-  extra_info: z.string().nullable(),
-  file_format: z.union([
-    z.enum(["PlainText", "Binary"]),
-    z.object({ SupportedLanguage: z.string() }),
-    z.object({ TextFallback: z.object({ reason: z.string() }) }),
-  ]),
-  lhs_src: source,
-  rhs_src: source,
-  lhs_positions: z.array(position),
-  rhs_positions: z.array(position),
-  lhs_folds: z.array(fold),
-  rhs_folds: z.array(fold),
-  aligned_rows: z.array(z.tuple([uint.nullable(), uint.nullable()])),
-  hunks: z.array(
-    z.object({
-      novel_lhs: z.array(uint),
-      novel_rhs: z.array(uint),
-      lines: z.array(z.tuple([uint.nullable(), uint.nullable()])),
-    }),
-  ),
-  has_byte_changes: z.tuple([uint, uint]).nullable(),
-  has_syntactic_changes: z.boolean(),
-});
-const operand = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("file"), path: z.string() }),
-  z.object({ kind: z.literal("revision"), ref: z.string() }),
-  z.object({ kind: z.literal("index") }),
-  z.object({ kind: z.literal("working_tree") }),
-  z.object({ kind: z.literal("empty_tree") }),
-]);
-const file = z.object({
-  old_path: z.string().nullable(),
-  new_path: z.string().nullable(),
-  status: z.enum([
-    "added",
-    "deleted",
-    "modified",
-    "renamed",
-    "type_changed",
-    "conflicted",
-  ]),
-  class: z.string().nullable(),
-});
+const fileEvent = z
+  .object({ type: z.literal("file"), file: pairing(fileRef), diff: diff.optional(), error: problem.optional() })
+  .refine((value) => (value.diff === undefined) !== (value.error === undefined), {
+    message: "a file record needs exactly one of diff or error",
+  });
 export const eventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("start"),
-    version: z.literal(1),
-    before: operand,
-    after: operand,
-    total: uint,
-    files: z.array(file),
+    version: z.literal(2),
+    lhs: snapshot,
+    rhs: snapshot,
+    files: z.array(fileChange),
   }),
-  z.object({ type: z.literal("file"), file, diff: diffResultSchema }),
-  z.object({ type: z.literal("file_error"), file, message: z.string() }),
-  z.object({ type: z.literal("complete"), succeeded: uint, failed: uint }),
+  fileEvent,
+  z.object({ type: z.literal("complete"), succeeded: uint, failed: uint, aborted: problem.optional() }),
 ]);
-export type FileChange = z.infer<typeof file>;
-export const fileIdentity = (file: FileChange) => JSON.stringify([file.old_path, file.new_path]);
-export type DiffResult = z.infer<typeof diffResultSchema>;
+export type FileRef = z.infer<typeof fileRef>;
+export type FileChange = z.infer<typeof fileChange>;
+export type Visibility = z.infer<typeof visibility>;
+export type Problem = z.infer<typeof problem>;
+export type Source = z.infer<typeof source>;
+export type TextDiff = Extract<z.infer<typeof diff>, { type: "text" }>;
+export type Diff = z.infer<typeof diff>;
+export type Span = z.infer<typeof span>;
+export type SyntaxSpan = z.infer<typeof syntaxSpan>;
+export type Stats = z.infer<typeof stats>;
 export type DiffEvent = z.infer<typeof eventSchema>;
-export type DiffFile = Extract<DiffEvent, { type: "file" }>;
-export type MatchedPos = DiffResult["lhs_positions"][number];
-export type Highlight = z.infer<typeof highlight>;
+export type FileEvent = Extract<DiffEvent, { type: "file" }>;
+/** A file record that carries a diff; failures are kept separately by the store. */
+export type DiffFile = FileEvent & { diff: Diff };
+export const fileIdentity = (file: Pairing<FileRef>) =>
+  JSON.stringify([file.lhs?.path ?? null, file.rhs?.path ?? null]);
+export const filePath = (file: Pairing<FileRef>) => file.rhs?.path ?? file.lhs?.path ?? "";

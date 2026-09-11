@@ -5,8 +5,13 @@ import { TextRenderable, type BaseRenderable } from "@opentui/core";
 
 import { App } from "./App";
 import { DiffStore } from "../diffr/store";
-import { createTestDiffFile } from "../diffr/fixture";
-import { createFoldedDiffFile } from "../diffr/folds.test";
+import { createTestDiffFile, leaf, line, withIdenticalLines } from "../diffr/fixture";
+import type { DiffFile } from "../diffr/wire";
+import { createFoldedDiffFile } from "../diffr/regions.test";
+const at = (file: DiffFile, path: string) => {
+  file.file = { lhs: { path, oid: "1", mode: "100644" }, rhs: { path, oid: "2", mode: "100644" } };
+  return file;
+};
 test("render real OpenTUI rows, switch layout, collapse and reopen file with mouse", async () => {
   const store = new DiffStore();
   store.accept(createTestDiffFile());
@@ -60,13 +65,7 @@ test("render real OpenTUI rows, switch layout, collapse and reopen file with mou
 test("scrolling a large stream keeps terminal renderables bounded", async () => {
   const store = new DiffStore(),
     file = createTestDiffFile();
-  const lines = Array.from({ length: 5000 }, (_, i) => `line ${i}`);
-  file.diff.lhs_src = file.diff.rhs_src = { Text: lines.join("\n") };
-  file.diff.lhs_positions = file.diff.rhs_positions = [];
-  file.diff.hunks = [
-    { novel_lhs: [], novel_rhs: [], lines: lines.map((_, i) => [i, i]) },
-  ];
-  file.diff.aligned_rows = lines.map((_, i) => [i, i]);
+  withIdenticalLines(file, 5000);
   store.accept(file);
   const testRenderer = await testRender(
     <App store={store} onQuit={() => {}} />,
@@ -98,13 +97,11 @@ test("scrolling a large stream keeps terminal renderables bounded", async () => 
 test("hierarchical tree navigation, sticky counts, sidebar toggle and menus", async () => {
   const store = new DiffStore();
   for (const path of ["src/alpha.ts", "src/nested/beta.ts"]) {
-    const file = createTestDiffFile();
-    file.file.new_path = path;
+    const file = at(createTestDiffFile(), path);
     const lines = Array.from({length: 60}, (_, i) => `code ${i}`);
-    file.diff.lhs_src = file.diff.rhs_src = {Text: lines.join("\n")};
-    file.diff.lhs_positions = file.diff.rhs_positions = [];
-    file.diff.aligned_rows = lines.map((_, i) => [i, i]);
-    file.diff.hunks = [{novel_lhs: [20], novel_rhs: [20,21], lines: file.diff.aligned_rows}];
+    if (file.diff.type !== "text") throw new Error();
+    file.diff.lhs = { text: lines.join("\n"), syntax: [], regions: [leaf(1, 0, 20), leaf(2, 20, 21, [line(20, 0, 7)]), leaf(3, 21, 60)] };
+    file.diff.rhs = { text: lines.join("\n"), syntax: [], regions: [leaf(1, 0, 20), leaf(2, 20, 21, [line(20, 0, 7)]), leaf(4, 21, 22, [line(21, 0, 7)]), leaf(3, 22, 60)] };
     store.accept(file);
   }
   const t = await testRender(<App store={store} onQuit={() => {}} />, {width:150, height:20});
@@ -125,9 +122,9 @@ test("hierarchical tree navigation, sticky counts, sidebar toggle and menus", as
     await act(async () => { t.mockInput.pressKey("\\"); });
     await t.waitForFrame(f => f.includes("▾ nested"));
     await act(async () => { await t.mockMouse.click(9, 0); });
-    await t.waitForFrame(f => f.includes("Context: compact"));
+    await t.waitForFrame(f => f.includes("Toggle context gaps"));
     await act(async () => { t.mockInput.pressKey("ESCAPE"); await new Promise(resolve => setTimeout(resolve, 50)); });
-    await t.waitForFrame(f => !f.includes("Context: compact"));
+    await t.waitForFrame(f => !f.includes("Toggle context gaps"));
   } finally {
     await act(async () => { t.renderer.destroy(); });
   }
@@ -135,10 +132,8 @@ test("hierarchical tree navigation, sticky counts, sidebar toggle and menus", as
 test("Hunk navigation chords and draggable sidebar preserve viewport behavior", async () => {
   const store = new DiffStore(), file = createTestDiffFile();
   const lines = Array.from({length: 150}, (_, i) => `row ${i}`);
-  file.diff.lhs_src = file.diff.rhs_src = {Text: lines.join("\n")};
-  file.diff.lhs_positions = file.diff.rhs_positions = [];
-  file.diff.aligned_rows = lines.map((_, i) => [i, i]);
-  file.diff.hunks = [{novel_lhs: [], novel_rhs: [], lines: file.diff.aligned_rows}];
+  if (file.diff.type !== "text") throw new Error();
+  file.diff.lhs = file.diff.rhs = { text: lines.join("\n"), syntax: [], regions: [leaf(1, 0, 150)] };
   store.accept(file);
   const t = await testRender(<App store={store} onQuit={() => {}} />, {width:150, height:20});
   const firstSource = () => Number(t.captureCharFrame().split("\n")[2].match(/row (\d+)/)?.[1]);
@@ -179,10 +174,10 @@ test("Hunk navigation chords and draggable sidebar preserve viewport behavior", 
 });
 test("initial manifest renders pending tree and remembers a jump until its diff arrives", async () => {
   const store = new DiffStore(), a = createTestDiffFile(), b = createTestDiffFile();
-  a.file = {...a.file, old_path:"src/a.ts", new_path:"src/a.ts"};
-  b.file = {...b.file, old_path:"src/b.ts", new_path:"src/b.ts"};
-  store.accept({type:"start", version:1, before:{kind:"index"}, after:{kind:"working_tree"},
-    total:2, files:[a.file,b.file]});
+  at(a, "src/a.ts");
+  at(b, "src/b.ts");
+  const entry = (file: DiffFile) => ({ file: file.file, status: "modified" as const, visibility: { collapsed: false, label: "" } });
+  store.accept({type:"start", version:2, lhs:{type:"index"}, rhs:{type:"working_tree"}, files:[entry(a), entry(b)]});
   const t = await testRender(<App store={store} onQuit={() => {}} />, {width:150, height:20});
   try {
     await act(async () => { await t.renderOnce(); });
@@ -202,17 +197,14 @@ test("initial manifest renders pending tree and remembers a jump until its diff 
 test("streaming diffs follow tree order without moving the visible source row", async () => {
   const store = new DiffStore();
   const files = ["z/last.ts", "a/first.ts", "m/middle.ts"].map(path => {
-    const file = createTestDiffFile();
-    file.file = {...file.file, old_path:path, new_path:path};
+    const file = at(createTestDiffFile(), path);
+    if (file.diff.type !== "text") throw new Error();
     const lines = Array.from({length:50}, (_, i) => `code ${i}`);
-    file.diff.lhs_src = file.diff.rhs_src = {Text:lines.join("\n")};
-    file.diff.lhs_positions = file.diff.rhs_positions = [];
-    file.diff.aligned_rows = lines.map((_, i) => [i,i]);
-    file.diff.hunks = [{novel_lhs:[], novel_rhs:[], lines:file.diff.aligned_rows}];
+    file.diff.lhs = file.diff.rhs = { text: lines.join("\n"), syntax: [], regions: [leaf(1, 0, 50)] };
     return file;
   });
-  store.accept({type:"start", version:1, before:{kind:"index"}, after:{kind:"working_tree"},
-    total:3, files:files.map(f => f.file)});
+  const entry = (file: DiffFile) => ({ file: file.file, status: "modified" as const, visibility: { collapsed: false, label: "" } });
+  store.accept({type:"start", version:2, lhs:{type:"index"}, rhs:{type:"working_tree"}, files:files.map(entry)});
   const t = await testRender(<App store={store} onQuit={() => {}} />, {width:150, height:20});
   const sidebarLines = () => t.captureCharFrame().split("\n").slice(1,8).map(line => line.slice(0,27).trim());
   try {
@@ -244,17 +236,14 @@ for (const wrap of [false, true]) for (const unified of [false, true])
 test(`stream arrivals preserve code in every commit (wrap=${wrap}, unified=${unified})`, async () => {
   const store = new DiffStore();
   const files = ["m/current.ts", "a/earlier.ts", "z/later.ts"].map(path => {
-    const file = createTestDiffFile();
-    file.file = {...file.file, old_path:path, new_path:path};
+    const file = at(createTestDiffFile(), path);
+    if (file.diff.type !== "text") throw new Error();
     const lines = Array.from({length:50}, (_, i) => `source ${path} ${i} ${"word ".repeat(20)}`);
-    file.diff.lhs_src = file.diff.rhs_src = {Text:lines.join("\n")};
-    file.diff.lhs_positions = file.diff.rhs_positions = [];
-    file.diff.aligned_rows = lines.map((_, i) => [i,i]);
-    file.diff.hunks = [{novel_lhs:[], novel_rhs:[], lines:file.diff.aligned_rows}];
+    file.diff.lhs = file.diff.rhs = { text: lines.join("\n"), syntax: [], regions: [leaf(1, 0, 50)] };
     return file;
   });
-  store.accept({type:"start", version:1, before:{kind:"index"}, after:{kind:"working_tree"},
-    total:files.length, files:files.map(f => f.file)});
+  const entry = (file: DiffFile) => ({ file: file.file, status: "modified" as const, visibility: { collapsed: false, label: "" } });
+  store.accept({type:"start", version:2, lhs:{type:"index"}, rhs:{type:"working_tree"}, files:files.map(entry)});
   store.accept(files[0]);
   let capture: (() => void) | undefined;
   const commits: string[][] = [];
@@ -292,12 +281,12 @@ test("folds collapse from the gutter chevron and expand from the placeholder", a
   const store = new DiffStore();
   const file = createFoldedDiffFile();
   // Pad the file past the viewport so the z key can act on a scrolled-to row.
-  const text = (file.diff.rhs_src as { Text: string }).Text;
+  if (file.diff.type !== "text") throw new Error();
   const tail = Array.from({ length: 20 }, (_, i) => `tail ${i}`);
-  file.diff.lhs_src = file.diff.rhs_src = { Text: text + tail.join("\n") + "\n" };
-  const rows = file.diff.aligned_rows.length;
-  file.diff.aligned_rows.push(...tail.map((_, i): [number, number] => [rows + i, rows + i]));
-  file.diff.hunks[0].lines = file.diff.aligned_rows;
+  for (const source of [file.diff.lhs!, file.diff.rhs!]) {
+    source.text += tail.join("\n") + "\n";
+    source.regions.push(leaf(99, 8, 28));
+  }
   store.accept(file);
   const t = await testRender(<App store={store} onQuit={() => {}} />, { width: 150, height: 20 });
   try {

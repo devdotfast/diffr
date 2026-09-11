@@ -4,7 +4,7 @@ import { createTestDiffFile } from "./fixture";
 test("tree shares directories, retains file identities, and folds subtrees", () => {
   const files = ["src/ui/App.tsx", "README.md", "src/core.rs", "test/ui/App.tsx"].map(path => {
     const file = createTestDiffFile();
-    file.file.new_path = path;
+    file.file = { rhs: { path, oid: "0", mode: "100644" } };
     return file;
   });
   const tree = buildFileTree(files);
@@ -14,6 +14,7 @@ test("tree shares directories, retains file identities, and folds subtrees", () 
   ]);
   expect(flattenFileTree(tree, new Set(["/src"])).some(r => r.node.fileIndex === 0)).toBe(false);
   expect(parentDirectories(files[0])).toEqual(["/src", "/src/ui"]);
-  files[0].diff.hunks.push(files[0].diff.hunks[0]);
-  expect(lineCounts(files[0])).toEqual({added: 2, removed: 1});
+  expect(lineCounts(files[0])).toEqual({ textual: { added: 2, removed: 1 }, structural: { added: 2, removed: 1 } });
+  files[0].diff = { type: "binary", lhs: { size: 1 } };
+  expect(lineCounts(files[0])).toEqual({ textual: { added: 0, removed: 0 } });
 });

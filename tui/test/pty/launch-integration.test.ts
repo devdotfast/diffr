@@ -28,19 +28,21 @@ test.skipIf(process.platform === "win32")(
 );
 test("actual Rust output satisfies wire schema and renders both layouts", async () => {
   const process = Bun.spawn(
-    [binary, "--no-index", "--format", "ndjson", "--", before, after],
+    [binary, "--no-index", "--format", "ndjson", "--syntax", "--", before, after],
     { stdout: "pipe", stderr: "pipe" },
   );
   const events = await Array.fromAsync(readDiffStream(process.stdout));
   expect(await process.exited).toBe(0);
   const file = events.find((e) => e.type === "file");
   expect(file?.type).toBe("file");
-  if (file?.type === "file") {
-    expect(rowsForFile(file, 0, "split", dark).some((r) => r.left)).toBe(true);
-    expect(rowsForFile(file, 0, "unified", dark).some((r) => r.cell)).toBe(
-      true,
-    );
-  }
+  if (file?.type !== "file" || !file.diff) throw new Error("diffr did not produce a diff");
+  const loaded = { ...file, diff: file.diff };
+  expect(rowsForFile(loaded, 0, "split", dark).some((r) => r.left)).toBe(true);
+  expect(rowsForFile(loaded, 0, "unified", dark).some((r) => r.cell)).toBe(true);
+  if (file.diff.type !== "text") throw new Error("fixture diff is not text");
+  // --syntax fills capture names; the fixture is TypeScript so keywords are present.
+  expect(file.diff.rhs!.syntax.some((span) => span.capture.startsWith("keyword"))).toBe(true);
+  expect(file.diff.rhs!.regions.length).toBeGreaterThan(0);
 });
 test("redirected output and explicit text bypass the TUI even without Bun", () => {
   for (const format of [[], ["--format", "text"]]) {

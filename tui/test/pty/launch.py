@@ -1,6 +1,7 @@
 """Exercise Rust -> Bun -> NDJSON -> terminal, including real mouse escape sequences."""
 import errno
 import fcntl
+import re
 import os
 import pty
 import select
@@ -18,10 +19,12 @@ if pid == 0:
     os.execv(binary, [binary, '--no-index', *(['--exit-code'] if os.environ.get('DIFFR_TEST_EXIT_CODE') else []), '--', before, after])
 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 100, 0, 0))
 output = bytearray()
+ANSI = re.compile(rb'\x1b\[[0-9;?]*[A-Za-z]')
 def until(token):
+    """Wait for token in the screen text; syntax colouring splits words with escape codes."""
     deadline = time.monotonic() + 12
     while time.monotonic() < deadline:
-        if token in output:
+        if token in ANSI.sub(b'', bytes(output)):
             output.clear()
             return
         if select.select([master], [], [], 0.1)[0]:

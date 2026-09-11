@@ -144,6 +144,18 @@ fn range(node: &Syntax<'_>) -> Option<SourceRange> {
     Some(region)
 }
 
+/// Every fold in a parsed side, without any correspondence. Used when the
+/// AST match did not run: the projection pairs folds through the line
+/// alignment instead.
+pub(crate) fn unmatched(nodes: &[&Syntax<'_>], folds: &mut Vec<Fold>) {
+    for node in nodes {
+        folds.extend(project(node, ChangeKind::Novel));
+        if let Syntax::List { children, .. } = node {
+            unmatched(children, folds);
+        }
+    }
+}
+
 /// Project a side-local annotation using the same correspondence as MatchedPos.
 pub(crate) fn project(node: &Syntax<'_>, change: ChangeKind<'_>) -> Option<Fold> {
     let own = node.info().fold.borrow().clone()?;

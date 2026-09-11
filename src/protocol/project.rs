@@ -21,7 +21,7 @@ use crate::display::line_layout::{aligned_rows, novel_lines};
 use crate::hash::DftHashMap;
 use crate::line_parser;
 use crate::lines;
-use crate::parse::folds::{Fold, FoldMatch};
+use crate::parse::folds::Fold;
 use crate::parse::syntax::{MatchKind, MatchedPos};
 use crate::parse::tree_sitter_parser::{highlight_captures, TreeSitterConfig};
 use crate::summary::{DiffResult, FileContent, FileFormat};
@@ -241,20 +241,15 @@ fn regions(
         .filter_map(|run| run.rhs)
         .collect();
 
-    let lhs_folds: Vec<SideFold<'_>> =
-        side_folds(&result.lhs_folds, &result.rhs_folds, Side::Left, &lhs_lines)?
-            .into_iter()
-            .filter(|fold| !inside_gap(fold.lines, &lhs_gaps))
-            .collect();
-    let rhs_folds: Vec<SideFold<'_>> = side_folds(
-        &result.lhs_folds,
-        &result.rhs_folds,
-        Side::Right,
-        &rhs_lines,
-    )?
-    .into_iter()
-    .filter(|fold| !inside_gap(fold.lines, &rhs_gaps))
-    .collect();
+    let mut lhs_folds: Vec<SideFold<'_>> = side_folds(&result.lhs_folds, &lhs_lines)
+        .into_iter()
+        .filter(|fold| !inside_gap(fold.lines, &lhs_gaps))
+        .collect();
+    let mut rhs_folds: Vec<SideFold<'_>> = side_folds(&result.rhs_folds, &rhs_lines)
+        .into_iter()
+        .filter(|fold| !inside_gap(fold.lines, &rhs_gaps))
+        .collect();
+    pair_folds(&mut lhs_folds, &mut rhs_folds, &rows);
     let lhs_splits = split_lines(&lhs_folds);
     let rhs_splits = split_lines(&rhs_folds);
     let (lhs_leaves, rhs_leaves) = split_runs(&runs, &lhs_splits, &rhs_splits);
@@ -277,12 +272,6 @@ fn regions(
         &mut ids,
     );
     Ok((lhs, rhs))
-}
-
-#[derive(Clone, Copy)]
-enum Side {
-    Left,
-    Right,
 }
 
 /// Rows in order, run-length encoded by kind and side presence.
@@ -418,53 +407,69 @@ fn line_span(range: &lines::SourceRange, line_count: usize) -> (usize, usize) {
     )
 }
 
-fn side_folds<'a>(
-    lhs_folds: &'a [Fold],
-    rhs_folds: &'a [Fold],
-    side: Side,
-    lines: &[&str],
-) -> Result<Vec<SideFold<'a>>, Problem> {
-    let (own, other) = match side {
-        Side::Left => (lhs_folds, rhs_folds),
-        Side::Right => (rhs_folds, lhs_folds),
-    };
-    let by_range: DftHashMap<lines::SourceRange, usize> = other
+fn side_folds<'a>(folds: &'a [Fold], lines: &[&str]) -> Vec<SideFold<'a>> {
+    folds
         .iter()
-        .enumerate()
-        .map(|(index, fold)| (fold.range, index))
-        .collect();
-    own.iter()
-        .enumerate()
         // A fold on a single line hides nothing; it is not a region.
-        .filter(|(_, fold)| {
+        .filter(|fold| {
             let (start, end) = line_span(&fold.range, lines.len());
             end - start >= 2
         })
-        .map(|(index, fold)| {
-            let pair = match &fold.match_kind {
-                FoldMatch::Novel => None,
-                FoldMatch::Unchanged { opposite } => {
-                    let other_index = *by_range.get(opposite).ok_or_else(|| Problem {
-                        code: "fold_pairing".to_owned(),
-                        message: format!(
-                            "fold at line {} has no counterpart at {:?}",
-                            fold.range.start.line.as_usize() + 1,
-                            opposite
-                        ),
-                    })?;
-                    Some(match side {
-                        Side::Left => index,
-                        Side::Right => other_index,
-                    })
-                }
-            };
-            Ok(SideFold {
-                fold,
-                lines: line_span(&fold.range, lines.len()),
-                pair,
-            })
+        .map(|fold| SideFold {
+            fold,
+            lines: line_span(&fold.range, lines.len()),
+            pair: None,
         })
         .collect()
+}
+
+/// Two folds correspond when the line alignment pairs their header lines
+/// and their tags agree. A changed signature is still a paired row, so a
+/// function whose header was edited keeps its counterpart. The rule is the
+/// same whichever engine produced the alignment: the structural engine
+/// pairs rows through matched tokens, the text diff through its line
+/// alignment. Folds sharing a header line on one side, such as a body and
+/// a collection opened on the same line, pair in order of span length.
+fn pair_folds(
+    lhs_folds: &mut [SideFold<'_>],
+    rhs_folds: &mut [SideFold<'_>],
+    rows: &[(Option<usize>, Option<usize>)],
+) {
+    let aligned: DftHashMap<usize, usize> = rows
+        .iter()
+        .filter_map(|&(lhs, rhs)| Some((lhs?, rhs?)))
+        .collect();
+    let mut rhs_by_header: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for (index, fold) in rhs_folds.iter().enumerate() {
+        rhs_by_header.entry(fold.lines.0).or_default().push(index);
+    }
+    let span = |fold: &SideFold<'_>| fold.lines.1 - fold.lines.0;
+    for candidates in rhs_by_header.values_mut() {
+        candidates.sort_by_key(|&index| std::cmp::Reverse(span(&rhs_folds[index])));
+    }
+    let mut lhs_by_header: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for (index, fold) in lhs_folds.iter().enumerate() {
+        lhs_by_header.entry(fold.lines.0).or_default().push(index);
+    }
+    for (header, mut own) in lhs_by_header {
+        let Some(other) = aligned
+            .get(&header)
+            .and_then(|line| rhs_by_header.get(line))
+        else {
+            continue;
+        };
+        own.sort_by_key(|&index| std::cmp::Reverse(span(&lhs_folds[index])));
+        for lhs_index in own {
+            let tags = &lhs_folds[lhs_index].fold.tags;
+            let Some(&rhs_index) = other.iter().find(|&&index| {
+                rhs_folds[index].pair.is_none() && rhs_folds[index].fold.tags == *tags
+            }) else {
+                continue;
+            };
+            lhs_folds[lhs_index].pair = Some(lhs_index);
+            rhs_folds[rhs_index].pair = Some(lhs_index);
+        }
+    }
 }
 
 fn split_lines(folds: &[SideFold<'_>]) -> BTreeSet<usize> {
@@ -784,6 +789,7 @@ mod tests {
     use super::*;
     use crate::config::Params;
     use crate::options::{DiffOptions, DisplayOptions};
+    use crate::parse::folds::FoldMatch;
 
     fn refs(lhs: bool, rhs: bool) -> Pairing<FileRef> {
         let file_ref = FileRef {
@@ -803,6 +809,17 @@ mod tests {
     }
 
     fn project(path: &str, lhs: &str, rhs: &str, context: usize) -> Diff {
+        project_with(path, lhs, rhs, context, DiffOptions::default())
+    }
+
+    /// `graph_limit: 1` forces the text-diff fallback for any real change.
+    fn project_with(
+        path: &str,
+        lhs: &str,
+        rhs: &str,
+        context: usize,
+        options: DiffOptions,
+    ) -> Diff {
         let result = DiffResult::from_sources_with_options(
             path,
             lhs,
@@ -812,7 +829,7 @@ mod tests {
                 num_context_lines: context as u32,
                 ..DisplayOptions::default()
             },
-            &DiffOptions::default(),
+            &options,
         );
         diff(
             &result,
@@ -892,6 +909,109 @@ mod tests {
             let range = self.lines();
             (range.start, range.end)
         }
+    }
+
+    const RUST_LHS: &str = "fn f(a: u32) -> u32 {\n    let x = a + 1;\n    let y = x * 2;\n    x + y\n}\n\nfn keep() -> u32 {\n    let k = 1;\n    let m = 2;\n    k + m\n}\n";
+    const RUST_RHS: &str = "fn f(a: u32, b: u32) -> u32 {\n    let x = a + b;\n    let y = x * 2;\n    x + y\n}\n\nfn keep() -> u32 {\n    let k = 1;\n    let m = 2;\n    k + m\n}\n\nfn added() -> u32 {\n    let p = 3;\n    let q = 4;\n    p + q\n}\n";
+
+    fn fold_ids(source: &Source) -> BTreeMap<u32, u32> {
+        all(&source.regions)
+            .into_iter()
+            .filter(|r| matches!(r.node, Node::Fold { .. }))
+            .map(|r| (r.range.start.line, r.id))
+            .collect()
+    }
+
+    #[test]
+    fn folds_pair_through_the_line_alignment_on_either_engine() {
+        for options in [
+            DiffOptions::default(),
+            DiffOptions {
+                graph_limit: 1,
+                ..DiffOptions::default()
+            },
+        ] {
+            let structural = options.graph_limit != 1;
+            let diff = project_with("a.rs", RUST_LHS, RUST_RHS, 3, options);
+            let Diff::Text { stats, .. } = &diff else {
+                panic!("text diff");
+            };
+            assert_eq!(stats.structural.is_ok(), structural);
+            let (lhs, rhs) = sources(&diff);
+            let (lhs, rhs) = (lhs.unwrap(), rhs.unwrap());
+            assert_tiles(lhs);
+            assert_tiles(rhs);
+            let (lhs_folds, rhs_folds) = (fold_ids(lhs), fold_ids(rhs));
+            // `f` changed its signature; its header rows still align, so the
+            // bodies stay paired. `keep` is untouched. `added` is rhs-only.
+            assert_eq!(
+                lhs_folds[&0], rhs_folds[&0],
+                "f pairs across a changed header"
+            );
+            assert_eq!(lhs_folds[&6], rhs_folds[&6], "keep pairs");
+            assert!(
+                !lhs_folds.values().any(|id| *id == rhs_folds[&12]),
+                "added is rhs-only"
+            );
+            assert_eq!(lhs_folds.len(), 2);
+            assert_eq!(rhs_folds.len(), 3);
+        }
+    }
+
+    #[test]
+    fn the_alignment_rule_agrees_with_the_matcher_where_headers_align() {
+        let result = DiffResult::from_sources_with_options(
+            "a.rs",
+            RUST_LHS,
+            RUST_RHS,
+            &Params::default(),
+            &DisplayOptions::default(),
+            &DiffOptions::default(),
+        );
+        let diff = project("a.rs", RUST_LHS, RUST_RHS, 3);
+        let (lhs, rhs) = sources(&diff);
+        let (lhs_folds, rhs_folds) = (fold_ids(lhs.unwrap()), fold_ids(rhs.unwrap()));
+        let rhs_ids: BTreeSet<u32> = rhs_folds.values().copied().collect();
+        for fold in &result.lhs_folds {
+            let id = lhs_folds[&(fold.range.start.line.as_usize() as u32)];
+            let matcher_paired = matches!(fold.match_kind, FoldMatch::Unchanged { .. });
+            assert_eq!(rhs_ids.contains(&id), matcher_paired, "{:?}", fold.range);
+        }
+    }
+
+    #[test]
+    fn the_fallback_keeps_folds_and_enclosing_context() {
+        let diff = project_with(
+            "a.rs",
+            RUST_LHS,
+            RUST_RHS,
+            1,
+            DiffOptions {
+                graph_limit: 1,
+                ..DiffOptions::default()
+            },
+        );
+        let Diff::Text { stats, .. } = &diff else {
+            panic!("text diff");
+        };
+        assert_eq!(stats.structural.as_ref().unwrap_err().code, "too_complex");
+        let (_, rhs) = sources(&diff);
+        let rhs = rhs.unwrap();
+        let bodies: Vec<_> = all(&rhs.regions)
+            .into_iter()
+            .filter(|r| r.tags == ["body"])
+            .map(|r| r.range.start.line)
+            .collect();
+        // `keep` is untouched and lies inside a collapsed gap, so it is not a
+        // region; the changed `f` and the new `added` are folds.
+        assert_eq!(bodies, vec![0, 12]);
+        // The change inside `f` keeps its header line open, not in a gap.
+        let gaps: Vec<_> = leaves(&rhs.regions)
+            .into_iter()
+            .filter(|r| r.visibility.collapsed)
+            .map(|r| r.range.lines_spanned())
+            .collect();
+        assert!(gaps.iter().all(|(start, _)| *start != 0), "{gaps:?}");
     }
 
     #[test]

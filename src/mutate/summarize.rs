@@ -300,6 +300,15 @@ pub(crate) mod tests {
 
     /// Project a two-source comparison the way the stream does.
     pub(crate) fn project(path: &str, before: &str, after: &str) -> (FileChange, Pairing<Source>) {
+        project_with(path, before, after, crate::options::DiffOptions::default())
+    }
+
+    pub(crate) fn project_with(
+        path: &str,
+        before: &str,
+        after: &str,
+        options: crate::options::DiffOptions,
+    ) -> (FileChange, Pairing<Source>) {
         let params = Config::from_toml("").unwrap().compile().unwrap();
         let result = crate::summary::DiffResult::from_sources_with_options(
             path,
@@ -307,7 +316,7 @@ pub(crate) mod tests {
             after,
             &params,
             &crate::options::DisplayOptions::default(),
-            &crate::options::DiffOptions::default(),
+            &options,
         );
         let file_ref = FileRef {
             path: path.to_owned(),
@@ -417,6 +426,24 @@ pub(crate) mod tests {
         assert_eq!((selected[0].1, selected[0].2), (2, 4));
         let (_, sides) = project("a.py", LARGE, LARGE);
         assert!(select(&sides, 3).is_empty());
+    }
+
+    #[test]
+    fn selection_still_finds_new_bodies_when_the_match_fell_back() {
+        let before = "def keep():\n    a = 1\n    b = 2\n    return a + b\n";
+        let after = "def keep():\n    a = 1\n    b = 2\n    return a + b\n\ndef fresh():\n    x = 1\n    y = 2\n    return x + y\n";
+        let (_, sides) = project_with(
+            "a.py",
+            before,
+            after,
+            crate::options::DiffOptions {
+                graph_limit: 1,
+                ..crate::options::DiffOptions::default()
+            },
+        );
+        let selected = select(&sides, 3);
+        assert_eq!(selected.len(), 1, "{selected:?}");
+        assert_eq!((selected[0].1, selected[0].2), (7, 9));
     }
 
     #[test]

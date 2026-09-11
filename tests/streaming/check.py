@@ -216,9 +216,11 @@ with tempfile.TemporaryDirectory(prefix="diffr-stream-") as temp:
         fallback = events[1]["diff"]["stats"]["fallback"]
         assert fallback["code"] == "too_complex", fallback
         assert "diff.graph_limit (1)" in fallback["message"], fallback
-        assert not all_regions(events[1]["diff"]["rhs"]["regions"]) or all(
-            r["kind"] == "leaf" for r in all_regions(events[1]["diff"]["rhs"]["regions"])
-        )
+        # The parse still stands in fallback: folds are present, paired
+        # through the line alignment.
+        assert any(
+            r["kind"] == "fold" for r in all_regions(events[1]["diff"]["rhs"]["regions"])
+        ), events[1]["diff"]["rhs"]["regions"]
     # The previous stream stays available while frontends migrate.
     v1 = cli(
         repo, "--format", "ndjson-v1", "--config", str(custom), base, head, "--", "a.rs"

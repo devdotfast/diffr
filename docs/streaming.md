@@ -134,9 +134,13 @@ per line, sorted, and non-overlapping; where captures nest, the innermost wins.
 Files that fell back to a line diff have no syntax.
 
 `stats.textual` counts lines with any byte change. `stats.structural` counts lines
-with a syntactic change and is replaced by `fallback` when tree-sitter did not run:
-`unsupported_language`, `too_large`, `too_complex`, `parse_error`. A fallback diff
-has leaves but no folds.
+with a syntactic change and is replaced by `fallback` when the AST match did not
+run: `unsupported_language`, `too_large`, `too_complex`, `parse_error`. A fallback
+diff is aligned by a line diff and its `changed` spans are word-level, but the
+parse still stands: folds and the enclosing-header context are present whenever
+the language parsed (`too_complex`, `parse_error`), paired through that alignment
+exactly as they are for a structural diff. Only `unsupported_language` and
+`too_large` produce leaves alone.
 
 ### Regions
 

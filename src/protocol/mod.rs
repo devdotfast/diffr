@@ -297,10 +297,13 @@ pub struct SyntaxSpan {
 }
 
 /// A range on one side. The same `id` on the other side is its
-/// counterpart. Ids appear at most once per side. A paired leaf has the
-/// same line count on both sides and its rows pair line for line; a paired
-/// leaf whose counterpart is behind the reading cursor is a move, and the
-/// frontend chooses how to show it.
+/// counterpart. Two leaves correspond when the line alignment pairs their
+/// lines. Two folds correspond when their header lines are paired as
+/// unchanged in that alignment, whichever engine produced it. Ids appear
+/// at most once per side. A paired leaf has the same line count on both
+/// sides and its rows pair line for line; a paired leaf whose counterpart
+/// is behind the reading cursor is a move, and the frontend chooses how to
+/// show it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Region {
     pub id: u32,
@@ -369,7 +372,9 @@ pub struct SourcePos {
 pub struct Stats {
     /// Lines with any byte change.
     pub textual: LineCounts,
-    /// Lines with a syntactic change.
+    /// Lines with a syntactic change. `Err` means the AST match did not
+    /// run: the alignment is a line diff, `changed` spans are word-level,
+    /// and folds are still present, paired through that alignment.
     pub structural: Result<LineCounts, Problem>,
 }
 

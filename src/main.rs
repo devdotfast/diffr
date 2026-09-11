@@ -59,6 +59,8 @@ mod line_parser;
 mod lines;
 mod options;
 mod parse;
+#[allow(dead_code)]
+mod protocol;
 mod review;
 mod stream;
 mod summary;

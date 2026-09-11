@@ -365,60 +365,22 @@ pub struct SourcePos {
     pub column: u32,
 }
 
-/// `structural` is `Ok` when tree-sitter compared both sides and `Err`
-/// when this is a line diff, carrying why. On the wire that is a
-/// `structural` key or a `fallback` key, never both.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Line counts for one file. `fallback` is present exactly when the AST
+/// match did not run and the alignment is a line diff, carrying why:
+/// `too_complex`, `too_large`, `unsupported_language`, `parse_error`.
+/// Folds are still present on a fallback whenever the language parsed,
+/// paired through that alignment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Stats {
     /// Lines with any byte change.
     pub textual: LineCounts,
-    /// Lines with a syntactic change. `Err` means the AST match did not
-    /// run: the alignment is a line diff, `changed` spans are word-level,
-    /// and folds are still present, paired through that alignment.
-    pub structural: Result<LineCounts, Problem>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct StatsRepr {
-    textual: LineCounts,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    structural: Option<LineCounts>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    fallback: Option<Problem>,
-}
-
-impl Serialize for Stats {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let (structural, fallback) = match &self.structural {
-            Ok(counts) => (Some(*counts), None),
-            Err(problem) => (None, Some(problem.clone())),
-        };
-        StatsRepr {
-            textual: self.textual,
-            structural,
-            fallback,
-        }
-        .serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for Stats {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let repr = StatsRepr::deserialize(deserializer)?;
-        let structural = match (repr.structural, repr.fallback) {
-            (Some(counts), None) => Ok(counts),
-            (None, Some(problem)) => Err(problem),
-            _ => {
-                return Err(D::Error::custom(
-                    "stats need exactly one of structural or fallback",
-                ))
-            }
-        };
-        Ok(Self {
-            textual: repr.textual,
-            structural,
-        })
-    }
+    /// Changed lines still on screen under the default visibility: a
+    /// changed line inside a region that starts collapsed, or under one,
+    /// is not counted. Computed after mutations run, so hooks and config
+    /// change it.
+    pub visible: LineCounts,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<Problem>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -499,10 +461,11 @@ mod tests {
                         added: 1,
                         removed: 1,
                     },
-                    structural: Ok(LineCounts {
+                    visible: LineCounts {
                         added: 1,
-                        removed: 0,
-                    }),
+                        removed: 1,
+                    },
+                    fallback: None,
                 },
             })
             .into(),
@@ -537,7 +500,7 @@ mod tests {
                 "lhs": {"text": "fn f() {\n    1\n}\n", "regions": [region(json!([]))]},
                 "rhs": {"text": "fn f() {\n    1 + 2\n}\n",
                         "regions": [region(json!([{"line": 1, "start_column": 5, "end_column": 9}]))]},
-                "stats": {"textual": {"added": 1, "removed": 1}, "structural": {"added": 1, "removed": 0}},
+                "stats": {"textual": {"added": 1, "removed": 1}, "visible": {"added": 1, "removed": 1}},
             },
         });
         assert_eq!(serde_json::to_value(example_file()).unwrap(), expected);

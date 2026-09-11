@@ -1,7 +1,11 @@
 //! The v2 stdout stream: manifest, one record per file as it finishes, footer.
 use super::project::{self, Inputs};
-use super::{Diff, Event, FileChange, Outcome, Pairing, Problem, Snapshot, SyntaxSpan, VERSION};
+use super::{
+    Diff, Event, FileChange, LineCounts, Node, Outcome, Pairing, Problem, Region, Snapshot, Source,
+    SyntaxSpan, VERSION,
+};
 use crate::git::{DiffSession, FileProblem, LoadedFile};
+use crate::hash::DftHashSet;
 use crate::mutate::Mutations;
 use crate::summary::{DiffResult, FileContent, FileFormat};
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -192,8 +196,12 @@ fn mutate(
     projected: Result<Diff, Problem>,
 ) -> Result<Outcome, Problem> {
     let outcome = match projected {
-        Ok(Diff::Text { mut sides, stats }) => {
+        Ok(Diff::Text {
+            mut sides,
+            mut stats,
+        }) => {
             mutations.apply_fold(entry, &mut sides)?;
+            stats.visible = visible_counts(&sides);
             Ok(Diff::Text { sides, stats })
         }
         other => other,
@@ -335,31 +343,147 @@ pub(crate) fn write_file(
     Ok(ended)
 }
 
+/// Changed lines that start on screen. A line counts when it carries a
+/// `changed` span, or when its leaf exists on one side only (every line of
+/// a one-sided leaf is new or removed, blank ones included). Lines inside a
+/// collapsed region, or under one, are not counted.
+pub(crate) fn visible_counts(sides: &Pairing<Source>) -> LineCounts {
+    fn ids(regions: &[Region], out: &mut DftHashSet<u32>) {
+        for region in regions {
+            out.insert(region.id);
+            if let Node::Fold { children } = &region.node {
+                ids(children, out);
+            }
+        }
+    }
+    fn count(regions: &[Region], other: &DftHashSet<u32>, hidden: bool) -> u32 {
+        let mut total = 0;
+        for region in regions {
+            let hidden = hidden || region.visibility.collapsed;
+            match &region.node {
+                Node::Leaf { changed } => {
+                    if hidden {
+                        continue;
+                    }
+                    if other.contains(&region.id) {
+                        let lines: DftHashSet<u32> = changed.iter().map(|span| span.line).collect();
+                        total += lines.len() as u32;
+                    } else {
+                        total += region.range.lines().len() as u32;
+                    }
+                }
+                Node::Fold { children } => total += count(children, other, hidden),
+            }
+        }
+        total
+    }
+    let side_ids = |source: Option<&Source>| {
+        let mut out = DftHashSet::default();
+        if let Some(source) = source {
+            ids(&source.regions, &mut out);
+        }
+        out
+    };
+    let (lhs_ids, rhs_ids) = (side_ids(sides.lhs()), side_ids(sides.rhs()));
+    LineCounts {
+        added: sides
+            .rhs()
+            .map_or(0, |rhs| count(&rhs.regions, &lhs_ids, false)),
+        removed: sides
+            .lhs()
+            .map_or(0, |lhs| count(&lhs.regions, &rhs_ids, false)),
+    }
+}
+
 #[cfg(test)]
-mod tests {
+mod visible_tests {
     use super::*;
+    use crate::protocol::{SourcePos, SourceRange, Span, Visibility};
+
+    fn pos(line: u32) -> SourcePos {
+        SourcePos { line, column: 0 }
+    }
+
+    fn leaf(id: u32, lines: (u32, u32), changed: &[u32], collapsed: bool) -> Region {
+        Region {
+            id,
+            range: SourceRange {
+                start: pos(lines.0),
+                end: pos(lines.1),
+            },
+            tags: vec![],
+            visibility: Visibility {
+                collapsed,
+                label: String::new(),
+            },
+            node: Node::Leaf {
+                changed: changed
+                    .iter()
+                    .map(|&line| Span {
+                        line,
+                        start_column: 0,
+                        end_column: 1,
+                    })
+                    .collect(),
+            },
+        }
+    }
+
+    fn fold(id: u32, lines: (u32, u32), collapsed: bool, children: Vec<Region>) -> Region {
+        Region {
+            id,
+            range: SourceRange {
+                start: pos(lines.0),
+                end: pos(lines.1),
+            },
+            tags: vec!["body".to_owned()],
+            visibility: Visibility {
+                collapsed,
+                label: String::new(),
+            },
+            node: Node::Fold { children },
+        }
+    }
+
+    fn source(regions: Vec<Region>) -> Source {
+        Source {
+            text: String::new(),
+            syntax: vec![],
+            regions,
+        }
+    }
 
     #[test]
-    fn fallback_files_still_get_syntax_spans() {
-        let params = crate::config::Config::from_toml("")
-            .unwrap()
-            .compile()
-            .unwrap();
-        let src = "fn f() {\n    let x = 1;\n}\n";
-        let diff = DiffResult::from_sources_with_options(
-            "a.rs",
-            "fn g() {\n    let y = 2;\n}\n",
-            src,
-            &params,
-            &crate::options::DisplayOptions::default(),
-            &crate::options::DiffOptions {
-                graph_limit: 1,
-                ..crate::options::DiffOptions::default()
-            },
-        );
-        assert!(matches!(diff.file_format, FileFormat::TextFallback { .. }));
-        let (lhs, rhs) = syntax_spans(&diff, &params, std::path::Path::new("a.rs"));
-        assert!(!lhs.is_empty() && !rhs.is_empty());
-        assert!(rhs.iter().any(|span| span.capture.starts_with("keyword")));
+    fn counts_span_lines_and_every_line_of_a_one_sided_leaf() {
+        let rhs = source(vec![
+            // paired leaf: only the lines with spans count (two, one twice)
+            leaf(1, (0, 3), &[0, 1, 1], false),
+            // paired leaf without spans: unchanged context, not counted
+            leaf(9, (3, 4), &[], false),
+            // one-sided leaf with no spans (blank lines): every line counts
+            leaf(2, (4, 6), &[], false),
+            // collapsed leaf: hidden
+            leaf(3, (6, 9), &[6, 7], true),
+            // open fold with an open one-sided leaf: every line counts
+            fold(4, (9, 12), false, vec![leaf(5, (9, 12), &[10], false)]),
+            // collapsed fold: its open child is hidden by the ancestor
+            fold(6, (12, 15), true, vec![leaf(7, (12, 15), &[13, 14], false)]),
+        ]);
+        let lhs = source(vec![
+            leaf(1, (0, 3), &[0], false),
+            leaf(9, (3, 4), &[], false),
+            leaf(8, (4, 7), &[4, 5], true),
+        ]);
+        let counts = visible_counts(&Pairing::Both { lhs, rhs });
+        assert_eq!(counts.added, 2 + 2 + 3);
+        assert_eq!(counts.removed, 1);
+    }
+
+    #[test]
+    fn a_missing_side_counts_nothing() {
+        let rhs = source(vec![leaf(1, (0, 1), &[0], false)]);
+        let counts = visible_counts(&Pairing::RightOnly { rhs });
+        assert_eq!(counts.added, 1);
+        assert_eq!(counts.removed, 0);
     }
 }

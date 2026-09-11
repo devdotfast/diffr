@@ -36,8 +36,8 @@ pub(crate) struct Config {
 }
 
 /// When a file exceeds one of these, diffr falls back to a line diff for
-/// it: no folds, no collapse rules, no summaries, and `stats.structural`
-/// carries the reason. The `DFT_BYTE_LIMIT`, `DFT_GRAPH_LIMIT` and
+/// it: the alignment is line-based and `stats.fallback` carries the
+/// reason; folds still come from the parse where it succeeded. The `DFT_BYTE_LIMIT`, `DFT_GRAPH_LIMIT` and
 /// `DFT_PARSE_ERROR_LIMIT` variables override the file, and the matching
 /// command-line flags override both.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

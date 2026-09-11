@@ -88,16 +88,13 @@ fn stats(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> Stats {
         added: novel_lines(&rhs_lines).len() as u32,
         removed: novel_lines(&lhs_lines).len() as u32,
     };
-    let structural = match &result.file_format {
-        FileFormat::SupportedLanguage(_) => Ok(LineCounts {
-            added: novel_lines(&result.rhs_positions).len() as u32,
-            removed: novel_lines(&result.lhs_positions).len() as u32,
-        }),
-        FileFormat::PlainText => Err(Problem {
+    let fallback = match &result.file_format {
+        FileFormat::SupportedLanguage(_) => None,
+        FileFormat::PlainText => Some(Problem {
             code: "unsupported_language".to_owned(),
             message: "no tree-sitter grammar for this file".to_owned(),
         }),
-        FileFormat::TextFallback { reason } => Err(Problem {
+        FileFormat::TextFallback { reason } => Some(Problem {
             code: fallback_code(reason).to_owned(),
             message: reason.clone(),
         }),
@@ -105,7 +102,11 @@ fn stats(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> Stats {
     };
     Stats {
         textual,
-        structural,
+        // Before any mutation runs nothing starts collapsed except context
+        // gaps, which hold no changed lines; the stream recounts after
+        // mutations.
+        visible: textual,
+        fallback,
     }
 }
 
@@ -936,7 +937,7 @@ mod tests {
             let Diff::Text { stats, .. } = &diff else {
                 panic!("text diff");
             };
-            assert_eq!(stats.structural.is_ok(), structural);
+            assert_eq!(stats.fallback.is_none(), structural);
             let (lhs, rhs) = sources(&diff);
             let (lhs, rhs) = (lhs.unwrap(), rhs.unwrap());
             assert_tiles(lhs);
@@ -994,7 +995,7 @@ mod tests {
         let Diff::Text { stats, .. } = &diff else {
             panic!("text diff");
         };
-        assert_eq!(stats.structural.as_ref().unwrap_err().code, "too_complex");
+        assert_eq!(stats.fallback.as_ref().unwrap().code, "too_complex");
         let (_, rhs) = sources(&diff);
         let rhs = rhs.unwrap();
         let bodies: Vec<_> = all(&rhs.regions)
@@ -1269,14 +1270,13 @@ mod tests {
                 removed: 1
             }
         );
-        let structural = stats.structural.as_ref().unwrap();
-        assert_eq!(structural.added, 1);
+        assert!(stats.fallback.is_none());
         let diff = project("a.unknownext", "x\n", "y\n", 3);
         let Diff::Text { stats, .. } = &diff else {
             panic!("text")
         };
         assert_eq!(
-            stats.structural.as_ref().unwrap_err().code,
+            stats.fallback.as_ref().unwrap().code,
             "unsupported_language"
         );
     }

@@ -161,7 +161,13 @@ with tempfile.TemporaryDirectory(prefix="diffr-stream-") as temp:
     assert not any(r["kind"] == "fold" for r in all_regions(rust["rhs"]["regions"]))
     assert "syntax" not in rust["rhs"]
     assert rust["stats"]["textual"] == {"added": 1, "removed": 0}
-    assert rust["stats"]["structural"] == {"added": 1, "removed": 0}
+    assert "fallback" not in rust["stats"]
+    assert rust["stats"]["visible"] == {"added": 1, "removed": 0}
+    for record in records.values():
+        if "diff" in record and record["diff"]["type"] == "text":
+            visible, textual = record["diff"]["stats"]["visible"], record["diff"]["stats"]["textual"]
+            assert visible["added"] <= textual["added"], record["diff"]["stats"]
+            assert visible["removed"] <= textual["removed"], record["diff"]["stats"]
     check_tiling(rust["lhs"])
     check_tiling(rust["rhs"])
     changed = [leaf for leaf in leaves(rust["rhs"]["regions"]) if "changed" in leaf]
@@ -210,7 +216,7 @@ with tempfile.TemporaryDirectory(prefix="diffr-stream-") as temp:
     )
     # The structural limits come from [diff]; exceeding one names the key.
     events = stream(repo, base, head, "--", "a.rs")
-    assert "structural" in events[1]["diff"]["stats"], events[1]["diff"]["stats"]
+    assert "fallback" not in events[1]["diff"]["stats"], events[1]["diff"]["stats"]
     for args in (["--graph-limit", "1"], ["--set", "diff.graph_limit=1"]):
         events = stream(repo, base, head, *args, "--", "a.rs")
         fallback = events[1]["diff"]["stats"]["fallback"]
@@ -291,7 +297,8 @@ with tempfile.TemporaryDirectory(prefix="diffr-no-index-") as temp:
     events = [json.loads(line) for line in result.stdout.splitlines()]
     assert events[0]["lhs"] == {"type": "path", "path": str(before)}
     assert events[1]["file"]["lhs"]["path"] == str(before)
-    assert events[1]["diff"]["stats"]["structural"] == {"added": 1, "removed": 1}
+    assert events[1]["diff"]["stats"]["textual"] == {"added": 1, "removed": 1}
+    assert "fallback" not in events[1]["diff"]["stats"]
     assert events[2] == {"type": "complete", "succeeded": 1, "failed": 0}
 
 # A configured fold hook fills fold labels before each file record; a hook
@@ -485,4 +492,28 @@ if os.name == "posix":
             assert json.loads(process.stdout.readline())["type"] == "start"
             process.stdout.close()
             assert process.wait(timeout=30) != 0
+# `stats.visible` follows the default visibility: collapsing test bodies
+# removes their changed lines from the count, and never exceeds `textual`.
+with tempfile.TemporaryDirectory(prefix="diffr-visible-") as temp:
+    repo = Path(temp)
+    git(repo, "init", "-q")
+    git(repo, "commit", "--allow-empty", "-qm", "empty")
+    base = git(repo, "rev-parse", "HEAD")
+    (repo / "t.py").write_text(
+        "def helper():\n    return 1\n\n\ndef test_helper():\n    assert helper() == 1\n    assert helper() != 2\n    assert helper() > 0\n"
+    )
+    git(repo, "add", "-A")
+    head = commit(repo, "add tests")
+    collapsed = stream(repo, base, head, "--", "t.py")[1]["diff"]["stats"]
+    expanded = stream(
+        repo, base, head, "--set", "folds.collapse_test_bodies=false", "--", "t.py"
+    )[1]["diff"]["stats"]
+    assert collapsed["textual"] == expanded["textual"] == {"added": 8, "removed": 0}, (
+        collapsed,
+        expanded,
+    )
+    assert expanded["visible"] == {"added": 8, "removed": 0}, expanded
+    assert collapsed["visible"]["added"] < expanded["visible"]["added"], collapsed
+    assert collapsed["visible"]["added"] <= collapsed["textual"]["added"]
+
 print("CLI streaming, cancellation and Git operand checks passed")

@@ -298,8 +298,8 @@ pub struct SyntaxSpan {
 
 /// A range on one side. The same `id` on the other side is its
 /// counterpart. Two leaves correspond when the line alignment pairs their
-/// lines. Two folds correspond when their header lines are paired as
-/// unchanged in that alignment, whichever engine produced it. Ids appear
+/// lines. Two folds correspond when the alignment pairs their header
+/// lines, changed or not, whichever engine produced it. Ids appear
 /// at most once per side. A paired leaf has the same line count on both
 /// sides and its rows pair line for line; a paired leaf whose counterpart
 /// is behind the reading cursor is a move, and the frontend chooses how to

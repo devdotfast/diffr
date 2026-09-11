@@ -168,6 +168,10 @@ export function rowsForFile(
   const hidden = [hiddenLines(folds[0], collapsed), hiddenLines(folds[1], collapsed)];
   const headers = [foldHeaders(folds[0], leaves[0], collapsed), foldHeaders(folds[1], leaves[1], collapsed)];
   const caches = [new Map<number, RenderSpan[]>(), new Map<number, RenderSpan[]>()];
+  // A leaf is novel when it carries change spans or has no counterpart; every line in it is
+  // tinted, and the spans inside get the darker word tint on top.
+  const ids = [new Set(leaves[0].map((l) => l.id)), new Set(leaves[1].map((l) => l.id))];
+  const novel = (leaf: Leaf) => leaf.changed.size > 0 || !ids[leaf.side ? 0 : 1].has(leaf.id);
   const cell = (leaf: Leaf | null, line: number | null, side: 0 | 1): SplitLineCell => {
     if (line === null || leaf === null) return { kind: "empty", sign: " ", spans: [] };
     const text = texts[side][line];
@@ -178,7 +182,7 @@ export function rowsForFile(
         side ? "right" : "left", theme);
       caches[side].set(line, spans);
     }
-    const changed = leaf.changed.has(line);
+    const changed = novel(leaf);
     return {
       kind: changed ? (side ? "addition" : "deletion") : "context",
       sign: changed ? (side ? "+" : "-") : " ",

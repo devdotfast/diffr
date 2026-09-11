@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createTestDiffFile, leaf, line, withIdenticalLines } from "./fixture";
-import { captureColor, dark, lineSpans, rowsForFile } from "./rows";
+import { captureColor, dark, light, lineSpans, rowsForFile } from "./rows";
 import { measureRows, visibleRows } from "./geometry";
 import { copySelection } from "./selection";
 test("split zips leaves on their ids, unified groups old before new", () => {
@@ -35,6 +35,28 @@ test("moved leaves render one-sided on each side", () => {
   const rows = rowsForFile(file, 0, "split", dark).filter((r) => r.left);
   expect(rows.map((r) => [r.left!.lineNumber, r.right!.lineNumber])).toEqual([
     [undefined, 1], [1, 2], [2, undefined],
+  ]);
+});
+test("changed spans paint the darker word tint, distinct from the line tint", () => {
+  for (const theme of [dark, light]) {
+    const spans = lineSpans("let x = old + y;", [], [line(0, 8, 11)], "right", theme);
+    expect(spans.map((s) => [s.text, s.bg])).toEqual([
+      ["let x = ", undefined], ["old", theme.addWord], [" + y;", undefined],
+    ]);
+    expect(theme.addWord).not.toBe(theme.addition);
+    expect(lineSpans("old", [], [line(0, 0, 3)], "left", theme)[0].bg).toBe(theme.deleteWord);
+    expect(theme.deleteWord).not.toBe(theme.deletion);
+  }
+});
+test("every line of a novel leaf is tinted, even without a span", () => {
+  const file = createTestDiffFile();
+  if (file.diff.type !== "text") throw new Error();
+  file.diff.lhs = { text: "a\n", syntax: [], regions: [leaf(1, 0, 1)] };
+  // A new block: one changed word, a blank line, and an unpaired leaf with no spans at all.
+  file.diff.rhs = { text: "a\nb = 1\n\nc\n", syntax: [], regions: [leaf(1, 0, 1), leaf(2, 1, 3, [line(1, 4, 5)]), leaf(3, 3, 4)] };
+  const rows = rowsForFile(file, 0, "split", dark).filter((r) => r.right);
+  expect(rows.map((r) => [r.right!.kind, r.right!.spans.some((s) => s.bg)])).toEqual([
+    ["context", false], ["addition", true], ["addition", false], ["addition", false],
   ]);
 });
 test("byte spans survive multibyte characters and tabs; captures pick theme colours", () => {
@@ -110,10 +132,10 @@ test("context gaps come from collapsed unchanged leaves, one row per gap", () =>
     fold?.collapsed ? fold.label : line;
   expect(split.slice(1).map(r => shown(r.left?.fold, r.left?.lineNumber)))
     .toEqual(["1 unchanged lines", 2, 3, "5 unchanged lines", 9, 10, "2 unchanged lines"]);
-  // Unified shows the changed line once per side.
+  // Unified shows the novel leaf's lines once per side, removals first.
   const unified = rowsForFile(file, 0, "unified", dark, new Set([1, 3, 5]));
   expect(unified.slice(1).map(r => shown(r.cell?.fold, r.cell?.newLineNumber ?? r.cell?.oldLineNumber)))
-    .toEqual(["1 unchanged lines", 2, 2, 3, "5 unchanged lines", 9, 10, "2 unchanged lines"]);
+    .toEqual(["1 unchanged lines", 2, 3, 2, 3, "5 unchanged lines", 9, 10, "2 unchanged lines"]);
   for (const layout of ["split", "unified"] as const) {
     expect(rowsForFile(file, 0, layout, dark, new Set([1, 3, 5])).filter(r => r.hunkStart)).toHaveLength(1);
     expect(rowsForFile(file, 0, layout, dark, new Set()).length).toBeGreaterThanOrEqual(13);

@@ -33,8 +33,14 @@ in [streaming.md](streaming.md), diffing `--jobs N` files at once (default 16)
 and emitting each as it finishes; `--syntax` adds every token's highlight
 capture to it. `--format ndjson-v1` is the previous stream, kept while frontends
 migrate. `--format snapshot` is the fixture text adapter.
-`-U N` selects ordinary context padding. Matching limits, `--ignore-comments`,
-color, width and inline/split display remain configurable; see `--help`.
+`-U N` selects context padding, defaulting to `folds.context_lines`. Matching
+limits, `--ignore-comments`, color, width and inline/split display remain
+configurable; see `--help`.
+
+Configuration is layered from the global file, the repository's `diffr.toml`,
+`DIFFR_*` variables and `--set key=value`; `--config PATH` replaces the global
+file. `diffr config` opens the settings screen, and `diffr config schema`,
+`show` and `set` are the commands frontends use. See [config.md](config.md).
 
 This is a subset of git diff, not full flag parity: unsupported options and Git
 magic pathspecs fail explicitly. Untracked files are excluded as in git diff.

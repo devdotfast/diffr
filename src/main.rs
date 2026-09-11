@@ -41,6 +41,7 @@
 #![warn(clippy::todo)]
 #![warn(clippy::dbg_macro)]
 
+mod category;
 mod cli;
 mod config;
 mod conflicts;
@@ -57,6 +58,7 @@ mod hash;
 mod hook;
 mod line_parser;
 mod lines;
+mod mutate;
 mod options;
 mod parse;
 pub(crate) mod protocol;

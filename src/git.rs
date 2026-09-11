@@ -175,12 +175,14 @@ impl FileChange {
             ),
             (None, None) => panic!("a standalone comparison needs at least one path"),
         };
-        let language = language_of(new_path.as_deref().or(old_path.as_deref()).expect("a path"));
+        let path = new_path.as_deref().or(old_path.as_deref()).expect("a path");
+        let language = language_of(path);
+        let class = crate::category::from_path(path).map(str::to_owned);
         Self {
             old_path,
             new_path,
             status,
-            class: None,
+            class,
             sides,
             language,
         }
@@ -203,6 +205,22 @@ impl FileChange {
             visibility: protocol::Visibility::default(),
         }
     }
+}
+
+/// `diffr-classify` wins; then `linguist-generated`; then the built-in
+/// path rules.
+fn category(repo: &Repository, path: &str) -> Result<Option<String>> {
+    let attr = |name: &str| {
+        repo.get_attr(Path::new(path), name, AttrCheckFlags::FILE_THEN_INDEX)
+            .map(AttrValue::from_string)
+    };
+    if let AttrValue::String(value) = attr("diffr-classify")? {
+        return Ok(Some(value.to_owned()));
+    }
+    if let AttrValue::True = attr("linguist-generated")? {
+        return Ok(Some(crate::category::GENERATED.to_owned()));
+    }
+    Ok(crate::category::from_path(path).map(str::to_owned))
 }
 
 fn language_of(path: &str) -> Option<String> {
@@ -420,14 +438,7 @@ impl DiffSession {
                     sides,
                     language,
                 };
-                file.class = match AttrValue::from_string(repo.get_attr(
-                    Path::new(file.path()),
-                    "diffr-classify",
-                    AttrCheckFlags::FILE_THEN_INDEX,
-                )?) {
-                    AttrValue::String(value) => Some(value.to_owned()),
-                    _ => None,
-                };
+                file.class = category(&repo, file.path())?;
                 pending.push(PendingFile {
                     before: Source::from_delta(
                         delta.old_file(),

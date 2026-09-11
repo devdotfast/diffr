@@ -3,10 +3,10 @@
 
 Listens on 127.0.0.1:$DIFFR_HOOK_PORT. The first argument selects a behavior:
   echo   answer every fold with "pseudo <placeholder>"
-  first  answer only fold 0 with "summary of f"
+  first  answer only the first fold with "summary of f"
   error  return a JSON-RPC error for every request
   slow   never answer (sleeps inside the handler)
-  cwd    answer fold 0 with the working directory and assert DIFFR_WORKSPACE
+  cwd    answer the first fold with the working directory and assert DIFFR_WORKSPACE
   bad    return a non-JSON body
 """
 
@@ -43,12 +43,12 @@ class Handler(BaseHTTPRequestHandler):
                     str(f["id"]): "pseudo " + f["placeholder"] for f in params["folds"]
                 }
             elif MODE == "first":
-                texts = {"0": "summary of f"}
+                texts = {str(params["folds"][0]["id"]): "summary of f"}
             elif MODE == "cwd":
                 assert os.environ["DIFFR_WORKSPACE"] == sys.argv[2], os.environ[
                     "DIFFR_WORKSPACE"
                 ]
-                texts = {"0": os.getcwd()}
+                texts = {str(params["folds"][0]["id"]): os.getcwd()}
             else:
                 raise SystemExit(f"unknown mode {MODE}")
             body = json.dumps(

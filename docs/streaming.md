@@ -18,11 +18,15 @@ from the internal diff is `src/protocol/project.rs`.
 
 ## Configuration and ordering
 
-Each invocation loads repository-root `diffr.toml` and compiles it once.
-`--config PATH` selects another file instead. Omitted keys retain bundled defaults;
-query strings replace whole values, and empty queries disable that feature.
+Each invocation resolves one configuration from the bundled defaults, the
+global file, the repository's `diffr.toml`, `DIFFR_*` variables and `--set`
+overrides, then compiles it once; see [config.md](config.md). Omitted keys
+retain defaults; query strings replace whole values, and empty queries disable
+that feature.
 
-File categories come from the current workspace's Git attributes:
+File categories come from `diffr-classify` and `linguist-generated` Git
+attributes, then built-in path rules for lockfiles, build output, tests and
+docs:
 
 ```gitattributes
 *          diffr-classify=source
@@ -100,7 +104,7 @@ One shape everywhere: `{"code": "<snake_case>", "message": "<prose>"}`.
 - On a `file` record, `error` replaces `diff` and the run continues. Codes:
   `binary`, `not_utf8`, `unsupported_file_type` (symlinks, submodules),
   `unmerged`, `read_failed`, `fold_pairing`.
-- On `complete`, `aborted` reports a run-level failure, currently only
+- On `complete`, `aborted` reports a run-level failure: `summarizer_failed` or
   `hook_failed`. diffr stops pulling files, lets the ones in flight finish, and
   exits 2. Every `file` record already written stays valid.
 - Setup failures (bad revision, unreadable config, hook that never starts)
@@ -206,32 +210,40 @@ Regular UTF-8 text files are supported. Binary and non-UTF-8 files, symlinks,
 submodules and unmerged index entries produce per-file errors. Non-UTF-8 paths
 fail discovery.
 
-## Fold hooks
+## Mutations and fold hooks
 
-A trusted hook can replace a fold's collapsed label with richer text, such as
-pseudocode, before its `file` record is emitted. A hook is a JSON-RPC 2.0
-server over HTTP that diffr starts once per invocation and calls on loopback:
+After projection, mutations set what starts collapsed and what its label says:
+generated and test files in the manifest, deleted bodies, and summaries for
+new bodies from the built-in summarizer. [config.md](config.md) lists them and
+their order. Their output is ordinary `visibility` on files and regions;
+frontends need no knowledge of which mutation produced it.
+
+A trusted hook can add its own summaries. It is a JSON-RPC 2.0 server over
+HTTP that diffr starts once per invocation, calls on loopback, and runs after
+the built-in summarizer:
 
 ```toml
 [folds.hook]
 command = ["uv", "run", "--script", "examples/hooks/summarize.py"]
-tags = ["body"]            # optional; any listed tag qualifies. Omit to send every fold.
-min_lines = 12             # optional; default 0
+tags = ["body"]            # optional; any listed tag qualifies. Omit to send every tagged fold.
+min_lines = 12             # optional; defaults to folds.min_lines
 timeout_ms = 5000          # optional; per call
 startup_timeout_ms = 30000 # optional; time allowed to start listening
 ```
 
 The command starts with the caller's environment plus `DIFFR_HOOK_PORT`, the
 loopback port it must listen on, and `DIFFR_WORKSPACE`, the diffed repository's
-root. It runs in the directory containing the config file, so relative paths in
-`command` resolve against the config wherever it lives. Its stdout is discarded
-because diffr's own stdout carries the stream; log to stderr. diffr polls the
-port until the hook accepts connections, exits 2 before `start` if the hook
-exits or misses `startup_timeout_ms`, and kills the hook when the comparison ends.
+root. It runs in the directory of the file that configured it, so relative
+paths in `command` resolve against that file wherever it lives. Its stdout is
+discarded because diffr's own stdout carries the stream; log to stderr. diffr
+polls the port until the hook accepts connections, exits 2 before `start` if
+the hook exits or misses `startup_timeout_ms`, and kills the hook when the
+comparison ends.
 
-Only novel folds on the after side qualify: bodies that exist in the after
-source with no counterpart in the before source. Files with no qualifying fold
-never reach the hook. Streaming is the only output mode that runs hooks.
+Only new fold regions on the after side qualify: folds whose id has no
+counterpart on the before side, of at least `min_lines` lines. Files with no
+qualifying fold never reach the hook. Streaming is the only output mode that
+runs mutations.
 
 One call per file, method `summarize`, params by name. The worker diffing that
 file blocks on the reply; other workers keep calling, so a hook must serve
@@ -241,24 +253,26 @@ requests concurrently rather than one at a time.
 // diffr -> hook   POST / with a JSON-RPC 2.0 request
 {"jsonrpc": "2.0", "id": 7, "method": "summarize", "params": {
   "path": "src/auth.py", "language": "Python", "src": "<after source>",
-  "folds": [{"id": 0, "range": {"start": {"line": 40, "byte_column": 0}, "end": {"line": 88, "byte_column": 1}},
+  "folds": [{"id": 3, "start": {"line": 40, "column": 0}, "end": {"line": 88, "column": 1},
              "tags": ["body"], "placeholder": "Body"}]}}
 // hook -> diffr
-{"jsonrpc": "2.0", "id": 7, "result": {"0": "def refresh_token(session):\n    ..."}}
+{"jsonrpc": "2.0", "id": 7, "result": {"3": "def refresh_token(session):\n    ..."}}
 ```
 
-A fold `id` indexes that file's after-side folds in the order the hook received
-them; the matching region's `visibility.label` becomes the returned text. Folds
-missing from the result keep their placeholder. An error object, a timeout, an
-unknown fold id, or an invalid response is a run-level failure: the stream ends
-with `complete.aborted` set to `hook_failed` and diffr exits 2.
+A fold `id` is the region's id in that file's `rhs.regions`. The matching
+region starts collapsed with the returned text as its label, behind a
+`# pseudocode` comment line in the file's own syntax. Folds missing from the
+result keep their placeholder. An error object, a timeout, an unknown fold id,
+or an invalid response is a run-level failure: the stream ends with
+`complete.aborted` set to `hook_failed` and diffr exits 2.
 
 `examples/hooks/summarize.py` is a reference hook: an aiohttp server that hands
 each request to jsonrpcserver and asks Gemini Flash, with thinking disabled,
 for Python-style pseudocode. It needs `GOOGLE_API_KEY` and answers up to 16
 files at once on one asyncio loop with a shared httpx client. `uv run --script`
-installs its dependencies on first use. `tests/hooks/rpc_server.py` is a
-dependency-free hook used by the tests.
+installs its dependencies on first use. The built-in summarizer does the same
+job without a subprocess. `tests/hooks/rpc_server.py` is a dependency-free hook
+used by the tests.
 
 ## Fixture viewer
 

@@ -1,0 +1,112 @@
+# Configuration
+
+One configuration, layered. Later layers override earlier ones, key by key:
+
+1. Bundled defaults.
+2. The global file, `$XDG_CONFIG_HOME/diffr/config.toml` (usually
+   `~/.config/diffr/config.toml`). `--config PATH` replaces it and must exist.
+3. The repository's `diffr.toml`, when there is one.
+4. Environment variables `DIFFR_<TABLE>__<KEY>`, for example
+   `DIFFR_SUMMARIZE__API_KEY=...` or `DIFFR_FOLDS__MIN_LINES=8`.
+5. `--set key=value`, repeatable, for one run.
+
+Most users need nothing beyond the global file, and `diffr config` writes it.
+A repository file is for maintainers: language queries, or a rule the whole
+team wants.
+
+## Commands
+
+```sh
+diffr config                  # settings screen in the terminal frontend
+diffr config summarize        # the same, searching for "summarize"
+diffr config schema           # JSON Schema: description and default per key
+diffr config show [--json]    # the resolved configuration; api_key redacted
+diffr config show --reveal    # ...with the key
+diffr config set folds.min_lines 20
+diffr config set summarize.api_key "$KEY"
+```
+
+`set` writes one key into the global file (or the `--config` file), keeping
+everything else in it as written. Values are TOML: `true`, `12`, `1.5`,
+`["a", "b"]`; anything that is not valid TOML is taken as a string, and a
+number given to a string key stays a string. Unknown keys and wrong types are
+rejected before anything is written. Frontends drive their settings pages
+through these three commands; the schema is the only contract.
+
+## Keys
+
+```toml
+[folds]
+min_lines = 12             # bodies shorter than this are never summarized or collapsed
+collapse_deleted = true    # deleted function bodies start collapsed, header visible
+collapse_generated = true  # generated files start hidden
+collapse_tests = true      # test files start hidden
+context_lines = 3          # unchanged lines kept around a change; -U overrides
+
+[summarize]
+enabled = true             # off without an API key, silently
+provider = "gemini"
+model = "gemini-3.8-flash"
+api_key = "..."            # or GEMINI_API_KEY / GOOGLE_API_KEY in the environment
+endpoint = "https://..."   # optional base URL override, for proxies and tests
+timeout_ms = 60000
+max_concurrency = 16       # requests in flight across files
+retries = 3                # on timeouts, rate limits and server errors
+
+[theme]
+name = "default-dark"      # a bundled terminal theme
+path = "/path/to/theme.toml"  # or a Helix-style theme file
+
+[languages.rust]           # tree-sitter queries; see src/config/README.md
+folds = '''...'''
+context = '''...'''
+
+[folds.hook]               # an external JSON-RPC summarizer; see streaming.md
+command = ["uv", "run", "--script", "examples/hooks/summarize.py"]
+tags = ["body"]
+min_lines = 12             # optional; defaults to folds.min_lines
+timeout_ms = 5000
+startup_timeout_ms = 30000
+```
+
+`languages` and `folds.hook` are not in the schema, so the settings screen
+does not show them; `config set` still accepts their keys.
+
+## File categories
+
+Every file in the manifest carries a `category`: `source`, `test`,
+`generated`, `docs`, or whatever a repository assigns. In order of precedence:
+
+1. A `diffr-classify` git attribute.
+2. A set `linguist-generated` attribute, which means `generated`.
+3. Built-in path rules: lockfiles and `dist/`, `build/`, `vendor/`,
+   `node_modules/`, `__generated__/`, `*.min.js`, `*.pb.go`, `*.generated.*`
+   are generated; `tests/`, `test/`, `__tests__/`, `spec/`, `*_test.go`,
+   `*.test.*`, `*.spec.*`, `test_*.py`, `*_test.py`, `conftest.py` are tests;
+   `docs/` and `*.md` are docs.
+
+```gitattributes
+web/schema.json  diffr-classify=generated
+fixtures/**      diffr-classify=test
+```
+
+## Mutations
+
+After each file is diffed and projected onto the wire, mutations adjust what
+starts collapsed and what the collapsed label says. They never touch the diff
+itself. In order:
+
+1. `collapse_generated`, `collapse_tests`: the file's `visibility` in the
+   manifest, before `start` is written.
+2. `collapse_deleted`: deleted function bodies of at least `min_lines` lines,
+   labelled `"<n> lines removed"`.
+3. The built-in summarizer: new function bodies of at least `min_lines` lines
+   on the after side become Python-style pseudocode. The label starts with a
+   comment line in the file's own syntax, `# pseudocode` or `// pseudocode`,
+   then the text.
+4. `folds.hook`, when configured, over the same selection with its own tags
+   and threshold; its text gets the same comment line.
+
+A mutation that fails after its retries ends the run: the stream finishes with
+`complete.aborted` (`summarizer_failed` or `hook_failed`) and diffr exits 2.
+Files already written stay valid.

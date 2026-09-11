@@ -1,6 +1,5 @@
 //! Incremental stdout protocol over the shared file iterator.
 use crate::git::{DiffSession, FileChange, LoadedFile, Operand};
-use crate::hook::Hook;
 use crate::summary::DiffResult;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use serde::Serialize;
@@ -45,7 +44,6 @@ enum Event {
 pub(crate) fn write(
     session: DiffSession,
     jobs: usize,
-    hook: Option<Arc<Hook>>,
     output: &mut impl Write,
 ) -> crate::git::Result<bool> {
     let (sender, receiver) = sync_channel(1);
@@ -55,7 +53,7 @@ pub(crate) fn write(
         .build()?;
     let worker = thread::spawn(move || {
         // A disconnected consumer cancels production after the files in flight.
-        let _ = produce(session, &pool, hook.as_deref(), sender);
+        let _ = produce(session, &pool, sender);
     });
     let mut output = BufWriter::new(output);
     let result: crate::git::Result<bool> = (|| {
@@ -81,7 +79,6 @@ pub(crate) fn write(
 fn produce(
     session: DiffSession,
     pool: &rayon::ThreadPool,
-    hook: Option<&Hook>,
     sender: SyncSender<Event>,
 ) -> std::result::Result<(), SendError<Event>> {
     sender.send(Event::Start {
@@ -103,7 +100,7 @@ fn produce(
             let event = match loaded {
                 Ok(loaded) => {
                     succeeded.fetch_add(1, Ordering::Relaxed);
-                    file_event(file, loaded.diff(), hook)
+                    file_event(file, loaded.diff())
                 }
                 Err(error) => {
                     failed.fetch_add(1, Ordering::Relaxed);
@@ -124,13 +121,12 @@ fn produce(
     })
 }
 
-/// Summaries are filled in before the event so clients never see a fold change.
-fn file_event(file: FileChange, mut diff: DiffResult, hook: Option<&Hook>) -> Event {
-    let hook_error = hook.and_then(|hook| hook.summarize(&mut diff).err());
+/// The previous stream never carries summaries; hooks are a v2 feature.
+fn file_event(file: FileChange, diff: DiffResult) -> Event {
     Event::File {
         file,
         diff: diff.domain_json(),
-        hook_error,
+        hook_error: None,
     }
 }
 
@@ -157,7 +153,6 @@ pub(crate) fn write_file(
     before: &str,
     after: &str,
     compute: impl FnOnce() -> DiffResult,
-    hook: Option<&Hook>,
     output: &mut impl Write,
 ) -> crate::git::Result<()> {
     let file = FileChange::standalone(before, after);
@@ -172,7 +167,7 @@ pub(crate) fn write_file(
     )?;
     output.write_all(b"\n")?;
     output.flush()?;
-    serde_json::to_writer(&mut output, &file_event(file, compute(), hook))?;
+    serde_json::to_writer(&mut output, &file_event(file, compute()))?;
     output.write_all(b"\n")?;
     serde_json::to_writer(
         &mut output,
@@ -207,7 +202,6 @@ mod tests {
             "before.rs",
             "after.rs",
             || panic!("must not compute after manifest flush fails"),
-            None,
             &mut output,
         );
         assert!(result.is_err());

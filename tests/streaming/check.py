@@ -11,8 +11,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 EXE = ROOT / "target/debug/diffr"
+# An empty global configuration and no model API key, whatever the machine has.
+CONFIG_HOME = tempfile.mkdtemp(prefix="diffr-config-home-")
 ENV = dict(
-    os.environ,
+    {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("GEMINI_API_KEY", "GOOGLE_API_KEY")
+    },
+    XDG_CONFIG_HOME=CONFIG_HOME,
     GIT_CONFIG_GLOBAL="/dev/null",
     GIT_CONFIG_NOSYSTEM="1",
     GIT_AUTHOR_NAME="Test",
@@ -193,8 +200,10 @@ with tempfile.TemporaryDirectory(prefix="diffr-stream-") as temp:
         assert result.returncode == 2 and not result.stdout and result.stderr
     (repo / "diffr.toml").write_text("invalid toml")
     assert cli(repo, "--format", "ndjson", base, head).returncode == 2
+    # --config replaces the global file; the repository file still layers on top.
+    (repo / "diffr.toml").write_text("")
     custom = repo / "custom.toml"
-    custom.write_text("")
+    custom.write_text("[folds]\nmin_lines = 2\n")
     events = stream(repo, base, head, "--config", str(custom), "--", "a.rs")
     assert any(
         r["kind"] == "fold" for r in all_regions(events[1]["diff"]["rhs"]["regions"])
@@ -294,7 +303,7 @@ with tempfile.TemporaryDirectory(prefix="diffr-hook-") as temp:
 
     (repo / "diffr.toml").write_text(hook_config("echo"))
     events = {path_of(e): e for e in stream(repo, base, head)[1:-1]}
-    assert fold_labels(events["good.py"]) == ["pseudo Body"]
+    assert fold_labels(events["good.py"]) == ["# pseudocode\npseudo Body"]
     assert fold_labels(events["small.py"]) == []
     (repo / "diffr.toml").write_text(hook_config("error"))
     events = stream(repo, base, head, "--jobs", "1", code=2)
@@ -305,10 +314,12 @@ with tempfile.TemporaryDirectory(prefix="diffr-hook-") as temp:
     (repo / "diffr.toml").write_text(hook_config("exit"))
     assert cli(repo, "--format", "ndjson", base, head).returncode == 2
     # Relative hook paths resolve against the config file, not the repository.
+    # The repository file still layers over --config, so clear it first.
+    (repo / "diffr.toml").write_text("")
     with tempfile.TemporaryDirectory(prefix="diffr-hook-config-") as elsewhere:
         shutil.copy(rpc_server, Path(elsewhere) / "hook.py")
         (Path(elsewhere) / "hook.toml").write_text(
-            f"[folds.hook]\ncommand = [{json.dumps(sys.executable)}, 'hook.py', 'cwd', {json.dumps(str(repo.resolve()) + os.sep)}]\ntags = ['body']\n"
+            f"[folds.hook]\ncommand = [{json.dumps(sys.executable)}, 'hook.py', 'cwd', {json.dumps(str(repo.resolve()) + os.sep)}]\ntags = ['body']\nmin_lines = 3\n"
         )
         events = stream(
             repo,
@@ -319,7 +330,122 @@ with tempfile.TemporaryDirectory(prefix="diffr-hook-") as temp:
             "--",
             "good.py",
         )
-        assert fold_labels(events[1])[0] == str(Path(elsewhere).resolve())
+        assert fold_labels(events[1])[0] == "# pseudocode\n" + str(
+            Path(elsewhere).resolve()
+        )
+
+# Configuration: one layered file, the three commands frontends drive, and
+# the default collapse rules on the wire.
+with tempfile.TemporaryDirectory(prefix="diffr-config-") as temp:
+    repo = Path(temp) / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    (repo / "src").mkdir()
+    (repo / "src" / "lib.py").write_text(
+        "def gone():\n    a()\n    b()\n    c()\n\ndef kept():\n    a()\n"
+    )
+    (repo / "Cargo.lock").write_text("[[package]]\nname = 'a'\n")
+    base = commit(repo, "base")
+    (repo / "src" / "lib.py").write_text("def kept():\n    a()\n")
+    (repo / "Cargo.lock").write_text("[[package]]\nname = 'b'\n")
+    (repo / "test_lib.py").write_text("def test_kept():\n    assert True\n")
+    head = commit(repo, "head")
+    env = dict(ENV, XDG_CONFIG_HOME=str(Path(temp) / "home"))
+    config_file = Path(temp) / "home" / "diffr" / "config.toml"
+
+    def config(*args, code=0):
+        result = subprocess.run(
+            [str(EXE), "--repo", str(repo), "config", *args],
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+        assert result.returncode == code, result.stderr
+        return result.stdout.decode()
+
+    schema = json.loads(config("schema"))
+    assert schema["properties"]["folds"]
+    shown = json.loads(config("show", "--json"))
+    assert shown["folds"]["min_lines"] == 12 and shown["summarize"]["api_key"] is None
+    config("set", "folds.min_lines", "3")
+    config("set", "summarize.api_key", "1234")
+    config("set", "folds.typo", "1", code=2)
+    text = config_file.read_text()
+    assert "min_lines = 3" in text and 'api_key = "1234"' in text, text
+    shown = json.loads(config("show", "--json"))
+    assert shown["folds"]["min_lines"] == 3
+    assert shown["summarize"]["api_key"] == "<redacted>"
+    assert (
+        json.loads(config("show", "--json", "--reveal"))["summarize"]["api_key"]
+        == "1234"
+    )
+    result = subprocess.run(
+        [
+            str(EXE),
+            "--repo",
+            str(repo),
+            "--set",
+            "folds.min_lines=7",
+            "config",
+            "show",
+            "--json",
+        ],
+        capture_output=True,
+        env=env,
+        check=True,
+    )
+    assert json.loads(result.stdout)["folds"]["min_lines"] == 7
+
+    # No key in the environment and summarize disabled: the rules still run.
+    config("set", "summarize.enabled", "false")
+    with subprocess.Popen(
+        [str(EXE), "--repo", str(repo), "--format", "ndjson", base, head],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+    ) as process:
+        events = [json.loads(line) for line in process.stdout]
+        assert process.wait(timeout=30) == 0, process.stderr.read()
+    manifest = {
+        (f["file"].get("rhs") or f["file"]["lhs"])["path"]: f
+        for f in events[0]["files"]
+    }
+    assert manifest["Cargo.lock"]["category"] == "generated"
+    assert manifest["Cargo.lock"]["visibility"] == {
+        "collapsed": True,
+        "label": "Generated file · hidden by default",
+    }
+    assert (
+        manifest["test_lib.py"]["visibility"]["label"]
+        == "Test file · hidden by default"
+    )
+    assert "visibility" not in manifest["src/lib.py"]
+    lib = next(e for e in events[1:-1] if path_of(e) == "src/lib.py")
+    deleted = [
+        r
+        for r in all_regions(lib["diff"]["lhs"]["regions"])
+        if r["kind"] == "fold" and r.get("visibility", {}).get("collapsed")
+    ]
+    assert [r["visibility"]["label"] for r in deleted] == ["3 lines removed"], deleted
+    config("set", "folds.collapse_deleted", "false")
+    config("set", "folds.collapse_generated", "false")
+    with subprocess.Popen(
+        [str(EXE), "--repo", str(repo), "--format", "ndjson", base, head],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+    ) as process:
+        events = [json.loads(line) for line in process.stdout]
+        assert process.wait(timeout=30) == 0, process.stderr.read()
+    assert "visibility" not in next(
+        f for f in events[0]["files"] if path_of(f) == "Cargo.lock"
+    )
+    lib = next(e for e in events[1:-1] if path_of(e) == "src/lib.py")
+    assert not any(
+        r.get("visibility", {}).get("collapsed")
+        for r in all_regions(lib["diff"]["lhs"]["regions"])
+        if r["kind"] == "fold"
+    )
 
 # Closing the pipe while a multi-file producer is active must not leave it
 # blocked forever on a full queue. Unix CLI output retains normal SIGPIPE behavior.

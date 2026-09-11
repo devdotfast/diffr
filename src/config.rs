@@ -1,40 +1,147 @@
-//! Deserialize user settings, resolve defaults, and compile once before diffing.
+//! One configuration, layered: bundled defaults, the user's global file,
+//! the repository's `diffr.toml`, `DIFFR_*` environment variables, then
+//! `--set` overrides. Every field carries a doc comment, which becomes its
+//! description in `diffr config schema`.
 pub(crate) mod query;
+pub(crate) mod store;
 use crate::hash::DftHashMap;
 use crate::parse::{guess_language::Language, tree_sitter_parser};
+use figment::providers::{Env, Format, Serialized, Toml};
+use figment::Figment;
 use query::AnnotationQuery;
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use strum::IntoEnumIterator;
 
-#[derive(Default, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Config {
+    /// Tree-sitter fold and context queries per language, keyed by the
+    /// lowercase language name. Omitted queries keep the bundled ones; an
+    /// empty string disables that feature.
+    #[schemars(skip)]
     pub(crate) languages: BTreeMap<String, LanguageConfig>,
+    /// What gets folded and what starts collapsed.
     pub(crate) folds: FoldsConfig,
+    /// Pseudocode summaries for large new function bodies.
+    pub(crate) summarize: SummarizeConfig,
+    /// Colors for the terminal frontend.
+    pub(crate) theme: ThemeConfig,
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FoldsConfig {
+    /// Bodies shorter than this are never summarized or collapsed by a rule.
+    pub(crate) min_lines: usize,
+    /// Collapse deleted function bodies, keeping their header line visible.
+    pub(crate) collapse_deleted: bool,
+    /// Hide files classified as generated, such as lockfiles and build output.
+    pub(crate) collapse_generated: bool,
+    /// Hide files classified as tests.
+    pub(crate) collapse_tests: bool,
+    /// Unchanged lines kept visible on either side of a change. `-U` overrides it.
+    pub(crate) context_lines: u32,
+    /// An external JSON-RPC summarizer, run after the built-in one.
+    #[schemars(skip)]
     pub(crate) hook: Option<HookConfig>,
 }
 
+impl Default for FoldsConfig {
+    fn default() -> Self {
+        Self {
+            min_lines: 12,
+            collapse_deleted: true,
+            collapse_generated: true,
+            collapse_tests: true,
+            context_lines: 3,
+            hook: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct SummarizeConfig {
+    /// Summarize large new function bodies as pseudocode. Silently off
+    /// without an API key.
+    pub(crate) enabled: bool,
+    /// Which model API to call.
+    pub(crate) provider: Provider,
+    /// The model name sent to the provider.
+    pub(crate) model: String,
+    /// The provider's API key. `GEMINI_API_KEY` or `GOOGLE_API_KEY` in the
+    /// environment is used when this is unset.
+    pub(crate) api_key: Option<String>,
+    /// Override the provider's base URL, for proxies and tests.
+    pub(crate) endpoint: Option<String>,
+    /// Per-request limit in milliseconds.
+    pub(crate) timeout_ms: u64,
+    /// Requests in flight at once across files.
+    pub(crate) max_concurrency: usize,
+    /// Retries after a timeout, rate limit, or server error before the run
+    /// is aborted.
+    pub(crate) retries: u32,
+}
+
+impl Default for SummarizeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            provider: Provider::Gemini,
+            model: "gemini-3.8-flash".to_owned(),
+            api_key: None,
+            endpoint: None,
+            timeout_ms: 60_000,
+            max_concurrency: 16,
+            retries: 3,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[schemars(inline)]
+pub(crate) enum Provider {
+    Gemini,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct ThemeConfig {
+    /// A bundled theme name.
+    pub(crate) name: String,
+    /// A Helix-style theme file that replaces the bundled theme.
+    pub(crate) path: Option<PathBuf>,
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        Self {
+            name: "default-dark".to_owned(),
+            path: None,
+        }
+    }
+}
+
 /// A trusted subprocess that supplies summaries for large novel folds.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct HookConfig {
-    /// Relative command paths resolve against the config file, wherever it lives.
+    /// Relative command paths resolve against the file that configured the
+    /// hook, or the workspace when it came from the environment.
     #[serde(skip)]
     pub(crate) dir: PathBuf,
     pub(crate) command: Vec<String>,
     /// None sends every tagged fold; otherwise a fold needs one of these tags.
     #[serde(default)]
     pub(crate) tags: Option<Vec<String>>,
+    /// Overrides `folds.min_lines` for the hook alone.
     #[serde(default)]
-    pub(crate) min_lines: usize,
+    pub(crate) min_lines: Option<usize>,
     /// Per-call limit once the hook is listening.
     #[serde(default = "default_timeout_ms")]
     pub(crate) timeout_ms: u64,
@@ -51,7 +158,7 @@ fn default_startup_timeout_ms() -> u64 {
     30_000
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct LanguageConfig {
     /// None keeps the bundled query; an empty string disables this feature.
@@ -70,6 +177,8 @@ impl std::error::Error for ConfigError {}
 
 pub(crate) struct Params {
     languages: DftHashMap<Language, OnceLock<Arc<LanguageParams>>>,
+    pub(crate) folds: FoldsConfig,
+    pub(crate) summarize: SummarizeConfig,
     pub(crate) hook: Option<HookConfig>,
 }
 
@@ -96,31 +205,123 @@ impl LanguageParams {
     }
 }
 
+/// Where the layers come from.
+pub(crate) struct Sources<'a> {
+    /// The repository root; `diffr.toml` inside it is the repository layer.
+    pub(crate) workspace: &'a Path,
+    /// Replaces the global file. Must exist.
+    pub(crate) explicit: Option<&'a Path>,
+    /// `key=value` overrides, applied last.
+    pub(crate) overrides: &'a [String],
+}
+
+/// The user's global file: `$XDG_CONFIG_HOME/diffr/config.toml`, falling
+/// back to `~/.config/diffr/config.toml`.
+pub(crate) fn global_path() -> Result<PathBuf, ConfigError> {
+    let dir = match std::env::var_os("XDG_CONFIG_HOME") {
+        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => dirs::home_dir()
+            .ok_or_else(|| ConfigError("no home directory for this user".into()))?
+            .join(".config"),
+    };
+    Ok(dir.join("diffr").join("config.toml"))
+}
+
+/// A `key=value` override. Values parse as TOML; anything that is not
+/// valid TOML is a string.
+pub(crate) fn parse_override(text: &str) -> Result<(String, toml::Value), ConfigError> {
+    let (key, value) = text
+        .split_once('=')
+        .ok_or_else(|| ConfigError(format!("--set expects key=value, got {text:?}")))?;
+    Ok((key.to_owned(), parse_value(value)))
+}
+
+/// TOML scalars and arrays; anything else is the literal string.
+pub(crate) fn parse_value(text: &str) -> toml::Value {
+    match toml::from_str::<toml::Table>(&format!("v = {text}")) {
+        Ok(mut table) => match table.remove("v") {
+            Some(toml::Value::Table(_)) | Some(toml::Value::Datetime(_)) | None => {
+                toml::Value::String(text.to_owned())
+            }
+            Some(value) => value,
+        },
+        Err(_) => toml::Value::String(text.to_owned()),
+    }
+}
+
 impl Config {
-    pub(crate) fn load(workspace: &Path, explicit: Option<&Path>) -> Result<Self, ConfigError> {
-        let path = explicit
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| workspace.join("diffr.toml"));
-        match std::fs::read_to_string(&path) {
-            Ok(source) => {
-                let mut config = Self::from_toml(&source)?;
-                if let Some(hook) = &mut config.folds.hook {
-                    hook.dir = path
-                        .parent()
-                        .expect("config file has a parent")
-                        .to_path_buf();
+    /// Layer every source and resolve it. Missing global and repository
+    /// files are fine; an explicit `--config` file must exist.
+    pub(crate) fn load(sources: Sources<'_>) -> Result<Self, ConfigError> {
+        let global = match sources.explicit {
+            Some(path) => {
+                if !path.is_file() {
+                    return Err(ConfigError(format!("{}: not found", path.display())));
                 }
-                Ok(config)
+                path.to_path_buf()
             }
-            Err(error) if explicit.is_none() && error.kind() == std::io::ErrorKind::NotFound => {
-                Ok(Self::default())
+            None => global_path()?,
+        };
+        let overrides = sources
+            .overrides
+            .iter()
+            .map(|text| parse_override(text))
+            .collect::<Result<Vec<_>, _>>()?;
+        let figment = |overrides: &[(String, toml::Value)]| {
+            let mut figment = Figment::from(Serialized::defaults(Config::default()))
+                .merge(Toml::file(&global))
+                .merge(Toml::file(sources.workspace.join("diffr.toml")))
+                .merge(
+                    Env::prefixed("DIFFR_")
+                        .filter(|key| key.as_str().contains("__"))
+                        .split("__"),
+                );
+            for (key, value) in overrides {
+                figment = figment.merge(Serialized::default(key, value));
             }
-            Err(error) => Err(ConfigError(format!("{}: {error}", path.display()))),
+            figment
+        };
+        let typed = figment(&overrides);
+        let (figment, mut config) = match typed.extract::<Config>() {
+            Ok(config) => (typed, config),
+            Err(error) => {
+                // A value like `1234` for a string key parsed as a number; the
+                // literal text is the intended value.
+                let as_strings: Vec<_> = sources
+                    .overrides
+                    .iter()
+                    .map(|text| {
+                        let (key, value) = text.split_once('=').expect("validated above");
+                        (key.to_owned(), toml::Value::String(value.to_owned()))
+                    })
+                    .collect();
+                let retry = figment(&as_strings);
+                match retry.extract::<Config>() {
+                    Ok(config) if as_strings != overrides => (retry, config),
+                    _ => return Err(ConfigError(error.to_string())),
+                }
+            }
+        };
+        if let Some(hook) = &mut config.folds.hook {
+            hook.dir = figment
+                .find_metadata("folds.hook.command")
+                .and_then(|metadata| metadata.source.as_ref())
+                .and_then(|source| source.file_path())
+                .and_then(|path| path.parent())
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| sources.workspace.to_path_buf());
         }
+        Ok(config)
     }
 
     pub(crate) fn from_toml(source: &str) -> Result<Self, ConfigError> {
         toml::from_str(source).map_err(|error| ConfigError(error.to_string()))
+    }
+
+    /// The JSON Schema of the configuration, with a description and default
+    /// on every setting.
+    pub(crate) fn schema() -> serde_json::Value {
+        serde_json::to_value(schemars::schema_for!(Config)).expect("schema serializes")
     }
 
     pub(crate) fn compile(self) -> Result<Params, ConfigError> {
@@ -131,6 +332,11 @@ impl Config {
             if hook.timeout_ms == 0 || hook.startup_timeout_ms == 0 {
                 return Err(ConfigError("folds.hook timeouts must be positive".into()));
             }
+        }
+        if self.summarize.timeout_ms == 0 || self.summarize.max_concurrency == 0 {
+            return Err(ConfigError(
+                "summarize.timeout_ms and summarize.max_concurrency must be positive".into(),
+            ));
         }
         let defaults = Self::from_toml(include_str!("config/defaults.toml"))?;
         let mut resolved = defaults.languages;
@@ -167,6 +373,8 @@ impl Config {
         }
         Ok(Params {
             languages,
+            folds: self.folds.clone(),
+            summarize: self.summarize,
             hook: self.folds.hook,
         })
     }
@@ -301,7 +509,7 @@ mod tests {
         assert_eq!(hook.tags.as_deref(), Some(&["body".to_owned()][..]));
         assert_eq!(
             (hook.min_lines, hook.timeout_ms, hook.startup_timeout_ms),
-            (30, 5000, 30_000)
+            (Some(30), 5000, 30_000)
         );
         assert!(Config::from_toml("")
             .unwrap()
@@ -482,6 +690,42 @@ mod tag_tests {
     }
 
     #[test]
+    fn javascript_test_callbacks_are_tagged() {
+        let params = Params::default();
+        for (path, source) in [
+            (
+                "a.test.ts",
+                "it('adds', () => {\n  expect(1).toBe(1);\n});\n",
+            ),
+            ("a.test.js", "describe('x', function () {\n  run();\n});\n"),
+            (
+                "a.test.tsx",
+                "test('y', async () => {\n  await run();\n});\n",
+            ),
+        ] {
+            let result = DiffResult::from_sources_with_params(path, "", source, &params);
+            assert!(
+                result
+                    .rhs_folds
+                    .iter()
+                    .any(|fold| fold.tags == ["body", "test"]),
+                "{path}: {:?}",
+                result.rhs_folds.iter().map(|f| &f.tags).collect::<Vec<_>>()
+            );
+        }
+        let plain = DiffResult::from_sources_with_params(
+            "a.ts",
+            "",
+            "run('z', () => {\n  go();\n});\n",
+            &params,
+        );
+        assert!(plain
+            .rhs_folds
+            .iter()
+            .all(|fold| !fold.tags.iter().any(|tag| tag == "test")));
+    }
+
+    #[test]
     fn test_bodies_keep_both_tags_and_remain_paired() {
         use crate::parse::folds::FoldMatch;
         let params = Params::default();
@@ -497,5 +741,107 @@ mod tag_tests {
         assert_eq!(result.rhs_folds[0].tags, ["body", "test"]);
         assert!(matches!(&result.lhs_folds[0].match_kind,
             FoldMatch::Unchanged { opposite } if *opposite == result.rhs_folds[0].range));
+    }
+}
+
+#[cfg(test)]
+mod layer_tests {
+    use super::*;
+
+    fn load(dir: &Path, overrides: &[&str]) -> Result<Config, ConfigError> {
+        let overrides: Vec<String> = overrides.iter().map(|s| (*s).to_owned()).collect();
+        Config::load(Sources {
+            workspace: dir,
+            explicit: Some(&dir.join("global.toml")),
+            overrides: &overrides,
+        })
+    }
+
+    #[test]
+    fn layers_resolve_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("global.toml"),
+            "[folds]\nmin_lines = 5\ncollapse_tests = false\n[summarize]\nmodel = 'global'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("diffr.toml"),
+            "[summarize]\nmodel = 'repo'\n",
+        )
+        .unwrap();
+        let config = load(dir.path(), &["folds.min_lines=7"]).unwrap();
+        assert_eq!(config.folds.min_lines, 7);
+        assert!(!config.folds.collapse_tests);
+        assert!(config.folds.collapse_deleted);
+        assert_eq!(config.summarize.model, "repo");
+        assert_eq!(config.summarize.retries, 3);
+    }
+
+    #[test]
+    fn overrides_that_look_numeric_still_fill_string_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("global.toml"), "").unwrap();
+        let config = load(dir.path(), &["summarize.api_key=1234"]).unwrap();
+        assert_eq!(config.summarize.api_key.as_deref(), Some("1234"));
+        let config = load(dir.path(), &["summarize.api_key=abc-def"]).unwrap();
+        assert_eq!(config.summarize.api_key.as_deref(), Some("abc-def"));
+        let config = load(dir.path(), &["folds.collapse_deleted=false"]).unwrap();
+        assert!(!config.folds.collapse_deleted);
+    }
+
+    #[test]
+    fn unknown_keys_and_missing_explicit_files_are_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("global.toml"), "").unwrap();
+        assert!(load(dir.path(), &["folds.typo=1"]).is_err());
+        assert!(load(dir.path(), &["folds.min_lines=abc"]).is_err());
+        assert!(load(dir.path(), &["folds.min_lines"]).is_err());
+        assert!(Config::load(Sources {
+            workspace: dir.path(),
+            explicit: Some(&dir.path().join("absent.toml")),
+            overrides: &[],
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn hook_paths_resolve_against_the_file_that_configured_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("elsewhere");
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::write(
+            nested.join("global.toml"),
+            "[folds.hook]\ncommand = ['hook.py']\n",
+        )
+        .unwrap();
+        let config = Config::load(Sources {
+            workspace: dir.path(),
+            explicit: Some(&nested.join("global.toml")),
+            overrides: &[],
+        })
+        .unwrap();
+        assert_eq!(config.folds.hook.unwrap().dir, nested);
+    }
+
+    #[test]
+    fn schema_describes_every_setting_with_its_default() {
+        let schema = Config::schema();
+        let folds = &schema["properties"]["folds"];
+        let folds = match folds.get("$ref") {
+            Some(reference) => {
+                let name = reference.as_str().unwrap().rsplit('/').next().unwrap();
+                &schema["$defs"][name]
+            }
+            None => folds,
+        };
+        let min_lines = &folds["properties"]["min_lines"];
+        assert_eq!(min_lines["default"], 12);
+        assert!(min_lines["description"]
+            .as_str()
+            .unwrap()
+            .contains("never summarized"));
+        assert!(schema["properties"].get("languages").is_none());
+        assert!(folds["properties"].get("hook").is_none());
     }
 }

@@ -1,8 +1,8 @@
 //! The v2 stdout stream: manifest, one record per file as it finishes, footer.
 use super::project::{self, Inputs};
-use super::{Event, FileChange, Outcome, Pairing, Problem, Snapshot, SyntaxSpan, VERSION};
+use super::{Diff, Event, FileChange, Outcome, Pairing, Problem, Snapshot, SyntaxSpan, VERSION};
 use crate::git::{DiffSession, FileProblem, LoadedFile};
-use crate::hook::Hook;
+use crate::mutate::Mutations;
 use crate::summary::{DiffResult, FileContent, FileFormat};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::io::{BufWriter, Write};
@@ -31,10 +31,13 @@ pub(crate) struct Ended {
 pub(crate) fn write(
     session: DiffSession,
     jobs: usize,
-    hook: Option<Arc<Hook>>,
+    mutations: Arc<Mutations>,
     options: Options,
     output: &mut impl Write,
 ) -> crate::git::Result<Ended> {
+    // File mutations run before the manifest is written; a failure there is
+    // a setup error, not a stream event.
+    let manifest = manifest(&session, &mutations)?;
     let (sender, receiver) = sync_channel(1);
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(jobs)
@@ -42,7 +45,7 @@ pub(crate) fn write(
         .build()?;
     let worker = thread::spawn(move || {
         // A disconnected consumer cancels production after the files in flight.
-        let _ = produce(session, &pool, hook.as_deref(), options, sender);
+        let _ = produce(session, manifest, &pool, &mutations, options, sender);
     });
     let mut output = BufWriter::new(output);
     let result: crate::git::Result<Ended> = (|| {
@@ -75,10 +78,25 @@ pub(crate) fn write(
 /// The consumer went away; production stops after the files in flight.
 struct Disconnected;
 
+fn manifest(session: &DiffSession, mutations: &Mutations) -> crate::git::Result<Vec<FileChange>> {
+    session
+        .file_manifest()
+        .iter()
+        .map(|file| {
+            let mut entry = file.manifest_entry();
+            mutations
+                .apply_file(&mut entry)
+                .map_err(|problem| format!("{}: {}", problem.code, problem.message))?;
+            Ok(entry)
+        })
+        .collect()
+}
+
 fn produce(
     session: DiffSession,
+    manifest: Vec<FileChange>,
     pool: &rayon::ThreadPool,
-    hook: Option<&Hook>,
+    mutations: &Mutations,
     options: Options,
     sender: SyncSender<Event>,
 ) -> Result<(), Disconnected> {
@@ -87,11 +105,7 @@ fn produce(
         version: VERSION,
         lhs: Snapshot::from(&session.comparison.before),
         rhs: Snapshot::from(&session.comparison.after),
-        files: session
-            .file_manifest()
-            .iter()
-            .map(|file| file.manifest_entry())
-            .collect(),
+        files: manifest,
     })?;
     let succeeded = AtomicU32::new(0);
     let failed = AtomicU32::new(0);
@@ -104,7 +118,7 @@ fn produce(
     pool.install(|| {
         loader.par_bridge().for_each(|(file, loaded)| {
             let outcome = match loaded {
-                Ok(loaded) => match file_outcome(&loaded, hook, options) {
+                Ok(loaded) => match file_outcome(&loaded, mutations, options) {
                     Ok(outcome) => outcome,
                     Err(problem) => {
                         // A run-level failure: stop pulling files, let the ones in
@@ -149,16 +163,10 @@ fn problem_from(problem: FileProblem) -> Problem {
 /// `Err` here is a run-level failure, not a file-level one.
 fn file_outcome(
     loaded: &LoadedFile,
-    hook: Option<&Hook>,
+    mutations: &Mutations,
     options: Options,
 ) -> Result<Outcome, Problem> {
-    let mut diff = loaded.diff();
-    if let Some(hook) = hook {
-        hook.summarize(&mut diff).map_err(|message| Problem {
-            code: "hook_failed".to_owned(),
-            message,
-        })?;
-    }
+    let diff = loaded.diff();
     let syntax = if options.syntax {
         syntax_spans(&diff, &loaded.params)
     } else {
@@ -170,7 +178,26 @@ fn file_outcome(
         context_lines: loaded.context_lines as usize,
         syntax,
     };
-    Ok(project::diff(&diff, inputs).into())
+    let mut entry = loaded.file.manifest_entry();
+    mutations.apply_file(&mut entry)?;
+    mutate(mutations, &entry, project::diff(&diff, inputs))
+}
+
+/// Fold mutations see the projected text diff; a per-file failure passes
+/// through untouched.
+fn mutate(
+    mutations: &Mutations,
+    entry: &FileChange,
+    projected: Result<Diff, Problem>,
+) -> Result<Outcome, Problem> {
+    let outcome = match projected {
+        Ok(Diff::Text { mut sides, stats }) => {
+            mutations.apply_fold(entry, &mut sides)?;
+            Ok(Diff::Text { sides, stats })
+        }
+        other => other,
+    };
+    Ok(outcome.into())
 }
 
 pub(crate) fn syntax_spans(
@@ -213,13 +240,16 @@ pub(crate) fn write_file(
     compute: impl FnOnce() -> DiffResult,
     params: &crate::config::Params,
     context_lines: usize,
-    hook: Option<&Hook>,
+    mutations: &Mutations,
     options: Options,
     output: &mut impl Write,
 ) -> crate::git::Result<Ended> {
     let file = crate::git::FileChange::standalone(before, after);
     let mut output = BufWriter::new(output);
-    let manifest: FileChange = file.manifest_entry();
+    let mut entry: FileChange = file.manifest_entry();
+    mutations
+        .apply_file(&mut entry)
+        .map_err(|problem| format!("{}: {}", problem.code, problem.message))?;
     serde_json::to_writer(
         &mut output,
         &Event::Start {
@@ -230,37 +260,33 @@ pub(crate) fn write_file(
             rhs: Snapshot::Path {
                 path: after.to_owned(),
             },
-            files: vec![manifest],
+            files: vec![entry.clone()],
         },
     )?;
     output.write_all(b"\n")?;
     output.flush()?;
-    let mut diff = compute();
+    let diff = compute();
+    let syntax = if options.syntax {
+        syntax_spans(&diff, params)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let sides: Pairing<_> = file.sides.clone();
+    let projected = project::diff(
+        &diff,
+        Inputs {
+            file: &sides,
+            sizes,
+            context_lines,
+            syntax,
+        },
+    );
     let mut aborted = None;
-    let outcome = match hook.map(|hook| hook.summarize(&mut diff)) {
-        Some(Err(message)) => {
-            aborted = Some(Problem {
-                code: "hook_failed".to_owned(),
-                message,
-            });
+    let outcome = match mutate(mutations, &entry, projected) {
+        Ok(outcome) => Some(outcome),
+        Err(problem) => {
+            aborted = Some(problem);
             None
-        }
-        _ => {
-            let syntax = if options.syntax {
-                syntax_spans(&diff, params)
-            } else {
-                (Vec::new(), Vec::new())
-            };
-            let sides: Pairing<_> = file.sides.clone();
-            Some(Outcome::from(project::diff(
-                &diff,
-                Inputs {
-                    file: &sides,
-                    sizes,
-                    context_lines,
-                    syntax,
-                },
-            )))
         }
     };
     let mut ended = Ended {

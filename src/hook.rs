@@ -1,59 +1,81 @@
 //! Trusted fold-summary hook: a JSON-RPC 2.0 server that diffr starts once per
-//! session and calls over loopback HTTP.
+//! session and calls over loopback HTTP. It is a fold mutation like the
+//! built-in summarizer, and runs after it.
 //!
 //! The hook receives its port in `DIFFR_HOOK_PORT` and the diffed repository in
-//! `DIFFR_WORKSPACE`. Each call carries one file and its large novel folds on
-//! the after side. Workers block on their own call while the client multiplexes
-//! every in-flight request on a small tokio runtime, so files still stream out
-//! as each worker finishes.
+//! `DIFFR_WORKSPACE`. Each call carries one file and its large new fold
+//! regions on the after side. Workers block on their own call while the
+//! client multiplexes every in-flight request on a small tokio runtime, so
+//! files still stream out as each worker finishes.
 use crate::config::HookConfig;
-use crate::parse::folds::FoldMatch;
-use crate::review::wire;
-use crate::summary::{DiffResult, FileContent, FileFormat};
-use jsonrpsee::core::ClientError;
-use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
-use jsonrpsee::proc_macros::rpc;
-use serde::Serialize;
-use serde_json::Value;
+use crate::mutate::{
+    collapse, ids, is_fold, line_count, summary_label, walk, walk_mut, FoldMutation,
+};
+use crate::protocol::{FileChange, Pairing, Problem, Region, Source, SourceRange};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 #[derive(Serialize)]
 pub(crate) struct RequestFold {
-    /// Index into the file's rhs folds.
-    id: usize,
-    range: Value,
+    /// The region id on the after side.
+    id: u32,
+    range: SourceRange,
     tags: Vec<String>,
+    /// The label the region has before the hook answers, e.g. `Body`.
     placeholder: String,
 }
 
-/// The interface every hook implements. Params are sent by name; the result
-/// maps fold ids, as strings, to replacement text.
-#[rpc(client)]
-trait FoldHook {
-    #[method(name = "summarize", param_kind = map)]
-    async fn summarize(
-        &self,
-        path: String,
-        language: Option<String>,
-        src: String,
-        folds: Vec<RequestFold>,
-    ) -> jsonrpsee::core::RpcResult<BTreeMap<String, String>>;
+#[derive(Serialize)]
+struct Params<'a> {
+    path: &'a str,
+    language: Option<&'a str>,
+    src: &'a str,
+    folds: Vec<RequestFold>,
+}
+
+#[derive(Serialize)]
+struct Request<'a> {
+    jsonrpc: &'static str,
+    id: u64,
+    method: &'static str,
+    params: Params<'a>,
+}
+
+#[derive(Deserialize)]
+struct Response {
+    #[serde(default)]
+    result: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    error: Option<RpcError>,
+}
+
+#[derive(Deserialize)]
+struct RpcError {
+    message: String,
 }
 
 pub(crate) struct Hook {
     config: HookConfig,
+    min_lines: usize,
     child: Mutex<Child>,
     runtime: tokio::runtime::Runtime,
-    client: HttpClient,
+    client: reqwest::Client,
+    url: String,
+    next_id: AtomicU64,
 }
 
 impl Hook {
-    pub(crate) fn spawn(config: &HookConfig, workspace: &Path) -> crate::git::Result<Self> {
+    pub(crate) fn spawn(
+        config: &HookConfig,
+        default_min_lines: usize,
+        workspace: &Path,
+    ) -> crate::git::Result<Self> {
         let port = free_port()?;
         let mut child = Command::new(&config.command[0])
             .args(&config.command[1..])
@@ -76,92 +98,129 @@ impl Hook {
             .thread_name("diffr-hook-client")
             .enable_all()
             .build()?;
-        let client = runtime.block_on(async {
-            HttpClientBuilder::default()
-                .request_timeout(Duration::from_millis(config.timeout_ms))
-                .build(format!("http://127.0.0.1:{port}"))
-        })?;
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(config.timeout_ms))
+            .build()?;
         Ok(Self {
             config: config.clone(),
+            min_lines: config.min_lines.unwrap_or(default_min_lines),
             child: Mutex::new(child),
             runtime,
             client,
+            url: format!("http://127.0.0.1:{port}/"),
+            next_id: AtomicU64::new(1),
         })
     }
 
-    /// Fill in summaries for this file's qualifying folds, blocking on the hook.
-    /// Files without qualifying folds never reach the hook.
-    pub(crate) fn summarize(&self, diff: &mut DiffResult) -> Result<(), String> {
-        let selected: Vec<usize> = diff
-            .rhs_folds
-            .iter()
-            .enumerate()
-            .filter(|(_, fold)| self.qualifies(fold))
-            .map(|(index, _)| index)
-            .collect();
-        if selected.is_empty() {
-            return Ok(());
-        }
-        let FileContent::Text(src) = &diff.rhs_src else {
-            return Ok(());
-        };
-        let language = match &diff.file_format {
-            FileFormat::SupportedLanguage(language) => {
-                Some(crate::parse::guess_language::language_name(*language).to_owned())
-            }
-            _ => None,
-        };
-        let folds = selected
-            .iter()
-            .map(|&index| {
-                let fold = &diff.rhs_folds[index];
-                RequestFold {
-                    id: index,
-                    range: wire::range(&fold.range),
-                    tags: fold.tags.clone(),
-                    placeholder: fold.placeholder.clone(),
-                }
-            })
-            .collect();
-        let texts = self
-            .runtime
-            .block_on(FoldHookClient::summarize(
-                &self.client,
-                diff.display_path.clone(),
-                language,
-                src.clone(),
-                folds,
-            ))
-            .map_err(|error| match error {
-                ClientError::Call(error) => format!("fold hook reported: {}", error.message()),
-                ClientError::RequestTimeout => {
-                    format!("fold hook timed out after {}ms", self.config.timeout_ms)
-                }
-                other => format!("fold hook: {other}"),
-            })?;
-        for (key, text) in texts {
-            let index: usize = key
-                .parse()
-                .ok()
-                .filter(|index| selected.contains(index))
-                .ok_or_else(|| format!("fold hook answered for unknown fold {key:?}"))?;
-            diff.rhs_folds[index].summary = Some(text);
-        }
-        Ok(())
-    }
-
-    fn qualifies(&self, fold: &crate::parse::folds::Fold) -> bool {
-        if !matches!(fold.match_kind, FoldMatch::Novel) {
+    fn qualifies(&self, region: &Region, lhs_ids: &crate::hash::DftHashSet<u32>) -> bool {
+        if !is_fold(region) || lhs_ids.contains(&region.id) {
             return false;
         }
-        let lines = (fold.range.end.line.0 - fold.range.start.line.0 + 1) as usize;
-        if lines < self.config.min_lines {
+        if line_count(region) < self.min_lines {
             return false;
         }
         match &self.config.tags {
-            Some(tags) => fold.tags.iter().any(|tag| tags.contains(tag)),
-            None => true,
+            Some(tags) => region.tags.iter().any(|tag| tags.contains(tag)),
+            None => !region.tags.is_empty(),
         }
+    }
+
+    fn call(&self, params: Params<'_>) -> Result<BTreeMap<String, String>, String> {
+        let request = Request {
+            jsonrpc: "2.0",
+            id: self.next_id.fetch_add(1, Ordering::Relaxed),
+            method: "summarize",
+            params,
+        };
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .post(&self.url)
+                .json(&request)
+                .send()
+                .await
+                .map_err(|error| {
+                    if error.is_timeout() {
+                        format!("fold hook timed out after {}ms", self.config.timeout_ms)
+                    } else {
+                        format!("fold hook: {error}")
+                    }
+                })?;
+            let status = response.status();
+            let body = response
+                .text()
+                .await
+                .map_err(|error| format!("fold hook: {error}"))?;
+            let response: Response = serde_json::from_str(&body)
+                .map_err(|error| format!("fold hook: invalid response ({status}): {error}"))?;
+            match (response.result, response.error) {
+                (_, Some(error)) => Err(format!("fold hook reported: {}", error.message)),
+                (Some(result), None) => Ok(result),
+                (None, None) => Err("fold hook: response has neither result nor error".to_owned()),
+            }
+        })
+    }
+}
+
+impl FoldMutation for Hook {
+    /// Files without qualifying folds never reach the hook.
+    fn apply(&self, file: &FileChange, sides: &mut Pairing<Source>) -> Result<(), Problem> {
+        let lhs_ids = sides.lhs().map(|lhs| ids(&lhs.regions)).unwrap_or_default();
+        let Some(rhs) = sides.rhs() else {
+            return Ok(());
+        };
+        let mut folds = Vec::new();
+        walk(&rhs.regions, &mut |region| {
+            if self.qualifies(region, &lhs_ids) {
+                folds.push(RequestFold {
+                    id: region.id,
+                    range: region.range,
+                    tags: region.tags.clone(),
+                    placeholder: region.visibility.label.clone(),
+                });
+            }
+        });
+        if folds.is_empty() {
+            return Ok(());
+        }
+        let selected: Vec<u32> = folds.iter().map(|fold| fold.id).collect();
+        let language = file.language.as_deref();
+        let texts = self
+            .call(Params {
+                path: file
+                    .file
+                    .rhs()
+                    .map(|side| side.path.as_str())
+                    .unwrap_or_default(),
+                language,
+                src: &rhs.text,
+                folds,
+            })
+            .map_err(|message| Problem {
+                code: "hook_failed".to_owned(),
+                message,
+            })?;
+        let mut by_id = BTreeMap::new();
+        for (key, text) in texts {
+            let id: u32 = key
+                .parse()
+                .ok()
+                .filter(|id| selected.contains(id))
+                .ok_or_else(|| Problem {
+                    code: "hook_failed".to_owned(),
+                    message: format!("fold hook answered for unknown fold {key:?}"),
+                })?;
+            by_id.insert(id, text);
+        }
+        let (Pairing::Both { rhs, .. } | Pairing::RightOnly { rhs }) = sides else {
+            unreachable!("rhs regions were selected");
+        };
+        walk_mut(&mut rhs.regions, &mut |region| {
+            if let Some(text) = by_id.get(&region.id) {
+                collapse(region, summary_label(language, text));
+            }
+        });
+        Ok(())
     }
 }
 
@@ -202,7 +261,7 @@ impl Drop for Hook {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
+    use crate::mutate::summarize::tests::project;
     use std::sync::Arc;
 
     fn hook(mode: &str, timeout_ms: u64) -> crate::git::Result<Hook> {
@@ -214,36 +273,40 @@ mod tests {
                 mode.into(),
             ],
             tags: Some(vec!["body".into()]),
-            min_lines: 2,
+            min_lines: Some(2),
             timeout_ms,
             startup_timeout_ms: 10_000,
         };
-        Hook::spawn(&config, Path::new("."))
-    }
-
-    fn diff(rhs: &str) -> DiffResult {
-        let params = Config::from_toml("").unwrap().compile().unwrap();
-        DiffResult::from_sources_with_options(
-            "file.py",
-            "",
-            rhs,
-            &params,
-            &crate::options::DisplayOptions::default(),
-            &crate::options::DiffOptions::default(),
-        )
+        Hook::spawn(&config, 12, Path::new("."))
     }
 
     const LARGE: &str = "def f():\n    a()\n    b()\n    c()\n\ndef g():\n    d()\n";
 
+    fn fold_labels(sides: &Pairing<Source>) -> Vec<(bool, String)> {
+        let mut labels = Vec::new();
+        walk(&sides.rhs().unwrap().regions, &mut |region| {
+            if is_fold(region) {
+                labels.push((region.visibility.collapsed, region.visibility.label.clone()));
+            }
+        });
+        labels
+    }
+
     #[test]
     fn summaries_land_on_selected_folds_only() {
-        let hook = hook("first", 5000).unwrap();
-        let mut result = diff(LARGE);
-        assert_eq!(result.rhs_folds.len(), 2);
-        hook.summarize(&mut result).unwrap();
-        assert_eq!(result.rhs_folds[0].summary.as_deref(), Some("summary of f"));
-        assert_eq!(result.rhs_folds[1].summary, None);
-        assert!(result.lhs_folds.iter().all(|fold| fold.summary.is_none()));
+        let hook = hook("echo", 5000).unwrap();
+        let (file, mut sides) = project("file.py", "", LARGE);
+        hook.apply(&file, &mut sides).unwrap();
+        // `g` has a one-line body, which is not a region.
+        assert_eq!(
+            fold_labels(&sides),
+            vec![(
+                true,
+                "# pseudocode
+pseudo Body"
+                    .to_owned()
+            )]
+        );
     }
 
     #[test]
@@ -253,24 +316,26 @@ mod tests {
             .map(|_| {
                 let hook = Arc::clone(&hook);
                 std::thread::spawn(move || {
-                    let mut result = diff(LARGE);
-                    hook.summarize(&mut result).unwrap();
-                    result.rhs_folds[0].summary.clone()
+                    let (file, mut sides) = project("file.py", "", LARGE);
+                    hook.apply(&file, &mut sides).unwrap();
+                    fold_labels(&sides)[0].1.clone()
                 })
             })
             .collect();
         for worker in workers {
-            assert_eq!(worker.join().unwrap().as_deref(), Some("pseudo Body"));
+            assert_eq!(worker.join().unwrap(), "# pseudocode\npseudo Body");
         }
     }
 
     #[test]
-    fn small_or_untagged_folds_never_reach_the_hook() {
+    fn small_paired_or_untagged_folds_never_reach_the_hook() {
         let hook = hook("error", 5000).unwrap();
-        let mut result = diff("import os\nimport sys\n");
-        hook.summarize(&mut result).unwrap();
-        let mut result = diff("def f():\n    a()\n");
-        hook.summarize(&mut result).unwrap();
+        let (file, mut sides) = project("file.py", "", "import os\nimport sys\n");
+        hook.apply(&file, &mut sides).unwrap();
+        let (file, mut sides) = project("file.py", "", "def f():\n    a()\n");
+        hook.apply(&file, &mut sides).unwrap();
+        let (file, mut sides) = project("file.py", LARGE, LARGE);
+        hook.apply(&file, &mut sides).unwrap();
     }
 
     #[test]
@@ -283,23 +348,24 @@ mod tests {
     }
 
     #[test]
-    fn call_failures_are_reported_without_losing_the_diff() {
-        let mut result = diff(LARGE);
+    fn call_failures_are_reported_without_changing_the_regions() {
+        let (file, mut sides) = project("file.py", "", LARGE);
         let error = hook("slow", 200)
             .unwrap()
-            .summarize(&mut result)
+            .apply(&file, &mut sides)
             .unwrap_err();
-        assert!(error.contains("timed out"), "{error}");
+        assert!(error.message.contains("timed out"), "{}", error.message);
         let error = hook("error", 5000)
             .unwrap()
-            .summarize(&mut result)
+            .apply(&file, &mut sides)
             .unwrap_err();
-        assert!(error.contains("declined"), "{error}");
+        assert!(error.message.contains("declined"), "{}", error.message);
         let error = hook("bad", 5000)
             .unwrap()
-            .summarize(&mut result)
+            .apply(&file, &mut sides)
             .unwrap_err();
-        assert!(error.starts_with("fold hook:"), "{error}");
-        assert!(result.rhs_folds.iter().all(|fold| fold.summary.is_none()));
+        assert!(error.message.starts_with("fold hook:"), "{}", error.message);
+        assert_eq!(error.code, "hook_failed");
+        assert!(fold_labels(&sides).iter().all(|(collapsed, _)| !collapsed));
     }
 }

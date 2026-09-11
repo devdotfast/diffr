@@ -9,7 +9,13 @@ use std::path::Path;
 /// The API key is redacted unless `reveal` is set.
 pub(crate) fn show(config: &Config, reveal: bool) -> serde_json::Value {
     let mut value = serde_json::to_value(config).expect("config serializes");
-    if !reveal && config.summarize.api_key.is_some() {
+    if !reveal
+        && config
+            .summarize
+            .api_key
+            .as_deref()
+            .is_some_and(|key| !key.is_empty())
+    {
         value["summarize"]["api_key"] = serde_json::Value::String("<redacted>".to_owned());
     }
     value

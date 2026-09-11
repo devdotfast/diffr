@@ -590,7 +590,13 @@ fn run_config(args: &ArgMatches, sub: &ArgMatches) -> Result<i32> {
                 stdout.write_all(b"\n")?;
             } else {
                 let mut redacted = config.clone();
-                if !reveal && redacted.summarize.api_key.is_some() {
+                if !reveal
+                    && redacted
+                        .summarize
+                        .api_key
+                        .as_deref()
+                        .is_some_and(|key| !key.is_empty())
+                {
                     redacted.summarize.api_key = Some("<redacted>".to_owned());
                 }
                 stdout.write_all(toml::to_string_pretty(&redacted)?.as_bytes())?;

@@ -45,9 +45,13 @@ diffr config show --json   # resolved values, nested like the schema
 diffr config set <key> <value>   # dotted key, value as typed: true, 12, gemini
 ```
 
-Type to filter (fuzzy over keys, substring over descriptions), `↑`/`↓` to move, Enter to
-edit: booleans toggle, enums cycle, numbers and strings open an inline editor (Enter
-saves, Esc cancels). `●` marks a value that differs from its default. Esc closes.
+The list view: type to filter (fuzzy over keys, substring over descriptions), `↑`/`↓` to
+move, Enter to edit, Esc to quit. `●` marks a value that differs from its default and an
+empty value shows as `<unset>`. Enter opens an edit view for the selected setting with
+its key, description and default: booleans and enums pick from a list (`↑`/`↓`, or `y`/`n`
+for booleans), numbers and strings use a text field, masked for credential-looking keys
+such as `api_key`. Enter saves through `diffr config set` and returns to the refreshed
+list; Esc returns without saving. Both views carry a footer hint line.
 
 ## Controls
 

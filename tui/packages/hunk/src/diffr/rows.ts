@@ -4,6 +4,7 @@ import { filePath } from "./wire";
 import type { RenderSpan, SplitLineCell, UnifiedLineCell } from "../ui/diff/diffRowModel";
 import { measureTextWidth } from "../ui/lib/text";
 import { flatten, foldHeaders, hiddenLines, leafLabel, sourceLines, type Leaf, type RowFold } from "./regions";
+import { loadBundledTheme, type Palette } from "./theme";
 export { sourceLines };
 export type Layout = "split" | "unified";
 export interface ViewerRow {
@@ -18,78 +19,13 @@ export interface ViewerRow {
   right?: SplitLineCell;
   cell?: UnifiedLineCell;
 }
-export interface Palette {
-  bg: string;
-  fg: string;
-  muted: string;
-  addition: string;
-  deletion: string;
-  addWord: string;
-  deleteWord: string;
-  keyword: string;
-  type: string;
-  string: string;
-  function: string;
-  variable: string;
-  constant: string;
-  comment: string;
-  punctuation: string;
-  /** VS Code's editor.foldBackground and foldPlaceholderForeground. */
-  foldBackground: string;
-  foldPlaceholder: string;
-}
-export const dark: Palette = {
-  bg: "#0d1117",
-  fg: "#e6edf3",
-  muted: "#8b949e",
-  addition: "#12261e",
-  deletion: "#301a20",
-  addWord: "#24583a",
-  deleteWord: "#74333c",
-  keyword: "#ff7b72",
-  type: "#79c0ff",
-  string: "#a5d6ff",
-  function: "#d2a8ff",
-  variable: "#e6edf3",
-  constant: "#79c0ff",
-  comment: "#8b949e",
-  punctuation: "#c9d1d9",
-  foldBackground: "#152434",
-  foldPlaceholder: "#808080",
-};
-export const light: Palette = {
-  bg: "#ffffff",
-  fg: "#24292f",
-  muted: "#57606a",
-  addition: "#dafbe1",
-  deletion: "#ffebe9",
-  addWord: "#aceebb",
-  deleteWord: "#ffcecb",
-  keyword: "#cf222e",
-  type: "#0550ae",
-  string: "#0a3069",
-  function: "#8250df",
-  variable: "#24292f",
-  constant: "#0550ae",
-  comment: "#6e7781",
-  punctuation: "#24292f",
-  foldBackground: "#e6f3ff",
-  foldPlaceholder: "#808080",
-};
-/** Theme key for a tree-sitter capture; dotted names fall back to their first segment. */
-const captureColors = new Map<string, keyof Palette>([
-  ["keyword", "keyword"], ["conditional", "keyword"], ["repeat", "keyword"], ["exception", "keyword"],
-  ["include", "keyword"], ["operator", "punctuation"], ["punctuation", "punctuation"],
-  ["delimiter", "punctuation"], ["string", "string"], ["character", "string"], ["escape", "string"],
-  ["comment", "comment"], ["type", "type"], ["constructor", "type"], ["storageclass", "type"],
-  ["namespace", "type"], ["module", "type"], ["function", "function"], ["method", "function"],
-  ["variable", "variable"], ["parameter", "variable"], ["property", "variable"], ["field", "variable"],
-  ["attribute", "variable"], ["number", "constant"], ["float", "constant"], ["boolean", "constant"],
-  ["constant", "constant"], ["label", "constant"],
-]);
+export type { Palette } from "./theme";
+/** The bundled defaults, for tests and the settings screen. */
+export const dark: Palette = loadBundledTheme("default-dark");
+export const light: Palette = loadBundledTheme("default-light");
+/** Foreground for a tree-sitter capture: the theme's scope, its parents, else plain text. */
 export function captureColor(capture: string, theme: Palette): string {
-  const key = captureColors.get(capture) ?? captureColors.get(capture.split(".")[0]);
-  return key ? theme[key] : theme.fg;
+  return theme.syntax(capture) ?? theme.fg;
 }
 /** Colour a line from byte-addressed syntax and change spans, then expand tabs into cells. */
 export function lineSpans(

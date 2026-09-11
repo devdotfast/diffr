@@ -33,6 +33,29 @@ The frontend launches Rust with `--format ndjson --syntax`: the wire is diffr's 
 protocol (`src/protocol.rs`) and `--syntax` adds a tree-sitter capture name per token,
 which is the only source of syntax colour here.
 
+## Themes
+
+Colours come from Helix theme files: TOML keyed by tree-sitter capture names such as
+`keyword`, `function.method`, `string`, `comment`, `type`, `variable.parameter`, with
+a `[palette]` section and `ui.*` keys for chrome. A capture falls back to its parent
+scope (`keyword.return` → `keyword`). Four themes are bundled under `themes/` (Helix's
+own, MPL-2.0): `default-dark` (onedark), `default-light` (onelight), `gruvbox`, and
+`solarized_light`.
+
+The frontend reads `diffr config show --json` at startup and uses `theme.path` when set,
+else `theme.name` from the bundled index. An unknown name is an error, not a fallback.
+To use any other Helix theme, download it from
+https://github.com/helix-editor/helix/tree/master/runtime/themes and point at it:
+
+```sh
+diffr config set theme.path ~/.config/helix/themes/dracula.toml
+```
+
+`t` toggles between `default-dark` and `default-light`. Change tints (line and word
+backgrounds) are mixed from the theme's background and its `diff.plus`/`diff.minus`
+colours. Recordings played with `--input` take `--theme <name|file.toml>` and default
+to `default-dark`.
+
 ## Settings screen
 
 `diffr config` opens a searchable settings screen in this frontend. The CLI contract it
@@ -82,7 +105,7 @@ list; Esc returns without saving. Both views carry a footer hint line.
   such gap at once. Folds and gaps start in the state diffr's `visibility` asks for.
 - `s`: split/unified; initial mode is responsive to width.
 - `w`: wrap; Left/Right: horizontal scrolling when unwrapped.
-- `t`: dark/light theme.
+- `t`: toggle between the bundled dark and light defaults (see Themes).
 - Drag code rows: select original source lines on the starting side; `y` or Copy copies
   via OSC 52. Escape clears selection. Character-level selection and drag autoscroll
   are not implemented in this first pass.

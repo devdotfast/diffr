@@ -69,9 +69,9 @@ test("byte spans survive multibyte characters and tabs; captures pick theme colo
   );
   expect(spans.map((s) => s.text).join("")).toBe("é   变量");
   expect(spans.at(-1)!.bg).toBe(dark.addWord);
-  expect(spans.at(-1)!.fg).toBe(dark.type);
+  expect(spans.at(-1)!.fg).toBe(dark.syntax("type")!);
   expect(() => lineSpans("é", [], [line(0, 1, 9)], "left", dark)).toThrow();
-  expect(captureColor("function.method", dark)).toBe(dark.function);
+  expect(captureColor("function.method", dark)).toBe(dark.syntax("function")!);
   expect(captureColor("unknown.thing", dark)).toBe(dark.fg);
 });
 test("the innermost syntax capture colours a nested span", () => {
@@ -86,7 +86,7 @@ test("the innermost syntax capture colours a nested span", () => {
     dark,
   );
   expect(spans.map((s) => [s.text, s.fg])).toEqual([
-    ['f(', dark.function], ['"x"', dark.string], [")", dark.function],
+    ['f(', dark.syntax("function")], ['"x"', dark.syntax("string")], [")", dark.syntax("function")],
   ]);
 });
 test("wrapping adds equal split heights and windowing mounts only intersecting rows", () => {

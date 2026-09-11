@@ -7,6 +7,7 @@ import { createRoot } from "@opentui/react";
 import { readDiffStream } from "./diffr/stream";
 import { DiffStore } from "./diffr/store";
 import { cliClient } from "./diffr/config";
+import { loadBundledTheme, loadThemeFile, themeConfig, themesFromConfig, type ThemeSet } from "./diffr/theme";
 import { App } from "./ui/App";
 import { Settings } from "./ui/Settings";
 const args = process.argv.slice(2),
@@ -39,7 +40,17 @@ let input: NodeJS.ReadStream = process.stdin;
 let ttyFd: number | undefined;
 let expectsDifferenceExit = false;
 let comparisonExitCode = 0;
+let themes: ThemeSet;
 if (args[0] === "--input" && args[1]) {
+  // A recording has no diffr to ask; `--theme <name|path>` picks one, else the dark default.
+  const themeArg = args.indexOf("--theme");
+  const chosen = themeArg >= 0 ? args[themeArg + 1] : "default-dark";
+  if (!chosen) throw new Error("--theme needs a bundled name or a Helix theme path");
+  themes = {
+    initial: chosen.endsWith(".toml") ? loadThemeFile(chosen) : loadBundledTheme(chosen),
+    dark: loadBundledTheme("default-dark"),
+    light: loadBundledTheme("default-light"),
+  };
   chunks = args[1] === "-" ? process.stdin : createReadStream(args[1]);
   if (args[1] === "-") {
     ttyFd = openSync(process.platform === "win32" ? "CONIN$" : "/dev/tty", "r");
@@ -47,6 +58,8 @@ if (args[0] === "--input" && args[1]) {
   }
 } else if (args[0] === "--diffr" && args[1]) {
   const comparison = args.slice(args[2] === "--" ? 3 : 2);
+  // The theme comes from diffr's own config, so every frontend reads the same choice.
+  themes = themesFromConfig(themeConfig(cliClient(args[1]).show()));
   const separator = comparison.indexOf("--");
   expectsDifferenceExit = comparison
     .slice(0, separator < 0 ? comparison.length : separator)
@@ -58,7 +71,7 @@ if (args[0] === "--input" && args[1]) {
   chunks = child.stdout!;
 } else {
   console.error(
-    "Usage: bun run start --diffr /path/to/diffr -- [comparison arguments]\n       bun run start --input recording.ndjson (or -)\n       bun run start --settings --diffr /path/to/diffr [query]",
+    "Usage: bun run start --diffr /path/to/diffr -- [comparison arguments]\n       bun run start --input recording.ndjson (or -) [--theme name|file.toml]\n       bun run start --settings --diffr /path/to/diffr [query]",
   );
   process.exit(2);
 }
@@ -86,7 +99,7 @@ function quit() {
 process.once("SIGTERM", quit);
 process.once("SIGINT", quit);
 const root = createRoot(renderer);
-root.render(<App store={store} onQuit={quit} />);
+root.render(<App store={store} onQuit={quit} themes={themes!} />);
 let stderr = "";
 child?.stderr?.on("data", (data) => {
   stderr = (stderr + data.toString()).slice(-16384);

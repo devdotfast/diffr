@@ -16,12 +16,11 @@ import { matchesKey } from "./lib/keys";
 import { resizeSidebarWidth } from "./lib/sidebar";
 import { CodeRowView } from "./diff/CodeRowView";
 import {
-  dark,
-  light,
   rowsForFile,
   type Layout,
   type ViewerRow,
 } from "../diffr/rows";
+import type { Palette, ThemeSet } from "../diffr/theme";
 import { measureRows, visibleRows } from "../diffr/geometry";
 import {
   copySelection,
@@ -39,9 +38,11 @@ const fit = (text: string, width: number) =>
 export function App({
   store,
   onQuit,
+  themes,
 }: {
   store: DiffStore;
   onQuit: () => void;
+  themes: ThemeSet;
 }) {
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot);
   const renderer = useRenderer(),
@@ -49,7 +50,7 @@ export function App({
   const [mode, setMode] = useState<Layout | "auto">("auto"),
     [showSidebar, setShowSidebar] = useState(true),
     [wrap, setWrap] = useState(false),
-    [isLight, setLight] = useState(false);
+    [theme, setTheme] = useState<Palette>(themes.initial);
   const [scroll, setScroll] = useState(0),
     [horizontal, setHorizontal] = useState(0);
   // Files the user closed or opened; unset files follow the manifest's visibility.
@@ -68,8 +69,9 @@ export function App({
   const [menu, setMenu] = useState<string | null>(null);
   const dragging = useRef(false),
     thumbDragging = useRef(false);
-  const theme = isLight ? light : dark,
-    sidebar = showSidebar && width >= 60 ? Math.max(16, Math.min(sidebarWidth, width - 40)) : 0;
+  // `t` swaps between the two bundled defaults; a configured theme is left by the first press.
+  const toggleTheme = () => setTheme((current) => (current.isLight ? themes.dark : themes.light));
+  const sidebar = showSidebar && width >= 60 ? Math.max(16, Math.min(sidebarWidth, width - 40)) : 0;
   const contentWidth = Math.max(10, width - sidebar - 1),
     viewportHeight = Math.max(1, height - 2);
   const layout =
@@ -98,7 +100,7 @@ export function App({
     const all = fileOrder.flatMap(index => {
       const file = snapshot.files[index];
       const folds = foldsOf(index);
-      const key = `${index}:${layout}:${isLight}:${[...folds].sort((a, b) => a - b).join(",")}`;
+      const key = `${index}:${layout}:${theme.name}:${[...folds].sort((a, b) => a - b).join(",")}`;
       let cached = rowCache.current.get(file);
       if (cached?.key !== key) {
         cached = { key, rows: rowsForFile(file, index, layout, theme, folds) };
@@ -242,7 +244,7 @@ export function App({
       setSelection(null);
     } else if (key.name === "w") setWrap((v) => !v);
     else if (key.name === "c") { toggleContext(); setSelection(null); }
-    else if (key.name === "t") setLight((v) => !v);
+    else if (key.name === "t") toggleTheme();
     else if (key.name === "y") copy();
     else if (key.name === "escape") { setSelection(null); setMenu(null); }
     else if (key.name === "return") {
@@ -300,13 +302,13 @@ export function App({
       ? ` · syntax +${count.structural.added} -${count.structural.removed}` : "";
     const statsWidth = String(count.textual.added).length + String(count.textual.removed).length + 5 + structural.length;
     return <box key={key} height={1} width={contentWidth} flexDirection="row"
-      backgroundColor={isLight ? "#f0f2f5" : "#161b22"}
+      backgroundColor={theme.chrome}
       onMouseUp={() => toggleFile(fileIndex)}>
       <text width={Math.max(1, contentWidth - statsWidth)} fg={theme.fg} selectable={false}>
         {fit(sanitizeTerminalLine(`${isClosed(fileIndex) ? "▸" : "▾"} ${path}`), Math.max(1, contentWidth - statsWidth))}
       </text>
-      <text fg={isLight ? "#1a7f37" : "#7ee787"} selectable={false}>{` +${count.textual.added}`}</text>
-      <text fg={isLight ? "#cf222e" : "#ffa198"} selectable={false}>{` -${count.textual.removed} `}</text>
+      <text fg={theme.addedText} selectable={false}>{` +${count.textual.added}`}</text>
+      <text fg={theme.removedText} selectable={false}>{` -${count.textual.removed} `}</text>
       {structural && <text fg={theme.muted} selectable={false}>{structural}</text>}
     </box>;
   };
@@ -328,7 +330,7 @@ export function App({
             key={row.key}
             height={1}
             width={contentWidth}
-            fg={row.loadDiff ? theme.type : theme.muted}
+            fg={row.loadDiff ? theme.accent : theme.muted}
             selectable={false}
             onMouseUp={() => {
               if (row.loadDiff) toggleFile(row.fileIndex);
@@ -393,7 +395,7 @@ export function App({
       ["Fold all  zM", () => foldAll(true)], ["Unfold all  zR", () => foldAll(false)]],
     Navigate: [["Previous change  [", () => navigateHunk(-1)], ["Next change  ]", () => navigateHunk(1)],
       ["First file  Home", () => setScroll(0)], ["Last file  End", () => setScroll(maxScroll)]],
-    Theme: [["Dark", () => setLight(false)], ["Light", () => setLight(true)]],
+    Theme: [[`Dark (${themes.dark.name})  t`, () => setTheme(themes.dark)], [`Light (${themes.light.name})  t`, () => setTheme(themes.light)]],
     Help: [["Scroll: j/k · h/l · gg/G", () => setMessage("j/k scroll · h/l pan · gg first · G last")],
       ["Half page: Ctrl-D / Ctrl-U", () => setMessage("d / Ctrl-D: half down · u / Ctrl-U: half up")],
       ["Full page: Ctrl-F / Ctrl-B", () => setMessage("Ctrl-F: page down · Ctrl-B: page up")],
@@ -427,14 +429,14 @@ export function App({
         sidebarDrag.current = null;
       }}
     >
-      <box height={1} flexDirection="row" backgroundColor={isLight ? "#f0f2f5" : "#161b22"}>
+      <box height={1} flexDirection="row" backgroundColor={theme.chrome}>
         {["File", "View", "Navigate", "Theme", "Help"].map(name => (
           <text key={name} fg={menu === name ? theme.fg : theme.muted} selectable={false}
             onMouseUp={() => setMenu(old => old === name ? null : name)}>
             {` ${name} `}
           </text>
         ))}
-        <text fg={theme.type} selectable={false} onMouseUp={() => {
+        <text fg={theme.accent} selectable={false} onMouseUp={() => {
           setMode(layout === "split" ? "unified" : "split"); setSelection(null);
         }}>{`  ${layout} [s] `}</text>
         <text fg={theme.muted} selectable={false}>{` · ${snapshot.total || snapshot.inventory.length} files`}</text>
@@ -466,7 +468,7 @@ export function App({
             {treeRows.slice(sidebarStart, sidebarStart + viewportHeight).map(({node, depth}) => (
               <text key={node.key} height={1} width={sidebar - 1}
                 fg={node.fileIndex === currentTreeFile ? theme.fg : theme.muted}
-                bg={node.fileIndex === currentTreeFile ? (isLight ? "#ddf4ff" : "#1c3045") : theme.bg}
+                bg={node.fileIndex === currentTreeFile ? theme.highlight : theme.bg}
                 selectable={false}
                 onMouseUp={() => {
                   if (node.fileIndex !== undefined) {
@@ -540,7 +542,7 @@ export function App({
       </box>
       {menu && <box position="absolute" top={1} left={0} width={38}
         height={menuItems[menu].length} flexDirection="column" zIndex={10}
-        backgroundColor={isLight ? "#eaeef2" : "#21262d"}>
+        backgroundColor={theme.chrome}>
         {menuItems[menu].map(([label, action]) => (
           <text key={label} height={1} width={38} fg={theme.fg} selectable={false}
             onMouseUp={() => { action(); setMenu(null); }}>

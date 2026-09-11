@@ -8,6 +8,8 @@ import { DiffStore } from "../diffr/store";
 import { createTestDiffFile, leaf, line, withIdenticalLines } from "../diffr/fixture";
 import type { DiffFile } from "../diffr/wire";
 import { createFoldedDiffFile } from "../diffr/regions.test";
+import { loadBundledTheme } from "../diffr/theme";
+const themes = { initial: loadBundledTheme("default-dark"), dark: loadBundledTheme("default-dark"), light: loadBundledTheme("default-light") };
 const at = (file: DiffFile, path: string) => {
   file.file = { lhs: { path, oid: "1", mode: "100644" }, rhs: { path, oid: "2", mode: "100644" } };
   return file;
@@ -16,7 +18,7 @@ test("render real OpenTUI rows, switch layout, collapse and reopen file with mou
   const store = new DiffStore();
   store.accept(createTestDiffFile());
   const testRenderer = await testRender(
-    <App store={store} onQuit={() => {}} />,
+    <App store={store} onQuit={() => {}} themes={themes} />,
     { width: 150, height: 20 },
   );
   try {
@@ -68,7 +70,7 @@ test("scrolling a large stream keeps terminal renderables bounded", async () => 
   withIdenticalLines(file, 5000);
   store.accept(file);
   const testRenderer = await testRender(
-    <App store={store} onQuit={() => {}} />,
+    <App store={store} onQuit={() => {}} themes={themes} />,
     { width: 150, height: 20 },
   );
   try {
@@ -104,7 +106,7 @@ test("hierarchical tree navigation, sticky counts, sidebar toggle and menus", as
     file.diff.rhs = { text: lines.join("\n"), syntax: [], regions: [leaf(1, 0, 20), leaf(2, 20, 21, [line(20, 0, 7)]), leaf(4, 21, 22, [line(21, 0, 7)]), leaf(3, 22, 60)] };
     store.accept(file);
   }
-  const t = await testRender(<App store={store} onQuit={() => {}} />, {width:150, height:20});
+  const t = await testRender(<App store={store} onQuit={() => {}} themes={themes} />, {width:150, height:20});
   try {
     await act(async () => { await t.renderOnce(); });
     await t.waitForFrame(f => f.includes("▾ src"));
@@ -135,7 +137,7 @@ test("Hunk navigation chords and draggable sidebar preserve viewport behavior", 
   if (file.diff.type !== "text") throw new Error();
   file.diff.lhs = file.diff.rhs = { text: lines.join("\n"), syntax: [], regions: [leaf(1, 0, 150)] };
   store.accept(file);
-  const t = await testRender(<App store={store} onQuit={() => {}} />, {width:150, height:20});
+  const t = await testRender(<App store={store} onQuit={() => {}} themes={themes} />, {width:150, height:20});
   const firstSource = () => Number(t.captureCharFrame().split("\n")[2].match(/row (\d+)/)?.[1]);
   const press = async (name: string, ctrl = false) => {
     await act(async () => { t.mockInput.pressKey(name, {ctrl}); });
@@ -178,7 +180,7 @@ test("initial manifest renders pending tree and remembers a jump until its diff 
   at(b, "src/b.ts");
   const entry = (file: DiffFile) => ({ file: file.file, status: "modified" as const, visibility: { collapsed: false, label: "" } });
   store.accept({type:"start", version:2, lhs:{type:"index"}, rhs:{type:"working_tree"}, files:[entry(a), entry(b)]});
-  const t = await testRender(<App store={store} onQuit={() => {}} />, {width:150, height:20});
+  const t = await testRender(<App store={store} onQuit={() => {}} themes={themes} />, {width:150, height:20});
   try {
     await act(async () => { await t.renderOnce(); });
     await t.waitForFrame(f => f.includes("◌ a.ts") && f.includes("◌ b.ts"));
@@ -205,7 +207,7 @@ test("streaming diffs follow tree order without moving the visible source row", 
   });
   const entry = (file: DiffFile) => ({ file: file.file, status: "modified" as const, visibility: { collapsed: false, label: "" } });
   store.accept({type:"start", version:2, lhs:{type:"index"}, rhs:{type:"working_tree"}, files:files.map(entry)});
-  const t = await testRender(<App store={store} onQuit={() => {}} />, {width:150, height:20});
+  const t = await testRender(<App store={store} onQuit={() => {}} themes={themes} />, {width:150, height:20});
   const sidebarLines = () => t.captureCharFrame().split("\n").slice(1,8).map(line => line.slice(0,27).trim());
   try {
     await act(async () => { await t.renderOnce(); store.accept(files[0]); store.accept(files[2]); });
@@ -248,7 +250,7 @@ test(`stream arrivals preserve code in every commit (wrap=${wrap}, unified=${uni
   let capture: (() => void) | undefined;
   const commits: string[][] = [];
   const t = await testRender(<Profiler id="viewport" onRender={() => capture?.()}>
-    <App store={store} onQuit={() => {}} />
+    <App store={store} onQuit={() => {}} themes={themes} />
   </Profiler>, {width:150, height:20});
   const sourceCells = (node: BaseRenderable): string[] => {
     if (node instanceof TextRenderable) {
@@ -288,7 +290,7 @@ test("folds collapse from the gutter chevron and expand from the placeholder", a
     source.regions.push(leaf(99, 8, 28));
   }
   store.accept(file);
-  const t = await testRender(<App store={store} onQuit={() => {}} />, { width: 150, height: 20 });
+  const t = await testRender(<App store={store} onQuit={() => {}} themes={themes} />, { width: 150, height: 20 });
   try {
     await act(async () => { await t.renderOnce(); });
     await t.waitForFrame((f) => f.includes("inner(|| {"));

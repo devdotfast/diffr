@@ -92,7 +92,7 @@ export function Settings({ client, onQuit, initialQuery = "" }: { client: Config
                 {fit(` ${choice === draft ? "▸" : " "} ${choice}`, width)}
               </text>
             ))
-          : <text height={1} fg={theme.type} selectable={false}>{fit(` value: ${field}▏`, width)}</text>}
+          : <text height={1} fg={theme.accent} selectable={false}>{fit(` value: ${field}▏`, width)}</text>}
         <box flexGrow={1} />
         <text height={1} fg={theme.muted} selectable={false}>
           {fit(` enter save · esc back${setting.type === "boolean" ? " · y/n or ↑↓ choose" : choices.length ? " · ↑↓ choose" : ""}  ${message}`, width)}
@@ -108,7 +108,7 @@ export function Settings({ client, onQuit, initialQuery = "" }: { client: Config
   return (
     <box width={width} height={height} flexDirection="column" backgroundColor={theme.bg}>
       <text height={1} fg={theme.fg} selectable={false}>{fit(" diffr settings", width)}</text>
-      <text height={1} fg={theme.type} selectable={false}>{fit(` > ${query}▏`, width)}</text>
+      <text height={1} fg={theme.accent} selectable={false}>{fit(` > ${query}▏`, width)}</text>
       {visible.slice(start, start + bodyHeight).map((setting, i) => {
         const selected = start + i === cursor;
         const value = isSecret(setting.key) && formatValue(setting.value) !== "" ? "••••••" : displayValue(setting.value);

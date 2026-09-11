@@ -7,7 +7,7 @@ import type {
   UnifiedLineCell,
 } from "./diffRowModel";
 import type { Geometry, MeasuredRow } from "../../diffr/geometry";
-import type { Palette } from "../../diffr/rows";
+import type { Palette } from "../../diffr/theme";
 import type { RowFold } from "../../diffr/regions";
 import { measureTextWidth } from "../lib/text";
 const colors = new Map<string, ReturnType<typeof parseColor>>();
@@ -68,7 +68,7 @@ export const CodeRowView = memo(function CodeRowView({
     const fold = value.fold;
     const bg =
       selectedSide === side
-        ? "#264f78"
+        ? theme.highlight
         : value.foldLabel || fold?.collapsed
           ? theme.foldBackground
           : value.kind === "addition"

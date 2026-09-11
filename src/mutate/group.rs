@@ -23,7 +23,7 @@ impl FoldMutation for GroupCollapsed {
     }
 }
 
-fn next_id(sides: &Pairing<Source>) -> u32 {
+pub(super) fn next_id(sides: &Pairing<Source>) -> u32 {
     let mut max = None;
     for source in [sides.lhs(), sides.rhs()].into_iter().flatten() {
         walk(&source.regions, &mut |region| {

@@ -39,6 +39,10 @@ pub(crate) struct FoldsConfig {
     pub(crate) min_lines: usize,
     /// Collapse deleted function bodies, keeping their header line visible.
     pub(crate) collapse_deleted: bool,
+    /// Removed stretches with no counterpart and at least this many lines
+    /// collapse in the middle, keeping their first and last line visible.
+    /// `0` disables it.
+    pub(crate) collapse_removed_lines: usize,
     /// Hide files classified as generated, such as lockfiles and build output.
     pub(crate) collapse_generated: bool,
     /// Hide files classified as tests.
@@ -55,6 +59,7 @@ impl Default for FoldsConfig {
         Self {
             min_lines: 12,
             collapse_deleted: true,
+            collapse_removed_lines: 5,
             collapse_generated: true,
             collapse_tests: true,
             context_lines: 3,

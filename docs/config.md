@@ -39,6 +39,7 @@ through these three commands; the schema is the only contract.
 [folds]
 min_lines = 12             # bodies shorter than this are never summarized or collapsed
 collapse_deleted = true    # deleted function bodies start collapsed, header visible
+collapse_removed_lines = 5 # removed stretches this long collapse in the middle; 0 disables
 collapse_generated = true  # generated files start hidden
 collapse_tests = true      # test files start hidden
 context_lines = 3          # unchanged lines kept around a change; -U overrides
@@ -100,13 +101,18 @@ itself. In order:
    manifest, before `start` is written.
 2. `collapse_deleted`: deleted function bodies of at least `min_lines` lines,
    labelled `"<n> lines removed"`.
-3. The built-in summarizer: new function bodies of at least `min_lines` lines
+3. `collapse_removed_lines`: removed stretches with no counterpart on the
+   after side and at least that many lines keep their first and last line
+   open and collapse the middle, tagged `removed` and labelled
+   `"<n> lines removed"`. Stretches under a fold that already starts
+   collapsed are left alone.
+4. The built-in summarizer: new function bodies of at least `min_lines` lines
    on the after side become Python-style pseudocode. The label starts with a
    comment line in the file's own syntax, `# pseudocode` or `// pseudocode`,
    then the text.
-4. `folds.hook`, when configured, over the same selection with its own tags
+5. `folds.hook`, when configured, over the same selection with its own tags
    and threshold; its text gets the same comment line.
-5. Grouping, always on: adjacent context gaps merge into one, and a run of
+6. Grouping, always on: adjacent context gaps merge into one, and a run of
    two or more sibling folds that start collapsed is wrapped in one `group`
    fold labelled `"<n> functions removed"`, `"<n> functions summarized"`, or
    `"<n> folded regions"`. Expanding it reveals each child's own row.

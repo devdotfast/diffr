@@ -16,7 +16,9 @@ pid, master = pty.fork()
 if pid == 0:
     os.environ['DIFFR_BUN'] = bun
     os.environ['TERM'] = 'xterm-256color'
-    os.execv(binary, [binary, '--no-index', *(['--exit-code'] if os.environ.get('DIFFR_TEST_EXIT_CODE') else []), '--', before, after])
+    # The fixtures live under test/, which the category rules hide by default; this test is about
+    # the viewer lifecycle, so keep the file open.
+    os.execv(binary, [binary, '--no-index', '--set', 'folds.collapse_tests=false', *(['--exit-code'] if os.environ.get('DIFFR_TEST_EXIT_CODE') else []), '--', before, after])
 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 100, 0, 0))
 output = bytearray()
 ANSI = re.compile(rb'\x1b\[[0-9;?]*[A-Za-z]')

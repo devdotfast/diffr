@@ -7,12 +7,16 @@
 //! id too. Leaves are split wherever a fold starts or ends so that every
 //! fold's children tile its line span exactly, and a split on one side of
 //! a paired leaf is mirrored on the other so paired leaves stay equal in
-//! length. Long unchanged paired runs are trimmed to the context width and
-//! their middle becomes a collapsed leaf tagged `unchanged`.
+//! length. Unchanged rows that no hunk shows, which is everything outside
+//! the `-U` padding and the enclosing syntax context difftastic already
+//! selected, become collapsed leaves tagged `unchanged`. Folds that lie
+//! entirely inside such a gap are dropped: they would be hidden anyway, and
+//! keeping them would only fragment the gap.
 use super::{
     BinaryRef, Diff, FileRef, LineCounts, Node, Pairing, Problem, Region, Source, SourcePos,
     SourceRange, Span, Stats, SyntaxSpan, Visibility,
 };
+use crate::display::hunks::Hunk;
 use crate::display::line_layout::{aligned_rows, novel_lines};
 use crate::hash::DftHashMap;
 use crate::line_parser;
@@ -29,8 +33,6 @@ pub(crate) struct Inputs<'a> {
     pub(crate) file: &'a Pairing<FileRef>,
     /// Byte length of each side's content, for binary files.
     pub(crate) sizes: (u64, u64),
-    /// Unchanged lines kept open on either side of a change.
-    pub(crate) context_lines: usize,
     /// Highlight spans per side; empty when the run did not ask for syntax.
     pub(crate) syntax: (Vec<SyntaxSpan>, Vec<SyntaxSpan>),
 }
@@ -51,7 +53,7 @@ pub(crate) fn diff(result: &DiffResult, inputs: Inputs<'_>) -> Result<Diff, Prob
             return Ok(Diff::Binary { sides });
         }
     };
-    let (lhs_regions, rhs_regions) = regions(result, lhs_src, rhs_src, inputs.context_lines)?;
+    let (lhs_regions, rhs_regions) = regions(result, lhs_src, rhs_src)?;
     let (lhs_syntax, rhs_syntax) = inputs.syntax;
     let sides = pair(
         inputs.file,
@@ -217,7 +219,6 @@ fn regions(
     result: &DiffResult,
     lhs_src: &str,
     rhs_src: &str,
-    context_lines: usize,
 ) -> Result<(Vec<Region>, Vec<Region>), Problem> {
     let lhs_lines: Vec<&str> = lhs_src.split_terminator('\n').collect();
     let rhs_lines: Vec<&str> = rhs_src.split_terminator('\n').collect();
@@ -227,15 +228,33 @@ fn regions(
         (lhs_src, rhs_src),
         (&result.lhs_positions, &result.rhs_positions),
     );
-    let runs = trim_context(runs(&rows, &lhs_novel, &rhs_novel), context_lines);
+    let (lhs_shown, rhs_shown) = shown_lines(&result.hunks);
+    let runs = trim_context(runs(&rows, &lhs_novel, &rhs_novel), &lhs_shown, &rhs_shown);
+    let lhs_gaps: Vec<(usize, usize)> = runs
+        .iter()
+        .filter(|run| run.collapsed)
+        .filter_map(|run| run.lhs)
+        .collect();
+    let rhs_gaps: Vec<(usize, usize)> = runs
+        .iter()
+        .filter(|run| run.collapsed)
+        .filter_map(|run| run.rhs)
+        .collect();
 
-    let lhs_folds = side_folds(&result.lhs_folds, &result.rhs_folds, Side::Left, &lhs_lines)?;
-    let rhs_folds = side_folds(
+    let lhs_folds: Vec<SideFold<'_>> =
+        side_folds(&result.lhs_folds, &result.rhs_folds, Side::Left, &lhs_lines)?
+            .into_iter()
+            .filter(|fold| !inside_gap(fold.lines, &lhs_gaps))
+            .collect();
+    let rhs_folds: Vec<SideFold<'_>> = side_folds(
         &result.lhs_folds,
         &result.rhs_folds,
         Side::Right,
         &rhs_lines,
-    )?;
+    )?
+    .into_iter()
+    .filter(|fold| !inside_gap(fold.lines, &rhs_gaps))
+    .collect();
     let lhs_splits = split_lines(&lhs_folds);
     let rhs_splits = split_lines(&rhs_folds);
     let (lhs_leaves, rhs_leaves) = split_runs(&runs, &lhs_splits, &rhs_splits);
@@ -307,42 +326,83 @@ fn runs(
     runs
 }
 
-/// Keep `context` lines of every unchanged run on the side that faces a
-/// change; collapse the rest. A run at the file start faces no change
-/// before it, one at the end none after, and a file with a single run has
-/// no change at all.
-fn trim_context(runs: Vec<Run>, context: usize) -> Vec<Run> {
-    let last = runs.len().saturating_sub(1);
-    let mut out = Vec::new();
-    for (index, run) in runs.into_iter().enumerate() {
-        if run.kind != RunKind::Unchanged {
-            out.push(run);
-            continue;
+/// The lines difftastic's hunks display on each side: the `-U` padding
+/// around every change plus the enclosing syntax context, such as the
+/// header of the function a change sits in.
+fn shown_lines(hunks: &[Hunk]) -> (BTreeSet<usize>, BTreeSet<usize>) {
+    let mut lhs = BTreeSet::new();
+    let mut rhs = BTreeSet::new();
+    for hunk in hunks {
+        for &(l, r) in &hunk.lines {
+            lhs.extend(l.map(|line| line.as_usize()));
+            rhs.extend(r.map(|line| line.as_usize()));
         }
-        let lead = if index == 0 { 0 } else { context };
-        let trail = if index == last { 0 } else { context };
-        let len = run.len();
-        if len <= lead + trail {
+    }
+    (lhs, rhs)
+}
+
+/// Collapsing fewer lines than this saves nothing worth a fold row.
+const MIN_GAP: usize = 3;
+
+/// Collapse every maximal stretch of an unchanged run that no hunk shows
+/// and that is at least `MIN_GAP` lines long. A file with no change has no
+/// hunks, so it becomes one collapsed run.
+fn trim_context(
+    runs: Vec<Run>,
+    lhs_shown: &BTreeSet<usize>,
+    rhs_shown: &BTreeSet<usize>,
+) -> Vec<Run> {
+    let no_change = lhs_shown.is_empty() && rhs_shown.is_empty();
+    let mut out: Vec<Run> = Vec::new();
+    for run in runs {
+        if run.kind != RunKind::Unchanged {
             out.push(run);
             continue;
         }
         let (lhs_start, _) = run.lhs.expect("unchanged runs are paired");
         let (rhs_start, _) = run.rhs.expect("unchanged runs are paired");
-        let piece = |offset: usize, count: usize, collapsed: bool| Run {
-            kind: RunKind::Unchanged,
-            lhs: Some((lhs_start + offset, lhs_start + offset + count)),
-            rhs: Some((rhs_start + offset, rhs_start + offset + count)),
-            collapsed,
+        let shown = |offset: usize| {
+            lhs_shown.contains(&(lhs_start + offset)) || rhs_shown.contains(&(rhs_start + offset))
         };
-        if lead > 0 {
-            out.push(piece(0, lead, false));
-        }
-        out.push(piece(lead, len - lead - trail, true));
-        if trail > 0 {
-            out.push(piece(len - trail, trail, false));
+        let len = run.len();
+        let mut from = 0;
+        while from < len {
+            let hidden = !shown(from);
+            let mut to = from + 1;
+            while to < len && shown(to) != hidden {
+                to += 1;
+            }
+            // A file with no change at all is one gap however short.
+            let collapsed = hidden && (to - from >= MIN_GAP || no_change);
+            let piece = Run {
+                kind: RunKind::Unchanged,
+                lhs: Some((lhs_start + from, lhs_start + to)),
+                rhs: Some((rhs_start + from, rhs_start + to)),
+                collapsed,
+            };
+            match out.last_mut() {
+                // Open pieces of one run stay one leaf.
+                Some(last)
+                    if !collapsed
+                        && !last.collapsed
+                        && last.kind == RunKind::Unchanged
+                        && last.lhs.is_some_and(|(_, end)| end == lhs_start + from) =>
+                {
+                    last.lhs = Some((last.lhs.expect("paired").0, lhs_start + to));
+                    last.rhs = Some((last.rhs.expect("paired").0, rhs_start + to));
+                }
+                _ => out.push(piece),
+            }
+            from = to;
         }
     }
     out
+}
+
+/// Whether a fold's line span lies entirely inside one collapsed gap.
+fn inside_gap(lines: (usize, usize), gaps: &[(usize, usize)]) -> bool {
+    gaps.iter()
+        .any(|&(start, end)| start <= lines.0 && lines.1 <= end)
 }
 
 fn line_span(range: &lines::SourceRange, line_count: usize) -> (usize, usize) {
@@ -436,18 +496,21 @@ fn split_runs(
         let mut at = 0;
         for (piece, cut) in offsets.into_iter().chain([len]).enumerate() {
             let key = paired.then_some(LeafKey { run: index, piece });
+            // A sliver cut off a gap by a fold edge stays open: the same
+            // offsets apply to both sides, so paired pieces agree.
+            let collapsed = run.collapsed && (cut - at >= MIN_GAP || cut - at == len);
             if let Some((start, _)) = run.lhs {
                 lhs_leaves.push(Leaf {
                     lines: (start + at, start + cut),
                     key,
-                    collapsed: run.collapsed,
+                    collapsed,
                 });
             }
             if let Some((start, _)) = run.rhs {
                 rhs_leaves.push(Leaf {
                     lines: (start + at, start + cut),
                     key,
-                    collapsed: run.collapsed,
+                    collapsed,
                 });
             }
             at = cut;
@@ -756,7 +819,6 @@ mod tests {
             Inputs {
                 file: &refs(!lhs.is_empty(), !rhs.is_empty()),
                 sizes: (lhs.len() as u64, rhs.len() as u64),
-                context_lines: context,
                 syntax: (Vec::new(), Vec::new()),
             },
         )
@@ -970,6 +1032,87 @@ mod tests {
     }
 
     #[test]
+    fn folds_inside_a_gap_are_dropped_and_the_gap_stays_whole() {
+        // Three unchanged functions sit between two changes. They would be
+        // hidden inside the gap, so they are not regions and do not split it.
+        let unchanged = (0..3)
+            .map(|i| format!("def f{i}():\n    a = {i}\n    b = {i}\n    return a + b\n\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        let lhs = format!("first = 1\n\n{unchanged}last = 1\n");
+        let rhs = format!("first = 2\n\n{unchanged}last = 2\n");
+        let diff = project("a.py", &lhs, &rhs, 1);
+        let (lhs, rhs) = sources(&diff);
+        let (lhs, rhs) = (lhs.unwrap(), rhs.unwrap());
+        assert!(all(&lhs.regions)
+            .iter()
+            .all(|r| matches!(r.node, Node::Leaf { .. })));
+        let gaps: Vec<_> = leaves(&rhs.regions)
+            .into_iter()
+            .filter(|leaf| leaf.visibility.collapsed)
+            .map(|leaf| leaf.range.lines_spanned())
+            .collect();
+        assert_eq!(gaps, vec![(2, 16)]);
+        assert_tiles(lhs);
+        assert_tiles(rhs);
+    }
+
+    #[test]
+    fn slivers_cut_from_a_gap_by_a_fold_edge_stay_open() {
+        // The changed function's fold edge lands one line into the gap
+        // before it; that one line is not worth a fold row.
+        let head = (0..8)
+            .map(|i| format!("x{i} = {i}\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        let lhs = format!("{head}\ndef f():\n    a = 1\n    b = 1\n    c = 1\n    return 1\n");
+        let rhs = format!("{head}\ndef f():\n    a = 1\n    b = 1\n    c = 1\n    return 2\n");
+        let diff = project("a.py", &lhs, &rhs, 1);
+        let (_, rhs) = sources(&diff);
+        let rhs = rhs.unwrap();
+        for leaf in leaves(&rhs.regions) {
+            let (start, end) = leaf.range.lines_spanned();
+            assert!(
+                !leaf.visibility.collapsed || end - start >= MIN_GAP as u32,
+                "collapsed sliver {start}..{end}"
+            );
+        }
+        assert_tiles(rhs);
+    }
+
+    #[test]
+    fn the_enclosing_header_stays_open_above_a_deep_change() {
+        // A change ten lines into a function: the `def` line is syntax
+        // context, so it is shown even though it is far outside the padding.
+        let body = (0..10)
+            .map(|i| format!("    a{i} = {i}\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        let lhs = format!("def outer():\n{body}    return 1\n");
+        let rhs = format!("def outer():\n{body}    return 2\n");
+        let diff = project("a.py", &lhs, &rhs, 1);
+        let (_, rhs) = sources(&diff);
+        let rhs = rhs.unwrap();
+        let open_lines: Vec<u32> = leaves(&rhs.regions)
+            .into_iter()
+            .filter(|leaf| !leaf.visibility.collapsed)
+            .flat_map(|leaf| {
+                let (start, end) = leaf.range.lines_spanned();
+                start..end
+            })
+            .collect();
+        assert!(
+            open_lines.contains(&0),
+            "header line hidden: {open_lines:?}"
+        );
+        assert!(
+            !open_lines.contains(&5),
+            "middle of the body should be a gap"
+        );
+        assert_tiles(rhs);
+    }
+
+    #[test]
     fn a_fold_edge_splits_paired_leaves_on_both_sides() {
         // The unchanged function inside the gap forces a split on both sides
         // at the same offset, even though only the rhs shifted.
@@ -1061,7 +1204,6 @@ mod tests {
             Inputs {
                 file: &refs(true, true),
                 sizes: (3, 5),
-                context_lines: 3,
                 syntax: (Vec::new(), Vec::new()),
             },
         )

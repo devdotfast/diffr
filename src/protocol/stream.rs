@@ -175,7 +175,6 @@ fn file_outcome(
     let inputs = Inputs {
         file: &loaded.file.sides,
         sizes: loaded.sizes(),
-        context_lines: loaded.context_lines as usize,
         syntax,
     };
     let mut entry = loaded.file.manifest_entry();
@@ -239,7 +238,6 @@ pub(crate) fn write_file(
     sizes: (u64, u64),
     compute: impl FnOnce() -> DiffResult,
     params: &crate::config::Params,
-    context_lines: usize,
     mutations: &Mutations,
     options: Options,
     output: &mut impl Write,
@@ -277,7 +275,6 @@ pub(crate) fn write_file(
         Inputs {
             file: &sides,
             sizes,
-            context_lines,
             syntax,
         },
     );

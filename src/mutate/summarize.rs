@@ -330,7 +330,6 @@ pub(crate) mod tests {
             project::Inputs {
                 file: &file.file,
                 sizes: (before.len() as u64, after.len() as u64),
-                context_lines: 3,
                 syntax: (Vec::new(), Vec::new()),
             },
         )

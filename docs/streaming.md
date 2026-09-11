@@ -181,13 +181,23 @@ hook adds). `visibility` is how it starts out: `collapsed` and the `label` to
 show while collapsed, a placeholder or pseudocode summary for a fold, or the
 count for a context gap. Absent means open.
 
-**Context** is expressed as leaves: an unchanged run longer than twice the
-`-U` width keeps that many lines open on each side that faces a change and
-collapses the rest into a leaf tagged `unchanged` with a label such as
-`"142 unchanged lines"`. A run at the start of the file keeps only its trailing
-lines, one at the end only its leading lines, and a file with no change is one
-collapsed leaf. Fold edges can split a gap into consecutive collapsed leaves;
-render adjacent collapsed leaves as one gap.
+**Context** is expressed as leaves. The rows difftastic's hunks display,
+which are the `-U` padding around every change plus the enclosing syntax
+context such as the header of the function a change sits in, stay open.
+Every other stretch of unchanged rows that is at least three lines long
+collapses into a leaf tagged `unchanged` with a label such as
+`"142 unchanged lines"`; shorter stretches stay open because a fold row
+would save nothing. A file with no change is one collapsed leaf however
+short. Folds that lie entirely inside a gap are not regions, so a gap is
+split only by a fold that crosses its edge, and the grouping mutation merges
+adjacent gaps again where both sides agree.
+
+**Groups** come from the last built-in mutation: a run of two or more
+sibling folds that start collapsed, such as several deleted or summarized
+functions in a row, is wrapped in one new fold tagged `group` whose label
+counts them (`"3 functions removed"`, `"3 functions summarized"`, or
+`"3 folded regions"`). It starts collapsed; expanding it reveals each
+child's own collapsed row. The wrapped children are untouched.
 
 Ids are per file, dense, and assigned in lhs preorder then rhs preorder. They
 mean nothing across files or runs.

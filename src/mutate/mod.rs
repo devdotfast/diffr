@@ -3,9 +3,12 @@
 //! region trees. diffr's diff internals never see them.
 //!
 //! Order: file mutations (hidden categories), then fold mutations in this
-//! sequence: deleted bodies, the built-in summarizer, the JSON-RPC hook.
-//! A mutation failure aborts the run; retries belong inside a mutation.
+//! sequence: deleted bodies, the built-in summarizer, the JSON-RPC hook, and
+//! last the grouping pass that merges adjacent gaps and wraps runs of
+//! collapsed folds. A mutation failure aborts the run; retries belong
+//! inside a mutation.
 pub(crate) mod collapse;
+pub(crate) mod group;
 pub(crate) mod summarize;
 use crate::config::Params;
 use crate::hash::DftHashSet;
@@ -57,6 +60,7 @@ impl Mutations {
                 .fold
                 .push(Box::new(Hook::spawn(hook, folds.min_lines, workspace)?));
         }
+        mutations.fold.push(Box::new(group::GroupCollapsed));
         Ok(mutations)
     }
 

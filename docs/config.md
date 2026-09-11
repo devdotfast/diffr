@@ -106,6 +106,10 @@ itself. In order:
    then the text.
 4. `folds.hook`, when configured, over the same selection with its own tags
    and threshold; its text gets the same comment line.
+5. Grouping, always on: adjacent context gaps merge into one, and a run of
+   two or more sibling folds that start collapsed is wrapped in one `group`
+   fold labelled `"<n> functions removed"`, `"<n> functions summarized"`, or
+   `"<n> folded regions"`. Expanding it reveals each child's own row.
 
 A mutation that fails after its retries ends the run: the stream finishes with
 `complete.aborted` (`summarizer_failed` or `hook_failed`) and diffr exits 2.

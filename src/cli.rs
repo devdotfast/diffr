@@ -532,7 +532,6 @@ fn no_index(
                 (before.len() as u64, after.len() as u64),
                 compute,
                 &config,
-                display.num_context_lines as usize,
                 &mutations,
                 stream_options,
                 &mut io::stdout().lock(),

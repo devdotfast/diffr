@@ -30,6 +30,7 @@ export function createFoldedDiffFile(): DiffFile {
   if (file.diff.type !== "text") throw new Error("fixture is not a text diff");
   file.diff.lhs = { text, syntax: [], regions: regions(false) };
   file.diff.rhs = { text, syntax: [], regions: regions(true) };
+  file.diff.stats = { textual: { added: 1, removed: 0 }, visible: { added: 1, removed: 0 }, structural: { added: 1, removed: 0 } };
   return file;
 }
 test("folds keep headers visible, hide trailing lines only when nothing follows", () => {

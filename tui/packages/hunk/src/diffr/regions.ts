@@ -70,6 +70,15 @@ export function flatten(diff: TextDiff) {
   const rhs = diff.rhs ? flattenSide(diff.rhs, 1) : { leaves: [], folds: [] };
   return { leaves: [lhs.leaves, rhs.leaves] as const, folds: [lhs.folds, rhs.folds] as const };
 }
+/** A leaf is novel when it carries change spans or has no counterpart on the other side. */
+export function novelLeaves(leaves: readonly [Leaf[], Leaf[]]): Set<Leaf> {
+  const ids = [new Set(leaves[0].map((l) => l.id)), new Set(leaves[1].map((l) => l.id))];
+  const novel = new Set<Leaf>();
+  for (const side of [0, 1] as const)
+    for (const leaf of leaves[side])
+      if (leaf.changed.size > 0 || !ids[side ? 0 : 1].has(leaf.id)) novel.add(leaf);
+  return novel;
+}
 /** Ids diffr asks to start collapsed: context gaps and folded bodies, on either side. */
 export function defaultCollapsed(diff: TextDiff): Set<number> {
   const ids = new Set<number>();

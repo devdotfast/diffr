@@ -167,7 +167,7 @@ test("binary and one-sided files render without a second side", () => {
   added.file = { rhs: added.file.rhs };
   if (added.diff.type !== "text") throw new Error();
   added.diff = { type: "text", rhs: { text: "new\n", syntax: [], regions: [leaf(1, 0, 1, [line(0, 0, 3)])] },
-    stats: { textual: { added: 1, removed: 0 }, structural: { added: 1, removed: 0 } } };
+    stats: { textual: { added: 1, removed: 0 }, visible: { added: 1, removed: 0 }, structural: { added: 1, removed: 0 } } };
   const rows = rowsForFile(added, 0, "split", dark).filter((r) => r.left);
   expect(rows.map((r) => [r.left!.kind, r.right!.lineNumber])).toEqual([["empty", 1]]);
 });

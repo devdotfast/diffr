@@ -30,6 +30,7 @@ import {
 import { fileIdentity, filePath, type DiffFile } from "../diffr/wire";
 import { defaultCollapsed, foldIds, gapIds, nestedIds, type RowFold } from "../diffr/regions";
 import { placeholderRows } from "../diffr/rows";
+import { add, blockBar, comparisonLabel, visibleCounts, zero, type LineCounts } from "../diffr/counts";
 import type { DiffStore } from "../diffr/store";
 import { sanitizeTerminalLine } from "../lib/terminalText";
 import { sliceTextByWidth } from "./lib/text";
@@ -67,13 +68,14 @@ export function App({
   const sidebarDrag = useRef<{ x: number; width: number } | null>(null);
   const [pendingFile, setPendingFile] = useState<string | null>(null);
   const [menu, setMenu] = useState<string | null>(null);
+  const [showBreakdown, setShowBreakdown] = useState(false);
   const dragging = useRef(false),
     thumbDragging = useRef(false);
   // `t` swaps between the two bundled defaults; a configured theme is left by the first press.
   const toggleTheme = () => setTheme((current) => (current.isLight ? themes.dark : themes.light));
   const sidebar = showSidebar && width >= 60 ? Math.max(16, Math.min(sidebarWidth, width - 40)) : 0;
   const contentWidth = Math.max(10, width - sidebar - 1),
-    viewportHeight = Math.max(1, height - 2);
+    viewportHeight = Math.max(1, height - 3);
   const layout =
     mode === "auto" ? (contentWidth >= 100 ? "split" : "unified") : mode;
   const loadedByIdentity = useMemo(() => new Map(snapshot.files.map((f, i) => [fileIdentity(f.file), i])), [snapshot.files]);
@@ -246,7 +248,8 @@ export function App({
     else if (key.name === "c") { toggleContext(); setSelection(null); }
     else if (key.name === "t") toggleTheme();
     else if (key.name === "y") copy();
-    else if (key.name === "escape") { setSelection(null); setMenu(null); }
+    else if (key.name === "escape") { setSelection(null); setMenu(null); setShowBreakdown(false); }
+    else if (key.name === "i") setShowBreakdown((v) => !v);
     else if (key.name === "return") {
       const current = visibleRows(geometry, top, 1)[0];
       if (current && current.row.fileIndex >= 0)
@@ -278,6 +281,18 @@ export function App({
   }, [pendingFile, loadedByIdentity, geometry, maxScroll, snapshot.failedFiles, snapshot.complete]);
   const treeRows = useMemo(() => flattenFileTree(tree, closedDirectories), [tree, closedDirectories]);
   const counts = useMemo(() => snapshot.files.map(lineCounts), [snapshot.files]);
+  // Headline numbers are the changed lines on screen, so every fold or file toggle moves them.
+  const visibleByFile = useMemo(
+    () => snapshot.files.map((file, index) => visibleCounts(file, foldsOf(index), isClosed(index))),
+    [snapshot.files, snapshot.inventory, collapsed, closed],
+  );
+  const totals = useMemo(() => ({
+    visible: visibleByFile.reduce(add, zero),
+    textual: counts.reduce((sum, c) => add(sum, c.textual), zero),
+    structural: counts.reduce<LineCounts | null>((sum, c) => sum && c.structural ? add(sum, c.structural) : null, zero),
+  }), [visibleByFile, counts]);
+  const plusMinus = (c: LineCounts) => `+${c.added} −${c.removed}`;
+  const structuralText = (c: LineCounts | null | undefined) => (c ? plusMinus(c) : "line diff");
   useEffect(() => {
     const file = inventory[currentTreeFile];
     if (!file) return;
@@ -294,21 +309,19 @@ export function App({
   }, [currentTreeFile, treeRows, viewportHeight]);
   const sidebarStart = Math.min(treeScroll, Math.max(0, treeRows.length - viewportHeight));
   const fileHeader = (fileIndex: number, key: string) => {
-    const file = snapshot.files[fileIndex], count = counts[fileIndex];
+    const file = snapshot.files[fileIndex], count = visibleByFile[fileIndex];
     if (!file) return null;
     const path = filePath(file.file);
-    const structural = count.structural && (count.structural.added !== count.textual.added
-      || count.structural.removed !== count.textual.removed)
-      ? ` · syntax +${count.structural.added} -${count.structural.removed}` : "";
-    const statsWidth = String(count.textual.added).length + String(count.textual.removed).length + 5 + structural.length;
+    const structural = "";
+    const statsWidth = String(count.added).length + String(count.removed).length + 5;
     return <box key={key} height={1} width={contentWidth} flexDirection="row"
       backgroundColor={theme.chrome}
       onMouseUp={() => toggleFile(fileIndex)}>
       <text width={Math.max(1, contentWidth - statsWidth)} fg={theme.fg} selectable={false}>
         {fit(sanitizeTerminalLine(`${isClosed(fileIndex) ? "▸" : "▾"} ${path}`), Math.max(1, contentWidth - statsWidth))}
       </text>
-      <text fg={theme.addedText} selectable={false}>{` +${count.textual.added}`}</text>
-      <text fg={theme.removedText} selectable={false}>{` -${count.textual.removed} `}</text>
+      <text fg={theme.addedText} selectable={false}>{` +${count.added}`}</text>
+      <text fg={theme.removedText} selectable={false}>{` −${count.removed} `}</text>
       {structural && <text fg={theme.muted} selectable={false}>{structural}</text>}
     </box>;
   };
@@ -400,6 +413,7 @@ export function App({
       ["Half page: Ctrl-D / Ctrl-U", () => setMessage("d / Ctrl-D: half down · u / Ctrl-U: half up")],
       ["Full page: Ctrl-F / Ctrl-B", () => setMessage("Ctrl-F: page down · Ctrl-B: page up")],
       ["Drag to select · y to copy", () => setMessage("Drag source lines; y copies original source")],
+      ["Change breakdown  i", () => setShowBreakdown(true)],
       ["Folds: click ▾ · za zo zc · zM zR", () => setMessage("Click the chevron or ⋯ · za toggle, zo open, zc close the top fold (zA zO zC recursive) · zM/zR fold/unfold all · zj/zk next/previous fold")]],
   };
   return (
@@ -439,7 +453,19 @@ export function App({
         <text fg={theme.accent} selectable={false} onMouseUp={() => {
           setMode(layout === "split" ? "unified" : "split"); setSelection(null);
         }}>{`  ${layout} [s] `}</text>
-        <text fg={theme.muted} selectable={false}>{` · ${snapshot.total || snapshot.inventory.length} files`}</text>
+      </box>
+      <box height={1} flexDirection="row" backgroundColor={theme.chrome}>
+        <text fg={theme.fg} selectable={false}>
+          {` ${snapshot.comparison ? comparisonLabel(snapshot.comparison.lhs, snapshot.comparison.rhs) : "diffr"}`}
+        </text>
+        <text fg={theme.muted} selectable={false}>{` · ${snapshot.total || snapshot.inventory.length} files · `}</text>
+        <text fg={theme.addedText} selectable={false} onMouseUp={() => setShowBreakdown((v) => !v)}>{`+${totals.visible.added}`}</text>
+        <text fg={theme.removedText} selectable={false} onMouseUp={() => setShowBreakdown((v) => !v)}>{` −${totals.visible.removed}`}</text>
+        <text fg={theme.muted} selectable={false}>{snapshot.complete ? " " : "… "}</text>
+        {blockBar(totals.visible).map((block, i) => (
+          <text key={i} fg={block === "added" ? theme.addedText : block === "removed" ? theme.removedText : theme.muted}
+            selectable={false} onMouseUp={() => setShowBreakdown((v) => !v)}>{block === "neutral" ? "□" : "■"}</text>
+        ))}
       </box>
       <box
         height={viewportHeight}
@@ -540,6 +566,24 @@ export function App({
           />
         </box>
       </box>
+      {showBreakdown && (() => {
+        const file = snapshot.files[currentFile];
+        const lines = [
+          ["All files", totals.visible, totals.structural, totals.textual],
+          ...(file ? [[filePath(file.file), visibleByFile[currentFile], counts[currentFile].structural ?? null, counts[currentFile].textual]] : []),
+        ] as [string, LineCounts, LineCounts | null, LineCounts][];
+        const boxWidth = Math.min(width, 44);
+        return <box position="absolute" top={2} left={Math.max(0, width - boxWidth - 1)} width={boxWidth}
+          height={lines.length * 4 + 1} flexDirection="column" zIndex={10} backgroundColor={theme.chrome}>
+          {lines.flatMap(([title, visible, structural, textual]) => [
+            <text key={`${title}:t`} height={1} fg={theme.fg} selectable={false}>{fit(` ${title}`, boxWidth)}</text>,
+            <text key={`${title}:v`} height={1} fg={theme.muted} selectable={false}>{fit(`   visible     ${plusMinus(visible)}`, boxWidth)}</text>,
+            <text key={`${title}:s`} height={1} fg={theme.muted} selectable={false}>{fit(`   structural  ${structuralText(structural)}`, boxWidth)}</text>,
+            <text key={`${title}:x`} height={1} fg={theme.muted} selectable={false}>{fit(`   textual     ${plusMinus(textual)}`, boxWidth)}</text>,
+          ])}
+          <text height={1} fg={theme.muted} selectable={false}>{fit(" esc close", boxWidth)}</text>
+        </box>;
+      })()}
       {menu && <box position="absolute" top={1} left={0} width={38}
         height={menuItems[menu].length} flexDirection="column" zIndex={10}
         backgroundColor={theme.chrome}>
@@ -552,7 +596,7 @@ export function App({
       </box>}
       <text height={1} fg={theme.muted} selectable={false}>
         {fit(
-          `${snapshot.files.length}/${snapshot.total} files ${snapshot.complete ? "" : "loading…"} ${snapshot.errors.length ? `${snapshot.errors.length} errors` : ""}  [/] hunks · za fold · drag selects lines · y copy · q quit ${message}`,
+          `${snapshot.files.length}/${snapshot.total} files ${snapshot.complete ? "" : "loading…"} ${snapshot.errors.length ? `${snapshot.errors.length} errors` : ""}  [/] hunks · za fold · i breakdown · drag selects lines · y copy · q quit ${message}`,
           width,
         )}
       </text>

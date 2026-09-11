@@ -1,6 +1,9 @@
 /** Hold streamed files separately from presentation state and notify React in batches. */
 import { fileIdentity, filePath, type FileChange, type DiffEvent, type DiffFile } from "./wire";
+type StartEvent = Extract<DiffEvent, { type: "start" }>;
 export interface Snapshot {
+  /** The two ends of the comparison, from the start event. */
+  comparison: { lhs: StartEvent["lhs"]; rhs: StartEvent["rhs"] } | null;
   files: DiffFile[];
   inventory: FileChange[];
   failedFiles: Map<string, string>;
@@ -10,6 +13,7 @@ export interface Snapshot {
 }
 export class DiffStore {
   private value: Snapshot = {
+    comparison: null,
     files: [],
     inventory: [],
     failedFiles: new Map(),
@@ -27,7 +31,7 @@ export class DiffStore {
   getSnapshot = () => this.value;
   accept(event: DiffEvent) {
     if (event.type === "start")
-      this.value = { ...this.value, total: event.files.length, inventory: event.files };
+      this.value = { ...this.value, comparison: { lhs: event.lhs, rhs: event.rhs }, total: event.files.length, inventory: event.files };
     if (event.type === "file") {
       const identity = fileIdentity(event.file);
       const inventory = this.value.inventory.some((f) => fileIdentity(f.file) === identity)

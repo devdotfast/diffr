@@ -3,7 +3,7 @@ import type { DiffFile, Span, SyntaxSpan } from "./wire";
 import { filePath } from "./wire";
 import type { RenderSpan, SplitLineCell, UnifiedLineCell } from "../ui/diff/diffRowModel";
 import { measureTextWidth } from "../ui/lib/text";
-import { flatten, foldHeaders, hiddenLines, leafLabel, sourceLines, type Leaf, type RowFold } from "./regions";
+import { flatten, foldHeaders, hiddenLines, leafLabel, novelLeaves, sourceLines, type Leaf, type RowFold } from "./regions";
 import { loadBundledTheme, type Palette } from "./theme";
 export { sourceLines };
 export type Layout = "split" | "unified";
@@ -104,10 +104,9 @@ export function rowsForFile(
   const hidden = [hiddenLines(folds[0], collapsed), hiddenLines(folds[1], collapsed)];
   const headers = [foldHeaders(folds[0], leaves[0], collapsed), foldHeaders(folds[1], leaves[1], collapsed)];
   const caches = [new Map<number, RenderSpan[]>(), new Map<number, RenderSpan[]>()];
-  // A leaf is novel when it carries change spans or has no counterpart; every line in it is
-  // tinted, and the spans inside get the darker word tint on top.
-  const ids = [new Set(leaves[0].map((l) => l.id)), new Set(leaves[1].map((l) => l.id))];
-  const novel = (leaf: Leaf) => leaf.changed.size > 0 || !ids[leaf.side ? 0 : 1].has(leaf.id);
+  // Every line of a novel leaf is tinted; the spans inside get the darker word tint on top.
+  const novelSet = novelLeaves(leaves);
+  const novel = (leaf: Leaf) => novelSet.has(leaf);
   const cell = (leaf: Leaf | null, line: number | null, side: 0 | 1): SplitLineCell => {
     if (line === null || leaf === null) return { kind: "empty", sign: " ", spans: [] };
     const text = texts[side][line];

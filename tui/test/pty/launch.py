@@ -44,10 +44,11 @@ try:
     until(b'console.log(name);')
     os.write(master, b's')
     until(b'split [s]')
-    # Width 100 has a 28-column file sidebar. The header is at x=30,y=2 (1-based).
-    os.write(master, b'\x1b[<0;31;2M\x1b[<0;31;2m')
+    # Width 100 has a 28-column file sidebar. Below the menubar and summary strip the header
+    # is at x=30,y=3 (1-based).
+    os.write(master, b'\x1b[<0;31;3M\x1b[<0;31;3m')
     until('▸'.encode())
-    os.write(master, b'\x1b[<0;31;2M\x1b[<0;31;2m')
+    os.write(master, b'\x1b[<0;31;3M\x1b[<0;31;3m')
     until('▾'.encode())
     os.write(master, b'q')
     deadline = time.monotonic() + 5

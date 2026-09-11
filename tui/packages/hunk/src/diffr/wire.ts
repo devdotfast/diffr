@@ -67,6 +67,8 @@ const lineCounts = z.object({ added: uint, removed: uint });
 const stats = z
   .object({
     textual: lineCounts,
+    /** Changed lines shown under diffr's default fold state; the frontend adjusts it as folds toggle. */
+    visible: lineCounts,
     structural: lineCounts.optional(),
     fallback: problem.optional(),
   })
@@ -110,6 +112,7 @@ export type Diff = z.infer<typeof diff>;
 export type Span = z.infer<typeof span>;
 export type SyntaxSpan = z.infer<typeof syntaxSpan>;
 export type Stats = z.infer<typeof stats>;
+export type LineCounts = z.infer<typeof lineCounts>;
 export type DiffEvent = z.infer<typeof eventSchema>;
 export type FileEvent = Extract<DiffEvent, { type: "file" }>;
 /** A file record that carries a diff; failures are kept separately by the store. */

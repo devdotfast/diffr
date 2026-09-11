@@ -32,7 +32,7 @@ test("omitted defaults are filled in", async () => {
   const bare = { type: "file", file: file.file, diff: { type: "text",
     lhs: { text: "a\n", regions: [{ id: 1, kind: "leaf", start: { line: 0, column: 0 }, end: { line: 1, column: 0 } }] },
     rhs: { text: "a\n", regions: [{ id: 1, kind: "leaf", start: { line: 0, column: 0 }, end: { line: 1, column: 0 } }] },
-    stats: { textual: { added: 0, removed: 0 }, structural: { added: 0, removed: 0 } } } };
+    stats: { textual: { added: 0, removed: 0 }, visible: { added: 0, removed: 0 }, structural: { added: 0, removed: 0 } } } };
   const [, decoded] = await decode([{ ...start, files: [{ file: file.file, status: "modified" }] }, bare,
     { type: "complete", succeeded: 1, failed: 0 }]);
   expect(decoded).toMatchObject({ diff: { lhs: { syntax: [], regions: [{ tags: [], changed: [], children: [],

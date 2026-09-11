@@ -83,8 +83,15 @@ list; Esc returns without saving. Both views carry a footer hint line.
 - File header click or Enter: collapse/expand the file.
 - `\` / Cmd-B (when forwarded by the terminal): toggle the file tree.
 - Click folders to expand/collapse them; click files to navigate. The active file is highlighted and revealed as the diff scrolls.
-- File headers stay pinned while scrolling and show textual counts (`+added -removed`)
-  from Rust, plus `syntax +a -r` when the structural counts differ.
+- A summary strip under the menubar shows the comparison (`main…HEAD`, `index…working
+  tree`), the file count, the totals `+N −M` in the theme's diff colours, and GitHub's
+  five-block bar. Totals and file-header counts are the changed lines currently visible:
+  diffr's `stats.visible` (its default fold state) adjusted as folds, gaps, and files are
+  toggled, so lines hidden inside a collapsed region are not counted. While results are
+  still arriving the total ends in `…`.
+- `i` (or clicking the totals) opens a breakdown for the whole comparison and the current
+  file: `visible`, `structural` (from tree-sitter, or `line diff` when it fell back), and
+  `textual`. Esc closes it.
 - A file diffr marks hidden by default (generated, test) opens collapsed with a GitHub-style
   placeholder: `Load diff` and the reason line. Click it or press Enter to reveal.
 - File, View, Navigate, Theme and Help menus expose the supported controls.

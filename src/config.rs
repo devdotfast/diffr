@@ -57,7 +57,7 @@ impl Default for DiffConfig {
     fn default() -> Self {
         Self {
             byte_limit: crate::options::DEFAULT_BYTE_LIMIT,
-            graph_limit: 30_000_000,
+            graph_limit: crate::options::DEFAULT_GRAPH_LIMIT,
             parse_error_limit: crate::options::DEFAULT_PARSE_ERROR_LIMIT,
         }
     }
@@ -487,7 +487,7 @@ mod tests {
     #[test]
     fn diff_limits_default_and_layer_from_the_file() {
         let defaults = Config::default().diff;
-        assert_eq!(defaults.graph_limit, 30_000_000);
+        assert_eq!(defaults.graph_limit, crate::options::DEFAULT_GRAPH_LIMIT);
         assert_eq!(defaults.byte_limit, crate::options::DEFAULT_BYTE_LIMIT);
         let custom = Config::from_toml("[diff]\ngraph_limit = 5").unwrap();
         assert_eq!(custom.diff.graph_limit, 5);

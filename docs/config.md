@@ -56,7 +56,7 @@ retries = 3                # on timeouts, rate limits and server errors
 
 [diff]
 byte_limit = 1000000       # larger files on either side get a line diff
-graph_limit = 30000000     # the largest AST matching graph explored per file
+graph_limit = 3000000      # the largest AST matching graph explored per file
 parse_error_limit = 0      # more tree-sitter parse errors than this: line diff
 
 [theme]
@@ -83,10 +83,10 @@ no collapse rules, no summaries, and the file's `stats` carries a `fallback`
 with code `too_large`, `too_complex` or `parse_error` and a message naming
 the key to raise. `DFT_BYTE_LIMIT`, `DFT_GRAPH_LIMIT` and
 `DFT_PARSE_ERROR_LIMIT` override the file for one run, and `--byte-limit`,
-`--graph-limit` and `--parse-error-limit` override both. The graph limit is
-ten times difftastic's default because a large rewrite of a large file, such
-as replacing an HTTP client, exceeded the old one; that file takes about a
-second longer to compare and every other file is unaffected.
+`--graph-limit` and `--parse-error-limit` override both. The defaults are
+difftastic's. A large rewrite can exceed the graph limit and fall back to a
+line diff; raising the limit trades memory for it across every file diffed in
+parallel, so prefer narrowing the comparison or leaving the fallback.
 
 ## File categories
 

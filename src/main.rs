@@ -57,6 +57,7 @@ mod hash;
 // The fold hook has no caller until it returns as a fold mutation.
 #[allow(dead_code)]
 mod hook;
+mod line_folds;
 mod line_parser;
 mod lines;
 mod options;

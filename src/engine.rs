@@ -8,9 +8,11 @@ use crate::diff::unchanged;
 use crate::display;
 use crate::display::context::opposite_positions;
 use crate::display::hunks::{matched_pos_to_hunks, merge_adjacent};
+use crate::line_folds;
 use crate::line_parser;
 use crate::lines::MaxLine;
 use crate::options::{DiffOptions, DisplayOptions, FileArgument};
+use crate::parse::folds;
 use crate::parse::guess_language::{guess, language_name, LanguageOverride};
 use crate::parse::syntax::{self, init_next_prev};
 use crate::parse::tree_sitter_parser as tsp;
@@ -218,6 +220,14 @@ pub(crate) fn diff_file_content(
                             }
 
                             if exceeded_graph_limit {
+                                // The parse still stands: folds and enclosing
+                                // context come from it, and the line diff
+                                // supplies the alignment they hang off.
+                                folds::unmatched(&lhs, &mut lhs_folds);
+                                folds::unmatched(&rhs, &mut rhs_folds);
+                                annotations = display::syntax_context::SyntaxAnnotations::collect(
+                                    (&lhs, &rhs),
+                                );
                                 let (lhs_positions, rhs_positions) =
                                     line_parser::change_positions(lhs_src, rhs_src);
                                 (
@@ -296,6 +306,30 @@ pub(crate) fn diff_file_content(
                                 );
                             }
 
+                            // The trees parsed, only with too many errors to
+                            // match on. Folds and context still come from them.
+                            let (lhs, _) = tsp::to_syntax(
+                                &lhs_tree,
+                                lhs_src,
+                                &arena,
+                                lang_config,
+                                diff_options.ignore_comments,
+                            );
+                            let (rhs, _) = tsp::to_syntax(
+                                &rhs_tree,
+                                rhs_src,
+                                &arena,
+                                lang_config,
+                                diff_options.ignore_comments,
+                            );
+                            // Fold partners are keyed by syntax id, which
+                            // only exists once both sides are numbered.
+                            syntax::init_all_info(&lhs, &rhs);
+                            folds::unmatched(&lhs, &mut lhs_folds);
+                            folds::unmatched(&rhs, &mut rhs_folds);
+                            annotations =
+                                display::syntax_context::SyntaxAnnotations::collect((&lhs, &rhs));
+
                             let (lhs_positions, rhs_positions) =
                                 line_parser::change_positions(lhs_src, rhs_src);
                             (file_format, lhs_positions, rhs_positions)
@@ -355,6 +389,17 @@ pub(crate) fn diff_file_content(
     } else {
         Some((lhs_src.as_bytes().len(), rhs_src.as_bytes().len()))
     };
+
+    // A structural diff's folds already record the partners the matcher
+    // paired them with. A line-diff fallback's folds arrive unpaired; pair
+    // them through the line alignment instead.
+    if !matches!(file_format, FileFormat::SupportedLanguage(_)) {
+        line_folds::pair(
+            &line_folds::fallback_rows((lhs_src, rhs_src), (&lhs_positions, &rhs_positions)),
+            (lhs_src, rhs_src),
+            (&mut lhs_folds, &mut rhs_folds),
+        );
+    }
 
     DiffResult {
         extra_info,

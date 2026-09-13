@@ -22,6 +22,7 @@ use crate::display::line_layout::{
     aligned_rows, novel_lines, runs, shown_lines, trim_context, Run, MIN_GAP,
 };
 use crate::hash::DftHashMap;
+use crate::line_folds;
 use crate::line_parser;
 use crate::pairing::Pairing;
 use crate::parse::folds::{self, Fold};
@@ -157,7 +158,12 @@ fn regions(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> (Vec<Region>, V
         result.lhs_positions.as_slice(),
         result.rhs_positions.as_slice(),
     );
-    let rows = aligned_rows(sources, positions);
+    // The structural matcher anchors its rows on matched tokens; a line
+    // diff's changed blocks are re-paired from whichever end reads alike.
+    let rows = match result.file_format {
+        FileFormat::SupportedLanguage(_) => aligned_rows(sources, positions),
+        _ => line_folds::fallback_rows(sources, positions),
+    };
     let (lhs_shown, rhs_shown) = shown_lines(&result.hunks);
     let runs = trim_context(runs(&rows, &lhs_novel, &rhs_novel), &lhs_shown, &rhs_shown);
     let lhs_gaps: Vec<(usize, usize)> = runs
@@ -612,6 +618,64 @@ mod tests {
     use crate::config::Params;
     use crate::options::{DiffOptions, DisplayOptions};
 
+    #[test]
+    fn a_changed_block_pairs_its_last_lines_when_they_read_alike() {
+        // A changed block: an old doc comment and body, then the old
+        // signature; the new side has only the new signature. The unchanged
+        // row after it is the function body.
+        let lhs_lines = [
+            "/// Fill in summaries.",
+            "fn summarize() {",
+            "}",
+            "fn qualifies(fold: Fold) -> bool {",
+            "    true",
+        ];
+        let rhs_lines = ["fn qualifies(region: Region) -> bool {", "    true"];
+        let rows = vec![
+            (Some(0), Some(0)),
+            (Some(1), None),
+            (Some(2), None),
+            (Some(3), None),
+            (Some(4), Some(1)),
+        ];
+        let lhs_novel: BTreeSet<usize> = [0, 1, 2, 3].into_iter().collect();
+        let rhs_novel: BTreeSet<usize> = [0].into_iter().collect();
+        let realigned = crate::line_folds::align_changed_blocks(
+            &rows,
+            &lhs_novel,
+            &rhs_novel,
+            (&lhs_lines, &rhs_lines),
+        );
+        assert_eq!(
+            realigned,
+            vec![
+                (Some(0), None),
+                (Some(1), None),
+                (Some(2), None),
+                (Some(3), Some(0)),
+                (Some(4), Some(1)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_changed_block_keeps_its_rows_when_the_top_reads_as_well() {
+        let lhs_lines = ["let a = 1;", "let b = 2;", "done();"];
+        let rhs_lines = ["let a = 3;", "done();"];
+        let rows = vec![(Some(0), Some(0)), (Some(1), None), (Some(2), Some(1))];
+        let lhs_novel: BTreeSet<usize> = [0, 1].into_iter().collect();
+        let rhs_novel: BTreeSet<usize> = [0].into_iter().collect();
+        assert_eq!(
+            crate::line_folds::align_changed_blocks(
+                &rows,
+                &lhs_novel,
+                &rhs_novel,
+                (&lhs_lines, &rhs_lines)
+            ),
+            rows
+        );
+    }
+
     fn refs(lhs: bool, rhs: bool) -> Pairing<FileRef> {
         let file_ref = FileRef {
             path: "a.py".to_owned(),
@@ -809,6 +873,84 @@ mod tests {
     }
 
     #[test]
+    fn a_parse_error_fallback_numbers_its_folds() {
+        // Both sides hold a stray `)`, so the parse-error limit of zero sends
+        // the file to a line diff; the folds still come from the parse.
+        let lhs = format!("{RUST_LHS})\n");
+        let rhs = format!("{RUST_RHS})\n");
+        let diff = project_with(
+            "a.rs",
+            &lhs,
+            &rhs,
+            3,
+            DiffOptions {
+                parse_error_limit: 0,
+                ..DiffOptions::default()
+            },
+        );
+        let Diff::Text { stats, .. } = &diff else {
+            panic!("text diff");
+        };
+        assert_eq!(stats.fallback.as_ref().unwrap().code, "parse_error");
+        let (lhs, rhs) = sources(&diff);
+        let (lhs_folds, rhs_folds) = (fold_ids(lhs.unwrap()), fold_ids(rhs.unwrap()));
+        let lhs_ids: BTreeSet<u32> = lhs_folds.values().copied().collect();
+        let rhs_ids: BTreeSet<u32> = rhs_folds.values().copied().collect();
+        assert_eq!(
+            lhs_ids.len(),
+            lhs_folds.len(),
+            "lhs folds have distinct ids"
+        );
+        assert_eq!(
+            rhs_ids.len(),
+            rhs_folds.len(),
+            "rhs folds have distinct ids"
+        );
+        assert_eq!(
+            lhs_folds[&0], rhs_folds[&0],
+            "f pairs across a changed header"
+        );
+        assert!(!lhs_ids.contains(&rhs_folds[&12]), "added is rhs-only");
+    }
+
+    #[test]
+    fn folds_pair_on_either_engine() {
+        for options in [
+            DiffOptions::default(),
+            DiffOptions {
+                graph_limit: 1,
+                ..DiffOptions::default()
+            },
+        ] {
+            let structural = options.graph_limit != 1;
+            let diff = project_with("a.rs", RUST_LHS, RUST_RHS, 3, options);
+            let Diff::Text { stats, .. } = &diff else {
+                panic!("text diff");
+            };
+            assert_eq!(stats.fallback.is_none(), structural);
+            let (lhs, rhs) = sources(&diff);
+            let (lhs, rhs) = (lhs.unwrap(), rhs.unwrap());
+            assert_tiles(lhs);
+            assert_tiles(rhs);
+            let (lhs_folds, rhs_folds) = (fold_ids(lhs), fold_ids(rhs));
+            // `f` changed its signature and stays paired: through the matcher
+            // on the structural path, through its aligned header line on the
+            // fallback. `keep` is untouched. `added` is rhs-only.
+            assert_eq!(
+                lhs_folds[&0], rhs_folds[&0],
+                "f pairs across a changed header"
+            );
+            assert_eq!(lhs_folds[&6], rhs_folds[&6], "keep pairs");
+            assert!(
+                !lhs_folds.values().any(|id| *id == rhs_folds[&12]),
+                "added is rhs-only"
+            );
+            assert_eq!(lhs_folds.len(), 2);
+            assert_eq!(rhs_folds.len(), 3);
+        }
+    }
+
+    #[test]
     fn structural_folds_pair_exactly_as_the_matcher_recorded() {
         let result = DiffResult::from_sources_with_options(
             "a.rs",
@@ -862,6 +1004,119 @@ mod tests {
             !lhs_ids.contains(&array.alignment_id),
             "no lhs region claims the dropped fold's id"
         );
+    }
+
+    #[test]
+    fn a_line_diff_pairs_a_reflowed_signature_through_its_body() {
+        // The signature moves onto three lines, so the header rows no
+        // longer align, but the body is untouched: still the same function.
+        let lhs =
+            "fn f(a: u32, b: u32) -> u32 {\n    let x = a + b;\n    let y = x * 2;\n    x + y\n}\n";
+        let rhs = "fn f(\n    a: u32,\n    b: u32,\n) -> u32 {\n    let x = a + b;\n    let y = x * 2;\n    x + y\n}\n";
+        let diff = project_with(
+            "a.rs",
+            lhs,
+            rhs,
+            3,
+            DiffOptions {
+                graph_limit: 1,
+                ..DiffOptions::default()
+            },
+        );
+        let (lhs_src, rhs_src) = sources(&diff);
+        let (lhs_folds, rhs_folds) = (fold_ids(lhs_src.unwrap()), fold_ids(rhs_src.unwrap()));
+        assert_eq!(lhs_folds.len(), 1);
+        assert_eq!(rhs_folds.len(), 1);
+        assert_eq!(
+            lhs_folds.values().next(),
+            rhs_folds.values().next(),
+            "the reflowed function keeps one alignment id"
+        );
+    }
+
+    #[test]
+    fn line_diff_content_pairing_picks_the_candidate_with_the_most_paired_lines() {
+        // Both rhs functions have reflowed signatures and both hold a line
+        // `f` also holds (`let x = ...`), but only `g` holds `f`'s long
+        // body. Order is preserved so nothing crosses.
+        let lhs = "fn h(b: u32) -> u32 {\n    let x = b;\n    b\n}\n\nfn f(a: u32) -> u32 {\n    let x = a;\n    let y = x * 2;\n    let z = y * 3;\n    x + y + z\n}\n";
+        let rhs = "fn h(\n    b: u32,\n) -> u32 {\n    let x = b;\n    b\n}\n\nfn g(\n    a: u32,\n) -> u32 {\n    let x = a;\n    let y = x * 2;\n    let z = y * 3;\n    x + y + z\n}\n";
+        let diff = project_with(
+            "a.rs",
+            lhs,
+            rhs,
+            3,
+            DiffOptions {
+                graph_limit: 1,
+                ..DiffOptions::default()
+            },
+        );
+        let (lhs_src, rhs_src) = sources(&diff);
+        let (lhs_folds, rhs_folds) = (fold_ids(lhs_src.unwrap()), fold_ids(rhs_src.unwrap()));
+        // Fold headers sit on the `{` line: lhs h=0, f=5; rhs h=2, g=9.
+        assert_eq!(lhs_folds[&0], rhs_folds[&2], "h pairs with h");
+        assert_eq!(lhs_folds[&5], rhs_folds[&9], "f pairs with g by its body");
+    }
+
+    #[test]
+    fn line_diff_content_pairing_never_crosses_an_existing_pair() {
+        // `keep` pairs by header on both sides. `f` moved below `keep` on
+        // the rhs with a reflowed signature; pairing it would cross `keep`,
+        // so it stays one-sided on each side.
+        let lhs = "fn f(a: u32) -> u32 {\n    let x = a + 1;\n    let y = x * 2;\n    x + y\n}\n\nfn keep() -> u32 {\n    let k = 1;\n    let m = 2;\n    k + m\n}\n";
+        let rhs = "fn keep() -> u32 {\n    let k = 1;\n    let m = 2;\n    k + m\n}\n\nfn f(\n    a: u32,\n) -> u32 {\n    let x = a + 1;\n    let y = x * 2;\n    x + y\n}\n";
+        let diff = project_with(
+            "a.rs",
+            lhs,
+            rhs,
+            3,
+            DiffOptions {
+                graph_limit: 1,
+                ..DiffOptions::default()
+            },
+        );
+        let (lhs_src, rhs_src) = sources(&diff);
+        let (lhs_folds, rhs_folds) = (fold_ids(lhs_src.unwrap()), fold_ids(rhs_src.unwrap()));
+        assert_eq!(lhs_folds[&6], rhs_folds[&0], "keep pairs by header");
+        assert_ne!(
+            lhs_folds[&0], rhs_folds[&8],
+            "f would cross keep, so it stays unpaired"
+        );
+    }
+
+    #[test]
+    fn the_fallback_keeps_folds_and_enclosing_context() {
+        let diff = project_with(
+            "a.rs",
+            RUST_LHS,
+            RUST_RHS,
+            1,
+            DiffOptions {
+                graph_limit: 1,
+                ..DiffOptions::default()
+            },
+        );
+        let Diff::Text { stats, .. } = &diff else {
+            panic!("text diff");
+        };
+        assert_eq!(stats.fallback.as_ref().unwrap().code, "too_complex");
+        let (_, rhs) = sources(&diff);
+        let rhs = rhs.unwrap();
+        let bodies: Vec<_> = all(&rhs.regions)
+            .into_iter()
+            .filter(|r| r.tags.iter().any(|tag| tag == "body"))
+            .map(|r| r.range.start.line)
+            .collect();
+        // `keep` is untouched and lies inside a collapsed gap, so it is not a
+        // region; the changed `f` and the new `added` are folds.
+        assert_eq!(bodies, vec![0, 12]);
+        // The change inside `f` keeps its header line open, not in a gap.
+        let gaps: Vec<_> = leaves(&rhs.regions)
+            .into_iter()
+            .filter(|r| r.visibility.collapsed)
+            .map(|r| r.range.lines_spanned())
+            .collect();
+        assert!(gaps.iter().all(|(start, _)| *start != 0), "{gaps:?}");
     }
 
     #[test]

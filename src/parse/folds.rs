@@ -258,6 +258,18 @@ pub(crate) fn fit_to_gaps(span: (usize, usize), gaps: &[(usize, usize)]) -> Opti
     }
 }
 
+/// Every fold in one parsed side, each unpaired. Used when the AST match
+/// did not run: `line_folds::pair` then records partners through the line
+/// alignment.
+pub(crate) fn unmatched(nodes: &[&Syntax<'_>], folds: &mut Vec<Fold>) {
+    for node in nodes {
+        folds.extend(project(node, None));
+        if let Syntax::List { children, .. } = node {
+            unmatched(children, folds);
+        }
+    }
+}
+
 /// The node the matcher paired `node` with, when the pairing is mutual.
 ///
 /// Every matcher step records a pair on both nodes, but the nested slider

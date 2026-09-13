@@ -116,3 +116,15 @@ test("a collapsed leaf is one fold row with the chevron, its label, and no line 
   expect(rows[1].left!.fold).toBeUndefined();
   expect(rows[2].right!.fold).toBeUndefined();
 });
+
+test("a fold that runs to the end of the file may end one past its last line", () => {
+  const file = createTestDiffFile();
+  if (file.diff.type !== "text") throw new Error("fixture is not a text diff");
+  const text = "fn a() {\n    b();\n}\n";
+  // Three lines; the fold's hull ends at (3, 0), just past the last line.
+  const regions: Region[] = [fold(10, [0, 0], [3, 0], [leaf(1, 0, 1), leaf(2, 1, 3)])];
+  file.diff.lhs = { text, syntax: [], regions };
+  file.diff.rhs = { text, syntax: [], regions };
+  const { folds } = flatten(file.diff);
+  expect(folds[0][0]?.lastHidden).toBe(2);
+});

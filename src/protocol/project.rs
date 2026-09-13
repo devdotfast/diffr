@@ -229,6 +229,13 @@ fn regions(
         (lhs_src, rhs_src),
         (&result.lhs_positions, &result.rhs_positions),
     );
+    // A line diff pairs the lines of a changed block from the top, whatever
+    // they say; the structural matcher anchors its rows on matched tokens
+    // and is left alone.
+    let rows = match result.file_format {
+        FileFormat::SupportedLanguage(_) => rows,
+        _ => align_changed_blocks(&rows, &lhs_novel, &rhs_novel, (&lhs_lines, &rhs_lines)),
+    };
     let (lhs_shown, rhs_shown) = shown_lines(&result.hunks);
     let runs = trim_context(runs(&rows, &lhs_novel, &rhs_novel), &lhs_shown, &rhs_shown);
     let lhs_gaps: Vec<(usize, usize)> = runs
@@ -323,6 +330,82 @@ pub(crate) fn tree_violation(regions: &[Region]) -> Option<String> {
 }
 
 /// Rows in order, run-length encoded by kind and side presence.
+/// Re-pair the lines of each changed block, a maximal stretch of rows
+/// between unchanged rows, when its two sides differ in length. A line diff
+/// pairs a block's first lines with each other; when the block's last lines
+/// read more alike, pair those instead, so a changed signature sits next to
+/// the old one right above a body that still aligns. Blocks that are
+/// one-sided, equal in length, or read no better from the bottom keep their
+/// rows.
+fn align_changed_blocks(
+    rows: &[(Option<usize>, Option<usize>)],
+    lhs_novel: &BTreeSet<usize>,
+    rhs_novel: &BTreeSet<usize>,
+    (lhs_lines, rhs_lines): (&[&str], &[&str]),
+) -> Vec<(Option<usize>, Option<usize>)> {
+    let unchanged = |&(lhs, rhs): &(Option<usize>, Option<usize>)| matches!((lhs, rhs), (Some(l), Some(r)) if !lhs_novel.contains(&l) && !rhs_novel.contains(&r));
+    let mut out = Vec::with_capacity(rows.len());
+    let mut at = 0;
+    while at < rows.len() {
+        if unchanged(&rows[at]) {
+            out.push(rows[at]);
+            at += 1;
+            continue;
+        }
+        let end = rows[at..]
+            .iter()
+            .position(unchanged)
+            .map_or(rows.len(), |offset| at + offset);
+        let block = &rows[at..end];
+        let lhs: Vec<usize> = block.iter().filter_map(|&(l, _)| l).collect();
+        let rhs: Vec<usize> = block.iter().filter_map(|&(_, r)| r).collect();
+        let shared = lhs.len().min(rhs.len());
+        let similarity = |lhs_from: usize, rhs_from: usize| -> f64 {
+            (0..shared)
+                .map(|offset| {
+                    line_similarity(
+                        lhs_lines[lhs[lhs_from + offset]],
+                        rhs_lines[rhs[rhs_from + offset]],
+                    )
+                })
+                .sum()
+        };
+        let bottom_reads_better = shared > 0
+            && lhs.len() != rhs.len()
+            && similarity(lhs.len() - shared, rhs.len() - shared) > similarity(0, 0);
+        if bottom_reads_better {
+            out.extend(lhs[..lhs.len() - shared].iter().map(|&l| (Some(l), None)));
+            out.extend(rhs[..rhs.len() - shared].iter().map(|&r| (None, Some(r))));
+            out.extend(
+                lhs[lhs.len() - shared..]
+                    .iter()
+                    .zip(&rhs[rhs.len() - shared..])
+                    .map(|(&l, &r)| (Some(l), Some(r))),
+            );
+        } else {
+            out.extend_from_slice(block);
+        }
+        at = end;
+    }
+    out
+}
+
+/// How alike two lines read: the Dice coefficient of their identifier and
+/// number tokens, 0 when neither has any.
+fn line_similarity(lhs: &str, rhs: &str) -> f64 {
+    let tokens = |line: &str| -> BTreeSet<String> {
+        line.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .filter(|token| !token.is_empty())
+            .map(str::to_owned)
+            .collect()
+    };
+    let (lhs, rhs) = (tokens(lhs), tokens(rhs));
+    if lhs.is_empty() && rhs.is_empty() {
+        return 0.0;
+    }
+    2.0 * lhs.intersection(&rhs).count() as f64 / (lhs.len() + rhs.len()) as f64
+}
+
 fn runs(
     rows: &[(Option<usize>, Option<usize>)],
     lhs_novel: &BTreeSet<usize>,
@@ -1006,6 +1089,89 @@ mod tests {
     use crate::config::Params;
     use crate::options::{DiffOptions, DisplayOptions};
     use crate::parse::folds::FoldMatch;
+
+    #[test]
+    fn a_changed_block_pairs_its_last_lines_when_they_read_alike() {
+        // A changed block: an old doc comment and body, then the old
+        // signature; the new side has only the new signature. The unchanged
+        // row after it is the function body.
+        let lhs_lines = [
+            "/// Fill in summaries.",
+            "fn summarize() {",
+            "}",
+            "fn qualifies(fold: Fold) -> bool {",
+            "    true",
+        ];
+        let rhs_lines = ["fn qualifies(region: Region) -> bool {", "    true"];
+        let rows = vec![
+            (Some(0), Some(0)),
+            (Some(1), None),
+            (Some(2), None),
+            (Some(3), None),
+            (Some(4), Some(1)),
+        ];
+        let lhs_novel: BTreeSet<usize> = [0, 1, 2, 3].into_iter().collect();
+        let rhs_novel: BTreeSet<usize> = [0].into_iter().collect();
+        let realigned =
+            align_changed_blocks(&rows, &lhs_novel, &rhs_novel, (&lhs_lines, &rhs_lines));
+        assert_eq!(
+            realigned,
+            vec![
+                (Some(0), None),
+                (Some(1), None),
+                (Some(2), None),
+                (Some(3), Some(0)),
+                (Some(4), Some(1)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_changed_block_keeps_its_rows_when_the_top_reads_as_well() {
+        let lhs_lines = ["let a = 1;", "let b = 2;", "done();"];
+        let rhs_lines = ["let a = 3;", "done();"];
+        let rows = vec![(Some(0), Some(0)), (Some(1), None), (Some(2), Some(1))];
+        let lhs_novel: BTreeSet<usize> = [0, 1].into_iter().collect();
+        let rhs_novel: BTreeSet<usize> = [0].into_iter().collect();
+        assert_eq!(
+            align_changed_blocks(&rows, &lhs_novel, &rhs_novel, (&lhs_lines, &rhs_lines)),
+            rows
+        );
+    }
+
+    #[test]
+    fn line_diff_fallbacks_pair_a_changed_signature_with_the_old_one() {
+        use crate::options::DiffOptions;
+        let before = "fn first() {\n    one();\n}\n\n/// Old doc.\nfn helper() {\n    x();\n    y();\n    z();\n}\n\nfn check(fold: Fold) -> bool {\n    a();\n    b();\n    c();\n}\n";
+        let after = "fn first() {\n    one();\n}\n\nfn check(region: Region) -> bool {\n    a();\n    b();\n    c();\n}\n";
+        let options = DiffOptions {
+            graph_limit: 1,
+            ..DiffOptions::default()
+        };
+        let (_, sides) =
+            crate::mutate::summarize::tests::project_with("m.rs", before, after, options);
+        let (lhs, rhs) = (sides.lhs().unwrap(), sides.rhs().unwrap());
+        let signature = |source: &Source, needle: &str| {
+            let mut found = None;
+            crate::mutate::walk(&source.regions, &mut |region| {
+                if matches!(region.node, Node::Leaf { .. })
+                    && source
+                        .text
+                        .lines()
+                        .nth(region.range.start.line as usize)
+                        .is_some_and(|line| line.starts_with(needle))
+                {
+                    found = Some(region.alignment_id);
+                }
+            });
+            found.expect("a leaf starts on the signature line")
+        };
+        assert_eq!(
+            signature(lhs, "fn check("),
+            signature(rhs, "fn check("),
+            "the new signature pairs with the old one, not with the removed doc comment"
+        );
+    }
 
     fn refs(lhs: bool, rhs: bool) -> Pairing<FileRef> {
         let file_ref = FileRef {

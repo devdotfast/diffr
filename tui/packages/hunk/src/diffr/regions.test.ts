@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createTestDiffFile, fold, leaf, line } from "./fixture";
-import { defaultCollapsed, flatten, foldHeaders, gapIds, hiddenLines } from "./regions";
+import { defaultCollapsed, flatten, foldHeaders, foldIds, gapIds, hiddenLines } from "./regions";
 import { dark, rowsForFile } from "./rows";
 import type { DiffFile, Region } from "./wire";
 /** Rust-style body folds: header and closing brace stay visible, like VS Code. */
@@ -157,4 +157,34 @@ test("regions sharing a fold_state_id collapse and expand as one bundle", () => 
   const headers = rows.filter((r) => r.right!.fold).map((r) => [r.right!.lineNumber, r.right!.fold!.id, r.right!.fold!.label, r.right!.fold!.collapsed]);
   expect(headers).toEqual([[1, 21, "", true], [3, 21, "// pseudocode\nreturn a + b", true]]);
   expect(rows.map((r) => r.right!.lineNumber)).toEqual([1, 3, 5]);
+});
+
+test("a collapsed docstring leaf bundled with its function renders as a bare ⋯ row", () => {
+  const file = createTestDiffFile();
+  if (file.diff.type !== "text") throw new Error("fixture is not a text diff");
+  // The shape diffr emits for src/category.rs: a one-line docstring leaf tagged `docstring`,
+  // collapsed with an empty label, sharing fold state 4 with the function fold after it.
+  const text = [
+    "];", // 0
+    "/// The built-in rule for a path.", // 1
+    "pub(crate) fn from_path(path: &str) -> Option<&str> {", // 2
+    "    None", // 3
+    "}", // 4
+  ].join("\n") + "\n";
+  const docstring: Region = {
+    ...leaf(38, 1, 2), fold_state_id: 4, tags: ["docstring"], visibility: { collapsed: true, label: "" },
+  };
+  const body = fold(4, [2, 52], [4, 0], [leaf(5, 2, 4)], "// pseudocode\nreturn None", ["body", "function"], true);
+  file.diff.rhs = { text, syntax: [], regions: [leaf(3, 0, 1), docstring, body, leaf(6, 4, 5)] };
+  file.diff.lhs = undefined;
+  const collapsed = defaultCollapsed(file.diff);
+  expect([...collapsed]).toEqual([4]);
+  expect(foldIds(file.diff)).toContain(4);
+  const rows = rowsForFile(file, 0, "split", dark, collapsed).filter((r) => r.right && !r.right.foldLabel);
+  // Line 1 ("];"), then the docstring as one ⋯ fold row, then the signature carrying the body fold.
+  expect(rows.map((r) => [r.right!.lineNumber, r.right!.fold?.id, r.right!.fold?.label, r.right!.fold?.collapsed]))
+    .toEqual([[1, undefined, undefined, undefined], [undefined, 4, "", true], [3, 4, "// pseudocode\nreturn None", true], [5, undefined, undefined, undefined]]);
+  // Expanding the shared id reveals the docstring line too.
+  const open = rowsForFile(file, 0, "split", dark, new Set()).filter((r) => r.right && !r.right.foldLabel);
+  expect(open.map((r) => r.right!.lineNumber)).toEqual([1, 2, 3, 4, 5]);
 });

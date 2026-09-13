@@ -129,10 +129,13 @@ export function hiddenLines(folds: Fold[], collapsed: ReadonlySet<number>): Set<
   }
   return hidden;
 }
-/** A leaf collapses like a fold when diffr labelled it or tagged it as a context gap. */
-export const foldableLeaf = (leaf: Leaf) => leaf.label !== "" || leaf.tags.includes("unchanged");
+/** A leaf collapses like a fold when diffr starts it collapsed, labelled it, or tagged it as a
+ * context gap. A docstring bundled with its function arrives collapsed with an empty label. */
+export const foldableLeaf = (leaf: Leaf) =>
+  leaf.collapsed || leaf.label !== "" || leaf.tags.includes("unchanged");
+/** An empty label renders as a bare `⋯`; only a context gap falls back to its line count. */
 export const leafLabel = (leaf: Leaf) =>
-  leaf.label || `${leaf.endLine - leaf.startLine} unchanged lines`;
+  leaf.label || (leaf.tags.includes("unchanged") ? `${leaf.endLine - leaf.startLine} unchanged lines` : "");
 /** Fold headers keyed by source line, one per side; a fold wins the header line of its first leaf. */
 export function foldHeaders(folds: Fold[], leaves: Leaf[], collapsed: ReadonlySet<number>): Map<number, RowFold> {
   const headers = new Map<number, RowFold>();

@@ -6,6 +6,7 @@
 //! reveals each child's own collapsed row. Both steps keep ids paired: a
 //! merge or a group happens on one side only when the other side either
 //! does the same to the same ids or holds none of them.
+use super::docstrings::is_docstring;
 use super::{ids, is_fold, one_sided, walk, FoldMutation};
 use crate::hash::{DftHashMap, DftHashSet};
 use crate::protocol::{
@@ -134,18 +135,30 @@ fn removed_label(region: &Region) -> bool {
 
 /// A unit is a collapsed fold, with the single-line leaf just before it
 /// when there is one: the `def` or `fn` line whose body the fold hides.
+/// A docstring leaf that shares the fold's fold state belongs to the unit
+/// too and starts it. Returns the index of the unit's fold.
 fn unit_at(regions: &[Region], at: usize, other_ids: &DftHashSet<u32>) -> Option<usize> {
     let collapsed_fold = |region: &Region| {
         is_fold(region)
             && region.visibility.collapsed
             && (!removed_label(region) || one_sided(region, other_ids))
     };
-    let region = regions.get(at)?;
-    if collapsed_fold(region) {
-        return Some(at);
+    let mut index = at;
+    let docstring = regions
+        .get(index)
+        .filter(|region| !is_fold(region) && is_docstring(region))
+        .map(|region| region.fold_state_id);
+    if docstring.is_some() {
+        index += 1;
     }
-    let header = !is_fold(region) && region.range.lines().len() == 1;
-    (header && regions.get(at + 1).is_some_and(collapsed_fold)).then_some(at + 1)
+    let bundled = |region: &Region| docstring.is_none_or(|id| region.fold_state_id == id);
+    let region = regions.get(index)?;
+    if collapsed_fold(region) && bundled(region) {
+        return Some(index);
+    }
+    let header = !is_fold(region) && !is_docstring(region) && region.range.lines().len() == 1;
+    let fold = regions.get(index + 1)?;
+    (header && collapsed_fold(fold) && bundled(fold)).then_some(index + 1)
 }
 
 /// Lines a separator between units may span: blank lines, at most.
@@ -175,7 +188,7 @@ fn collapsed_fold_runs(regions: &[Region], other_ids: &DftHashSet<u32>, out: &mu
             while next < regions.len()
                 && !is_fold(&regions[next])
                 && !regions[next].visibility.collapsed
-                && unit_at(regions, next, other_ids) != Some(next + 1)
+                && unit_at(regions, next, other_ids).is_none()
             {
                 separator_lines += regions[next].range.lines().len();
                 next += 1;
@@ -435,6 +448,40 @@ mod tests {
                 region.alignment_id
             );
         });
+    }
+
+    #[test]
+    fn documented_test_bodies_group_with_their_docstrings() {
+        use crate::mutate::collapse::TestBodies;
+        use crate::mutate::docstrings::{DocstringVisibility, Docstrings};
+        let before = "fn keep() {}\n";
+        let after = "fn keep() {}\n\n/// First.\n#[test]\nfn a() {\n    x();\n    y();\n    z();\n}\n\n/// Second.\n#[test]\nfn b() {\n    x();\n    y();\n    z();\n}\n\n/// Third.\n#[test]\nfn c() {\n    x();\n    y();\n    z();\n}\n";
+        let (file, mut sides) = project("m.rs", before, after);
+        TestBodies.apply(&file, &mut sides).unwrap();
+        Docstrings.apply(&file, &mut sides).unwrap();
+        DocstringVisibility.apply(&file, &mut sides).unwrap();
+        GroupCollapsed.apply(&file, &mut sides).unwrap();
+        let rhs = sides.rhs().unwrap();
+        let mut groups = Vec::new();
+        walk(&rhs.regions, &mut |region| {
+            if region.tags == ["group"] {
+                groups.push(region.clone());
+            }
+        });
+        assert_eq!(groups.len(), 1, "one group for the three documented tests");
+        let group = &groups[0];
+        assert_eq!(group.visibility.label, "3 test bodies");
+        let Node::Fold { children } = &group.node else {
+            panic!("a group is a fold");
+        };
+        let docstrings = children.iter().filter(|child| is_docstring(child)).count();
+        assert_eq!(docstrings, 3, "every docstring is inside the group");
+        let first = children.first().unwrap();
+        assert!(
+            is_docstring(first),
+            "the group starts at the first docstring"
+        );
+        assert_eq!(group.range.start, first.range.start);
     }
 
     #[test]

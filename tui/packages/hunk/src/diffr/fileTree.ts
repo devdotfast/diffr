@@ -52,7 +52,7 @@ export function parentDirectories(file: Pick<FileChange, "file">): string[] {
   const parts = filePath(file.file).split("/").filter(Boolean);
   return parts.slice(0, -1).map((_, i) => "/" + parts.slice(0, i + 1).join("/"));
 }
-/** Textual counts always; structural ones when tree-sitter compared the file. */
+/** The wire's counts, verbatim: textual and visible, and why the AST match fell back if it did. */
 export function lineCounts(file: DiffFile) {
   if (file.diff.type === "binary") return { textual: { added: 0, removed: 0 }, visible: { added: 0, removed: 0 } };
   return { textual: file.diff.stats.textual, visible: file.diff.stats.visible, fallback: file.diff.stats.fallback };

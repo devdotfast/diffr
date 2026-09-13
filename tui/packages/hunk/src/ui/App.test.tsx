@@ -346,7 +346,7 @@ test("folds collapse from the gutter chevron and expand from the placeholder", a
   }
 });
 
-test("the summary strip shows visible totals that follow fold state, and i opens the breakdown", async () => {
+test("the summary strip shows the wire's visible totals, unmoved by folding, and i opens the breakdown", async () => {
   const store = new DiffStore();
   store.accept({type:"start", version:3, lhs:{type:"revision", rev:"main"}, rhs:{type:"working_tree"},
     files:[{ file: createFoldedDiffFile().file, status: "modified", visibility: { collapsed: false, label: "" } }]});
@@ -367,24 +367,25 @@ test("the summary strip shows visible totals that follow fold state, and i opens
     await act(async () => { store.accept({ type: "complete", succeeded: 1, failed: 0 }); });
     await render();
     expect(lines()[1]).not.toContain("−0…");
-    // Collapse the closure body: the change is hidden, so the totals and header drop to zero.
+    // Collapse the closure body: the change is hidden, but the counts are diffr's and stay put.
     const inner = lines().findIndex((l) => l.includes("inner(|| {"));
     const chevronX = lines()[inner].indexOf("▾");
     await act(async () => { await t.mockMouse.click(chevronX, inner); });
     await render();
-    expect(lines()[1]).toContain("+0 −0");
-    expect(lines()[1]).toContain("□□□□□");
-    expect(lines()[2]).toContain("+0 −0");
+    expect(t.captureCharFrame()).not.toContain("a();");
+    expect(lines()[1]).toContain("+1 −0");
+    expect(lines()[1]).toContain("■■■■■");
+    expect(lines()[2]).toContain("+1 −0");
     await act(async () => { t.mockInput.pressKey("i"); });
     await render();
     const frame = t.captureCharFrame();
     expect(frame).toContain("All files");
-    expect(frame).toContain("visible   +0 −0");
+    expect(frame).toContain("visible   +1 −0");
     expect(frame).toContain("textual   +1 −0");
     expect(frame).not.toContain("line diff");
     await act(async () => { t.mockInput.pressKey("ESCAPE"); await new Promise((resolve) => setTimeout(resolve, 100)); });
     await render();
-    expect(t.captureCharFrame()).not.toContain("visible   +0");
+    expect(t.captureCharFrame()).not.toContain("visible   +1");
   } finally {
     await act(async () => { t.renderer.destroy(); });
   }

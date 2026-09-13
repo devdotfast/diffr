@@ -30,7 +30,7 @@ import {
 import { fileIdentity, filePath, type DiffFile } from "../diffr/wire";
 import { defaultCollapsed, foldIds, gapIds, nestedIds, type RowFold } from "../diffr/regions";
 import { placeholderRows } from "../diffr/rows";
-import { add, blockBar, comparisonLabel, visibleCounts, zero, type LineCounts } from "../diffr/counts";
+import { add, blockBar, comparisonLabel, zero, type LineCounts } from "../diffr/counts";
 import type { DiffStore } from "../diffr/store";
 import { sanitizeTerminalLine } from "../lib/terminalText";
 import { sliceTextByWidth } from "./lib/text";
@@ -281,16 +281,12 @@ export function App({
   }, [pendingFile, loadedByIdentity, geometry, maxScroll, snapshot.failedFiles, snapshot.complete]);
   const treeRows = useMemo(() => flattenFileTree(tree, closedDirectories), [tree, closedDirectories]);
   const counts = useMemo(() => snapshot.files.map(lineCounts), [snapshot.files]);
-  // Headline numbers are the changed lines on screen, so every fold or file toggle moves them.
-  const visibleByFile = useMemo(
-    () => snapshot.files.map((file, index) => visibleCounts(file, foldsOf(index), isClosed(index))),
-    [snapshot.files, snapshot.inventory, collapsed, closed],
-  );
+  // Headline numbers are diffr's stats.visible, verbatim: folding never changes them.
   const totals = useMemo(() => ({
-    visible: visibleByFile.reduce(add, zero),
+    visible: counts.reduce((sum, c) => add(sum, c.visible), zero),
     textual: counts.reduce((sum, c) => add(sum, c.textual), zero),
     fallbacks: counts.filter((c) => c.fallback).length,
-  }), [visibleByFile, counts]);
+  }), [counts]);
   const plusMinus = (c: LineCounts) => `+${c.added} −${c.removed}`;
   useEffect(() => {
     const file = inventory[currentTreeFile];
@@ -308,8 +304,8 @@ export function App({
   }, [currentTreeFile, treeRows, viewportHeight]);
   const sidebarStart = Math.min(treeScroll, Math.max(0, treeRows.length - viewportHeight));
   const fileHeader = (fileIndex: number, key: string) => {
-    const file = snapshot.files[fileIndex], count = visibleByFile[fileIndex];
-    if (!file) return null;
+    const file = snapshot.files[fileIndex], count = counts[fileIndex]?.visible;
+    if (!file || !count) return null;
     const path = filePath(file.file);
     const statsWidth = String(count.added).length + String(count.removed).length + 5;
     return <box key={key} height={1} width={contentWidth} flexDirection="row"
@@ -568,7 +564,7 @@ export function App({
         const fallback = file && counts[currentFile].fallback;
         const sections: [string, LineCounts, LineCounts, string | null][] = [
           ["All files", totals.visible, totals.textual, totals.fallbacks ? `line diff: ${totals.fallbacks} files` : null],
-          ...(file ? [[filePath(file.file), visibleByFile[currentFile], counts[currentFile].textual,
+          ...(file ? [[filePath(file.file), counts[currentFile].visible, counts[currentFile].textual,
             fallback ? `line diff: ${fallback.code}` : null] as [string, LineCounts, LineCounts, string | null]] : []),
         ];
         const boxWidth = Math.min(width, 44);

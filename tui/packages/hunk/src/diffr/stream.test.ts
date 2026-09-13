@@ -6,7 +6,7 @@ const manifest = (file: ReturnType<typeof createTestDiffFile>): FileChange =>
   ({ file: file.file, status: "modified", visibility: { collapsed: false, label: "" } });
 const start = {
   type: "start",
-  version: 2,
+  version: 3,
   lhs: { type: "index" },
   rhs: { type: "working_tree" },
   files: [manifest(createTestDiffFile())],
@@ -30,8 +30,8 @@ test("decode byte-fragmented Unicode stream and preserve region trees", async ()
 test("omitted defaults are filled in", async () => {
   const file = createTestDiffFile();
   const bare = { type: "file", file: file.file, diff: { type: "text",
-    lhs: { text: "a\n", regions: [{ id: 1, kind: "leaf", start: { line: 0, column: 0 }, end: { line: 1, column: 0 } }] },
-    rhs: { text: "a\n", regions: [{ id: 1, kind: "leaf", start: { line: 0, column: 0 }, end: { line: 1, column: 0 } }] },
+    lhs: { text: "a\n", regions: [{ alignment_id: 1, fold_state_id: 1, kind: "leaf", start: { line: 0, column: 0 }, end: { line: 1, column: 0 } }] },
+    rhs: { text: "a\n", regions: [{ alignment_id: 1, fold_state_id: 1, kind: "leaf", start: { line: 0, column: 0 }, end: { line: 1, column: 0 } }] },
     stats: { textual: { added: 0, removed: 0 }, visible: { added: 0, removed: 0 } } } };
   const [, decoded] = await decode([{ ...start, files: [{ file: file.file, status: "modified" }] }, bare,
     { type: "complete", succeeded: 1, failed: 0 }]);

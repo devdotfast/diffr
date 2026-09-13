@@ -13,7 +13,7 @@ function shownLines(file: DiffFile & { diff: { type: "text" } }, collapsed: Read
   for (const side of [0, 1] as const) {
     const hidden = hiddenLines(folds[side], collapsed);
     for (const leaf of leaves[side]) {
-      if (!novel.has(leaf) || collapsed.has(leaf.id)) continue;
+      if (!novel.has(leaf) || collapsed.has(leaf.foldStateId)) continue;
       for (let line = leaf.startLine; line < leaf.endLine; line++) if (!hidden.has(line)) counts[side]++;
     }
   }

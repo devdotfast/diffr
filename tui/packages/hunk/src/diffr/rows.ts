@@ -137,9 +137,9 @@ export function rowsForFile(
     flush();
     const anchor = (left ?? right)!;
     const folded = (leaf: Leaf | null): SplitLineCell => leaf
-      ? { kind: "context", sign: " ", spans: [], fold: { id: leaf.id, label: leafLabel(leaf), collapsed: true } }
+      ? { kind: "context", sign: " ", spans: [], fold: { id: leaf.foldStateId, label: leafLabel(leaf), collapsed: true } }
       : { kind: "empty", sign: " ", spans: [] };
-    const key = `${fileIndex}:gap:${anchor.id}`;
+    const key = `${fileIndex}:gap:${anchor.foldStateId}`;
     if (layout === "split") rows.push({ key, fileIndex, left: folded(left), right: folded(right) });
     else rows.push({ key, fileIndex, cell: { kind: "context", sign: " ", spans: [], fold: folded(anchor).fold } });
   };
@@ -170,7 +170,7 @@ export function rowsForFile(
   const leafRows = (left: Leaf | null, right: Leaf | null) => {
     const anchor = left ?? right;
     if (!anchor) return;
-    if (collapsed.has(anchor.id)) {
+    if (collapsed.has(anchor.foldStateId)) {
       if (!hidden[anchor.side].has(anchor.startLine)) collapsedLeaf(left, right);
       return;
     }
@@ -180,13 +180,13 @@ export function rowsForFile(
         right && i < right.endLine - right.startLine ? right.startLine + i : null, left, right);
   };
   // Zip: walk the left leaves; a partner ahead on the right flushes what precedes it as right-only.
-  const rightIndex = new Map(leaves[1].map((leaf, index) => [leaf.id, index]));
+  const rightIndex = new Map(leaves[1].map((leaf, index) => [leaf.alignmentId, index]));
   let cursor = 0;
   const flushRight = (until: number) => {
     for (; cursor < until; cursor++) leafRows(null, leaves[1][cursor]);
   };
   for (const left of leaves[0]) {
-    const partner = rightIndex.get(left.id);
+    const partner = rightIndex.get(left.alignmentId);
     if (partner === undefined || partner < cursor) {
       // Unpaired, or a move whose partner was already shown: one-sided rows.
       leafRows(left, null);

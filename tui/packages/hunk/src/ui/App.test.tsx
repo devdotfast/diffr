@@ -179,7 +179,7 @@ test("initial manifest renders pending tree and remembers a jump until its diff 
   at(a, "src/a.ts");
   at(b, "src/b.ts");
   const entry = (file: DiffFile) => ({ file: file.file, status: "modified" as const, visibility: { collapsed: false, label: "" } });
-  store.accept({type:"start", version:2, lhs:{type:"index"}, rhs:{type:"working_tree"}, files:[entry(a), entry(b)]});
+  store.accept({type:"start", version:3, lhs:{type:"index"}, rhs:{type:"working_tree"}, files:[entry(a), entry(b)]});
   const t = await testRender(<App store={store} onQuit={() => {}} themes={themes} />, {width:150, height:20});
   try {
     await act(async () => { await t.renderOnce(); });
@@ -206,7 +206,7 @@ test("streaming diffs follow tree order without moving the visible source row", 
     return file;
   });
   const entry = (file: DiffFile) => ({ file: file.file, status: "modified" as const, visibility: { collapsed: false, label: "" } });
-  store.accept({type:"start", version:2, lhs:{type:"index"}, rhs:{type:"working_tree"}, files:files.map(entry)});
+  store.accept({type:"start", version:3, lhs:{type:"index"}, rhs:{type:"working_tree"}, files:files.map(entry)});
   const t = await testRender(<App store={store} onQuit={() => {}} themes={themes} />, {width:150, height:20});
   const sidebarLines = () => t.captureCharFrame().split("\n").slice(2,9).map(line => line.slice(0,27).trim());
   try {
@@ -245,7 +245,7 @@ test(`stream arrivals preserve code in every commit (wrap=${wrap}, unified=${uni
     return file;
   });
   const entry = (file: DiffFile) => ({ file: file.file, status: "modified" as const, visibility: { collapsed: false, label: "" } });
-  store.accept({type:"start", version:2, lhs:{type:"index"}, rhs:{type:"working_tree"}, files:files.map(entry)});
+  store.accept({type:"start", version:3, lhs:{type:"index"}, rhs:{type:"working_tree"}, files:files.map(entry)});
   store.accept(files[0]);
   let capture: (() => void) | undefined;
   const commits: string[][] = [];
@@ -348,7 +348,7 @@ test("folds collapse from the gutter chevron and expand from the placeholder", a
 
 test("the summary strip shows visible totals that follow fold state, and i opens the breakdown", async () => {
   const store = new DiffStore();
-  store.accept({type:"start", version:2, lhs:{type:"revision", rev:"main"}, rhs:{type:"working_tree"},
+  store.accept({type:"start", version:3, lhs:{type:"revision", rev:"main"}, rhs:{type:"working_tree"},
     files:[{ file: createFoldedDiffFile().file, status: "modified", visibility: { collapsed: false, label: "" } }]});
   store.accept(createFoldedDiffFile());
   const t = await testRender(<App store={store} onQuit={() => {}} themes={themes} />, { width: 150, height: 24 });

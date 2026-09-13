@@ -37,9 +37,9 @@ test("folds keep headers visible, hide trailing lines only when nothing follows"
   const file = createFoldedDiffFile();
   if (file.diff.type !== "text") throw new Error();
   const { folds, leaves } = flatten(file.diff);
-  expect(folds[1].map((f) => [f.id, f.headerLine, f.lastHidden])).toEqual([[10, 0, 6], [11, 1, 3], [12, 5, 6]]);
+  expect(folds[1].map((f) => [f.foldStateId, f.headerLine, f.lastHidden])).toEqual([[10, 0, 6], [11, 1, 3], [12, 5, 6]]);
   expect(folds[1][0].nested).toEqual([11, 12]);
-  expect(leaves[1].map((l) => [l.id, l.startLine, l.endLine])).toEqual([[1, 0, 1], [2, 1, 3], [3, 3, 4], [4, 4, 5], [5, 5, 7], [6, 7, 8]]);
+  expect(leaves[1].map((l) => [l.foldStateId, l.startLine, l.endLine])).toEqual([[1, 0, 1], [2, 1, 3], [3, 3, 4], [4, 4, 5], [5, 5, 7], [6, 7, 8]]);
   expect([...hiddenLines(folds[1], new Set([11, 12]))].sort()).toEqual([2, 3, 6]);
   // A fold hidden inside a collapsed outer fold hides nothing of its own.
   expect([...hiddenLines(folds[1], new Set([10, 11]))].sort()).toEqual([1, 2, 3, 4, 5, 6]);

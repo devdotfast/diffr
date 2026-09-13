@@ -1,9 +1,9 @@
-/** Provide a hand-authored wire v2 file record for renderer and protocol tests. */
+/** Provide a hand-authored wire v3 file record for renderer and protocol tests. */
 import type { DiffFile, Region, Span } from "./wire";
 const pos = (line: number, column = 0) => ({ line, column });
 export function leaf(id: number, start: number, end: number, changed: Span[] = []): Region {
-  return { id, start: pos(start), end: pos(end), tags: [], visibility: { collapsed: false, label: "" },
-    kind: "leaf", changed, children: [] };
+  return { alignment_id: id, fold_state_id: id, start: pos(start), end: pos(end), tags: [],
+    visibility: { collapsed: false, label: "" }, kind: "leaf", changed, children: [] };
 }
 export function fold(
   id: number,
@@ -14,8 +14,8 @@ export function fold(
   tags = ["body"],
   collapsed = false,
 ): Region {
-  return { id, start: pos(...start), end: pos(...end), tags, visibility: { collapsed, label },
-    kind: "fold", changed: [], children };
+  return { alignment_id: id, fold_state_id: id, start: pos(...start), end: pos(...end), tags,
+    visibility: { collapsed, label }, kind: "fold", changed: [], children };
 }
 export const line = (line: number, start_column: number, end_column: number): Span =>
   ({ line, start_column, end_column });

@@ -104,7 +104,7 @@ list; Esc returns without saving. Both views carry a footer hint line.
   header is the top row: `za` toggle, `zo` open, `zc` close, with `zA` / `zO` / `zC`
   recursive; `zM` / `zR` (and View > Fold all / Unfold all) fold or unfold every fold;
   `zj` / `zk` scroll to the next or previous fold header. The header and closing
-  delimiter stay visible; regions that share an id collapse on both sides. A fold on one
+  delimiter stay visible; regions that share a `fold_state_id` collapse together, on both sides. A fold on one
   side only blanks that side's cells, keeping the other side's lines in Rust's alignment.
 - Context gaps are folds too: an unchanged run diffr trimmed to N lines around changes
   arrives as a collapsed leaf tagged `unchanged`, and renders as one fold row with its
@@ -124,7 +124,7 @@ list; Esc returns without saving. Both views carry a footer hint line.
 Rust CLI -- implicit interactive output --> Bun frontend
 Bun frontend -- same comparison arguments + --format ndjson --syntax --> Rust subprocess
 Rust stdout --> validated events --> file store
-per-side text + syntax spans + region trees --> leaves zipped by id --> split/unified rows
+per-side text + syntax spans + region trees --> leaves zipped by alignment_id --> split/unified rows
 rows + width + wrapping --> measured row bounds
 row bounds + viewport --> mounted OpenTUI rows
 mouse/keyboard --> viewer state (collapsed ids, closed files) --> updated projection
@@ -135,13 +135,13 @@ mouse/keyboard --> viewer state (collapsed ids, closed files) --> updated projec
 - `src/protocol.rs` is the wire contract: a `start` manifest, one `file` record per file
   with `diff` or `error`, and a `complete` footer. Sides are `lhs`/`rhs` by presence.
   Each text side carries its full text, optional `syntax` spans, and a `regions` tree
-  whose leaves tile the file; the same region `id` on both sides means correspondence.
+  whose leaves tile the file; the same `alignment_id` on both sides means correspondence; `fold_state_id` groups what toggles together.
 - `packages/hunk/src/diffr/wire.ts` validates those shapes with Zod and fills omitted
   defaults. Columns remain zero-based UTF-8 byte offsets.
 - `diffr/regions.ts` flattens each side's tree into leaves and folds, computes which lines
   a collapsed fold hides (a trailing line hides only when nothing follows the range on
   it), and seeds the default collapsed set from `visibility`. Collapsed ids live in
-  viewer state, keyed by region id, so paired regions toggle together.
+  viewer state, keyed by `fold_state_id`, so regions sharing it (paired ones included) toggle together.
 - `diffr/stream.ts` validates event ordering, versions and completion counts, handles
   arbitrary chunk boundaries, and rejects truncated streams.
 - `diffr/store.ts` holds completed files and errors. The UI can display files while

@@ -34,7 +34,10 @@ const sourcePos = z.object({ line: uint, column: uint });
 const span = z.object({ line: uint, start_column: uint, end_column: uint });
 const syntaxSpan = span.extend({ capture: z.string() });
 export interface Region {
-  id: number;
+  /** Same value on the other side: the visual counterpart, one-to-one. Keys the row zip. */
+  alignment_id: number;
+  /** Regions sharing it open and close together, on either side. Keys collapse state. */
+  fold_state_id: number;
   start: { line: number; column: number };
   end: { line: number; column: number };
   tags: string[];
@@ -44,7 +47,8 @@ export interface Region {
   children: Region[];
 }
 const regionBase = z.object({
-  id: uint,
+  alignment_id: uint,
+  fold_state_id: uint,
   start: sourcePos,
   end: sourcePos,
   tags: z.array(z.string()).default([]),
@@ -90,7 +94,7 @@ const fileEvent = z
 export const eventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("start"),
-    version: z.literal(2),
+    version: z.literal(3),
     lhs: snapshot,
     rhs: snapshot,
     files: z.array(fileChange),

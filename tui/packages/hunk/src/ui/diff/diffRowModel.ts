@@ -6,7 +6,7 @@
  * column math, the highlight worker, geometry — can share these types without importing
  * the builders themselves.
  */
-import type { RowFold } from "../../diffr/regions";
+import type { FoldTint, RowFold } from "../../diffr/regions";
 type DiffLineMoveKind = "moved";
 
 export interface RenderSpan {
@@ -36,6 +36,8 @@ export interface SplitLineCell {
   fold?: RowFold;
   /** A line of a collapsed fold's label, painted in the fold tint without a line number. */
   foldLabel?: boolean;
+  /** The tint of the fold a label line belongs to. */
+  foldTint?: FoldTint;
   spans: RenderSpan[];
 }
 
@@ -49,5 +51,6 @@ export interface UnifiedLineCell {
   moveLabel?: boolean;
   fold?: RowFold;
   foldLabel?: boolean;
+  foldTint?: FoldTint;
   spans: RenderSpan[];
 }

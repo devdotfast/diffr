@@ -3,7 +3,7 @@ import type { DiffFile, Span, SyntaxSpan } from "./wire";
 import { filePath } from "./wire";
 import type { RenderSpan, SplitLineCell, UnifiedLineCell } from "../ui/diff/diffRowModel";
 import { measureTextWidth } from "../ui/lib/text";
-import { flatten, foldHeaders, hiddenLines, leafLabel, novelLeaves, sourceLines, type Leaf, type RowFold } from "./regions";
+import { alignmentIds, flatten, foldHeaders, foldTint, hiddenLines, leafLabel, novelLeaves, sourceLines, type Leaf, type RowFold } from "./regions";
 import { loadBundledTheme, type Palette } from "./theme";
 export { sourceLines };
 export type Layout = "split" | "unified";
@@ -102,7 +102,8 @@ export function rowsForFile(
   const syntax = [byLine(d.lhs?.syntax ?? []), byLine(d.rhs?.syntax ?? [])];
   const { leaves, folds } = flatten(d);
   const hidden = [hiddenLines(folds[0], collapsed), hiddenLines(folds[1], collapsed)];
-  const headers = [foldHeaders(folds[0], leaves[0], collapsed), foldHeaders(folds[1], leaves[1], collapsed)];
+  const ids = alignmentIds(d);
+  const headers = [foldHeaders(folds[0], leaves[0], collapsed, ids[1]), foldHeaders(folds[1], leaves[1], collapsed, ids[0])];
   const caches = [new Map<number, RenderSpan[]>(), new Map<number, RenderSpan[]>()];
   // Every line of a novel leaf is tinted; the spans inside get the darker word tint on top.
   const novelSet = novelLeaves(leaves);
@@ -167,7 +168,8 @@ export function rowsForFile(
     flush();
     const anchor = (left ?? right)!;
     const folded = (leaf: Leaf | null): SplitLineCell => leaf
-      ? { kind: "context", sign: " ", spans: [], fold: { id: leaf.foldStateId, label: leafLabel(leaf), collapsed: true } }
+      ? { kind: "context", sign: " ", spans: [], fold: { id: leaf.foldStateId, label: leafLabel(leaf), collapsed: true,
+          tint: foldTint(leaf.alignmentId, leaf.side, ids[leaf.side ? 0 : 1]) } }
       : { kind: "empty", sign: " ", spans: [] };
     const key = `${fileIndex}:gap:${anchor.foldStateId}`;
     if (layout === "split") rows.push({ key, fileIndex, left: folded(left), right: folded(right) });
@@ -282,10 +284,10 @@ function withFoldLabels(rows: ViewerRow[], texts: string[][], theme: Palette): V
   const result: ViewerRow[] = [];
   const labelLines = (fold: RowFold | undefined) =>
     fold?.collapsed && fold.label.includes("\n") ? fold.label.split("\n") : [];
-  const labelCell = (text: string | undefined, kind: SplitLineCell["kind"], indent: string): SplitLineCell =>
+  const labelCell = (text: string | undefined, kind: SplitLineCell["kind"], indent: string, fold?: RowFold): SplitLineCell =>
     text === undefined
       ? { kind: "empty", sign: " ", spans: [] }
-      : { kind, sign: " ", foldLabel: true, spans: [{ text: indent + text, fg: theme.foldPlaceholder }] };
+      : { kind, sign: " ", foldLabel: true, foldTint: fold?.tint, spans: [{ text: indent + text, fg: theme.foldPlaceholder }] };
   for (const row of rows) {
     result.push(row);
     if (row.cell) {
@@ -293,7 +295,7 @@ function withFoldLabels(rows: ViewerRow[], texts: string[][], theme: Palette): V
       const line = row.cell.newLineNumber ?? row.cell.oldLineNumber;
       const indent = indentOf(texts[row.cell.newLineNumber === undefined ? 0 : 1][(line ?? 1) - 1] ?? "") + "    ";
       lines.forEach((text, i) => result.push({ key: `${row.key}:label:${i}`, fileIndex: row.fileIndex,
-        cell: { ...labelCell(text, "context", indent), oldLineNumber: undefined, newLineNumber: undefined } as UnifiedLineCell }));
+        cell: { ...labelCell(text, "context", indent, row.cell!.fold), oldLineNumber: undefined, newLineNumber: undefined } as UnifiedLineCell }));
       continue;
     }
     if (!row.left || !row.right) continue;
@@ -304,8 +306,8 @@ function withFoldLabels(rows: ViewerRow[], texts: string[][], theme: Palette): V
     ];
     for (let i = 0; i < Math.max(left.length, right.length); i++)
       result.push({ key: `${row.key}:label:${i}`, fileIndex: row.fileIndex,
-        left: labelCell(left[i], row.left.kind === "empty" ? "context" : row.left.kind, indents[0]),
-        right: labelCell(right[i], row.right.kind === "empty" ? "context" : row.right.kind, indents[1]) });
+        left: labelCell(left[i], row.left.kind === "empty" ? "context" : row.left.kind, indents[0], row.left.fold),
+        right: labelCell(right[i], row.right.kind === "empty" ? "context" : row.right.kind, indents[1], row.right.fold) });
   }
   return result;
 }

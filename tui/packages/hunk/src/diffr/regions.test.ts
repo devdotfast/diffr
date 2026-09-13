@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
 import { createTestDiffFile, fold, leaf, line } from "./fixture";
-import { defaultCollapsed, flatten, foldHeaders, foldIds, gapIds, hiddenLines } from "./regions";
+import { alignmentIds, defaultCollapsed, flatten, foldHeaders, foldIds, foldTint, gapIds, hiddenLines } from "./regions";
 import { dark, rowsForFile } from "./rows";
 import type { DiffFile, Region } from "./wire";
+import { foldBackground } from "../ui/diff/CodeRowView";
 /** Rust-style body folds: header and closing brace stay visible, like VS Code. */
 export function createFoldedDiffFile(): DiffFile {
   const file = createTestDiffFile();
@@ -43,7 +44,7 @@ test("folds keep headers visible, hide trailing lines only when nothing follows"
   expect([...hiddenLines(folds[1], new Set([11, 12]))].sort()).toEqual([2, 3, 6]);
   // A fold hidden inside a collapsed outer fold hides nothing of its own.
   expect([...hiddenLines(folds[1], new Set([10, 11]))].sort()).toEqual([1, 2, 3, 4, 5, 6]);
-  expect(foldHeaders(folds[1], leaves[1], new Set([11])).get(1)).toEqual({ id: 11, label: "Body", collapsed: true });
+  expect(foldHeaders(folds[1], leaves[1], new Set([11]), alignmentIds(file.diff)[0]).get(1)).toEqual({ id: 11, label: "Body", collapsed: true, tint: "neutral" });
 });
 test("visibility seeds collapsed ids and tags name the context gaps", () => {
   const file = createFoldedDiffFile();
@@ -73,8 +74,8 @@ test("rows carry fold headers on both layouts and drop hidden lines", () => {
   const file = createFoldedDiffFile();
   const split = rowsForFile(file, 0, "split", dark, new Set([11])).filter((r) => r.right);
   expect(split.map((r) => r.right!.lineNumber)).toEqual([1, 2, 5, 6, 7, 8]);
-  expect(split[1].right!.fold).toEqual({ id: 11, label: "Body", collapsed: true });
-  expect(split[1].left!.fold).toEqual({ id: 11, label: "Body", collapsed: true });
+  expect(split[1].right!.fold).toEqual({ id: 11, label: "Body", collapsed: true, tint: "neutral" });
+  expect(split[1].left!.fold).toEqual({ id: 11, label: "Body", collapsed: true, tint: "neutral" });
   expect(split[0].right!.fold?.collapsed).toBe(false);
   const unified = rowsForFile(file, 0, "unified", dark, new Set([10])).filter((r) => r.cell);
   expect(unified.map((r) => r.cell!.newLineNumber)).toEqual([1, 8]);
@@ -99,20 +100,20 @@ test("a collapsed leaf is one fold row with the chevron, its label, and no line 
   if (file.diff.type !== "text") throw new Error();
   file.diff.lhs!.regions[0].visibility = file.diff.rhs!.regions[0].visibility = { collapsed: true, label: "1 unchanged line" };
   const split = rowsForFile(file, 0, "split", dark, new Set([1]));
-  expect(split[1].left!.fold).toEqual({ id: 1, label: "1 unchanged line", collapsed: true });
+  expect(split[1].left!.fold).toEqual({ id: 1, label: "1 unchanged line", collapsed: true, tint: "neutral" });
   expect(split[1].left!.lineNumber).toBeUndefined();
-  expect(split[1].right!.fold).toEqual({ id: 1, label: "1 unchanged line", collapsed: true });
+  expect(split[1].right!.fold).toEqual({ id: 1, label: "1 unchanged line", collapsed: true, tint: "neutral" });
   expect(split.filter((r) => r.left?.fold?.id === 1)).toHaveLength(1);
   const unified = rowsForFile(file, 0, "unified", dark, new Set([1]));
   expect(unified[1].cell).toMatchObject({ fold: { id: 1, collapsed: true } });
   // Open, the leaf's first line carries the chevron so it can be collapsed again.
-  expect(rowsForFile(file, 0, "split", dark, new Set())[1].left!.fold).toEqual({ id: 1, label: "1 unchanged line", collapsed: false });
+  expect(rowsForFile(file, 0, "split", dark, new Set())[1].left!.fold).toEqual({ id: 1, label: "1 unchanged line", collapsed: false, tint: "neutral" });
   // Unlabelled gaps get a computed label; ordinary leaves are not foldable.
   const tagged = createTestDiffFile();
   if (tagged.diff.type !== "text") throw new Error();
   tagged.diff.rhs!.regions[0].tags = ["unchanged"];
   const rows = rowsForFile(tagged, 0, "split", dark, new Set());
-  expect(rows[1].right!.fold).toEqual({ id: 1, label: "1 unchanged lines", collapsed: false });
+  expect(rows[1].right!.fold).toEqual({ id: 1, label: "1 unchanged lines", collapsed: false, tint: "neutral" });
   expect(rows[1].left!.fold).toBeUndefined();
   expect(rows[2].right!.fold).toBeUndefined();
 });
@@ -159,11 +160,14 @@ test("regions sharing a fold_state_id collapse and expand as one bundle", () => 
   expect(rows.map((r) => r.right!.lineNumber)).toEqual([1, 3, 5]);
 });
 
-test("a collapsed docstring leaf bundled with its function renders as a bare ⋯ row", () => {
+/**
+ * The shape diffr emits for a new, summarized function (src/category.rs `from_path`,
+ * src/protocol/project.rs `syntax_spans`): a one-line docstring leaf tagged `docstring`, collapsed
+ * with an empty label, sharing fold state 4 with the collapsed function fold after it, right side only.
+ */
+export function createBundledDiffFile(): DiffFile {
   const file = createTestDiffFile();
   if (file.diff.type !== "text") throw new Error("fixture is not a text diff");
-  // The shape diffr emits for src/category.rs: a one-line docstring leaf tagged `docstring`,
-  // collapsed with an empty label, sharing fold state 4 with the function fold after it.
   const text = [
     "];", // 0
     "/// The built-in rule for a path.", // 1
@@ -177,6 +181,11 @@ test("a collapsed docstring leaf bundled with its function renders as a bare ⋯
   const body = fold(4, [2, 52], [4, 0], [leaf(5, 2, 4)], "// pseudocode\nreturn None", ["body", "function"], true);
   file.diff.rhs = { text, syntax: [], regions: [leaf(3, 0, 1), docstring, body, leaf(6, 4, 5)] };
   file.diff.lhs = undefined;
+  return file;
+}
+test("a collapsed docstring leaf bundled with its function renders as a bare ⋯ row", () => {
+  const file = createBundledDiffFile();
+  if (file.diff.type !== "text") throw new Error("fixture is not a text diff");
   const collapsed = defaultCollapsed(file.diff);
   expect([...collapsed]).toEqual([4]);
   expect(foldIds(file.diff)).toContain(4);
@@ -184,7 +193,39 @@ test("a collapsed docstring leaf bundled with its function renders as a bare ⋯
   // Line 1 ("];"), then the docstring as one ⋯ fold row, then the signature carrying the body fold.
   expect(rows.map((r) => [r.right!.lineNumber, r.right!.fold?.id, r.right!.fold?.label, r.right!.fold?.collapsed]))
     .toEqual([[1, undefined, undefined, undefined], [undefined, 4, "", true], [3, 4, "// pseudocode\nreturn None", true], [5, undefined, undefined, undefined]]);
+  // Right side only, so both the ⋯ row and the summary take the added tint.
+  expect(rows.filter((r) => r.right!.fold).map((r) => r.right!.fold!.tint)).toEqual(["inserted", "inserted"]);
   // Expanding the shared id reveals the docstring line too.
   const open = rowsForFile(file, 0, "split", dark, new Set()).filter((r) => r.right && !r.right.foldLabel);
   expect(open.map((r) => r.right!.lineNumber)).toEqual([1, 2, 3, 4, 5]);
+});
+
+test("a collapsed fold takes its side's change tint when one-sided and stays neutral when paired", () => {
+  const text = "fn a() {\n    x\n}\n";
+  const body = (id: number, label: string) => fold(id, [0, 8], [2, 0], [leaf(id + 100, 0, 2)], label, ["body", "function"], true);
+  const rowsFor = (lhs: Region[] | undefined, rhs: Region[] | undefined) => {
+    const file = createTestDiffFile();
+    if (file.diff.type !== "text") throw new Error();
+    file.diff.lhs = lhs && { text, syntax: [], regions: [...lhs, leaf(9, 2, 3)] };
+    file.diff.rhs = rhs && { text, syntax: [], regions: [...rhs, leaf(9, 2, 3)] };
+    return rowsForFile(file, 0, "split", dark, defaultCollapsed(file.diff));
+  };
+  // Inserted: a summary on the right with no counterpart. The header and every label row are green.
+  const inserted = rowsFor(undefined, [body(7, "// pseudocode\nreturn x")]);
+  const header = inserted.find((r) => r.right?.fold)!.right!;
+  expect(header.fold!.tint).toBe("inserted");
+  expect(inserted.filter((r) => r.right?.foldLabel).map((r) => r.right!.foldTint)).toEqual(["inserted", "inserted"]);
+  expect(foldBackground(dark, "inserted")).toBe(dark.addition);
+  // Removed: the same body only on the left.
+  const removed = rowsFor([body(7, "2 lines removed")], undefined);
+  expect(removed.find((r) => r.left?.fold)!.left!.fold!.tint).toBe("removed");
+  expect(foldBackground(dark, "removed")).toBe(dark.deletion);
+  // Paired: the same alignment id on both sides keeps the neutral fold background.
+  const paired = rowsFor([body(7, "Body")], [body(7, "Body")]);
+  const both = paired.find((r) => r.left?.fold && r.right?.fold)!;
+  expect([both.left!.fold!.tint, both.right!.fold!.tint]).toEqual(["neutral", "neutral"]);
+  expect(foldBackground(dark, "neutral")).toBe(dark.foldBackground);
+  expect(foldTint(7, 1, new Set([7]))).toBe("neutral");
+  expect(foldTint(7, 1, new Set())).toBe("inserted");
+  expect(foldTint(7, 0, new Set())).toBe("removed");
 });

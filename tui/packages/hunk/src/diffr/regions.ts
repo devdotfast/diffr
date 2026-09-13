@@ -30,11 +30,24 @@ export interface Fold {
   /** Ids of folds nested inside, for recursive fold commands. */
   nested: number[];
 }
+/** The change tint of a fold: a one-sided region takes its side's change colour, a paired one stays neutral. */
+export type FoldTint = "inserted" | "removed" | "neutral";
 export interface RowFold {
   /** The fold-state id: what toggling this header toggles. */
   id: number;
   label: string;
   collapsed: boolean;
+  tint: FoldTint;
+}
+/** One-sided means the region's alignment_id is absent on the other side. */
+export function foldTint(alignmentId: number, side: Side, otherSide: ReadonlySet<number>): FoldTint {
+  if (otherSide.has(alignmentId)) return "neutral";
+  return side ? "inserted" : "removed";
+}
+/** Every alignment id on each side, leaves and folds alike. */
+export function alignmentIds(diff: TextDiff): readonly [Set<number>, Set<number>] {
+  const { leaves, folds } = flatten(diff);
+  return [0, 1].map((side) => new Set([...leaves[side].map((l) => l.alignmentId), ...folds[side].map((f) => f.alignmentId)])) as unknown as readonly [Set<number>, Set<number>];
 }
 export const sourceLines = (text: string) =>
   text === "" ? [] : text.replace(/\n$/, "").split("\n");
@@ -137,16 +150,23 @@ export const foldableLeaf = (leaf: Leaf) =>
 export const leafLabel = (leaf: Leaf) =>
   leaf.label || (leaf.tags.includes("unchanged") ? `${leaf.endLine - leaf.startLine} unchanged lines` : "");
 /** Fold headers keyed by source line, one per side; a fold wins the header line of its first leaf. */
-export function foldHeaders(folds: Fold[], leaves: Leaf[], collapsed: ReadonlySet<number>): Map<number, RowFold> {
+export function foldHeaders(
+  folds: Fold[],
+  leaves: Leaf[],
+  collapsed: ReadonlySet<number>,
+  otherSide: ReadonlySet<number>,
+): Map<number, RowFold> {
   const headers = new Map<number, RowFold>();
   for (const leaf of leaves)
     if (foldableLeaf(leaf))
-      headers.set(leaf.startLine, { id: leaf.foldStateId, label: leafLabel(leaf), collapsed: collapsed.has(leaf.foldStateId) });
+      headers.set(leaf.startLine, { id: leaf.foldStateId, label: leafLabel(leaf), collapsed: collapsed.has(leaf.foldStateId),
+        tint: foldTint(leaf.alignmentId, leaf.side, otherSide) });
   for (const fold of folds) {
     const existing = headers.get(fold.headerLine);
     const existingFold = existing && folds.find((f) => f.foldStateId === existing.id);
     if (existingFold && existingFold.lastHidden >= fold.lastHidden) continue;
-    headers.set(fold.headerLine, { id: fold.foldStateId, label: fold.label, collapsed: collapsed.has(fold.foldStateId) });
+    headers.set(fold.headerLine, { id: fold.foldStateId, label: fold.label, collapsed: collapsed.has(fold.foldStateId),
+      tint: foldTint(fold.alignmentId, fold.side, otherSide) });
   }
   return headers;
 }

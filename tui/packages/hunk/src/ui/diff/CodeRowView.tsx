@@ -9,7 +9,7 @@ import type {
 } from "./diffRowModel";
 import type { Geometry, MeasuredRow } from "../../diffr/geometry";
 import type { Palette } from "../../diffr/theme";
-import type { RowFold } from "../../diffr/regions";
+import type { FoldTint, RowFold } from "../../diffr/regions";
 import { measureTextWidth } from "../lib/text";
 const colors = new Map<string, ReturnType<typeof parseColor>>();
 function color(value: string) {
@@ -29,6 +29,11 @@ function styled(spans: RenderSpan[], theme: Palette, bg: string) {
       bg: color(span.bg ?? bg),
     })),
   );
+}
+/** A collapsed fold takes its side's change tint when it is one-sided, like Review's bands. */
+export function foldBackground(theme: Palette, tint: FoldTint | undefined) {
+  if (tint === undefined) throw new Error("A collapsed fold row has no tint");
+  return tint === "inserted" ? theme.addition : tint === "removed" ? theme.deletion : theme.foldBackground;
 }
 /** VS Code's showFoldingControls "always": expandable rows keep their chevron visible. */
 function chevron(fold: RowFold | undefined) {
@@ -74,7 +79,7 @@ export const CodeRowView = memo(function CodeRowView({
       selectedSide === side
         ? theme.highlight
         : value.foldLabel || fold?.collapsed
-          ? theme.foldBackground
+          ? foldBackground(theme, value.foldTint ?? fold?.tint)
           : value.moveKind === "moved"
             ? theme.moved
           : value.kind === "addition"

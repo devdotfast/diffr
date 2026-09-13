@@ -7,7 +7,7 @@ import { App } from "./App";
 import { DiffStore } from "../diffr/store";
 import { createTestDiffFile, leaf, line, withIdenticalLines } from "../diffr/fixture";
 import type { DiffFile } from "../diffr/wire";
-import { createFoldedDiffFile } from "../diffr/regions.test";
+import { createBundledDiffFile, createFoldedDiffFile } from "../diffr/regions.test";
 import { loadBundledTheme } from "../diffr/theme";
 const themes = { initial: loadBundledTheme("default-dark"), dark: loadBundledTheme("default-dark"), light: loadBundledTheme("default-light") };
 const at = (file: DiffFile, path: string) => {
@@ -386,6 +386,53 @@ test("the summary strip shows the wire's visible totals, unmoved by folding, and
     await act(async () => { t.mockInput.pressKey("ESCAPE"); await new Promise((resolve) => setTimeout(resolve, 100)); });
     await render();
     expect(t.captureCharFrame()).not.toContain("visible   +1");
+  } finally {
+    await act(async () => { t.renderer.destroy(); });
+  }
+});
+
+test("a docstring and its function sharing a fold_state_id open and close together from either row", async () => {
+  const store = new DiffStore();
+  const file = createBundledDiffFile();
+  if (file.diff.type !== "text") throw new Error();
+  // Pad past the viewport so z chords can act on a row scrolled to the top.
+  const tail = Array.from({ length: 20 }, (_, i) => `tail ${i}`);
+  file.diff.rhs!.text += tail.join("\n") + "\n";
+  file.diff.rhs!.regions.push(leaf(99, 5, 25));
+  store.accept(file);
+  const t = await testRender(<App store={store} onQuit={() => {}} themes={themes} />, { width: 150, height: 20 });
+  const lines = () => t.captureCharFrame().split("\n");
+  const rowOf = (needle: string) => lines().findIndex((l) => l.includes(needle));
+  const docOpen = (f: string) => f.includes("/// The built-in rule") && f.includes("    None");
+  const docClosed = (f: string) => !f.includes("/// The built-in rule") && !f.includes("    None") && f.includes("fn from_path");
+  const chord = async (...keys: string[]) => { for (const key of keys) await act(async () => { t.mockInput.pressKey(key); }); };
+  try {
+    await act(async () => { await t.renderOnce(); });
+    await t.waitForFrame(docClosed);
+    // Mouse, docstring row: its ⋯ row opens the docstring and the body together.
+    const bare = lines().findIndex((l) => /▸\s+⋯/.test(l));
+    expect(bare).toBeGreaterThan(0);
+    expect(bare).toBeLessThan(rowOf("fn from_path"));
+    await act(async () => { await t.mockMouse.click(lines()[bare].indexOf("▸"), bare); });
+    await t.waitForFrame(docOpen);
+    // Mouse, function row: its chevron closes both again.
+    const header = rowOf("fn from_path");
+    await act(async () => { await t.mockMouse.click(lines()[header].indexOf("▾"), header); });
+    await t.waitForFrame(docClosed);
+    // Keys: z chords act on the top row, under the sticky file header. Scroll past the header and
+    // line 1 so the docstring's ⋯ row is the top row; zo / zc / za then act on the pair.
+    await chord("j", "j");
+    await t.waitForFrame((f) => !f.includes("1   ];") && !/▸\s+⋯/.test(f));
+    // The top row sits under the sticky header, so judge by the body: open shows it, closed shows
+    // the pseudocode label instead.
+    const bodyOpen = (f: string) => f.includes("    None") && !f.includes("// pseudocode");
+    const bodyClosed = (f: string) => !f.includes("    None") && f.includes("// pseudocode");
+    await chord("z", "o");
+    await t.waitForFrame(bodyOpen);
+    await chord("z", "c");
+    await t.waitForFrame(bodyClosed);
+    await chord("z", "a");
+    await t.waitForFrame(bodyOpen);
   } finally {
     await act(async () => { t.renderer.destroy(); });
   }

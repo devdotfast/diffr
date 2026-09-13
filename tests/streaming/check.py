@@ -141,7 +141,12 @@ def check_tree(source):
 
 def check_tiling(source):
     at = 0
+    previous = None
     for leaf in leaves(source["regions"]):
+        # A collapsed unchanged gap is one leaf: two never sit back to back.
+        gap = leaf.get("visibility", {}).get("collapsed") and "unchanged" in leaf.get("tags", [])
+        assert not (gap and previous), (previous, leaf)
+        previous = gap
         assert leaf["start"] == {"line": at, "column": 0}, (leaf, at)
         assert leaf["end"]["column"] == 0 and leaf["end"]["line"] > at
         at = leaf["end"]["line"]

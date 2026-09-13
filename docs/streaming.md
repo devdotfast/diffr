@@ -210,9 +210,12 @@ Every other stretch of unchanged rows that is at least three lines long
 collapses into a leaf tagged `unchanged` with a label such as
 `"142 unchanged lines"`; shorter stretches stay open because a fold row
 would save nothing. A file with no change is one collapsed leaf however
-short. Folds that lie entirely inside a gap are not regions, so a gap is
-split only by a fold that crosses its edge, and the grouping mutation merges
-adjacent gaps again where both sides agree.
+short. Folds that lie entirely inside a gap are not regions. A fold edge
+never cuts a gap into two collapsed leaves back to back: a fold that ends
+inside a gap extends to the gap's end, and a fold whose header would be
+hidden inside one is dropped. A cut leaving a sliver under three lines
+leaves that sliver open. The grouping mutation merges adjacent gaps again
+where both sides agree.
 
 **Groups** come from the last built-in mutation: a run of two or more
 sibling folds that start collapsed, such as several deleted or summarized

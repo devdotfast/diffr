@@ -244,11 +244,11 @@ fn regions(
 
     let mut lhs_folds: Vec<SideFold<'_>> = side_folds(&result.lhs_folds, &lhs_lines)
         .into_iter()
-        .filter(|fold| !inside_gap(fold.lines, &lhs_gaps))
+        .filter_map(|fold| fit_to_gaps(fold, &lhs_gaps))
         .collect();
     let mut rhs_folds: Vec<SideFold<'_>> = side_folds(&result.rhs_folds, &rhs_lines)
         .into_iter()
-        .filter(|fold| !inside_gap(fold.lines, &rhs_gaps))
+        .filter_map(|fold| fit_to_gaps(fold, &rhs_gaps))
         .collect();
     let lhs_splits = split_lines(&lhs_folds);
     let rhs_splits = split_lines(&rhs_folds);
@@ -440,6 +440,38 @@ fn trim_context(
 fn inside_gap(lines: (usize, usize), gaps: &[(usize, usize)]) -> bool {
     gaps.iter()
         .any(|&(start, end)| start <= lines.0 && lines.1 <= end)
+}
+
+/// A collapsed gap is never split into two collapsed leaves back to back.
+/// A fold entirely inside a gap is dropped: it would be hidden anyway. When
+/// a fold edge would cut a gap into two pieces that are each long enough to
+/// collapse, the fold gives way: a fold whose header starts inside such a
+/// gap is dropped (its header would be hidden), and a fold that ends inside
+/// one extends to the gap's end, so the gap stays one leaf inside it. Any
+/// ancestor ending in the same gap extends to the same line, so nesting
+/// holds. A cut leaving a sliver shorter than `MIN_GAP` needs nothing: the
+/// sliver stays open. Gaps are aligned runs, so both sides agree.
+fn fit_to_gaps<'a>(mut fold: SideFold<'a>, gaps: &[(usize, usize)]) -> Option<SideFold<'a>> {
+    if inside_gap(fold.lines, gaps) {
+        return None;
+    }
+    let (start, end) = fold.lines;
+    let splits = |gap_start: usize, cut: usize, gap_end: usize| {
+        gap_start < cut && cut < gap_end && cut - gap_start >= MIN_GAP && gap_end - cut >= MIN_GAP
+    };
+    if gaps
+        .iter()
+        .any(|&(gap_start, gap_end)| splits(gap_start, start, gap_end.min(end)))
+    {
+        return None;
+    }
+    if let Some(&(_, gap_end)) = gaps
+        .iter()
+        .find(|&&(gap_start, gap_end)| splits(gap_start.max(start), end, gap_end))
+    {
+        fold.lines = (start, gap_end);
+    }
+    Some(fold)
 }
 
 fn line_span(range: &lines::SourceRange, line_count: usize) -> (usize, usize) {
@@ -1105,6 +1137,31 @@ mod tests {
             .filter(|r| matches!(r.node, Node::Fold { .. }))
             .map(|r| (r.range.start.line, r.alignment_id))
             .collect()
+    }
+
+    #[test]
+    fn a_fold_ending_inside_a_gap_does_not_split_it() {
+        // The inner block's closer sits inside a long unchanged stretch that
+        // continues in the enclosing function: one gap, not two back to back.
+        let body: String = (1..=7).map(|n| format!("        u{n}();\n")).collect();
+        let tail: String = (1..=5).map(|n| format!("    v{n}();\n")).collect();
+        let lhs = format!("fn f() {{\n    if a {{\n        x();\n{body}    }}\n{tail}}}\n");
+        let rhs = format!("fn f() {{\n    if a {{\n        y();\n{body}    }}\n{tail}}}\n");
+        let diff = project("a.rs", &lhs, &rhs, 1);
+        let (lhs_src, rhs_src) = sources(&diff);
+        for source in [lhs_src.unwrap(), rhs_src.unwrap()] {
+            assert_tiles(source);
+            let gaps: Vec<&Region> = all(&source.regions)
+                .into_iter()
+                .filter(|r| {
+                    matches!(r.node, Node::Leaf { .. })
+                        && r.visibility.collapsed
+                        && r.tags.iter().any(|t| t == "unchanged")
+                })
+                .collect();
+            assert_eq!(gaps.len(), 1, "one gap: {gaps:?}");
+            assert!(gaps[0].range.end.line - gaps[0].range.start.line >= 10);
+        }
     }
 
     #[test]

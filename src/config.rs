@@ -1,32 +1,131 @@
-//! Deserialize user settings, resolve defaults, and compile once before diffing.
+//! One configuration, layered: bundled defaults, the user's global file,
+//! the repository's `diffr.toml`, `DIFFR_*` environment variables, then
+//! `--set` overrides. Every field carries a doc comment, which becomes its
+//! description in `diffr config schema`, and every setting a `title` and an
+//! `x-group` that settings screens show in place of the dotted key.
 pub(crate) mod query;
+pub(crate) mod store;
 use crate::hash::DftHashMap;
+use crate::options::DiffOptions;
 use crate::parse::{guess_language::Language, tree_sitter_parser};
+use figment::providers::{Env, Format, Serialized, Toml};
+use figment::Figment;
 use query::AnnotationQuery;
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use strum::IntoEnumIterator;
 
-#[derive(Default, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Config {
+    /// Tree-sitter fold and context queries per language, keyed by the
+    /// lowercase language name. Omitted queries keep the bundled ones; an
+    /// empty string disables that feature.
+    #[schemars(skip)]
     pub(crate) languages: BTreeMap<String, LanguageConfig>,
+    /// What gets folded and what starts collapsed.
     pub(crate) folds: FoldsConfig,
+    /// Colors for the terminal frontend.
+    pub(crate) theme: ThemeConfig,
+    /// Limits on the structural comparison itself.
+    pub(crate) diff: DiffConfig,
 }
 
-#[derive(Default, Deserialize)]
+/// When a file exceeds one of these, diffr falls back to a line diff for
+/// it: the alignment is line-based and `stats.fallback` carries the
+/// reason; folds still come from the parse where it succeeded. The `DFT_BYTE_LIMIT`, `DFT_GRAPH_LIMIT` and
+/// `DFT_PARSE_ERROR_LIMIT` variables override the file, and the matching
+/// command-line flags override both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct DiffConfig {
+    /// Files larger than this many bytes on either side get a line diff.
+    #[schemars(title = "Largest file to diff structurally (bytes)", extend("x-group" = "Diff limits"))]
+    pub(crate) byte_limit: usize,
+    /// The largest AST matching graph diffr will explore for one file.
+    /// A large change to a large file can exceed it; raising it costs time
+    /// and memory on those files only.
+    #[schemars(title = "Largest matching graph", extend("x-group" = "Diff limits"))]
+    pub(crate) graph_limit: usize,
+    /// Files with more tree-sitter parse errors than this get a line diff.
+    #[schemars(title = "Parse errors allowed", extend("x-group" = "Diff limits"))]
+    pub(crate) parse_error_limit: usize,
+}
+
+impl Default for DiffConfig {
+    fn default() -> Self {
+        Self {
+            byte_limit: crate::options::DEFAULT_BYTE_LIMIT,
+            graph_limit: crate::options::DEFAULT_GRAPH_LIMIT,
+            parse_error_limit: crate::options::DEFAULT_PARSE_ERROR_LIMIT,
+        }
+    }
+}
+
+impl DiffConfig {
+    /// The engine options for these limits, with the `DFT_*` variables
+    /// applied on top. A variable that is set but not a number is an error.
+    pub(crate) fn options(&self, ignore_comments: bool) -> Result<DiffOptions, ConfigError> {
+        let limit = |name: &str, configured: usize| -> Result<usize, ConfigError> {
+            match std::env::var(name) {
+                Ok(text) => text.trim().parse().map_err(|_| {
+                    ConfigError(format!(
+                        "{name} must be a non-negative integer, got {text:?}"
+                    ))
+                }),
+                Err(std::env::VarError::NotPresent) => Ok(configured),
+                Err(std::env::VarError::NotUnicode(_)) => {
+                    Err(ConfigError(format!("{name} is not valid UTF-8")))
+                }
+            }
+        };
+        Ok(DiffOptions {
+            byte_limit: limit("DFT_BYTE_LIMIT", self.byte_limit)?,
+            graph_limit: limit("DFT_GRAPH_LIMIT", self.graph_limit)?,
+            parse_error_limit: limit("DFT_PARSE_ERROR_LIMIT", self.parse_error_limit)?,
+            ignore_comments,
+            ..DiffOptions::default()
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FoldsConfig {
+    /// An external JSON-RPC summarizer.
+    #[schemars(skip)]
     pub(crate) hook: Option<HookConfig>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct ThemeConfig {
+    /// A bundled theme name.
+    #[schemars(title = "Theme", extend("x-group" = "Appearance"))]
+    pub(crate) name: String,
+    /// A Helix-style theme file that replaces the bundled theme.
+    #[schemars(title = "Theme file", extend("x-group" = "Appearance"))]
+    pub(crate) path: Option<PathBuf>,
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        Self {
+            name: "default-dark".to_owned(),
+            path: None,
+        }
+    }
+}
+
 /// A trusted subprocess that supplies summaries for large novel folds.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct HookConfig {
-    /// Relative command paths resolve against the config file, wherever it lives.
+    /// Relative command paths resolve against the file that configured the
+    /// hook, or the workspace when it came from the environment.
     #[serde(skip)]
     pub(crate) dir: PathBuf,
     pub(crate) command: Vec<String>,
@@ -51,7 +150,7 @@ fn default_startup_timeout_ms() -> u64 {
     30_000
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct LanguageConfig {
     /// None keeps the bundled query; an empty string disables this feature.
@@ -73,6 +172,7 @@ pub(crate) struct Params {
     // Unread until the hook returns as a fold mutation.
     #[allow(dead_code)]
     pub(crate) hook: Option<HookConfig>,
+    pub(crate) diff: DiffConfig,
 }
 
 pub(crate) struct LanguageParams {
@@ -98,31 +198,123 @@ impl LanguageParams {
     }
 }
 
+/// Where the layers come from.
+pub(crate) struct Sources<'a> {
+    /// The repository root; `diffr.toml` inside it is the repository layer.
+    pub(crate) workspace: &'a Path,
+    /// Replaces the global file. Must exist.
+    pub(crate) explicit: Option<&'a Path>,
+    /// `key=value` overrides, applied last.
+    pub(crate) overrides: &'a [String],
+}
+
+/// The user's global file: `$XDG_CONFIG_HOME/diffr/config.toml`, falling
+/// back to `~/.config/diffr/config.toml`.
+pub(crate) fn global_path() -> Result<PathBuf, ConfigError> {
+    let dir = match std::env::var_os("XDG_CONFIG_HOME") {
+        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => dirs::home_dir()
+            .ok_or_else(|| ConfigError("no home directory for this user".into()))?
+            .join(".config"),
+    };
+    Ok(dir.join("diffr").join("config.toml"))
+}
+
+/// A `key=value` override. Values parse as TOML; anything that is not
+/// valid TOML is a string.
+pub(crate) fn parse_override(text: &str) -> Result<(String, toml::Value), ConfigError> {
+    let (key, value) = text
+        .split_once('=')
+        .ok_or_else(|| ConfigError(format!("--set expects key=value, got {text:?}")))?;
+    Ok((key.to_owned(), parse_value(value)))
+}
+
+/// TOML scalars and arrays; anything else is the literal string.
+pub(crate) fn parse_value(text: &str) -> toml::Value {
+    match toml::from_str::<toml::Table>(&format!("v = {text}")) {
+        Ok(mut table) => match table.remove("v") {
+            Some(toml::Value::Table(_)) | Some(toml::Value::Datetime(_)) | None => {
+                toml::Value::String(text.to_owned())
+            }
+            Some(value) => value,
+        },
+        Err(_) => toml::Value::String(text.to_owned()),
+    }
+}
+
 impl Config {
-    pub(crate) fn load(workspace: &Path, explicit: Option<&Path>) -> Result<Self, ConfigError> {
-        let path = explicit
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| workspace.join("diffr.toml"));
-        match std::fs::read_to_string(&path) {
-            Ok(source) => {
-                let mut config = Self::from_toml(&source)?;
-                if let Some(hook) = &mut config.folds.hook {
-                    hook.dir = path
-                        .parent()
-                        .expect("config file has a parent")
-                        .to_path_buf();
+    /// Layer every source and resolve it. Missing global and repository
+    /// files are fine; an explicit `--config` file must exist.
+    pub(crate) fn load(sources: Sources<'_>) -> Result<Self, ConfigError> {
+        let global = match sources.explicit {
+            Some(path) => {
+                if !path.is_file() {
+                    return Err(ConfigError(format!("{}: not found", path.display())));
                 }
-                Ok(config)
+                path.to_path_buf()
             }
-            Err(error) if explicit.is_none() && error.kind() == std::io::ErrorKind::NotFound => {
-                Ok(Self::default())
+            None => global_path()?,
+        };
+        let overrides = sources
+            .overrides
+            .iter()
+            .map(|text| parse_override(text))
+            .collect::<Result<Vec<_>, _>>()?;
+        let figment = |overrides: &[(String, toml::Value)]| {
+            let mut figment = Figment::from(Serialized::defaults(Config::default()))
+                .merge(Toml::file(&global))
+                .merge(Toml::file(sources.workspace.join("diffr.toml")))
+                .merge(
+                    Env::prefixed("DIFFR_")
+                        .filter(|key| key.as_str().contains("__"))
+                        .split("__"),
+                );
+            for (key, value) in overrides {
+                figment = figment.merge(Serialized::default(key, value));
             }
-            Err(error) => Err(ConfigError(format!("{}: {error}", path.display()))),
+            figment
+        };
+        let typed = figment(&overrides);
+        let (figment, mut config) = match typed.extract::<Config>() {
+            Ok(config) => (typed, config),
+            Err(error) => {
+                // A value like `1234` for a string key parsed as a number; the
+                // literal text is the intended value.
+                let as_strings: Vec<_> = sources
+                    .overrides
+                    .iter()
+                    .map(|text| {
+                        let (key, value) = text.split_once('=').expect("validated above");
+                        (key.to_owned(), toml::Value::String(value.to_owned()))
+                    })
+                    .collect();
+                let retry = figment(&as_strings);
+                match retry.extract::<Config>() {
+                    Ok(config) if as_strings != overrides => (retry, config),
+                    _ => return Err(ConfigError(error.to_string())),
+                }
+            }
+        };
+        if let Some(hook) = &mut config.folds.hook {
+            hook.dir = figment
+                .find_metadata("folds.hook.command")
+                .and_then(|metadata| metadata.source.as_ref())
+                .and_then(|source| source.file_path())
+                .and_then(|path| path.parent())
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| sources.workspace.to_path_buf());
         }
+        Ok(config)
     }
 
     pub(crate) fn from_toml(source: &str) -> Result<Self, ConfigError> {
         toml::from_str(source).map_err(|error| ConfigError(error.to_string()))
+    }
+
+    /// The JSON Schema of the configuration, with a description and default
+    /// on every setting.
+    pub(crate) fn schema() -> serde_json::Value {
+        serde_json::to_value(schemars::schema_for!(Config)).expect("schema serializes")
     }
 
     pub(crate) fn compile(self) -> Result<Params, ConfigError> {
@@ -169,6 +361,7 @@ impl Config {
         }
         Ok(Params {
             languages,
+            diff: self.diff,
             hook: self.folds.hook,
         })
     }
@@ -212,6 +405,27 @@ impl Default for Params {
 mod tests {
     use super::*;
     use crate::summary::DiffResult;
+
+    #[test]
+    fn diff_limits_default_and_layer_from_the_file() {
+        let defaults = Config::default().diff;
+        assert_eq!(defaults.graph_limit, crate::options::DEFAULT_GRAPH_LIMIT);
+        assert_eq!(defaults.byte_limit, crate::options::DEFAULT_BYTE_LIMIT);
+        let custom = Config::from_toml("[diff]\ngraph_limit = 5").unwrap();
+        assert_eq!(custom.diff.graph_limit, 5);
+        assert_eq!(custom.diff.byte_limit, defaults.byte_limit);
+        let options = custom.diff.options(true).unwrap();
+        assert_eq!(options.graph_limit, 5);
+        assert!(options.ignore_comments);
+        let compiled = custom.compile().unwrap();
+        assert_eq!(compiled.diff.graph_limit, 5);
+        let schema = Config::schema();
+        assert!(
+            schema["$defs"]["DiffConfig"]["properties"]["graph_limit"]["description"]
+                .as_str()
+                .is_some_and(|text| !text.is_empty())
+        );
+    }
 
     #[test]
     fn configuration_is_independent_and_omission_keeps_other_defaults() {
@@ -497,5 +711,105 @@ mod tag_tests {
         assert_eq!(result.lhs_folds[0].tags, ["body", "test"]);
         assert_eq!(result.rhs_folds[0].tags, ["body", "test"]);
         assert!(result.lhs_folds[0].counterpart(&result.rhs_folds).is_some());
+    }
+}
+
+#[cfg(test)]
+mod layer_tests {
+    use super::*;
+
+    fn load(dir: &Path, overrides: &[&str]) -> Result<Config, ConfigError> {
+        let overrides: Vec<String> = overrides.iter().map(|s| (*s).to_owned()).collect();
+        Config::load(Sources {
+            workspace: dir,
+            explicit: Some(&dir.join("global.toml")),
+            overrides: &overrides,
+        })
+    }
+
+    #[test]
+    fn layers_resolve_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("global.toml"),
+            "[diff]\ngraph_limit = 5\nbyte_limit = 6\n[theme]\nname = 'global'\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("diffr.toml"), "[theme]\nname = 'repo'\n").unwrap();
+        let config = load(dir.path(), &["diff.graph_limit=7"]).unwrap();
+        assert_eq!(config.diff.graph_limit, 7);
+        assert_eq!(config.diff.byte_limit, 6);
+        assert_eq!(
+            config.diff.parse_error_limit,
+            crate::options::DEFAULT_PARSE_ERROR_LIMIT
+        );
+        assert_eq!(config.theme.name, "repo");
+    }
+
+    #[test]
+    fn overrides_that_look_numeric_still_fill_string_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("global.toml"), "").unwrap();
+        let config = load(dir.path(), &["theme.name=1234"]).unwrap();
+        assert_eq!(config.theme.name, "1234");
+        let config = load(dir.path(), &["diff.graph_limit=9"]).unwrap();
+        assert_eq!(config.diff.graph_limit, 9);
+    }
+
+    #[test]
+    fn unknown_keys_and_missing_explicit_files_are_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("global.toml"), "").unwrap();
+        assert!(load(dir.path(), &["diff.typo=1"]).is_err());
+        assert!(load(dir.path(), &["diff.graph_limit=abc"]).is_err());
+        assert!(load(dir.path(), &["diff.graph_limit"]).is_err());
+        assert!(Config::load(Sources {
+            workspace: dir.path(),
+            explicit: Some(&dir.path().join("absent.toml")),
+            overrides: &[],
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn hook_paths_resolve_against_the_file_that_configured_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("elsewhere");
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::write(
+            nested.join("global.toml"),
+            "[folds.hook]\ncommand = ['hook.py']\n",
+        )
+        .unwrap();
+        let config = Config::load(Sources {
+            workspace: dir.path(),
+            explicit: Some(&nested.join("global.toml")),
+            overrides: &[],
+        })
+        .unwrap();
+        assert_eq!(config.folds.hook.unwrap().dir, nested);
+    }
+
+    #[test]
+    fn schema_describes_every_setting_with_its_default() {
+        let schema = Config::schema();
+        let diff = &schema["properties"]["diff"];
+        let diff = match diff.get("$ref") {
+            Some(reference) => {
+                let name = reference.as_str().unwrap().rsplit('/').next().unwrap();
+                &schema["$defs"][name]
+            }
+            None => diff,
+        };
+        let graph_limit = &diff["properties"]["graph_limit"];
+        assert_eq!(graph_limit["default"], crate::options::DEFAULT_GRAPH_LIMIT);
+        assert!(graph_limit["description"]
+            .as_str()
+            .unwrap()
+            .contains("matching graph"));
+        assert!(schema["properties"].get("languages").is_none());
+        assert!(schema["properties"]["folds"]
+            .get("properties")
+            .is_none_or(|properties| properties.get("hook").is_none()));
     }
 }

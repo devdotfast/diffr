@@ -115,9 +115,9 @@ fn stats(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> Stats {
 
 /// difftastic reports its fallbacks as prose; the wire wants a code.
 fn fallback_code(reason: &str) -> &'static str {
-    if reason.contains("DFT_BYTE_LIMIT") {
+    if reason.contains("byte_limit") {
         "too_large"
-    } else if reason.contains("DFT_GRAPH_LIMIT") {
+    } else if reason.contains("graph_limit") {
         "too_complex"
     } else if reason.contains("parse error") {
         "parse_error"

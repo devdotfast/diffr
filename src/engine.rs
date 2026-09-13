@@ -232,7 +232,10 @@ pub(crate) fn diff_file_content(
                                     line_parser::change_positions(lhs_src, rhs_src);
                                 (
                                     FileFormat::TextFallback {
-                                        reason: "exceeded DFT_GRAPH_LIMIT".into(),
+                                        reason: format!(
+                                            "structural diff exceeded diff.graph_limit ({}); raise it in diffr config",
+                                            diff_options.graph_limit
+                                        ),
                                     },
                                     lhs_positions,
                                     rhs_positions,
@@ -340,8 +343,9 @@ pub(crate) fn diff_file_content(
                     let format_options = FormatSizeOptions::from(BINARY).decimal_places(1);
                     let file_format = FileFormat::TextFallback {
                         reason: format!(
-                            "{} exceeded DFT_BYTE_LIMIT",
-                            format_size(num_bytes, format_options)
+                            "{} exceeded diff.byte_limit ({}); raise it in diffr config",
+                            format_size(num_bytes, format_options),
+                            diff_options.byte_limit
                         ),
                     };
 

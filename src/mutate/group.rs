@@ -6,7 +6,7 @@
 //! reveals each child's own collapsed row. Both steps keep ids paired: a
 //! merge or a group happens on one side only when the other side either
 //! does the same to the same ids or holds none of them.
-use super::{is_fold, walk, FoldMutation};
+use super::{ids, is_fold, one_sided, walk, FoldMutation};
 use crate::hash::{DftHashMap, DftHashSet};
 use crate::protocol::{
     FileChange, Node, Pairing, Problem, Region, Source, SourceRange, Visibility,
@@ -125,10 +125,21 @@ fn merge_gap_runs(regions: &mut Vec<Region>, merges: &DftHashSet<u32>) {
 
 // ── groups ────────────────────────────────────────────────────────────────
 
+/// A collapsed fold labelled as removed lines only counts when nothing
+/// under it is paired; a rewrite must not be swept into a "functions
+/// removed" group.
+fn removed_label(region: &Region) -> bool {
+    region.visibility.label.ends_with("lines removed")
+}
+
 /// A unit is a collapsed fold, with the single-line leaf just before it
 /// when there is one: the `def` or `fn` line whose body the fold hides.
-fn unit_at(regions: &[Region], at: usize) -> Option<usize> {
-    let collapsed_fold = |region: &Region| is_fold(region) && region.visibility.collapsed;
+fn unit_at(regions: &[Region], at: usize, other_ids: &DftHashSet<u32>) -> Option<usize> {
+    let collapsed_fold = |region: &Region| {
+        is_fold(region)
+            && region.visibility.collapsed
+            && (!removed_label(region) || one_sided(region, other_ids))
+    };
     let region = regions.get(at)?;
     if collapsed_fold(region) {
         return Some(at);
@@ -142,17 +153,17 @@ const MAX_SEPARATOR_LINES: usize = 2;
 
 /// Maximal runs of two or more units among siblings, separated by at most
 /// a couple of open leaf lines, as their child ids in document order.
-fn collapsed_fold_runs(regions: &[Region], out: &mut Vec<Vec<u32>>) {
+fn collapsed_fold_runs(regions: &[Region], other_ids: &DftHashSet<u32>, out: &mut Vec<Vec<u32>>) {
     for region in regions {
         // Nothing under a collapsed fold is visible, so nothing there
         // needs grouping.
         if let (Node::Fold { children }, false) = (&region.node, region.visibility.collapsed) {
-            collapsed_fold_runs(children, out);
+            collapsed_fold_runs(children, other_ids, out);
         }
     }
     let mut at = 0;
     while at < regions.len() {
-        let Some(mut last) = unit_at(regions, at) else {
+        let Some(mut last) = unit_at(regions, at, other_ids) else {
             at += 1;
             continue;
         };
@@ -164,7 +175,7 @@ fn collapsed_fold_runs(regions: &[Region], out: &mut Vec<Vec<u32>>) {
             while next < regions.len()
                 && !is_fold(&regions[next])
                 && !regions[next].visibility.collapsed
-                && unit_at(regions, next) != Some(next + 1)
+                && unit_at(regions, next, other_ids) != Some(next + 1)
             {
                 separator_lines += regions[next].range.lines().len();
                 next += 1;
@@ -172,7 +183,7 @@ fn collapsed_fold_runs(regions: &[Region], out: &mut Vec<Vec<u32>>) {
             if separator_lines > MAX_SEPARATOR_LINES {
                 break;
             }
-            match unit_at(regions, next) {
+            match unit_at(regions, next, other_ids) {
                 Some(end) => {
                     last = end;
                     units += 1;
@@ -190,11 +201,13 @@ fn collapsed_fold_runs(regions: &[Region], out: &mut Vec<Vec<u32>>) {
 fn group_folds(sides: &mut Pairing<Source>, next_id: &mut u32) {
     let mut lhs_runs = Vec::new();
     let mut rhs_runs = Vec::new();
+    let lhs_ids = sides.lhs().map(|lhs| ids(&lhs.regions)).unwrap_or_default();
+    let rhs_ids = sides.rhs().map(|rhs| ids(&rhs.regions)).unwrap_or_default();
     if let Some(lhs) = sides.lhs() {
-        collapsed_fold_runs(&lhs.regions, &mut lhs_runs);
+        collapsed_fold_runs(&lhs.regions, &rhs_ids, &mut lhs_runs);
     }
     if let Some(rhs) = sides.rhs() {
-        collapsed_fold_runs(&rhs.regions, &mut rhs_runs);
+        collapsed_fold_runs(&rhs.regions, &lhs_ids, &mut rhs_runs);
     }
     // A run whose ids form the same run on the other side shares the group id.
     let mut group_ids: DftHashMap<Vec<u32>, u32> = DftHashMap::default();
@@ -299,6 +312,72 @@ mod tests {
     use super::*;
     use crate::mutate::collapse::DeletedBodies;
     use crate::mutate::summarize::tests::project;
+
+    #[test]
+    fn removed_groups_only_wrap_one_sided_folds() {
+        use crate::protocol::SourcePos;
+        let leaf = |id: u32, start: u32, end: u32| Region {
+            id,
+            range: SourceRange {
+                start: SourcePos {
+                    line: start,
+                    column: 0,
+                },
+                end: SourcePos {
+                    line: end,
+                    column: 0,
+                },
+            },
+            tags: vec![],
+            visibility: Visibility::default(),
+            node: Node::Leaf { changed: vec![] },
+        };
+        let removed_fold = |id: u32, start: u32, end: u32, child: Region| Region {
+            id,
+            range: SourceRange {
+                start: SourcePos {
+                    line: start,
+                    column: 0,
+                },
+                end: SourcePos {
+                    line: end,
+                    column: 0,
+                },
+            },
+            tags: vec!["body".to_owned(), "function".to_owned()],
+            visibility: Visibility {
+                collapsed: true,
+                label: format!("{} lines removed", end - start),
+            },
+            node: Node::Fold {
+                children: vec![child],
+            },
+        };
+        // Two adjacent "removed" folds, but the first one's leaf is paired.
+        let lhs = vec![
+            leaf(1, 0, 1),
+            removed_fold(2, 1, 6, leaf(3, 1, 6)),
+            leaf(4, 6, 7),
+            removed_fold(5, 7, 12, leaf(6, 7, 12)),
+        ];
+        let rhs = vec![leaf(3, 0, 5)];
+        let source = |regions| Source {
+            text: String::new(),
+            syntax: vec![],
+            regions,
+        };
+        let mut sides = Pairing::Both {
+            lhs: source(lhs),
+            rhs: source(rhs),
+        };
+        let file = crate::mutate::summarize::tests::project("m.py", "", "").0;
+        GroupCollapsed.apply(&file, &mut sides).unwrap();
+        let lhs = &sides.lhs().unwrap().regions;
+        assert!(
+            lhs.iter().all(|region| region.tags != ["group"]),
+            "a rewrite next to a removal is not a run of removals"
+        );
+    }
 
     #[test]
     fn adjacent_deleted_bodies_are_grouped_under_one_collapsed_fold() {

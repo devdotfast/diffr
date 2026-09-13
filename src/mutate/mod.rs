@@ -119,6 +119,17 @@ pub(crate) fn ids(regions: &[Region]) -> DftHashSet<u32> {
     ids
 }
 
+/// True when nothing under `region`, itself included, has a counterpart on
+/// the other side. A fold whose header line did not align can still hold
+/// paired leaves, and such a fold is a rewrite, not a removal.
+pub(crate) fn one_sided(region: &Region, other_ids: &DftHashSet<u32>) -> bool {
+    let mut paired = false;
+    walk(std::slice::from_ref(region), &mut |inner| {
+        paired |= other_ids.contains(&inner.id);
+    });
+    !paired
+}
+
 pub(crate) fn line_count(region: &Region) -> usize {
     region.range.lines().len()
 }

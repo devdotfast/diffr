@@ -1,7 +1,7 @@
 //! Rules that start things collapsed: whole files by category, deleted
 //! function bodies, test bodies, and the middle of large removed stretches.
 use super::group::next_id;
-use super::{collapse, ids, is_fold, line_count, walk_mut, FileMutation, FoldMutation};
+use super::{collapse, ids, is_fold, line_count, one_sided, walk_mut, FileMutation, FoldMutation};
 use crate::category;
 use crate::hash::DftHashSet;
 use crate::protocol::{
@@ -28,7 +28,10 @@ impl FileMutation for HiddenCategories {
 }
 
 /// Deleted function bodies of at least `min_lines` start collapsed with a
-/// line count. The header line stays visible by fold semantics.
+/// line count. The header line stays visible by fold semantics. A body
+/// counts as deleted only when nothing under it is paired: a function
+/// whose header moved but whose lines still align is a rewrite and stays
+/// open.
 pub(crate) struct DeletedBodies {
     pub(crate) min_lines: usize,
 }
@@ -42,7 +45,7 @@ impl FoldMutation for DeletedBodies {
         walk_mut(&mut lhs.regions, &mut |region| {
             if is_fold(region)
                 && region.tags.iter().any(|tag| tag == "function")
-                && !rhs_ids.contains(&region.id)
+                && one_sided(region, &rhs_ids)
                 && line_count(region) >= self.min_lines
             {
                 let count = line_count(region);
@@ -93,7 +96,11 @@ impl FoldMutation for TestBodies {
 /// Removed stretches with no counterpart and at least `min_lines` lines are
 /// split into three leaves: the first line open, the middle collapsed with
 /// a line count, the last line open, so the reader still sees red at both
-/// ends. Leaves under a fold that already starts collapsed are left alone.
+/// ends. Only stretches in unpaired code qualify: the nearest enclosing
+/// `function` fold (or, outside any function, the nearest enclosing fold)
+/// must itself be one-sided, so a rewritten function shows its red and
+/// green lines in place. Stretches at the top level keep the plain rule.
+/// Leaves under a fold that already starts collapsed are left alone.
 pub(crate) struct RemovedRuns {
     pub(crate) min_lines: usize,
 }
@@ -107,8 +114,43 @@ impl FoldMutation for RemovedRuns {
         };
         // A leaf needs a first, a middle, and a last line to split.
         let threshold = self.min_lines.max(3);
-        split_removed_runs(&mut lhs.regions, &rhs_ids, threshold, false, &mut next_id);
+        split_removed_runs(
+            &mut lhs.regions,
+            &rhs_ids,
+            threshold,
+            false,
+            Gates::default(),
+            &mut next_id,
+        );
         Ok(())
+    }
+}
+
+/// Whether the enclosing folds are one-sided: the nearest `function` fold,
+/// and the nearest fold of any tag. `None` when there is no such fold.
+#[derive(Clone, Copy, Default)]
+struct Gates {
+    function: Option<bool>,
+    any: Option<bool>,
+}
+
+impl Gates {
+    fn enter(self, fold: &Region, rhs_ids: &DftHashSet<u32>) -> Self {
+        let unpaired = one_sided(fold, rhs_ids);
+        Self {
+            function: if fold.tags.iter().any(|tag| tag == "function") {
+                Some(unpaired)
+            } else {
+                self.function
+            },
+            any: Some(unpaired),
+        }
+    }
+
+    /// Inside a paired function nothing collapses; outside any function
+    /// the nearest fold decides; at the top level everything qualifies.
+    fn open(self) -> bool {
+        self.function.or(self.any).unwrap_or(true)
     }
 }
 
@@ -117,16 +159,24 @@ fn split_removed_runs(
     rhs_ids: &DftHashSet<u32>,
     threshold: usize,
     under_collapsed: bool,
+    gates: Gates,
     next_id: &mut u32,
 ) {
     let mut out = Vec::with_capacity(regions.len());
     for mut region in regions.drain(..) {
         let collapsed = under_collapsed || region.visibility.collapsed;
-        let splits =
-            !under_collapsed && !rhs_ids.contains(&region.id) && line_count(&region) >= threshold;
+        let splits = !under_collapsed
+            && gates.open()
+            && !rhs_ids.contains(&region.id)
+            && line_count(&region) >= threshold;
+        let inner = if is_fold(&region) {
+            gates.enter(&region, rhs_ids)
+        } else {
+            gates
+        };
         match &mut region.node {
             Node::Fold { children } => {
-                split_removed_runs(children, rhs_ids, threshold, collapsed, next_id);
+                split_removed_runs(children, rhs_ids, threshold, collapsed, inner, next_id);
                 out.push(region);
             }
             Node::Leaf { .. } if splits => out.extend(split_leaf(region, next_id)),
@@ -456,6 +506,102 @@ mod tests {
                 (9, 29, 30, false, String::new(), vec![]),
             ]
         );
+    }
+
+    fn function_fold(id: u32, start: u32, end: u32, children: Vec<Region>) -> Region {
+        Region {
+            id,
+            range: SourceRange {
+                start: SourcePos {
+                    line: start,
+                    column: 0,
+                },
+                end: SourcePos {
+                    line: end,
+                    column: 0,
+                },
+            },
+            tags: vec!["body".to_owned(), "function".to_owned()],
+            visibility: Visibility::default(),
+            node: Node::Fold { children },
+        }
+    }
+
+    fn both(lhs: Vec<Region>, rhs: Vec<Region>) -> Pairing<Source> {
+        let source = |regions| Source {
+            text: String::new(),
+            syntax: vec![],
+            regions,
+        };
+        Pairing::Both {
+            lhs: source(lhs),
+            rhs: source(rhs),
+        }
+    }
+
+    #[test]
+    fn removed_runs_stay_open_under_a_paired_function() {
+        // The lhs function fold has no counterpart, but its second leaf
+        // does: a rewrite, so its removed stretch stays in place.
+        let rewritten = function_fold(
+            1,
+            0,
+            20,
+            vec![
+                removed_leaf(2, 0, 10, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+                removed_leaf(3, 10, 20, &[]),
+            ],
+        );
+        // Wholly removed: nothing under it is on the rhs.
+        let removed = function_fold(
+            4,
+            20,
+            40,
+            vec![removed_leaf(5, 20, 40, &[20, 21, 22, 23, 24, 25, 26, 27])],
+        );
+        let mut sides = both(vec![rewritten, removed], vec![removed_leaf(3, 0, 10, &[])]);
+        RemovedRuns { min_lines: 5 }
+            .apply(&manifest(None), &mut sides)
+            .unwrap();
+        let lhs = &sides.lhs().unwrap().regions;
+        let Node::Fold { children } = &lhs[0].node else {
+            panic!("fold expected");
+        };
+        assert_eq!(children.len(), 2, "nothing split under the paired function");
+        assert!(children.iter().all(|child| !child.visibility.collapsed));
+        let Node::Fold { children } = &lhs[1].node else {
+            panic!("fold expected");
+        };
+        assert_eq!(
+            shape(children),
+            vec![
+                (5, 20, 21, false, String::new(), vec![20]),
+                (
+                    6,
+                    21,
+                    39,
+                    true,
+                    "18 lines removed".to_owned(),
+                    (21..28).collect()
+                ),
+                (7, 39, 40, false, String::new(), vec![]),
+            ]
+        );
+    }
+
+    #[test]
+    fn deleted_bodies_skip_folds_with_paired_content() {
+        // Header moved (fold id absent on the rhs) but the body lines align.
+        let rewritten = function_fold(1, 0, 20, vec![removed_leaf(2, 0, 20, &[])]);
+        let removed = function_fold(3, 20, 40, vec![removed_leaf(4, 20, 40, &[])]);
+        let mut sides = both(vec![rewritten, removed], vec![removed_leaf(2, 0, 20, &[])]);
+        DeletedBodies { min_lines: 3 }
+            .apply(&manifest(None), &mut sides)
+            .unwrap();
+        let lhs = &sides.lhs().unwrap().regions;
+        assert!(!lhs[0].visibility.collapsed, "a rewrite stays open");
+        assert!(lhs[1].visibility.collapsed);
+        assert_eq!(lhs[1].visibility.label, "20 lines removed");
     }
 
     #[test]

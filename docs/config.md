@@ -40,7 +40,7 @@ through these three commands; the schema is the only contract.
 min_lines = 12             # bodies shorter than this are never collapsed by a rule
 collapse_deleted = true    # deleted function bodies start collapsed, header visible
 collapse_test_bodies = true # test bodies start collapsed on both sides, header visible
-collapse_removed_lines = 5 # removed stretches this long collapse in the middle; 0 disables
+collapse_removed_lines = 5 # removed stretches this long, in unpaired code, collapse in the middle; 0 disables
 collapse_generated = true  # generated files start hidden
 collapse_tests = true      # test files start hidden
 context_lines = 3          # unchanged lines kept around a change; -U overrides
@@ -118,7 +118,10 @@ itself. In order:
 1. `collapse_generated`, `collapse_tests`: the file's `visibility` in the
    manifest, before `start` is written.
 2. `collapse_deleted`: deleted function bodies (folds tagged `function`) of
-   at least `min_lines` lines, labelled `"<n> lines removed"`.
+   at least `min_lines` lines, labelled `"<n> lines removed"`. A body is
+   deleted only when nothing under it is paired with the after side; a
+   function whose header moved but whose lines still align is a rewrite
+   and stays open.
 3. `collapse_test_bodies`: bodies of test functions (folds tagged `test`) of
    three or more lines, on both sides, labelled `"test body"`. A whole test
    module such as a Rust `#[cfg(test)] mod tests` is one `test` fold too,
@@ -126,8 +129,12 @@ itself. In order:
 4. `collapse_removed_lines`: removed stretches with no counterpart on the
    after side and at least that many lines keep their first and last line
    open and collapse the middle, tagged `removed` and labelled
-   `"<n> lines removed"`. Stretches under a fold that already starts
-   collapsed are left alone.
+   `"<n> lines removed"`. Only unpaired code qualifies: the nearest
+   enclosing `function` fold (or, outside any function, the nearest
+   enclosing fold) must itself have nothing paired under it, so a rewritten
+   function shows its removed lines in place. Stretches at the top level
+   always qualify. Stretches under a fold that already starts collapsed are
+   left alone.
 5. The built-in summarizer: new function bodies (folds tagged `function`,
    never a test, never one nested inside another selected body) of at least
    `summarize.min_lines` lines on the after side become python-flavored

@@ -37,8 +37,9 @@ impl Mutations {
     pub(crate) fn from_params(params: &Params, workspace: &Path) -> crate::git::Result<Self> {
         let mut mutations = Self::default();
         let folds = &params.folds;
-        if folds.collapse_generated || folds.collapse_tests {
+        if folds.collapse_deleted_files || folds.collapse_generated || folds.collapse_tests {
             mutations.file.push(Box::new(collapse::HiddenCategories {
+                deleted: folds.collapse_deleted_files,
                 generated: folds.collapse_generated,
                 tests: folds.collapse_tests,
             }));

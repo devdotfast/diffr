@@ -43,6 +43,7 @@ collapse_test_bodies = true # test bodies start collapsed on both sides, header 
 collapse_removed_lines = 5 # removed stretches this long, in unpaired code, collapse in the middle; 0 disables
 collapse_generated = true  # generated files start hidden
 collapse_tests = true      # test files start hidden
+collapse_deleted_files = true  # deleted files start hidden
 context_lines = 3          # unchanged lines kept around a change; -U overrides
 
 [summarize]
@@ -115,7 +116,7 @@ After each file is diffed and projected onto the wire, mutations adjust what
 starts collapsed and what the collapsed label says. They never touch the diff
 itself. In order:
 
-1. `collapse_generated`, `collapse_tests`: the file's `visibility` in the
+1. `collapse_deleted_files`, `collapse_generated`, `collapse_tests`: the file's `visibility` in the
    manifest, before `start` is written.
 2. `collapse_deleted`: deleted function bodies (folds tagged `function`) of
    at least `min_lines` lines, labelled `"<n> lines removed"`. A body is

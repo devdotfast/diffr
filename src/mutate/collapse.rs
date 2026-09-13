@@ -5,20 +5,25 @@ use super::{collapse, ids, is_fold, line_count, one_sided, walk_mut, FileMutatio
 use crate::category;
 use crate::hash::DftHashSet;
 use crate::protocol::{
-    FileChange, Node, Pairing, Problem, Region, Source, SourcePos, SourceRange, Visibility,
+    FileChange, FileStatus, Node, Pairing, Problem, Region, Source, SourcePos, SourceRange,
+    Visibility,
 };
 
-/// Generated and test files start hidden behind a placeholder.
+/// Deleted, generated and test files start hidden behind a placeholder.
 pub(crate) struct HiddenCategories {
+    pub(crate) deleted: bool,
     pub(crate) generated: bool,
     pub(crate) tests: bool,
 }
 
 impl FileMutation for HiddenCategories {
     fn apply(&self, file: &mut FileChange) -> Result<(), Problem> {
-        let label = match file.category.as_deref() {
-            Some(category::GENERATED) if self.generated => "Generated file · hidden by default",
-            Some(category::TEST) if self.tests => "Test file · hidden by default",
+        let label = match (file.status, file.category.as_deref()) {
+            (FileStatus::Deleted, _) if self.deleted => "Deleted file · hidden by default",
+            (_, Some(category::GENERATED)) if self.generated => {
+                "Generated file · hidden by default"
+            }
+            (_, Some(category::TEST)) if self.tests => "Test file · hidden by default",
             _ => return Ok(()),
         };
         file.visibility.collapsed = true;
@@ -333,6 +338,7 @@ mod tests {
     #[test]
     fn hidden_categories_follow_the_switches() {
         let rule = HiddenCategories {
+            deleted: false,
             generated: true,
             tests: false,
         };
@@ -345,6 +351,30 @@ mod tests {
         assert!(!file.visibility.collapsed);
         let mut file = manifest(None);
         rule.apply(&mut file).unwrap();
+        assert!(!file.visibility.collapsed);
+    }
+
+    #[test]
+    fn deleted_files_are_hidden_whatever_their_category() {
+        let rule = HiddenCategories {
+            deleted: true,
+            generated: true,
+            tests: true,
+        };
+        let mut file = manifest(Some("test"));
+        file.status = FileStatus::Deleted;
+        rule.apply(&mut file).unwrap();
+        assert!(file.visibility.collapsed);
+        assert_eq!(file.visibility.label, "Deleted file · hidden by default");
+
+        let off = HiddenCategories {
+            deleted: false,
+            generated: false,
+            tests: false,
+        };
+        let mut file = manifest(None);
+        file.status = FileStatus::Deleted;
+        off.apply(&mut file).unwrap();
         assert!(!file.visibility.collapsed);
     }
 

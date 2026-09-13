@@ -101,6 +101,8 @@ pub(crate) struct FoldsConfig {
     /// collapse in the middle, keeping their first and last line visible.
     /// `0` disables it.
     pub(crate) collapse_removed_lines: usize,
+    /// Hide files that were deleted outright.
+    pub(crate) collapse_deleted_files: bool,
     /// Hide files classified as generated, such as lockfiles and build output.
     pub(crate) collapse_generated: bool,
     /// Hide files classified as tests.
@@ -120,6 +122,7 @@ impl Default for FoldsConfig {
             min_lines: 12,
             collapse_deleted: true,
             collapse_removed_lines: 5,
+            collapse_deleted_files: true,
             collapse_generated: true,
             collapse_tests: true,
             collapse_test_bodies: true,

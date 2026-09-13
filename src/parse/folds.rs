@@ -30,6 +30,7 @@ pub(crate) struct Fold {
 
 impl Fold {
     /// The fold on the other side that pairs with this one, if any.
+    #[cfg(test)]
     pub(crate) fn counterpart<'a>(&self, other_side: &'a [Fold]) -> Option<&'a Fold> {
         let partner = self.partner?;
         other_side.iter().find(|other| other.syntax_id == partner)

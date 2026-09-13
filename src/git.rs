@@ -1,6 +1,7 @@
 //! Git comparison selection and lazy source loading used by the CLI and its stdout stream.
 use crate::config::Params;
 use crate::pairing::Pairing;
+use crate::parse::guess_language::{guess, language_name};
 use crate::protocol;
 use crate::summary::DiffResult;
 use anyhow::Context as _;
@@ -135,6 +136,7 @@ pub(crate) struct FileChange {
     pub(crate) class: Option<String>,
     /// Git's delta sides.
     pub(crate) sides: Pairing<protocol::FileRef>,
+    pub(crate) language: Option<String>,
 }
 
 impl FileChange {
@@ -169,12 +171,16 @@ impl FileChange {
             (None, Some(new)) => (FileStatus::Added, Pairing::RightOnly { rhs: file_ref(new) }),
             (None, None) => panic!("a standalone comparison needs at least one path"),
         };
+        let path = new_path.as_deref().or(old_path.as_deref()).expect("a path");
+        let language = language_of(path);
+        let class = crate::category::from_path(path).map(str::to_owned);
         Self {
             old_path,
             new_path,
             status,
-            class: None,
+            class,
             sides,
+            language,
         }
     }
 
@@ -190,9 +196,31 @@ impl FileChange {
                 // Both sides exist; the file record carries the unmerged error.
                 FileStatus::Conflicted => protocol::FileStatus::Modified,
             },
+            category: self.class.clone(),
+            language: self.language.clone(),
             visibility: protocol::Visibility::default(),
         }
     }
+}
+
+/// `diffr-classify` wins; then `linguist-generated`; then the built-in
+/// path rules.
+fn category(repo: &Repository, path: &str) -> Result<Option<String>> {
+    let attr = |name: &str| {
+        repo.get_attr(Path::new(path), name, AttrCheckFlags::FILE_THEN_INDEX)
+            .map(AttrValue::from_string)
+    };
+    if let AttrValue::String(value) = attr("diffr-classify")? {
+        return Ok(Some(value.to_owned()));
+    }
+    if let AttrValue::True = attr("linguist-generated")? {
+        return Ok(Some(crate::category::GENERATED.to_owned()));
+    }
+    Ok(crate::category::from_path(path).map(str::to_owned))
+}
+
+fn language_of(path: &str) -> Option<String> {
+    guess(Path::new(path), "", &[]).map(|language| language_name(language).to_owned())
 }
 
 /// Why one file could not be diffed. Loading attaches it to the error, and
@@ -405,21 +433,17 @@ impl DiffSession {
                     },
                     (None, None) => unreachable!("a delta has a path"),
                 };
+                let language =
+                    language_of(new_path.as_deref().or(old_path.as_deref()).expect("a path"));
                 let mut file = FileChange {
                     old_path,
                     new_path,
                     status,
                     class: None,
                     sides,
+                    language,
                 };
-                file.class = match AttrValue::from_string(repo.get_attr(
-                    Path::new(file.path()),
-                    "diffr-classify",
-                    AttrCheckFlags::FILE_THEN_INDEX,
-                )?) {
-                    AttrValue::String(value) => Some(value.to_owned()),
-                    _ => None,
-                };
+                file.class = category(&repo, file.path())?;
                 pending.push(PendingFile {
                     before: Source::from_delta(
                         delta.old_file(),

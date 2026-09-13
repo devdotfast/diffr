@@ -34,7 +34,7 @@ URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generate
 SYSTEM = (
     "You rewrite regions of a source file as terse Python-style pseudocode for a diff "
     "viewer that shows the pseudocode in place of the collapsed region. The user supplies "
-    "one numbered source file and a list of folds, each with an id and 1-based line range. "
+    "one numbered source file and a list of folds, each with an id (the region's alignment_id) and 1-based line range. "
     "For each fold, write pseudocode covering only that fold's lines: keep the control flow "
     "and the names that matter, drop types, error plumbing and boilerplate. Aim for about one "
     "pseudocode line per five source lines, between one and eight lines per fold. Reply with "

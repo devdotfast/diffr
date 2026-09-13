@@ -78,6 +78,26 @@ mod folds {
     }
 
     #[test]
+    fn cfg_test_modules_are_test_modules_and_plain_modules_are_not() {
+        let src = "mod plain {\n    fn a() {}\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        a();\n    }\n}\n";
+        let result = DiffResult::from_sources("a.rs", "", src);
+        let tags: Vec<Vec<String>> = result
+            .rhs_folds
+            .iter()
+            .filter(|fold| fold.tags.iter().any(|tag| tag == "module"))
+            .map(|fold| fold.tags.clone())
+            .collect();
+        assert_eq!(
+            tags,
+            [vec!["body", "module"], vec!["body", "module", "test"]]
+        );
+        assert!(result
+            .rhs_folds
+            .iter()
+            .any(|fold| fold.tags == ["body", "function", "test"]));
+    }
+
+    #[test]
     fn flattened_test_body_keeps_the_existing_string_match_on_both_sides() {
         let lhs = "def test_doc():\n    \"\"\"some shared words before\"\"\"\n";
         let rhs = "def test_doc():\n    \"\"\"some shared words after\"\"\"\n";
@@ -85,7 +105,7 @@ mod folds {
         assert_eq!(result.lhs_folds.len(), 1);
         assert_eq!(result.rhs_folds.len(), 1);
         let fold = &result.lhs_folds[0];
-        assert_eq!(fold.tags, ["body", "test"]);
+        assert_eq!(fold.tags, ["body", "function", "test"]);
         let (left, right) =
             paired(fold, &result.rhs_folds).expect("reuse the replaced-string correspondence");
         assert_eq!(text(lhs, left), "\"\"\"some shared words before\"\"\"");

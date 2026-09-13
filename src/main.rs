@@ -41,6 +41,7 @@
 #![warn(clippy::todo)]
 #![warn(clippy::dbg_macro)]
 
+mod category;
 mod cli;
 mod config;
 mod conflicts;
@@ -54,12 +55,11 @@ mod files;
 mod git;
 mod gitattributes;
 mod hash;
-// The fold hook has no caller until it returns as a fold mutation.
-#[allow(dead_code)]
 mod hook;
 mod line_folds;
 mod line_parser;
 mod lines;
+mod mutate;
 mod options;
 mod pairing;
 mod parse;

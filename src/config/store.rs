@@ -6,9 +6,19 @@ use figment::Figment;
 use std::path::Path;
 
 /// The resolved configuration as JSON, with the same nesting as the TOML.
-/// `reveal` is accepted for secrets; no setting holds one yet.
-pub(crate) fn show(config: &Config, _reveal: bool) -> serde_json::Value {
-    serde_json::to_value(config).expect("config serializes")
+/// The API key is redacted unless `reveal` is set.
+pub(crate) fn show(config: &Config, reveal: bool) -> serde_json::Value {
+    let mut value = serde_json::to_value(config).expect("config serializes");
+    if !reveal
+        && config
+            .summarize
+            .api_key
+            .as_deref()
+            .is_some_and(|key| !key.is_empty())
+    {
+        value["summarize"]["api_key"] = serde_json::Value::String("<redacted>".to_owned());
+    }
+    value
 }
 
 /// Write `key = value` into the global file, keeping everything else in it
@@ -120,30 +130,42 @@ mod tests {
     fn set_writes_typed_values_and_keeps_the_rest() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested").join("config.toml");
-        set(&path, "diff.graph_limit", "20").unwrap();
-        set(&path, "theme.name", "1234").unwrap();
-        set(&path, "theme.path", "themes/mine.toml").unwrap();
+        set(&path, "folds.min_lines", "20").unwrap();
+        set(&path, "summarize.api_key", "1234").unwrap();
+        set(&path, "folds.collapse_tests", "false").unwrap();
+        set(&path, "summarize.model", "gemini-x").unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("graph_limit = 20"), "{text}");
-        assert!(text.contains("name = \"1234\""), "{text}");
-        assert!(text.contains("path = \"themes/mine.toml\""), "{text}");
+        assert!(text.contains("min_lines = 20"), "{text}");
+        assert!(text.contains("api_key = \"1234\""), "{text}");
+        assert!(text.contains("collapse_tests = false"), "{text}");
+        assert!(text.contains("model = \"gemini-x\""), "{text}");
         let config = Config::from_toml(&text).unwrap();
-        assert_eq!(config.diff.graph_limit, 20);
-        assert_eq!(config.theme.name, "1234");
+        assert_eq!(config.folds.min_lines, 20);
+        assert_eq!(config.summarize.api_key.as_deref(), Some("1234"));
     }
 
     #[test]
     fn set_rejects_unknown_keys_and_wrong_types_without_writing() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        std::fs::write(&path, "# keep me\n[diff]\ngraph_limit = 4\n").unwrap();
-        assert!(set(&path, "diff.typo", "1").is_err());
-        assert!(set(&path, "diff.graph_limit", "abc").is_err());
-        assert!(set(&path, "diff", "1").is_err());
+        std::fs::write(&path, "# keep me\n[folds]\nmin_lines = 4\n").unwrap();
+        assert!(set(&path, "folds.typo", "1").is_err());
+        assert!(set(&path, "folds.min_lines", "abc").is_err());
+        assert!(set(&path, "folds", "1").is_err());
         assert!(set(&path, "", "1").is_err());
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "# keep me\n[diff]\ngraph_limit = 4\n"
+            "# keep me\n[folds]\nmin_lines = 4\n"
         );
+    }
+
+    #[test]
+    fn show_redacts_the_key_unless_revealed() {
+        let mut config = Config::default();
+        config.summarize.api_key = Some("secret".to_owned());
+        assert_eq!(show(&config, false)["summarize"]["api_key"], "<redacted>");
+        assert_eq!(show(&config, true)["summarize"]["api_key"], "secret");
+        assert!(show(&Config::default(), false)["summarize"]["api_key"].is_null());
+        assert_eq!(show(&config, false)["folds"]["min_lines"], 12);
     }
 }

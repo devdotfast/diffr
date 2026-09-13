@@ -26,6 +26,8 @@ pub(crate) struct Config {
     /// empty string disables that feature.
     #[schemars(skip)]
     pub(crate) languages: BTreeMap<String, LanguageConfig>,
+    /// Pseudocode summaries for large new function bodies.
+    pub(crate) summarize: SummarizeConfig,
     /// What gets folded and what starts collapsed.
     pub(crate) folds: FoldsConfig,
     /// Colors for the terminal frontend.
@@ -92,12 +94,119 @@ impl DiffConfig {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FoldsConfig {
-    /// An external JSON-RPC summarizer.
+    /// Hide files that were deleted outright.
+    #[schemars(title = "Hide deleted files", extend("x-group" = "Hidden files"))]
+    pub(crate) collapse_deleted_files: bool,
+    /// Hide files classified as generated, such as lockfiles and build output.
+    #[schemars(title = "Hide generated files", extend("x-group" = "Hidden files"))]
+    pub(crate) collapse_generated: bool,
+    /// Hide files classified as tests.
+    #[schemars(title = "Hide test files", extend("x-group" = "Hidden files"))]
+    pub(crate) collapse_tests: bool,
+    /// Bodies shorter than this are never summarized or collapsed by a rule.
+    #[schemars(title = "Shortest body to collapse (lines)", extend("x-group" = "Collapsed code"))]
+    pub(crate) min_lines: usize,
+    /// Collapse deleted function bodies, keeping their header line visible.
+    #[schemars(title = "Collapse deleted functions", extend("x-group" = "Collapsed code"))]
+    pub(crate) collapse_deleted: bool,
+    /// Removed stretches with no counterpart and at least this many lines
+    /// collapse in the middle, keeping their first and last line visible.
+    /// `0` disables it.
+    #[schemars(title = "Collapse removed stretches from (lines)", extend("x-group" = "Collapsed code"))]
+    pub(crate) collapse_removed_lines: usize,
+    /// Collapse the bodies of test functions on both sides, header visible.
+    #[schemars(title = "Collapse test function bodies", extend("x-group" = "Collapsed code"))]
+    pub(crate) collapse_test_bodies: bool,
+    /// Bundle each function with the comment above it (in Python, the
+    /// string that opens its body): they open and close together, and the
+    /// summarizer quotes the docstring before its pseudocode.
+    #[schemars(title = "Fold docstrings with their function", extend("x-group" = "Collapsed code"))]
+    pub(crate) bundle_docstrings: bool,
+    /// Unchanged lines kept visible on either side of a change. `-U` overrides it.
+    #[schemars(title = "Context lines", extend("x-group" = "Collapsed code"))]
+    pub(crate) context_lines: u32,
+    /// An external JSON-RPC summarizer, run after the built-in one.
     #[schemars(skip)]
     pub(crate) hook: Option<HookConfig>,
+}
+
+impl Default for FoldsConfig {
+    fn default() -> Self {
+        Self {
+            min_lines: 12,
+            collapse_deleted: true,
+            collapse_removed_lines: 5,
+            collapse_deleted_files: true,
+            collapse_generated: true,
+            collapse_tests: true,
+            collapse_test_bodies: true,
+            bundle_docstrings: true,
+            context_lines: 3,
+            hook: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct SummarizeConfig {
+    /// Summarize large new function bodies as pseudocode. Silently off
+    /// without an API key.
+    #[schemars(title = "Summarize new functions", extend("x-group" = "Summaries"))]
+    pub(crate) enabled: bool,
+    /// Which model API to call.
+    #[schemars(title = "Provider", extend("x-group" = "Summaries"))]
+    pub(crate) provider: Provider,
+    /// The model name sent to the provider.
+    #[schemars(title = "Model", extend("x-group" = "Summaries"))]
+    pub(crate) model: String,
+    /// New function bodies shorter than this are shown as code, not
+    /// summarized: pseudocode only pays off once the body is long.
+    #[schemars(title = "Shortest body to summarize (lines)", extend("x-group" = "Summaries"))]
+    pub(crate) min_lines: usize,
+    /// The provider's API key. `GEMINI_API_KEY` or `GOOGLE_API_KEY` in the
+    /// environment is used when this is unset.
+    #[schemars(title = "API key", extend("x-group" = "Summaries"))]
+    pub(crate) api_key: Option<String>,
+    /// Override the provider's base URL, for proxies and tests.
+    #[schemars(title = "Endpoint URL", extend("x-group" = "Summaries"))]
+    pub(crate) endpoint: Option<String>,
+    /// Per-request limit in milliseconds.
+    #[schemars(title = "Request timeout (ms)", extend("x-group" = "Summaries"))]
+    pub(crate) timeout_ms: u64,
+    /// Requests in flight at once across files.
+    #[schemars(title = "Parallel requests", extend("x-group" = "Summaries"))]
+    pub(crate) max_concurrency: usize,
+    /// Retries after a timeout, rate limit, or server error before the run
+    /// is aborted.
+    #[schemars(title = "Retries", extend("x-group" = "Summaries"))]
+    pub(crate) retries: u32,
+}
+
+impl Default for SummarizeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            provider: Provider::Gemini,
+            model: "gemini-3.8-flash".to_owned(),
+            min_lines: 20,
+            api_key: None,
+            endpoint: None,
+            timeout_ms: 60_000,
+            max_concurrency: 16,
+            retries: 3,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[schemars(inline)]
+pub(crate) enum Provider {
+    Gemini,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -132,8 +241,9 @@ pub(crate) struct HookConfig {
     /// None sends every tagged fold; otherwise a fold needs one of these tags.
     #[serde(default)]
     pub(crate) tags: Option<Vec<String>>,
+    /// Overrides `folds.min_lines` for the hook alone.
     #[serde(default)]
-    pub(crate) min_lines: usize,
+    pub(crate) min_lines: Option<usize>,
     /// Per-call limit once the hook is listening.
     #[serde(default = "default_timeout_ms")]
     pub(crate) timeout_ms: u64,
@@ -169,8 +279,8 @@ impl std::error::Error for ConfigError {}
 
 pub(crate) struct Params {
     languages: DftHashMap<Language, OnceLock<Arc<LanguageParams>>>,
-    // Unread until the hook returns as a fold mutation.
-    #[allow(dead_code)]
+    pub(crate) folds: FoldsConfig,
+    pub(crate) summarize: SummarizeConfig,
     pub(crate) hook: Option<HookConfig>,
     pub(crate) diff: DiffConfig,
 }
@@ -326,6 +436,11 @@ impl Config {
                 return Err(ConfigError("folds.hook timeouts must be positive".into()));
             }
         }
+        if self.summarize.timeout_ms == 0 || self.summarize.max_concurrency == 0 {
+            return Err(ConfigError(
+                "summarize.timeout_ms and summarize.max_concurrency must be positive".into(),
+            ));
+        }
         let defaults = Self::from_toml(include_str!("config/defaults.toml"))?;
         let mut resolved = defaults.languages;
         for (name, overrides) in self.languages {
@@ -361,6 +476,8 @@ impl Config {
         }
         Ok(Params {
             languages,
+            folds: self.folds.clone(),
+            summarize: self.summarize,
             diff: self.diff,
             hook: self.folds.hook,
         })
@@ -517,7 +634,7 @@ mod tests {
         assert_eq!(hook.tags.as_deref(), Some(&["body".to_owned()][..]));
         assert_eq!(
             (hook.min_lines, hook.timeout_ms, hook.startup_timeout_ms),
-            (30, 5000, 30_000)
+            (Some(30), 5000, 30_000)
         );
         assert!(Config::from_toml("")
             .unwrap()
@@ -698,6 +815,42 @@ mod tag_tests {
     }
 
     #[test]
+    fn javascript_test_callbacks_are_tagged() {
+        let params = Params::default();
+        for (path, source) in [
+            (
+                "a.test.ts",
+                "it('adds', () => {\n  expect(1).toBe(1);\n});\n",
+            ),
+            ("a.test.js", "describe('x', function () {\n  run();\n});\n"),
+            (
+                "a.test.tsx",
+                "test('y', async () => {\n  await run();\n});\n",
+            ),
+        ] {
+            let result = DiffResult::from_sources_with_params(path, "", source, &params);
+            assert!(
+                result
+                    .rhs_folds
+                    .iter()
+                    .any(|fold| fold.tags == ["body", "test"]),
+                "{path}: {:?}",
+                result.rhs_folds.iter().map(|f| &f.tags).collect::<Vec<_>>()
+            );
+        }
+        let plain = DiffResult::from_sources_with_params(
+            "a.ts",
+            "",
+            "run('z', () => {\n  go();\n});\n",
+            &params,
+        );
+        assert!(plain
+            .rhs_folds
+            .iter()
+            .all(|fold| !fold.tags.iter().any(|tag| tag == "test")));
+    }
+
+    #[test]
     fn test_bodies_keep_both_tags_and_remain_paired() {
         let params = Params::default();
         let result = DiffResult::from_sources_with_params(
@@ -708,8 +861,8 @@ mod tag_tests {
         );
         assert_eq!(result.lhs_folds.len(), 1);
         assert_eq!(result.rhs_folds.len(), 1);
-        assert_eq!(result.lhs_folds[0].tags, ["body", "test"]);
-        assert_eq!(result.rhs_folds[0].tags, ["body", "test"]);
+        assert_eq!(result.lhs_folds[0].tags, ["body", "function", "test"]);
+        assert_eq!(result.rhs_folds[0].tags, ["body", "function", "test"]);
         assert!(result.lhs_folds[0].counterpart(&result.rhs_folds).is_some());
     }
 }
@@ -732,37 +885,41 @@ mod layer_tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("global.toml"),
-            "[diff]\ngraph_limit = 5\nbyte_limit = 6\n[theme]\nname = 'global'\n",
+            "[folds]\nmin_lines = 5\ncollapse_tests = false\n[summarize]\nmodel = 'global'\n",
         )
         .unwrap();
-        std::fs::write(dir.path().join("diffr.toml"), "[theme]\nname = 'repo'\n").unwrap();
-        let config = load(dir.path(), &["diff.graph_limit=7"]).unwrap();
-        assert_eq!(config.diff.graph_limit, 7);
-        assert_eq!(config.diff.byte_limit, 6);
-        assert_eq!(
-            config.diff.parse_error_limit,
-            crate::options::DEFAULT_PARSE_ERROR_LIMIT
-        );
-        assert_eq!(config.theme.name, "repo");
+        std::fs::write(
+            dir.path().join("diffr.toml"),
+            "[summarize]\nmodel = 'repo'\n",
+        )
+        .unwrap();
+        let config = load(dir.path(), &["folds.min_lines=7"]).unwrap();
+        assert_eq!(config.folds.min_lines, 7);
+        assert!(!config.folds.collapse_tests);
+        assert!(config.folds.collapse_deleted);
+        assert_eq!(config.summarize.model, "repo");
+        assert_eq!(config.summarize.retries, 3);
     }
 
     #[test]
     fn overrides_that_look_numeric_still_fill_string_keys() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("global.toml"), "").unwrap();
-        let config = load(dir.path(), &["theme.name=1234"]).unwrap();
-        assert_eq!(config.theme.name, "1234");
-        let config = load(dir.path(), &["diff.graph_limit=9"]).unwrap();
-        assert_eq!(config.diff.graph_limit, 9);
+        let config = load(dir.path(), &["summarize.api_key=1234"]).unwrap();
+        assert_eq!(config.summarize.api_key.as_deref(), Some("1234"));
+        let config = load(dir.path(), &["summarize.api_key=abc-def"]).unwrap();
+        assert_eq!(config.summarize.api_key.as_deref(), Some("abc-def"));
+        let config = load(dir.path(), &["folds.collapse_deleted=false"]).unwrap();
+        assert!(!config.folds.collapse_deleted);
     }
 
     #[test]
     fn unknown_keys_and_missing_explicit_files_are_errors() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("global.toml"), "").unwrap();
-        assert!(load(dir.path(), &["diff.typo=1"]).is_err());
-        assert!(load(dir.path(), &["diff.graph_limit=abc"]).is_err());
-        assert!(load(dir.path(), &["diff.graph_limit"]).is_err());
+        assert!(load(dir.path(), &["folds.typo=1"]).is_err());
+        assert!(load(dir.path(), &["folds.min_lines=abc"]).is_err());
+        assert!(load(dir.path(), &["folds.min_lines"]).is_err());
         assert!(Config::load(Sources {
             workspace: dir.path(),
             explicit: Some(&dir.path().join("absent.toml")),
@@ -793,23 +950,21 @@ mod layer_tests {
     #[test]
     fn schema_describes_every_setting_with_its_default() {
         let schema = Config::schema();
-        let diff = &schema["properties"]["diff"];
-        let diff = match diff.get("$ref") {
+        let folds = &schema["properties"]["folds"];
+        let folds = match folds.get("$ref") {
             Some(reference) => {
                 let name = reference.as_str().unwrap().rsplit('/').next().unwrap();
                 &schema["$defs"][name]
             }
-            None => diff,
+            None => folds,
         };
-        let graph_limit = &diff["properties"]["graph_limit"];
-        assert_eq!(graph_limit["default"], crate::options::DEFAULT_GRAPH_LIMIT);
-        assert!(graph_limit["description"]
+        let min_lines = &folds["properties"]["min_lines"];
+        assert_eq!(min_lines["default"], 12);
+        assert!(min_lines["description"]
             .as_str()
             .unwrap()
-            .contains("matching graph"));
+            .contains("never summarized"));
         assert!(schema["properties"].get("languages").is_none());
-        assert!(schema["properties"]["folds"]
-            .get("properties")
-            .is_none_or(|properties| properties.get("hook").is_none()));
+        assert!(folds["properties"].get("hook").is_none());
     }
 }

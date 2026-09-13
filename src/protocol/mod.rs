@@ -97,6 +97,12 @@ pub struct FileChange {
     /// `LeftOnly` is a deletion, `RightOnly` an addition.
     pub file: Pairing<FileRef>,
     pub status: FileStatus,
+    /// `source`, `test`, `generated`, `docs`, or a repository's own class,
+    /// from git attributes and built-in path rules.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
     #[serde(default, skip_serializing_if = "Visibility::is_unset")]
     pub visibility: Visibility,
 }
@@ -244,7 +250,6 @@ pub struct SourceRange {
 impl SourceRange {
     /// The lines this range touches, half-open. A range ending at column
     /// zero does not touch its end line.
-    #[cfg(test)]
     pub fn lines(&self) -> std::ops::Range<u32> {
         let end = if self.end.column == 0 {
             self.end.line
@@ -423,6 +428,8 @@ mod tests {
                         },
                     },
                     status: FileStatus::Added,
+                    category: Some("generated".to_owned()),
+                    language: None,
                     visibility: Visibility {
                         collapsed: true,
                         label: "Generated file · hidden by default".to_owned(),

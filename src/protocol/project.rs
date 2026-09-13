@@ -676,6 +676,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn line_diff_fallbacks_pair_a_changed_signature_with_the_old_one() {
+        let before = "fn first() {\n    one();\n}\n\n/// Old doc.\nfn helper() {\n    x();\n    y();\n    z();\n}\n\nfn check(fold: Fold) -> bool {\n    a();\n    b();\n    c();\n}\n";
+        let after = "fn first() {\n    one();\n}\n\nfn check(region: Region) -> bool {\n    a();\n    b();\n    c();\n}\n";
+        let options = DiffOptions {
+            graph_limit: 1,
+            ..DiffOptions::default()
+        };
+        let (_, sides) =
+            crate::mutate::summarize::tests::project_with("m.rs", before, after, options);
+        let Pairing::Both { lhs, rhs } = &sides else {
+            panic!("both sides");
+        };
+        let signature = |source: &Source, needle: &str| {
+            let mut found = None;
+            crate::mutate::walk(&source.regions, &mut |region| {
+                if matches!(region.node, Node::Leaf { .. })
+                    && source
+                        .text
+                        .lines()
+                        .nth(region.range.start.line as usize)
+                        .is_some_and(|line| line.starts_with(needle))
+                {
+                    found = Some(region.alignment_id);
+                }
+            });
+            found.expect("a leaf starts on the signature line")
+        };
+        assert_eq!(
+            signature(lhs, "fn check("),
+            signature(rhs, "fn check("),
+            "the new signature pairs with the old one, not with the removed doc comment"
+        );
+    }
+
     fn refs(lhs: bool, rhs: bool) -> Pairing<FileRef> {
         let file_ref = FileRef {
             path: "a.py".to_owned(),

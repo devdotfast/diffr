@@ -1,6 +1,7 @@
 //! Git-style CLI input; rendering and NDJSON remain adapters over the same engine.
 use crate::config::{self, Config, Sources};
 use crate::git::{Comparison, DiffSession, FileParams, Operand, Result};
+use crate::mutate::Mutations;
 use crate::options::{DiffOptions, DisplayMode, DisplayOptions};
 use clap::{Arg, ArgAction, ArgGroup, ArgMatches, Command};
 use git2::{DiffStatsFormat, Repository};
@@ -59,7 +60,7 @@ pub(crate) fn run() -> Result<i32> {
         .arg(flag("null").short('z'))
         .arg(flag("no-renames"))
         .arg(flag("find-renames").short('M').conflicts_with("no-renames"))
-        .arg(Arg::new("unified").short('U').long("unified").default_value("3").value_parser(clap::value_parser!(u32)))
+        .arg(Arg::new("unified").short('U').long("unified").value_parser(clap::value_parser!(u32)).help("Unchanged lines kept around each change; defaults to folds.context_lines"))
         .arg(Arg::new("format").long("format").value_parser(["text", "ndjson", "snapshot"]).default_value("text"))
         .arg(Arg::new("display").long("display").value_parser(["inline", "side-by-side", "side-by-side-show-both"]).default_value("side-by-side"))
         .arg(Arg::new("color").long("color").num_args(0..=1).require_equals(true).default_missing_value("always").default_value("auto").value_parser(["auto", "always", "never"]))
@@ -111,7 +112,7 @@ pub(crate) fn run() -> Result<i32> {
         .cloned()
         .collect();
     let display = DisplayOptions {
-        num_context_lines: *args.get_one::<u32>("unified").unwrap(),
+        num_context_lines: args.get_one::<u32>("unified").copied().unwrap_or(3),
         terminal_width: args
             .get_one::<usize>("width")
             .copied()
@@ -172,8 +173,17 @@ pub(crate) fn run() -> Result<i32> {
     } else {
         let params = Arc::new(load_config(&args, workspace)?.compile()?);
         let diff_options = diff_options(&args, &params)?;
+        let context_lines = args
+            .get_one::<u32>("unified")
+            .copied()
+            .unwrap_or(params.folds.context_lines);
+        let mutations = if streaming {
+            Arc::new(Mutations::from_params(&params, workspace)?)
+        } else {
+            Arc::new(Mutations::default())
+        };
         let mut session = DiffSession::open(workspace, comparison, params, &files)?;
-        session.context_lines = display.num_context_lines;
+        session.context_lines = context_lines;
         session.diff_options = diff_options;
         let changed = session.remaining() > 0;
         if streaming {
@@ -181,13 +191,19 @@ pub(crate) fn run() -> Result<i32> {
             if jobs == 0 {
                 return Err("--jobs must be at least 1".into());
             }
-            let failed = crate::protocol::stream::write(session, jobs, &mut io::stdout().lock())?;
+            let ended =
+                crate::protocol::stream::write(session, jobs, mutations, &mut io::stdout().lock())?;
+            let failed = ended.failed || ended.aborted;
             return Ok(if failed {
                 2
             } else {
                 i32::from(changed && args.get_flag("exit-code"))
             });
         }
+        let display = DisplayOptions {
+            num_context_lines: context_lines,
+            ..display
+        };
         for (file, result) in session {
             let result = result.map_err(|error| format!("{}: {error}", file.path()))?;
             render(&result, &args, &display)?;
@@ -439,6 +455,13 @@ fn no_index(args: &ArgMatches, paths: Vec<OsString>, display: &DisplayOptions) -
     let workspace = Path::new(args.get_one::<String>("repo").unwrap());
     let config = load_config(args, workspace)?.compile()?;
     let options = &diff_options(args, &config)?;
+    let display = &DisplayOptions {
+        num_context_lines: args
+            .get_one::<u32>("unified")
+            .copied()
+            .unwrap_or(config.folds.context_lines),
+        ..display.clone()
+    };
     let lhs = crate::options::FileArgument::from_path_argument(&paths[0]);
     let rhs = crate::options::FileArgument::from_path_argument(&paths[1]);
     let compute = || {
@@ -458,14 +481,20 @@ fn no_index(args: &ArgMatches, paths: Vec<OsString>, display: &DisplayOptions) -
         )
     };
     if args.get_one::<String>("format").map(String::as_str) == Some("ndjson") {
-        crate::protocol::stream::write_file(
+        let mutations = Mutations::from_params(&config, workspace)?;
+        let ended = crate::protocol::stream::write_file(
             &paths[0].to_string_lossy(),
             &paths[1].to_string_lossy(),
             (before.len() as u64, after.len() as u64),
             compute,
+            &mutations,
             &mut io::stdout().lock(),
         )?;
-        Ok(i32::from(changed && args.get_flag("exit-code")))
+        Ok(if ended.failed || ended.aborted {
+            2
+        } else {
+            i32::from(changed && args.get_flag("exit-code"))
+        })
     } else {
         render(&compute(), args, display)?;
         Ok(i32::from(changed))
@@ -528,7 +557,17 @@ fn run_config(args: &ArgMatches, sub: &ArgMatches) -> Result<i32> {
                 serde_json::to_writer_pretty(&mut stdout, &config::store::show(&config, reveal))?;
                 stdout.write_all(b"\n")?;
             } else {
-                stdout.write_all(toml::to_string_pretty(&config)?.as_bytes())?;
+                let mut redacted = config.clone();
+                if !reveal
+                    && redacted
+                        .summarize
+                        .api_key
+                        .as_deref()
+                        .is_some_and(|key| !key.is_empty())
+                {
+                    redacted.summarize.api_key = Some("<redacted>".to_owned());
+                }
+                stdout.write_all(toml::to_string_pretty(&redacted)?.as_bytes())?;
             }
         }
         Some(("set", set)) => {

@@ -128,3 +128,33 @@ test("a fold that runs to the end of the file may end one past its last line", (
   const { folds } = flatten(file.diff);
   expect(folds[0][0]?.lastHidden).toBe(2);
 });
+
+test("regions sharing a fold_state_id collapse and expand as one bundle", () => {
+  const file = createTestDiffFile();
+  if (file.diff.type !== "text") throw new Error("fixture is not a text diff");
+  const text = [
+    "/// Adds two numbers.", // 0
+    "/// Wraps on overflow.", // 1
+    "fn add(a: u8, b: u8) -> u8 {", // 2
+    "    a.wrapping_add(b)", // 3
+    "}", // 4
+  ].join("\n") + "\n";
+  // The docstring (alignment 20) and the function body (alignment 21) share fold state 21.
+  const docstring: Region = { ...fold(20, [0, 0], [2, 0], [leaf(1, 0, 2)], "", ["comment"], true), fold_state_id: 21 };
+  const body = fold(21, [2, 28], [4, 0], [leaf(2, 2, 4)], "// pseudocode\nreturn a + b", ["body", "function"], true);
+  const regions: Region[] = [docstring, body, leaf(3, 4, 5)];
+  file.diff.lhs = { text, syntax: [], regions };
+  file.diff.rhs = { text, syntax: [], regions };
+  const collapsed = defaultCollapsed(file.diff);
+  expect([...collapsed]).toEqual([21]);
+  const { folds } = flatten(file.diff);
+  // One id hides both the docstring's continuation and the body.
+  expect([...hiddenLines(folds[1], collapsed)].sort()).toEqual([1, 3]);
+  expect([...hiddenLines(folds[1], new Set())]).toEqual([]);
+  const rows = rowsForFile(file, 0, "split", dark, collapsed).filter((r) => r.right && !r.right.foldLabel);
+  // The docstring is a one-row ⋯ fold (empty label), the signature stays visible, and both headers
+  // carry the same id, so either chevron toggles the pair.
+  const headers = rows.filter((r) => r.right!.fold).map((r) => [r.right!.lineNumber, r.right!.fold!.id, r.right!.fold!.label, r.right!.fold!.collapsed]);
+  expect(headers).toEqual([[1, 21, "", true], [3, 21, "// pseudocode\nreturn a + b", true]]);
+  expect(rows.map((r) => r.right!.lineNumber)).toEqual([1, 3, 5]);
+});

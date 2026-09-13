@@ -105,11 +105,13 @@ export function foldIds(diff: TextDiff): number[] {
   const { folds, leaves } = flatten(diff);
   return [...new Set([...folds.flat().map((fold) => fold.foldStateId), ...leaves.flat().filter(foldableLeaf).map((l) => l.foldStateId)])];
 }
-/** Ids nested inside a collapsible region, for recursive fold commands. */
+/** Ids nested inside a collapsible region, for recursive fold commands. Every region sharing the
+ * fold-state id counts, so a bundle such as a docstring and its function unfolds as one. */
 export function nestedIds(diff: TextDiff, id: number): number[] {
-  const fold = flatten(diff).folds.flat().find((f) => f.foldStateId === id);
-  if (fold) return fold.nested;
-  if (!flatten(diff).leaves.flat().some((leaf) => leaf.foldStateId === id)) throw new Error(`Unknown region ${id}`);
+  const { folds, leaves } = flatten(diff);
+  const members = folds.flat().filter((f) => f.foldStateId === id);
+  if (members.length) return [...new Set(members.flatMap((f) => f.nested))].filter((n) => n !== id);
+  if (!leaves.flat().some((leaf) => leaf.foldStateId === id)) throw new Error(`Unknown region ${id}`);
   return [];
 }
 /** Context-gap leaves: unchanged runs diffr trimmed to N lines around changes. */

@@ -19,11 +19,7 @@ ENV.pop('DFT_DBG_KEEP_UNCHANGED', None)
 def git(repo, *args, input=None):
     return subprocess.check_output(['git', '-C', str(repo), *args], input=input, env=ENV).decode().strip()
 
-# Build pinned comparisons and capture the CLI stream for the static viewer.
-REPO = OUT / "workspace"
-REPO.mkdir(exist_ok=True)
-git(REPO, 'init', '-q')
-sides = [[], []]
+# Build pinned comparisons for the static viewer.
 index = []
 for directory in sorted((ROOT / 'examples/review/real').iterdir()):
     provenance = json.loads((directory / 'provenance.json').read_text())
@@ -31,12 +27,6 @@ for directory in sorted((ROOT / 'examples/review/real').iterdir()):
     sources = provenance['sources']
     path = sources['rhs']['path'] or sources['lhs']['path']
     served_path = directory.name + "/" + path
-    for i, side in enumerate(('lhs', 'rhs')):
-        entry = sources[side]
-        if entry['path'] is not None:
-            data = (directory / entry['file']).read_bytes()
-            blob = git(REPO, 'hash-object', '-w', '--stdin', input=data)
-            sides[i].append((served_path, blob))
     with tempfile.TemporaryDirectory(prefix='difft-viewer-') as repo:
         git(repo, 'init', '-q')
         commits = []
@@ -66,23 +56,3 @@ for directory in sorted((ROOT / 'examples/review/real').iterdir()):
     index.append(meta)
     print(directory.name)
 (OUT / 'index.json').write_text(json.dumps(index))
-
-commits = []
-for files in sides:
-    git(REPO, 'read-tree', '--empty')
-    for path, blob in files:
-        git(REPO, 'update-index', '--add', '--cacheinfo', '100644', blob, path)
-    tree = git(REPO, 'write-tree')
-    parent = ['-p', commits[0]] if commits else []
-    commits.append(git(REPO, 'commit-tree', tree, '-m', 'Fixture stream snapshot', *parent))
-for meta in index:
-    path = OUT / (meta['id'] + '.json')
-    view = json.loads(path.read_text())
-    paths = view['request']['files']['paths']
-    stream_path = OUT / (meta['id'] + '.ndjson')
-    with stream_path.open('wb') as output:
-        subprocess.run([str(ROOT / 'target/debug/diffr'), '--repo', str(REPO),
-                        *commits, '--format', 'ndjson', '--', *paths],
-                       stdout=output, env=ENV, check=True)
-    view['request'] = 'data/' + stream_path.name
-    path.write_text(json.dumps(view))

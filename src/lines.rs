@@ -61,13 +61,13 @@ pub(crate) fn is_all_whitespace(s: &str) -> bool {
 
 /// A nonempty source interval with an exclusive end. Coordinates must be
 /// ordered, in bounds, and on UTF-8 boundaries in the associated text source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct SourceRange {
     pub(crate) start: SourcePosition,
     pub(crate) end: SourcePosition,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct SourcePosition {
     pub(crate) line: LineNumber,
     /// Zero-based UTF-8 byte offset within the line, not a display column.

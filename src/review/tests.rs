@@ -20,18 +20,24 @@ fn text<'a>(source: &'a str, range: &SourceRange) -> &'a str {
 mod folds {
     use super::text;
     use crate::lines::SourceRange;
-    use crate::parse::folds::{Fold, FoldMatch};
+    use crate::parse::folds::Fold;
     use crate::summary::DiffResult;
     use std::fmt::Write as _;
 
-    fn paired(fold: &Fold) -> Option<(&SourceRange, &SourceRange)> {
-        match &fold.match_kind {
-            FoldMatch::Unchanged { opposite } => Some((&fold.range, opposite)),
-            FoldMatch::Novel => None,
-        }
+    /// A fold's range and its counterpart's, when it has one.
+    fn paired<'a>(
+        fold: &'a Fold,
+        other_side: &'a [Fold],
+    ) -> Option<(&'a SourceRange, &'a SourceRange)> {
+        fold.counterpart(other_side)
+            .map(|other| (&fold.range, &other.range))
     }
-    fn added(fold: &Fold) -> Option<&SourceRange> {
-        matches!(fold.match_kind, FoldMatch::Novel).then_some(&fold.range)
+    /// A fold's range, when it has no counterpart.
+    fn added<'a>(fold: &'a Fold, other_side: &[Fold]) -> Option<&'a SourceRange> {
+        match fold.counterpart(other_side) {
+            Some(_) => None,
+            None => Some(&fold.range),
+        }
     }
 
     #[test]
@@ -40,7 +46,7 @@ mod folds {
         let rhs = "fn execute() {\n    old_work();\n    new_work();\n}\n";
         let diff = DiffResult::from_sources("a.rs", lhs, rhs);
         assert!(diff.lhs_folds.iter().any(|f| {
-            paired(f).is_some_and(|(l, r)| {
+            paired(f, &diff.rhs_folds).is_some_and(|(l, r)| {
                 l.start.line.as_usize() == 0
                     && l.end.line.as_usize() == 2
                     && r.end.line.as_usize() == 3
@@ -67,7 +73,8 @@ mod folds {
             .rhs_folds
             .iter()
             .any(|fold| fold.placeholder == "String"
-                && added(fold).is_some_and(|r| text(src, r) == "\"\"\"first\nsecond\"\"\"")));
+                && added(fold, &result.lhs_folds)
+                    .is_some_and(|r| text(src, r) == "\"\"\"first\nsecond\"\"\"")));
     }
 
     #[test]
@@ -79,7 +86,8 @@ mod folds {
         assert_eq!(result.rhs_folds.len(), 1);
         let fold = &result.lhs_folds[0];
         assert_eq!(fold.tags, ["body", "test"]);
-        let (left, right) = paired(fold).expect("reuse the replaced-string correspondence");
+        let (left, right) =
+            paired(fold, &result.rhs_folds).expect("reuse the replaced-string correspondence");
         assert_eq!(text(lhs, left), "\"\"\"some shared words before\"\"\"");
         assert_eq!(text(rhs, right), "\"\"\"some shared words after\"\"\"");
     }
@@ -96,8 +104,10 @@ mod folds {
             (source, ""),
         ] {
             let diff = DiffResult::from_sources("a.py", lhs, rhs);
-            for (folds, own, opposite) in [(&diff.lhs_folds, lhs, rhs), (&diff.rhs_folds, rhs, lhs)]
-            {
+            for (folds, own, opposite, opposite_folds) in [
+                (&diff.lhs_folds, lhs, rhs, &diff.rhs_folds),
+                (&diff.rhs_folds, rhs, lhs, &diff.lhs_folds),
+            ] {
                 if own.is_empty() {
                     assert!(folds.is_empty());
                     continue;
@@ -106,11 +116,9 @@ mod folds {
                 for (fold, expected) in folds.iter().zip(["import os", "import sys"]) {
                     assert_eq!(fold.tags, ["import"]);
                     assert_eq!(text(own, &fold.range), expected);
-                    match &fold.match_kind {
-                        FoldMatch::Unchanged { opposite: range } => {
-                            assert_eq!(text(opposite, range), expected)
-                        }
-                        FoldMatch::Novel => assert!(opposite.is_empty()),
+                    match fold.counterpart(opposite_folds) {
+                        Some(other) => assert_eq!(text(opposite, &other.range), expected),
+                        None => assert!(opposite.is_empty()),
                     }
                 }
             }
@@ -138,13 +146,19 @@ mod folds {
         let added_diff = DiffResult::from_sources("a.py", "", source);
         assert!(added_diff.lhs_folds.is_empty());
         assert_eq!(
-            text(source, added(&added_diff.rhs_folds[0]).unwrap()),
+            text(
+                source,
+                added(&added_diff.rhs_folds[0], &added_diff.lhs_folds).unwrap()
+            ),
             "import os"
         );
         let deleted_diff = DiffResult::from_sources("a.py", source, "");
         assert!(deleted_diff.rhs_folds.is_empty());
         assert_eq!(
-            text(source, added(&deleted_diff.lhs_folds[0]).unwrap()),
+            text(
+                source,
+                added(&deleted_diff.lhs_folds[0], &deleted_diff.rhs_folds).unwrap()
+            ),
             "import os"
         );
     }
@@ -162,7 +176,7 @@ mod folds {
             let expected_rhs = expected.replace("work(1)", "work(2)");
             assert!(
                 review.lhs_folds.iter().any(|f| {
-                    paired(f).is_some_and(|(l, r)| {
+                    paired(f, &review.rhs_folds).is_some_and(|(l, r)| {
                         text(lhs, l) == expected && text(&rhs, r) == expected_rhs
                     })
                 }),
@@ -181,7 +195,7 @@ mod folds {
             .position(|l| l.contains("fn max_depth_does_not_load_unreachable_ignore_files()"))
             .unwrap();
         assert!(review.rhs_folds.iter().any(|f| {
-            added(f).is_some_and(|r| {
+            added(f, &review.lhs_folds).is_some_and(|r| {
                 r.start.line.as_usize() == signature
                     && text(rhs, r).contains("let td = tmpdir();")
                     && rhs.lines().nth(r.end.line.as_usize()).unwrap().trim() == "}"
@@ -208,7 +222,7 @@ mod folds {
                 review
                     .rhs_folds
                     .iter()
-                    .any(|f| added(f).is_some_and(|r| text(src, r) == expected)),
+                    .any(|f| added(f, &review.lhs_folds).is_some_and(|r| text(src, r) == expected)),
                 "missing body fold in {path}"
             );
         }
@@ -220,7 +234,7 @@ mod folds {
         let rhs = "const x = [\"☕\", newValue];\n";
         let review = DiffResult::from_sources("a.ts", lhs, rhs);
         assert!(review.lhs_folds.iter().any(|f| {
-            paired(f).is_some_and(|(l, r)| {
+            paired(f, &review.rhs_folds).is_some_and(|(l, r)| {
                 text(lhs, l) == "\"☕\", oldValue" && text(rhs, r) == "\"☕\", newValue"
             })
         }));
@@ -321,10 +335,6 @@ mod syntax_tests {
             assert!(selected.contains(&own));
             assert!(!selected.contains(&other));
         }
-        let domain = review.domain_json();
-        assert!(domain.get("context").is_none());
-        assert!(domain["hunks"][0]["lines"].is_array());
-        assert!(domain["hunks"][0].get("context").is_none());
     }
 
     #[test]
@@ -423,7 +433,6 @@ mod syntax_tests {
 mod hunk_tests {
     use super::text;
     use crate::display::line_layout as layout;
-    use crate::parse::folds::FoldMatch;
     use crate::summary::DiffResult;
     use crate::summary::FileFormat;
     #[test]
@@ -471,10 +480,13 @@ mod hunk_tests {
         let source = "fn unchanged() {\n    work();\n}\n";
         let diff = DiffResult::from_sources("a.rs", source, source);
         assert!(diff.hunks.is_empty());
-        let viewer = diff.viewer_json();
+        let rows = layout::aligned_rows(
+            layout::sources(&diff),
+            (&diff.lhs_positions, &diff.rhs_positions),
+        );
         assert_eq!(
-            viewer["layout"]["rows"],
-            serde_json::json!([[0, 0], [1, 1], [2, 2]])
+            rows,
+            [(Some(0), Some(0)), (Some(1), Some(1)), (Some(2), Some(2))]
         );
     }
 
@@ -514,12 +526,21 @@ mod hunk_tests {
             ] {
                 for fold in folds {
                     text(own_src, &fold.range);
-                    if let FoldMatch::Unchanged { opposite } = &fold.match_kind {
-                        text(opposite_src, opposite);
-                        assert!(opposite_folds.iter().any(|other| {
-                            other.range == *opposite
-                                && matches!(&other.match_kind, FoldMatch::Unchanged { opposite: back } if *back == fold.range)
-                        }), "matched folds must be reciprocal");
+                    let counterparts: Vec<_> = opposite_folds
+                        .iter()
+                        .filter(|other| fold.partner == Some(other.syntax_id))
+                        .collect();
+                    assert!(
+                        counterparts.len() <= 1,
+                        "a fold has at most one counterpart"
+                    );
+                    for other in counterparts {
+                        text(opposite_src, &other.range);
+                        assert_eq!(
+                            other.partner,
+                            Some(fold.syntax_id),
+                            "matched folds must be reciprocal"
+                        );
                     }
                 }
             }

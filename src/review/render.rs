@@ -107,6 +107,7 @@ impl SnapshotWriter {
 
 #[cfg(test)]
 mod tests {
+    use crate::parse::syntax::MatchKind;
     use crate::summary::DiffResult;
     #[test]
     fn matched_rename_to_is_reindented_not_deleted_and_added() {
@@ -121,28 +122,22 @@ mod tests {
             .collect();
         assert_eq!(assignment.len(), 2);
         assert!(assignment.iter().all(|line| line.as_bytes()[10] == b'~'));
-        let domain = review.domain_json();
-        assert_eq!(domain["lhs_src"]["Text"], lhs);
-        assert_eq!(domain["rhs_src"]["Text"], rhs);
-        let token = domain["lhs_positions"]
-            .as_array()
-            .unwrap()
+        let token = review
+            .lhs_positions
             .iter()
-            .find(|p| p["pos"]["line"] == 247 && p["pos"]["start_col"] == 6)
+            .find(|p| p.pos.line.0 == 247 && p.pos.start_col == 6)
             .unwrap();
+        let MatchKind::UnchangedToken { opposite_pos, .. } = &token.kind else {
+            panic!(
+                "the renamed binding is an unchanged token: {:?}",
+                token.kind
+            );
+        };
         assert_eq!(
-            token["kind"]["UnchangedToken"]["opposite_pos"][0]["line"],
-            253
+            (opposite_pos[0].line.0, opposite_pos[0].start_col),
+            (253, 8)
         );
-        assert_eq!(
-            token["kind"]["UnchangedToken"]["opposite_pos"][0]["start_col"],
-            8
-        );
-        assert!(domain["lhs_folds"][0]["match_kind"]["Unchanged"].is_object());
-        assert!(
-            domain.get("layout").is_none(),
-            "layout is not part of the domain"
-        );
+        assert!(review.lhs_folds[0].counterpart(&review.rhs_folds).is_some());
     }
 
     #[test]

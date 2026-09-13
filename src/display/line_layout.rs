@@ -1,6 +1,7 @@
 //! Line alignment, ordinary context padding, and indentation classification.
 use super::hunks::Hunk;
 use crate::display::context::all_matched_lines_filled;
+use crate::pairing::Pairing;
 use crate::parse::syntax::MatchedPos;
 use crate::summary::{DiffResult, FileContent};
 use std::collections::BTreeSet;
@@ -133,6 +134,164 @@ pub(crate) fn reindented_pairs(diff: &DiffResult) -> BTreeSet<(usize, usize)> {
         }
     }
     pairs
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RunKind {
+    Unchanged,
+    Novel,
+}
+
+/// A maximal run of aligned rows of one kind before fold splitting. Each
+/// side present holds a half-open line span.
+#[derive(Clone, Debug)]
+pub(crate) struct Run {
+    pub(crate) kind: RunKind,
+    pub(crate) sides: Pairing<(usize, usize)>,
+    pub(crate) collapsed: bool,
+}
+
+impl Run {
+    pub(crate) fn len(&self) -> usize {
+        let (start, end) = match self.sides {
+            Pairing::Both { lhs, .. } | Pairing::LeftOnly { lhs } => lhs,
+            Pairing::RightOnly { rhs } => rhs,
+        };
+        end - start
+    }
+}
+
+/// Rows in order, run-length encoded by kind and side presence.
+pub(crate) fn runs(
+    rows: &[Row],
+    lhs_novel: &BTreeSet<usize>,
+    rhs_novel: &BTreeSet<usize>,
+) -> Vec<Run> {
+    let mut runs: Vec<Run> = Vec::new();
+    for &row in rows {
+        let row = match row {
+            (Some(lhs), Some(rhs)) => Pairing::Both { lhs, rhs },
+            (Some(lhs), None) => Pairing::LeftOnly { lhs },
+            (None, Some(rhs)) => Pairing::RightOnly { rhs },
+            (None, None) => unreachable!("aligned_rows only emits rows with a line on some side"),
+        };
+        let kind = match row {
+            Pairing::Both { lhs, rhs }
+                if !lhs_novel.contains(&lhs) && !rhs_novel.contains(&rhs) =>
+            {
+                RunKind::Unchanged
+            }
+            _ => RunKind::Novel,
+        };
+        let last = runs.last_mut().filter(|run| run.kind == kind);
+        match (last.map(|run| &mut run.sides), row) {
+            (
+                Some(Pairing::Both {
+                    lhs: (_, lhs_end),
+                    rhs: (_, rhs_end),
+                }),
+                Pairing::Both { lhs, rhs },
+            ) if *lhs_end == lhs && *rhs_end == rhs => {
+                *lhs_end += 1;
+                *rhs_end += 1;
+            }
+            (Some(Pairing::LeftOnly { lhs: (_, end) }), Pairing::LeftOnly { lhs: line })
+            | (Some(Pairing::RightOnly { rhs: (_, end) }), Pairing::RightOnly { rhs: line })
+                if *end == line =>
+            {
+                *end += 1;
+            }
+            _ => runs.push(Run {
+                kind,
+                sides: row.map(|line| (line, line + 1)),
+                collapsed: false,
+            }),
+        }
+    }
+    runs
+}
+
+/// The lines difftastic's hunks display on each side: the `-U` padding
+/// around every change plus the enclosing syntax context, such as the
+/// header of the function a change sits in.
+pub(crate) fn shown_lines(hunks: &[Hunk]) -> (BTreeSet<usize>, BTreeSet<usize>) {
+    let mut lhs = BTreeSet::new();
+    let mut rhs = BTreeSet::new();
+    for hunk in hunks {
+        for &(l, r) in &hunk.lines {
+            lhs.extend(l.map(|line| line.as_usize()));
+            rhs.extend(r.map(|line| line.as_usize()));
+        }
+    }
+    (lhs, rhs)
+}
+
+/// Collapsing fewer lines than this saves nothing worth a fold row.
+pub(crate) const MIN_GAP: usize = 3;
+
+/// Collapse every maximal stretch of an unchanged run that no hunk shows
+/// and that is at least `MIN_GAP` lines long. A file with no change has no
+/// hunks, so it becomes one collapsed run.
+pub(crate) fn trim_context(
+    runs: Vec<Run>,
+    lhs_shown: &BTreeSet<usize>,
+    rhs_shown: &BTreeSet<usize>,
+) -> Vec<Run> {
+    let no_change = lhs_shown.is_empty() && rhs_shown.is_empty();
+    let mut out: Vec<Run> = Vec::new();
+    for run in runs {
+        if run.kind != RunKind::Unchanged {
+            out.push(run);
+            continue;
+        }
+        let Pairing::Both {
+            lhs: (lhs_start, _),
+            rhs: (rhs_start, _),
+        } = run.sides
+        else {
+            unreachable!("unchanged runs are paired");
+        };
+        let shown = |offset: usize| {
+            lhs_shown.contains(&(lhs_start + offset)) || rhs_shown.contains(&(rhs_start + offset))
+        };
+        let len = run.len();
+        let mut from = 0;
+        while from < len {
+            let hidden = !shown(from);
+            let mut to = from + 1;
+            while to < len && shown(to) != hidden {
+                to += 1;
+            }
+            // A file with no change at all is one gap however short.
+            let collapsed = hidden && (to - from >= MIN_GAP || no_change);
+            let piece = Run {
+                kind: RunKind::Unchanged,
+                sides: Pairing::Both {
+                    lhs: (lhs_start + from, lhs_start + to),
+                    rhs: (rhs_start + from, rhs_start + to),
+                },
+                collapsed,
+            };
+            match out.last_mut() {
+                // Open pieces of one run stay one leaf.
+                Some(Run {
+                    kind: RunKind::Unchanged,
+                    sides:
+                        Pairing::Both {
+                            lhs: (_, lhs_end),
+                            rhs: (_, rhs_end),
+                        },
+                    collapsed: false,
+                }) if !collapsed && *lhs_end == lhs_start + from => {
+                    *lhs_end = lhs_start + to;
+                    *rhs_end = rhs_start + to;
+                }
+                _ => out.push(piece),
+            }
+            from = to;
+        }
+    }
+    out
 }
 
 #[cfg(test)]

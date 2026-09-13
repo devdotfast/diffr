@@ -70,6 +70,8 @@ impl std::error::Error for ConfigError {}
 
 pub(crate) struct Params {
     languages: DftHashMap<Language, OnceLock<Arc<LanguageParams>>>,
+    // Unread until the hook returns as a fold mutation.
+    #[allow(dead_code)]
     pub(crate) hook: Option<HookConfig>,
 }
 
@@ -483,7 +485,6 @@ mod tag_tests {
 
     #[test]
     fn test_bodies_keep_both_tags_and_remain_paired() {
-        use crate::parse::folds::FoldMatch;
         let params = Params::default();
         let result = DiffResult::from_sources_with_params(
             "a.rs",
@@ -495,7 +496,6 @@ mod tag_tests {
         assert_eq!(result.rhs_folds.len(), 1);
         assert_eq!(result.lhs_folds[0].tags, ["body", "test"]);
         assert_eq!(result.rhs_folds[0].tags, ["body", "test"]);
-        assert!(matches!(&result.lhs_folds[0].match_kind,
-            FoldMatch::Unchanged { opposite } if *opposite == result.rhs_folds[0].range));
+        assert!(result.lhs_folds[0].counterpart(&result.rhs_folds).is_some());
     }
 }

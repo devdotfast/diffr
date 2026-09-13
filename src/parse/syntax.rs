@@ -1088,7 +1088,10 @@ fn change_positions_<'a>(
             .get(node)
             .unwrap_or_else(|| panic!("Should have changes set in all nodes: {:#?}", node));
 
-        folds.extend(folds::project(node, change));
+        folds.extend(folds::project(
+            node,
+            folds::partner(node, change, change_map),
+        ));
 
         if matches!(change, ChangeKind::Unchanged(_)) {
             *seen_unchanged = true;

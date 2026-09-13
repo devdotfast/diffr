@@ -7,11 +7,10 @@
 //! every in-flight request on a small tokio runtime, so files still stream out
 //! as each worker finishes.
 use crate::config::HookConfig;
-use crate::parse::folds::FoldMatch;
-use crate::review::wire;
+use crate::parse::folds::Fold;
 use crate::summary::{DiffResult, FileContent, FileFormat};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
@@ -150,7 +149,7 @@ impl Hook {
             .rhs_folds
             .iter()
             .enumerate()
-            .filter(|(_, fold)| self.qualifies(fold))
+            .filter(|(_, fold)| self.qualifies(fold, &diff.lhs_folds))
             .map(|(index, _)| index)
             .collect();
         if selected.is_empty() {
@@ -171,7 +170,10 @@ impl Hook {
                 let fold = &diff.rhs_folds[index];
                 RequestFold {
                     id: index,
-                    range: wire::range(&fold.range),
+                    range: json!({
+                        "start": {"line": fold.range.start.line.0, "byte_column": fold.range.start.byte_column},
+                        "end": {"line": fold.range.end.line.0, "byte_column": fold.range.end.byte_column},
+                    }),
                     tags: fold.tags.clone(),
                     placeholder: fold.placeholder.clone(),
                 }
@@ -194,8 +196,9 @@ impl Hook {
         Ok(())
     }
 
-    fn qualifies(&self, fold: &crate::parse::folds::Fold) -> bool {
-        if !matches!(fold.match_kind, FoldMatch::Novel) {
+    /// Only folds new on the rhs qualify: those without a lhs counterpart.
+    fn qualifies(&self, fold: &Fold, lhs_folds: &[Fold]) -> bool {
+        if fold.counterpart(lhs_folds).is_some() {
             return false;
         }
         let lines = (fold.range.end.line.0 - fold.range.start.line.0 + 1) as usize;

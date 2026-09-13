@@ -54,13 +54,16 @@ mod files;
 mod git;
 mod gitattributes;
 mod hash;
+// The fold hook has no caller until it returns as a fold mutation.
+#[allow(dead_code)]
 mod hook;
 mod line_parser;
 mod lines;
 mod options;
+mod pairing;
 mod parse;
+pub(crate) mod protocol;
 mod review;
-mod stream;
 mod summary;
 mod version;
 mod words;

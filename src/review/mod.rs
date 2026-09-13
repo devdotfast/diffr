@@ -3,4 +3,3 @@
 mod render;
 #[cfg(test)]
 mod tests;
-pub(crate) mod wire;

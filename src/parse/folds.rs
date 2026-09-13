@@ -144,8 +144,40 @@ fn range(node: &Syntax<'_>) -> Option<SourceRange> {
     Some(region)
 }
 
+/// Pair the folds of a structural diff, as `(lhs index, rhs index)`.
+///
+/// The syntax matcher already decided correspondence: `project` records a
+/// fold's matched node as `FoldMatch::Unchanged { opposite }`. A lhs fold
+/// pairs with the rhs fold whose range is that opposite range, when the rhs
+/// fold records the lhs fold back. The matcher may pair folds out of reading
+/// order; such a pair is kept, and consumers show it as a move.
+pub(crate) fn pair_matched(lhs: &[Fold], rhs: &[Fold]) -> Vec<(usize, usize)> {
+    let mut rhs_by_range: DftHashMap<SourceRange, usize> = DftHashMap::default();
+    for (index, fold) in rhs.iter().enumerate() {
+        rhs_by_range.entry(fold.range).or_insert(index);
+    }
+    let mut taken: DftHashSet<usize> = DftHashSet::default();
+    let mut pairs = Vec::new();
+    for (lhs_index, fold) in lhs.iter().enumerate() {
+        let FoldMatch::Unchanged { opposite } = &fold.match_kind else {
+            continue;
+        };
+        let Some(&rhs_index) = rhs_by_range.get(opposite) else {
+            continue;
+        };
+        let mutual = matches!(
+            &rhs[rhs_index].match_kind,
+            FoldMatch::Unchanged { opposite } if *opposite == fold.range
+        );
+        if mutual && taken.insert(rhs_index) {
+            pairs.push((lhs_index, rhs_index));
+        }
+    }
+    pairs
+}
+
 /// Every fold in a parsed side, without any correspondence. Used when the
-/// AST match did not run: the projection pairs folds through the line
+/// AST match did not run: `line_folds::pair` pairs them through the line
 /// alignment instead.
 pub(crate) fn unmatched(nodes: &[&Syntax<'_>], folds: &mut Vec<Fold>) {
     for node in nodes {

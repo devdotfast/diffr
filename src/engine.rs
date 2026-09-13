@@ -8,6 +8,7 @@ use crate::diff::unchanged;
 use crate::display;
 use crate::display::context::opposite_positions;
 use crate::display::hunks::{matched_pos_to_hunks, merge_adjacent};
+use crate::line_folds;
 use crate::line_parser;
 use crate::lines::MaxLine;
 use crate::options::{DiffOptions, DisplayOptions, FileArgument};
@@ -90,6 +91,7 @@ fn check_only_text(
         hunks: vec![],
         lhs_folds: vec![],
         rhs_folds: vec![],
+        fold_pairs: vec![],
         has_byte_changes,
         has_syntactic_changes: lhs_src != rhs_src,
     }
@@ -135,6 +137,7 @@ pub(crate) fn diff_file_content(
             hunks: vec![],
             lhs_folds: vec![],
             rhs_folds: vec![],
+            fold_pairs: vec![],
             has_byte_changes: None,
             has_syntactic_changes: false,
         };
@@ -186,6 +189,7 @@ pub(crate) fn diff_file_content(
                                     hunks: vec![],
                                     lhs_folds: vec![],
                                     rhs_folds: vec![],
+                                    fold_pairs: vec![],
                                     has_byte_changes,
                                     has_syntactic_changes,
                                 };
@@ -390,6 +394,15 @@ pub(crate) fn diff_file_content(
         Some((lhs_src.as_bytes().len(), rhs_src.as_bytes().len()))
     };
 
+    let fold_pairs = match file_format {
+        FileFormat::SupportedLanguage(_) => folds::pair_matched(&lhs_folds, &rhs_folds),
+        _ => line_folds::pair(
+            &line_folds::fallback_rows((lhs_src, rhs_src), (&lhs_positions, &rhs_positions)),
+            (lhs_src, rhs_src),
+            (&lhs_folds, &rhs_folds),
+        ),
+    };
+
     DiffResult {
         extra_info,
         display_path: display_path.to_owned(),
@@ -401,6 +414,7 @@ pub(crate) fn diff_file_content(
         hunks,
         lhs_folds,
         rhs_folds,
+        fold_pairs,
         has_byte_changes,
         has_syntactic_changes,
     }

@@ -56,6 +56,7 @@ mod git;
 mod gitattributes;
 mod hash;
 mod hook;
+mod line_folds;
 mod line_parser;
 mod lines;
 mod mutate;
@@ -466,6 +467,7 @@ fn diff_file(
                 hunks: vec![],
                 lhs_folds: vec![],
                 rhs_folds: vec![],
+                fold_pairs: vec![],
                 has_byte_changes,
                 has_syntactic_changes: false,
             };

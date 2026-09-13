@@ -46,6 +46,10 @@ pub(crate) struct DiffResult {
     pub(crate) hunks: Vec<Hunk>,
     pub(crate) lhs_folds: Vec<Fold>,
     pub(crate) rhs_folds: Vec<Fold>,
+    /// Corresponding folds as `(lhs index, rhs index)`: from the syntax
+    /// matcher for a structural diff, from the line alignment for a
+    /// line-diff fallback.
+    pub(crate) fold_pairs: Vec<(usize, usize)>,
 
     pub(crate) lhs_positions: Vec<MatchedPos>,
     pub(crate) rhs_positions: Vec<MatchedPos>,

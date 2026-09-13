@@ -19,8 +19,8 @@ use super::{
 use crate::display::hunks::Hunk;
 use crate::display::line_layout::{aligned_rows, novel_lines};
 use crate::hash::DftHashMap;
+use crate::line_folds;
 use crate::line_parser;
-use crate::lines;
 use crate::parse::folds::Fold;
 use crate::parse::syntax::{MatchKind, MatchedPos};
 use crate::parse::tree_sitter_parser::{highlight_captures, TreeSitterConfig};
@@ -212,7 +212,8 @@ struct LeafKey {
 struct SideFold<'a> {
     fold: &'a Fold,
     lines: (usize, usize),
-    /// Index of the lhs fold this pairs with, on either side.
+    /// The pair this fold belongs to, as its lhs fold's index in
+    /// `DiffResult::lhs_folds`, on either side.
     pair: Option<usize>,
 }
 
@@ -225,16 +226,16 @@ fn regions(
     let rhs_lines: Vec<&str> = rhs_src.split_terminator('\n').collect();
     let lhs_novel = novel_lines(&result.lhs_positions);
     let rhs_novel = novel_lines(&result.rhs_positions);
-    let rows = aligned_rows(
-        (lhs_src, rhs_src),
-        (&result.lhs_positions, &result.rhs_positions),
+    let sources = (lhs_src, rhs_src);
+    let positions = (
+        result.lhs_positions.as_slice(),
+        result.rhs_positions.as_slice(),
     );
-    // A line diff pairs the lines of a changed block from the top, whatever
-    // they say; the structural matcher anchors its rows on matched tokens
-    // and is left alone.
+    // The structural matcher anchors its rows on matched tokens; a line
+    // diff's changed blocks are re-paired from whichever end reads alike.
     let rows = match result.file_format {
-        FileFormat::SupportedLanguage(_) => rows,
-        _ => align_changed_blocks(&rows, &lhs_novel, &rhs_novel, (&lhs_lines, &rhs_lines)),
+        FileFormat::SupportedLanguage(_) => aligned_rows(sources, positions),
+        _ => line_folds::fallback_rows(sources, positions),
     };
     let (lhs_shown, rhs_shown) = shown_lines(&result.hunks);
     let runs = trim_context(runs(&rows, &lhs_novel, &rhs_novel), &lhs_shown, &rhs_shown);
@@ -249,23 +250,28 @@ fn regions(
         .filter_map(|run| run.rhs)
         .collect();
 
-    let mut lhs_folds: Vec<SideFold<'_>> = side_folds(&result.lhs_folds, &lhs_lines)
+    // Pairs come with the diff; a pair is keyed by its lhs fold's index.
+    let rhs_key: DftHashMap<usize, usize> = result
+        .fold_pairs
+        .iter()
+        .map(|&(lhs, rhs)| (rhs, lhs))
+        .collect();
+    let lhs_key: DftHashMap<usize, usize> = result
+        .fold_pairs
+        .iter()
+        .map(|&(lhs, _)| (lhs, lhs))
+        .collect();
+    let lhs_folds: Vec<SideFold<'_>> = side_folds(&result.lhs_folds, &lhs_key, &lhs_lines)
         .into_iter()
         .filter_map(|fold| fit_to_gaps(fold, &lhs_gaps))
         .collect();
-    let mut rhs_folds: Vec<SideFold<'_>> = side_folds(&result.rhs_folds, &rhs_lines)
+    let rhs_folds: Vec<SideFold<'_>> = side_folds(&result.rhs_folds, &rhs_key, &rhs_lines)
         .into_iter()
         .filter_map(|fold| fit_to_gaps(fold, &rhs_gaps))
         .collect();
     let lhs_splits = split_lines(&lhs_folds);
     let rhs_splits = split_lines(&rhs_folds);
     let (lhs_leaves, rhs_leaves) = split_runs(&runs, &lhs_splits, &rhs_splits);
-    pair_folds(
-        &mut lhs_folds,
-        &mut rhs_folds,
-        &rows,
-        (&lhs_leaves, &rhs_leaves),
-    );
 
     let mut ids = Ids::default();
     let lhs = tree(
@@ -330,82 +336,6 @@ pub(crate) fn tree_violation(regions: &[Region]) -> Option<String> {
 }
 
 /// Rows in order, run-length encoded by kind and side presence.
-/// Re-pair the lines of each changed block, a maximal stretch of rows
-/// between unchanged rows, when its two sides differ in length. A line diff
-/// pairs a block's first lines with each other; when the block's last lines
-/// read more alike, pair those instead, so a changed signature sits next to
-/// the old one right above a body that still aligns. Blocks that are
-/// one-sided, equal in length, or read no better from the bottom keep their
-/// rows.
-fn align_changed_blocks(
-    rows: &[(Option<usize>, Option<usize>)],
-    lhs_novel: &BTreeSet<usize>,
-    rhs_novel: &BTreeSet<usize>,
-    (lhs_lines, rhs_lines): (&[&str], &[&str]),
-) -> Vec<(Option<usize>, Option<usize>)> {
-    let unchanged = |&(lhs, rhs): &(Option<usize>, Option<usize>)| matches!((lhs, rhs), (Some(l), Some(r)) if !lhs_novel.contains(&l) && !rhs_novel.contains(&r));
-    let mut out = Vec::with_capacity(rows.len());
-    let mut at = 0;
-    while at < rows.len() {
-        if unchanged(&rows[at]) {
-            out.push(rows[at]);
-            at += 1;
-            continue;
-        }
-        let end = rows[at..]
-            .iter()
-            .position(unchanged)
-            .map_or(rows.len(), |offset| at + offset);
-        let block = &rows[at..end];
-        let lhs: Vec<usize> = block.iter().filter_map(|&(l, _)| l).collect();
-        let rhs: Vec<usize> = block.iter().filter_map(|&(_, r)| r).collect();
-        let shared = lhs.len().min(rhs.len());
-        let similarity = |lhs_from: usize, rhs_from: usize| -> f64 {
-            (0..shared)
-                .map(|offset| {
-                    line_similarity(
-                        lhs_lines[lhs[lhs_from + offset]],
-                        rhs_lines[rhs[rhs_from + offset]],
-                    )
-                })
-                .sum()
-        };
-        let bottom_reads_better = shared > 0
-            && lhs.len() != rhs.len()
-            && similarity(lhs.len() - shared, rhs.len() - shared) > similarity(0, 0);
-        if bottom_reads_better {
-            out.extend(lhs[..lhs.len() - shared].iter().map(|&l| (Some(l), None)));
-            out.extend(rhs[..rhs.len() - shared].iter().map(|&r| (None, Some(r))));
-            out.extend(
-                lhs[lhs.len() - shared..]
-                    .iter()
-                    .zip(&rhs[rhs.len() - shared..])
-                    .map(|(&l, &r)| (Some(l), Some(r))),
-            );
-        } else {
-            out.extend_from_slice(block);
-        }
-        at = end;
-    }
-    out
-}
-
-/// How alike two lines read: the Dice coefficient of their identifier and
-/// number tokens, 0 when neither has any.
-fn line_similarity(lhs: &str, rhs: &str) -> f64 {
-    let tokens = |line: &str| -> BTreeSet<String> {
-        line.split(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .filter(|token| !token.is_empty())
-            .map(str::to_owned)
-            .collect()
-    };
-    let (lhs, rhs) = (tokens(lhs), tokens(rhs));
-    if lhs.is_empty() && rhs.is_empty() {
-        return 0.0;
-    }
-    2.0 * lhs.intersection(&rhs).count() as f64 / (lhs.len() + rhs.len()) as f64
-}
-
 fn runs(
     rows: &[(Option<usize>, Option<usize>)],
     lhs_novel: &BTreeSet<usize>,
@@ -557,33 +487,27 @@ fn fit_to_gaps<'a>(mut fold: SideFold<'a>, gaps: &[(usize, usize)]) -> Option<Si
     Some(fold)
 }
 
-fn line_span(range: &lines::SourceRange, line_count: usize) -> (usize, usize) {
-    let start = range.start.line.as_usize();
-    let end = if range.end.byte_column == 0 {
-        range.end.line.as_usize()
-    } else {
-        range.end.line.as_usize() + 1
-    };
-    (
-        start.min(line_count),
-        end.min(line_count).max(start.min(line_count)),
-    )
-}
-
-fn side_folds<'a>(folds: &'a [Fold], lines: &[&str]) -> Vec<SideFold<'a>> {
+/// One side's folds as nested line spans, each carrying the key of the pair
+/// it belongs to, if any.
+fn side_folds<'a>(
+    folds: &'a [Fold],
+    pair_key: &DftHashMap<usize, usize>,
+    lines: &[&str],
+) -> Vec<SideFold<'a>> {
     let spans: Vec<(usize, usize)> = folds
         .iter()
-        .map(|fold| line_span(&fold.range, lines.len()))
+        .map(|fold| line_folds::line_span(&fold.range, lines.len()))
         .collect();
     folds
         .iter()
+        .enumerate()
         .zip(nested_spans(&spans))
         // A fold on a single line hides nothing; it is not a region.
-        .filter_map(|(fold, span)| {
+        .filter_map(|((index, fold), span)| {
             span.map(|lines| SideFold {
                 fold,
                 lines,
-                pair: None,
+                pair: pair_key.get(&index).copied(),
             })
         })
         .collect()
@@ -633,142 +557,6 @@ fn nested_spans(spans: &[(usize, usize)]) -> Vec<Option<(usize, usize)>> {
         }
     }
     out
-}
-
-/// Two folds correspond when the line alignment pairs their header lines
-/// and their tags agree. A changed signature is still a paired row, so a
-/// function whose header was edited keeps its counterpart. The rule is the
-/// same whichever engine produced the alignment: the structural engine
-/// pairs rows through matched tokens, the text diff through its line
-/// alignment. Folds sharing a header line on one side, such as a body and
-/// a collection opened on the same line, pair in order of span length.
-/// Assign fold correspondence. Rule 1: header lines aligned in the row
-/// table and equal tags. Rule 2, for a lhs fold rule 1 left unpaired: the
-/// rhs fold with equal tags that contains the counterpart of a paired leaf
-/// inside it, choosing the candidate holding the most paired lines (ties
-/// by the nearest header in row order), provided that fold is free and the
-/// pair does not cross an existing pair. This is what keeps a function
-/// whose signature was reflowed onto more lines paired with itself.
-fn pair_folds(
-    lhs_folds: &mut [SideFold<'_>],
-    rhs_folds: &mut [SideFold<'_>],
-    rows: &[(Option<usize>, Option<usize>)],
-    (lhs_leaves, rhs_leaves): (&[Leaf], &[Leaf]),
-) {
-    let aligned: DftHashMap<usize, usize> = rows
-        .iter()
-        .filter_map(|&(lhs, rhs)| Some((lhs?, rhs?)))
-        .collect();
-    let mut rhs_by_header: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for (index, fold) in rhs_folds.iter().enumerate() {
-        rhs_by_header.entry(fold.lines.0).or_default().push(index);
-    }
-    let span = |fold: &SideFold<'_>| fold.lines.1 - fold.lines.0;
-    for candidates in rhs_by_header.values_mut() {
-        candidates.sort_by_key(|&index| std::cmp::Reverse(span(&rhs_folds[index])));
-    }
-    let mut lhs_by_header: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for (index, fold) in lhs_folds.iter().enumerate() {
-        lhs_by_header.entry(fold.lines.0).or_default().push(index);
-    }
-    for (header, mut own) in lhs_by_header {
-        let Some(other) = aligned
-            .get(&header)
-            .and_then(|line| rhs_by_header.get(line))
-        else {
-            continue;
-        };
-        own.sort_by_key(|&index| std::cmp::Reverse(span(&lhs_folds[index])));
-        for lhs_index in own {
-            let tags = &lhs_folds[lhs_index].fold.tags;
-            let Some(&rhs_index) = other.iter().find(|&&index| {
-                rhs_folds[index].pair.is_none() && rhs_folds[index].fold.tags == *tags
-            }) else {
-                continue;
-            };
-            lhs_folds[lhs_index].pair = Some(lhs_index);
-            rhs_folds[rhs_index].pair = Some(lhs_index);
-        }
-    }
-    pair_folds_by_content(lhs_folds, rhs_folds, rows, lhs_leaves, rhs_leaves);
-}
-
-/// Rule 2 of `pair_folds`: pair through a shared leaf rather than the
-/// header line. Paired leaves carry the same key on both sides.
-fn pair_folds_by_content(
-    lhs_folds: &mut [SideFold<'_>],
-    rhs_folds: &mut [SideFold<'_>],
-    rows: &[(Option<usize>, Option<usize>)],
-    lhs_leaves: &[Leaf],
-    rhs_leaves: &[Leaf],
-) {
-    // Row index of each side's line, for crossing checks and tie-breaks.
-    let mut row_of_lhs: DftHashMap<usize, usize> = DftHashMap::default();
-    let mut row_of_rhs: DftHashMap<usize, usize> = DftHashMap::default();
-    for (index, &(lhs, rhs)) in rows.iter().enumerate() {
-        if let Some(line) = lhs {
-            row_of_lhs.entry(line).or_insert(index);
-        }
-        if let Some(line) = rhs {
-            row_of_rhs.entry(line).or_insert(index);
-        }
-    }
-    let rhs_leaf_by_key: DftHashMap<LeafKey, &Leaf> = rhs_leaves
-        .iter()
-        .filter_map(|leaf| leaf.key.map(|key| (key, leaf)))
-        .collect();
-    let contains = |fold: &SideFold<'_>, leaf: &Leaf| {
-        fold.lines.0 <= leaf.lines.0 && leaf.lines.1 <= fold.lines.1
-    };
-    // Existing pairs as (lhs header row, rhs header row), to forbid crossings.
-    let mut pairs: Vec<(usize, usize)> = rhs_folds
-        .iter()
-        .filter_map(|rhs| {
-            let lhs = &lhs_folds[rhs.pair?];
-            Some((row_of_lhs[&lhs.lines.0], row_of_rhs[&rhs.lines.0]))
-        })
-        .collect();
-    #[allow(clippy::needless_range_loop)]
-    for lhs_index in 0..lhs_folds.len() {
-        if lhs_folds[lhs_index].pair.is_some() {
-            continue;
-        }
-        let lhs_fold = &lhs_folds[lhs_index];
-        // Paired lines per candidate rhs fold.
-        let mut score: DftHashMap<usize, usize> = DftHashMap::default();
-        for leaf in lhs_leaves.iter().filter(|leaf| contains(lhs_fold, leaf)) {
-            let Some(partner) = leaf.key.and_then(|key| rhs_leaf_by_key.get(&key)) else {
-                continue;
-            };
-            for (rhs_index, rhs_fold) in rhs_folds.iter().enumerate() {
-                if rhs_fold.pair.is_none()
-                    && rhs_fold.fold.tags == lhs_fold.fold.tags
-                    && contains(rhs_fold, partner)
-                {
-                    *score.entry(rhs_index).or_default() += partner.lines.1 - partner.lines.0;
-                }
-            }
-        }
-        let lhs_row = row_of_lhs[&lhs_fold.lines.0];
-        let mut candidates: Vec<(usize, usize)> = score.into_iter().collect();
-        candidates.sort_by_key(|&(rhs_index, lines)| {
-            let rhs_row = row_of_rhs[&rhs_folds[rhs_index].lines.0];
-            (
-                std::cmp::Reverse(lines),
-                rhs_row.abs_diff(lhs_row),
-                rhs_index,
-            )
-        });
-        let Some(&(rhs_index, _)) = candidates.iter().find(|&&(rhs_index, _)| {
-            let rhs_row = row_of_rhs[&rhs_folds[rhs_index].lines.0];
-            !pairs.iter().any(|&(a, b)| (a < lhs_row) != (b < rhs_row))
-        }) else {
-            continue;
-        };
-        lhs_folds[lhs_index].pair = Some(lhs_index);
-        rhs_folds[rhs_index].pair = Some(lhs_index);
-        pairs.push((lhs_row, row_of_rhs[&rhs_folds[rhs_index].lines.0]));
-    }
 }
 
 fn split_lines(folds: &[SideFold<'_>]) -> BTreeSet<usize> {
@@ -1112,8 +900,12 @@ mod tests {
         ];
         let lhs_novel: BTreeSet<usize> = [0, 1, 2, 3].into_iter().collect();
         let rhs_novel: BTreeSet<usize> = [0].into_iter().collect();
-        let realigned =
-            align_changed_blocks(&rows, &lhs_novel, &rhs_novel, (&lhs_lines, &rhs_lines));
+        let realigned = crate::line_folds::align_changed_blocks(
+            &rows,
+            &lhs_novel,
+            &rhs_novel,
+            (&lhs_lines, &rhs_lines),
+        );
         assert_eq!(
             realigned,
             vec![
@@ -1134,7 +926,12 @@ mod tests {
         let lhs_novel: BTreeSet<usize> = [0, 1].into_iter().collect();
         let rhs_novel: BTreeSet<usize> = [0].into_iter().collect();
         assert_eq!(
-            align_changed_blocks(&rows, &lhs_novel, &rhs_novel, (&lhs_lines, &rhs_lines)),
+            crate::line_folds::align_changed_blocks(
+                &rows,
+                &lhs_novel,
+                &rhs_novel,
+                (&lhs_lines, &rhs_lines)
+            ),
             rows
         );
     }
@@ -1390,7 +1187,7 @@ mod tests {
     }
 
     #[test]
-    fn folds_pair_through_the_line_alignment_on_either_engine() {
+    fn folds_pair_on_either_engine() {
         for options in [
             DiffOptions::default(),
             DiffOptions {
@@ -1409,8 +1206,9 @@ mod tests {
             assert_tiles(lhs);
             assert_tiles(rhs);
             let (lhs_folds, rhs_folds) = (fold_ids(lhs), fold_ids(rhs));
-            // `f` changed its signature; its header rows still align, so the
-            // bodies stay paired. `keep` is untouched. `added` is rhs-only.
+            // `f` changed its signature and stays paired: through the matcher
+            // on the structural path, through its aligned header line on the
+            // fallback. `keep` is untouched. `added` is rhs-only.
             assert_eq!(
                 lhs_folds[&0], rhs_folds[&0],
                 "f pairs across a changed header"
@@ -1426,7 +1224,7 @@ mod tests {
     }
 
     #[test]
-    fn the_alignment_rule_agrees_with_the_matcher_where_headers_align() {
+    fn structural_folds_pair_exactly_as_the_matcher_recorded() {
         let result = DiffResult::from_sources_with_options(
             "a.rs",
             RUST_LHS,
@@ -1447,13 +1245,22 @@ mod tests {
     }
 
     #[test]
-    fn a_reflowed_signature_pairs_through_a_paired_inner_leaf() {
+    fn a_line_diff_pairs_a_reflowed_signature_through_its_body() {
         // The signature moves onto three lines, so the header rows no
         // longer align, but the body is untouched: still the same function.
         let lhs =
             "fn f(a: u32, b: u32) -> u32 {\n    let x = a + b;\n    let y = x * 2;\n    x + y\n}\n";
         let rhs = "fn f(\n    a: u32,\n    b: u32,\n) -> u32 {\n    let x = a + b;\n    let y = x * 2;\n    x + y\n}\n";
-        let diff = project("a.rs", lhs, rhs, 3);
+        let diff = project_with(
+            "a.rs",
+            lhs,
+            rhs,
+            3,
+            DiffOptions {
+                graph_limit: 1,
+                ..DiffOptions::default()
+            },
+        );
         let (lhs_src, rhs_src) = sources(&diff);
         let (lhs_folds, rhs_folds) = (fold_ids(lhs_src.unwrap()), fold_ids(rhs_src.unwrap()));
         assert_eq!(lhs_folds.len(), 1);
@@ -1466,13 +1273,22 @@ mod tests {
     }
 
     #[test]
-    fn content_pairing_picks_the_candidate_with_the_most_paired_lines() {
+    fn line_diff_content_pairing_picks_the_candidate_with_the_most_paired_lines() {
         // Both rhs functions have reflowed signatures and both hold a line
         // `f` also holds (`let x = ...`), but only `g` holds `f`'s long
         // body. Order is preserved so nothing crosses.
         let lhs = "fn h(b: u32) -> u32 {\n    let x = b;\n    b\n}\n\nfn f(a: u32) -> u32 {\n    let x = a;\n    let y = x * 2;\n    let z = y * 3;\n    x + y + z\n}\n";
         let rhs = "fn h(\n    b: u32,\n) -> u32 {\n    let x = b;\n    b\n}\n\nfn g(\n    a: u32,\n) -> u32 {\n    let x = a;\n    let y = x * 2;\n    let z = y * 3;\n    x + y + z\n}\n";
-        let diff = project("a.rs", lhs, rhs, 3);
+        let diff = project_with(
+            "a.rs",
+            lhs,
+            rhs,
+            3,
+            DiffOptions {
+                graph_limit: 1,
+                ..DiffOptions::default()
+            },
+        );
         let (lhs_src, rhs_src) = sources(&diff);
         let (lhs_folds, rhs_folds) = (fold_ids(lhs_src.unwrap()), fold_ids(rhs_src.unwrap()));
         // Fold headers sit on the `{` line: lhs h=0, f=5; rhs h=2, g=9.
@@ -1481,13 +1297,22 @@ mod tests {
     }
 
     #[test]
-    fn content_pairing_never_crosses_an_existing_pair() {
+    fn line_diff_content_pairing_never_crosses_an_existing_pair() {
         // `keep` pairs by header on both sides. `f` moved below `keep` on
         // the rhs with a reflowed signature; pairing it would cross `keep`,
         // so it stays one-sided on each side.
         let lhs = "fn f(a: u32) -> u32 {\n    let x = a + 1;\n    let y = x * 2;\n    x + y\n}\n\nfn keep() -> u32 {\n    let k = 1;\n    let m = 2;\n    k + m\n}\n";
         let rhs = "fn keep() -> u32 {\n    let k = 1;\n    let m = 2;\n    k + m\n}\n\nfn f(\n    a: u32,\n) -> u32 {\n    let x = a + 1;\n    let y = x * 2;\n    x + y\n}\n";
-        let diff = project("a.rs", lhs, rhs, 3);
+        let diff = project_with(
+            "a.rs",
+            lhs,
+            rhs,
+            3,
+            DiffOptions {
+                graph_limit: 1,
+                ..DiffOptions::default()
+            },
+        );
         let (lhs_src, rhs_src) = sources(&diff);
         let (lhs_folds, rhs_folds) = (fold_ids(lhs_src.unwrap()), fold_ids(rhs_src.unwrap()));
         assert_eq!(lhs_folds[&6], rhs_folds[&0], "keep pairs by header");
@@ -1834,6 +1659,7 @@ mod tests {
             hunks: vec![],
             lhs_folds: vec![],
             rhs_folds: vec![],
+            fold_pairs: vec![],
             lhs_positions: vec![],
             rhs_positions: vec![],
             has_byte_changes: Some((3, 5)),

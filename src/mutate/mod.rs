@@ -3,11 +3,13 @@
 //! region trees. diffr's diff internals never see them.
 //!
 //! Order: file mutations (hidden categories), then fold mutations in this
-//! sequence: deleted function bodies, test bodies, removed runs, the
-//! built-in summarizer, the JSON-RPC hook, and last the grouping pass that
-//! merges adjacent gaps and wraps runs of collapsed folds. A mutation
+//! sequence: deleted function bodies, test bodies, removed runs, docstring
+//! bundling, the built-in summarizer, the JSON-RPC hook, docstring
+//! visibility, and last the grouping pass that merges adjacent gaps and
+//! wraps runs of collapsed folds. A mutation
 //! failure aborts the run; retries belong inside a mutation.
 pub(crate) mod collapse;
+pub(crate) mod docstrings;
 pub(crate) mod group;
 pub(crate) mod summarize;
 use crate::config::Params;
@@ -57,6 +59,9 @@ impl Mutations {
                 min_lines: folds.collapse_removed_lines,
             }));
         }
+        if folds.bundle_docstrings {
+            mutations.fold.push(Box::new(docstrings::Docstrings));
+        }
         if params.summarize.enabled {
             if let Some(summarizer) = summarize::Summarizer::new(&params.summarize)? {
                 mutations.fold.push(Box::new(summarizer));
@@ -66,6 +71,11 @@ impl Mutations {
             mutations
                 .fold
                 .push(Box::new(Hook::spawn(hook, folds.min_lines, workspace)?));
+        }
+        if folds.bundle_docstrings {
+            mutations
+                .fold
+                .push(Box::new(docstrings::DocstringVisibility));
         }
         mutations.fold.push(Box::new(group::GroupCollapsed));
         Ok(mutations)

@@ -40,6 +40,7 @@ through these three commands; the schema is the only contract.
 min_lines = 12             # bodies shorter than this are never collapsed by a rule
 collapse_deleted = true    # deleted function bodies start collapsed, header visible
 collapse_test_bodies = true # test bodies start collapsed on both sides, header visible
+bundle_docstrings = true   # a docstring opens and closes with its function
 collapse_removed_lines = 5 # removed stretches this long, in unpaired code, collapse in the middle; 0 disables
 collapse_generated = true  # generated files start hidden
 collapse_tests = true      # test files start hidden
@@ -136,16 +137,29 @@ itself. In order:
    function shows its removed lines in place. Stretches at the top level
    always qualify. Stretches under a fold that already starts collapsed are
    left alone.
-5. The built-in summarizer: new function bodies (folds tagged `function`,
+5. `bundle_docstrings`: a function's docstring is the run of comment lines
+   just above it, with only its signature and blank lines between; in
+   Python it is instead a string that is the body's first statement. Its
+   lines become leaves tagged `docstring` that share the function's
+   `fold_state_id`, so they open and close together. A comment separated
+   from the function by code does not count, a docstring already inside a
+   collapsed leaf is left alone, and a paired docstring keeps its bundle
+   only when the other side bundles it with the same function.
+6. The built-in summarizer: new function bodies (folds tagged `function`,
    never a test, never one nested inside another selected body) of at least
    `summarize.min_lines` lines on the after side become python-flavored
-   pseudocode. A summary with more than half the body's non-blank lines is
-   discarded and the body stays open. The label starts with a comment line
-   in the file's own syntax, `# pseudocode` or `// pseudocode`, then the
-   text.
-6. `folds.hook`, when configured, over the same selection with its own tags
+   pseudocode. When the body has a docstring its text goes with the request,
+   and the model may return one sentence from it; that sentence is kept only
+   when it really occurs in the docstring, and then leads the label. A
+   summary whose pseudocode has more than half the body's non-blank lines
+   is discarded and the body stays open. The label starts with a comment
+   line in the file's own syntax, `# pseudocode` or `// pseudocode`, then
+   the quoted sentence if any, then the pseudocode.
+7. `folds.hook`, when configured, over the same selection with its own tags
    and threshold; its text gets the same comment line.
-7. Grouping, always on: adjacent context gaps merge into one, and a run of
+8. With `bundle_docstrings`, each docstring whose function now starts
+   collapsed collapses too, with an empty label.
+9. Grouping, always on: adjacent context gaps merge into one, and a run of
    two or more sibling folds that start collapsed is wrapped in one `group`
    fold labelled `"<n> functions removed"`, `"<n> functions summarized"`, or
    `"<n> folded regions"`. Expanding it reveals each child's own row.

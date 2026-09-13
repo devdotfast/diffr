@@ -160,6 +160,9 @@ side. For an ordinary region the two hold the same number; a mutation that
 bundles regions (a docstring with its function, say) gives them one
 `fold_state_id` while each keeps its own `alignment_id`. Consumers key the row
 zip by `alignment_id` and collapse state by `fold_state_id`, never the reverse.
+Today the only bundle is a docstring: leaves tagged `docstring` carry the
+`fold_state_id` of the `function` fold they document, and start collapsed,
+with an empty label, whenever that function does.
 
 ```jsonc
 {"alignment_id": 7, "fold_state_id": 7, "kind": "fold",
@@ -249,8 +252,9 @@ fail discovery.
 
 After projection, mutations set what starts collapsed and what its label says:
 generated and test files in the manifest, deleted function bodies, test
-bodies on both sides, the middle of large removed stretches, and summaries
-for large new function bodies from the built-in summarizer. [config.md](config.md) lists them and
+bodies on both sides, the middle of large removed stretches, docstrings
+bundled with their functions, and summaries for large new function bodies
+from the built-in summarizer. [config.md](config.md) lists them and
 their order. Their output is ordinary `visibility` on files and regions;
 frontends need no knowledge of which mutation produced it.
 

@@ -134,9 +134,19 @@ def check_tree(source):
 
     walk(source["regions"], None)
     # Two identities per region: alignment pairs across sides, fold state
-    # groups toggles. Until a mutation bundles regions, they coincide.
-    for region in all_regions(source["regions"]):
-        assert region["fold_state_id"] == region["alignment_id"], region
+    # groups toggles. They coincide except for a docstring, which shares the
+    # fold state of a function on its side.
+    regions = all_regions(source["regions"])
+    functions = {
+        region["fold_state_id"]
+        for region in regions
+        if region["kind"] == "fold" and "function" in region.get("tags", [])
+    }
+    for region in regions:
+        if "docstring" in region.get("tags", []):
+            assert region["fold_state_id"] in functions, region
+        else:
+            assert region["fold_state_id"] == region["alignment_id"], region
 
 
 def check_tiling(source):

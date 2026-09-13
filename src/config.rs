@@ -109,6 +109,10 @@ pub(crate) struct FoldsConfig {
     pub(crate) collapse_tests: bool,
     /// Collapse the bodies of test functions on both sides, header visible.
     pub(crate) collapse_test_bodies: bool,
+    /// Bundle each function with the comment above it (in Python, the
+    /// string that opens its body): they open and close together, and the
+    /// summarizer quotes the docstring before its pseudocode.
+    pub(crate) bundle_docstrings: bool,
     /// Unchanged lines kept visible on either side of a change. `-U` overrides it.
     pub(crate) context_lines: u32,
     /// An external JSON-RPC summarizer, run after the built-in one.
@@ -126,6 +130,7 @@ impl Default for FoldsConfig {
             collapse_generated: true,
             collapse_tests: true,
             collapse_test_bodies: true,
+            bundle_docstrings: true,
             context_lines: 3,
             hook: None,
         }

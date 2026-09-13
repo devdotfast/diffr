@@ -1,5 +1,6 @@
 //! The built-in summarizer: large new function bodies become Python-style
 //! pseudocode, shown in place of the collapsed body.
+use super::docstrings;
 #[cfg(test)]
 use super::walk;
 use super::{collapse, ids, is_fold, line_count, summary_label, walk_mut, FoldMutation};
@@ -15,7 +16,9 @@ use tokio::sync::Semaphore;
 const SYSTEM: &str = "For each listed fold, rewrite that function body as short python-flavored \
 pseudocode. Keep the names. No prose, no comments, no code fences. Use as few lines as \
 possible: about one pseudocode line per five source lines, and never more than a third \
-of the body's lines. Answer with a JSON array of {\"id\", \"pseudocode\"} objects, one per fold.";
+of the body's lines. When a fold lists a doc, also set \"summary\" to one sentence copied \
+verbatim from that doc; otherwise leave it empty. Answer with a JSON array of \
+{\"id\", \"summary\", \"pseudocode\"} objects, one per fold.";
 
 const DEFAULT_ENDPOINT: &str = "https://generativelanguage.googleapis.com";
 
@@ -29,16 +32,27 @@ pub(crate) struct Summarizer {
     limit: Semaphore,
 }
 
-/// One fold to summarize: its region id and 1-based inclusive line range.
+/// One fold to summarize: its region id, 1-based inclusive line range, and
+/// the text of its docstring when it has one.
 struct Request {
     id: u32,
     first_line: u32,
     last_line: u32,
+    doc: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct Answer {
     id: u32,
+    #[serde(default)]
+    summary: String,
+    pseudocode: String,
+}
+
+/// What the model returned for one fold: an optional sentence quoted from
+/// its docstring, and the pseudocode.
+struct Summary {
+    quote: Option<String>,
     pseudocode: String,
 }
 
@@ -89,8 +103,13 @@ impl Summarizer {
         let ranges: Vec<String> = folds
             .iter()
             .map(|fold| {
+                let doc = fold
+                    .doc
+                    .as_ref()
+                    .map(|doc| format!("\n  doc: {doc}"))
+                    .unwrap_or_default();
                 format!(
-                    "- fold {}: lines {}-{}",
+                    "- fold {}: lines {}-{}{doc}",
                     fold.id, fold.first_line, fold.last_line
                 )
             })
@@ -111,7 +130,7 @@ impl Summarizer {
         language: Option<&str>,
         src: &str,
         folds: &[Request],
-    ) -> Result<BTreeMap<u32, String>, Problem> {
+    ) -> Result<BTreeMap<u32, Summary>, Problem> {
         let body = json!({
             "systemInstruction": {"parts": [{"text": SYSTEM}]},
             "contents": [{"role": "user", "parts": [{"text": self.prompt(path, language, src, folds)}]}],
@@ -124,7 +143,11 @@ impl Summarizer {
                     "type": "ARRAY",
                     "items": {
                         "type": "OBJECT",
-                        "properties": {"id": {"type": "INTEGER"}, "pseudocode": {"type": "STRING"}},
+                        "properties": {
+                            "id": {"type": "INTEGER"},
+                            "summary": {"type": "STRING"},
+                            "pseudocode": {"type": "STRING"},
+                        },
                         "required": ["id", "pseudocode"],
                     },
                 },
@@ -207,7 +230,17 @@ impl Summarizer {
                 ));
             }
             if !answer.pseudocode.trim().is_empty() {
-                texts.insert(answer.id, answer.pseudocode.trim().to_owned());
+                let doc = folds
+                    .iter()
+                    .find(|fold| fold.id == answer.id)
+                    .and_then(|fold| fold.doc.as_deref());
+                texts.insert(
+                    answer.id,
+                    Summary {
+                        quote: quoted(doc, &answer.summary),
+                        pseudocode: answer.pseudocode.trim().to_owned(),
+                    },
+                );
             }
         }
         Ok(texts)
@@ -252,6 +285,14 @@ pub(crate) fn select(sides: &Pairing<Source>, min_lines: usize) -> Vec<(u32, u32
     selected
 }
 
+/// The model's sentence, kept only when it really is a verbatim quote from
+/// the docstring: compared with runs of whitespace collapsed.
+fn quoted(doc: Option<&str>, summary: &str) -> Option<String> {
+    let squash = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let (doc, sentence) = (squash(doc?), squash(summary));
+    (!sentence.is_empty() && doc.contains(&sentence)).then_some(sentence)
+}
+
 /// Pseudocode earns its place only when it is clearly shorter than the
 /// code: a summary with more than half the body's non-blank lines is
 /// dropped and the body stays open.
@@ -262,6 +303,17 @@ fn compresses(summary: &str, body: &[&str]) -> bool {
         .count();
     let body_lines = body.iter().filter(|line| !line.trim().is_empty()).count();
     summary_lines * 2 <= body_lines
+}
+
+/// The fold state of the region with this alignment id on one side.
+fn fold_state_of(source: &Source, alignment_id: u32) -> u32 {
+    let mut state = alignment_id;
+    super::walk(&source.regions, &mut |region| {
+        if region.alignment_id == alignment_id {
+            state = region.fold_state_id;
+        }
+    });
+    state
 }
 
 fn resolve_key(config: &SummarizeConfig) -> Option<String> {
@@ -283,12 +335,14 @@ fn resolve_key(config: &SummarizeConfig) -> Option<String> {
 
 impl FoldMutation for Summarizer {
     fn apply(&self, file: &FileChange, sides: &mut Pairing<Source>) -> Result<(), Problem> {
+        let rhs_source = sides.rhs();
         let folds: Vec<Request> = select(sides, self.min_lines)
             .into_iter()
             .map(|(id, first_line, last_line)| Request {
                 id,
                 first_line,
                 last_line,
+                doc: rhs_source.and_then(|rhs| docstrings::text_for(rhs, fold_state_of(rhs, id))),
             })
             .collect();
         if folds.is_empty() {
@@ -304,13 +358,13 @@ impl FoldMutation for Summarizer {
             let rhs = sides.rhs().expect("selection found rhs regions");
             let lines: Vec<&str> = rhs.text.split_terminator('\n').collect();
             let mut texts = self.complete(path, language, &rhs.text, &folds)?;
-            texts.retain(|id, text| {
+            texts.retain(|id, summary| {
                 let fold = folds
                     .iter()
                     .find(|fold| fold.id == *id)
                     .expect("answered fold");
                 let body = &lines[fold.first_line as usize - 1..fold.last_line as usize];
-                compresses(text, body)
+                compresses(&summary.pseudocode, body)
             });
             texts
         };
@@ -318,8 +372,12 @@ impl FoldMutation for Summarizer {
             unreachable!("selection found rhs regions");
         };
         walk_mut(&mut rhs.regions, &mut |region| {
-            if let Some(text) = texts.get(&region.alignment_id) {
-                collapse(region, summary_label(language, text));
+            if let Some(summary) = texts.get(&region.alignment_id) {
+                let text = match &summary.quote {
+                    Some(quote) => format!("{quote}\n{}", summary.pseudocode),
+                    None => summary.pseudocode.clone(),
+                };
+                collapse(region, summary_label(language, &text));
             }
         });
         Ok(())
@@ -560,6 +618,47 @@ call a, b, c"
                     .to_owned()
             )]
         );
+    }
+
+    #[test]
+    fn a_docstring_is_sent_and_only_a_verbatim_sentence_from_it_is_kept() {
+        let after = "/// Sums three numbers. Used by tests.\nfn total(a: u32, b: u32, c: u32) -> u32 {\n    let x = a;\n    let y = b;\n    let z = c;\n    x + y + z\n}\n";
+        let (file, mut sides) = project("a.rs", "", after);
+        super::docstrings::Docstrings
+            .apply(&file, &mut sides)
+            .unwrap();
+        let id = select(&sides, 3)[0].0;
+        let answer = |summary: &str| {
+            let answers =
+                vec![json!({"id": id, "summary": summary, "pseudocode": "return a + b + c"})];
+            json!({"candidates": [{"content": {"parts": [{"text": serde_json::to_string(&answers).unwrap()}]}}]})
+                .to_string()
+        };
+        let (endpoint, server) = serve(vec![(200, answer("Sums three numbers."))]);
+        let summarizer = summarizer(&endpoint, 0);
+        summarizer.apply(&file, &mut sides).unwrap();
+        let bodies = server.join().unwrap();
+        assert!(
+            bodies[0].contains("doc: Sums three numbers. Used by tests."),
+            "{}",
+            bodies[0]
+        );
+        assert_eq!(
+            fold_label(&sides),
+            "// pseudocode\nSums three numbers.\nreturn a + b + c"
+        );
+
+        // A sentence the docstring does not contain is dropped.
+        let (file, mut sides) = project("a.rs", "", after);
+        super::docstrings::Docstrings
+            .apply(&file, &mut sides)
+            .unwrap();
+        let (endpoint, server) = serve(vec![(200, answer("Adds things up."))]);
+        super::tests::summarizer(&endpoint, 0)
+            .apply(&file, &mut sides)
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(fold_label(&sides), "// pseudocode\nreturn a + b + c");
     }
 
     #[test]

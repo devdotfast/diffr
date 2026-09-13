@@ -2,12 +2,12 @@
 use super::project::{self, Inputs};
 use super::{
     Diff, Event, FileChange, LineCounts, Node, Outcome, Pairing, Problem, Region, Snapshot, Source,
-    VERSION,
+    SyntaxSpan, VERSION,
 };
 use crate::git::{DiffSession, FileError, LoadedFile};
 use crate::hash::DftHashSet;
 use crate::mutate::{Failure, Mutations};
-use crate::summary::DiffResult;
+use crate::summary::{DiffResult, FileContent, FileFormat};
 use anyhow::anyhow;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::io::{BufWriter, Write};
@@ -15,6 +15,13 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
+
+/// Runtime choices that shape every file record.
+#[derive(Clone, Copy)]
+pub(crate) struct Options {
+    /// Emit every token's capture name.
+    pub(crate) syntax: bool,
+}
 
 /// What the stream ended with: whether any file failed, and whether the run
 /// was cut short by a run-level failure.
@@ -30,6 +37,7 @@ pub(crate) fn write(
     session: DiffSession,
     jobs: usize,
     mutations: Arc<Mutations>,
+    options: Options,
     output: &mut impl Write,
 ) -> anyhow::Result<Ended> {
     // File mutations run before the manifest is written; a failure there is
@@ -42,7 +50,7 @@ pub(crate) fn write(
         .build()?;
     let worker = thread::spawn(move || {
         // A disconnected consumer cancels production after the files in flight.
-        let _ = produce(session, manifest, &pool, &mutations, sender);
+        let _ = produce(session, manifest, &pool, &mutations, options, sender);
     });
     let mut output = BufWriter::new(output);
     let result: anyhow::Result<Ended> = (|| {
@@ -92,6 +100,7 @@ fn produce(
     manifest: Vec<FileChange>,
     pool: &rayon::ThreadPool,
     mutations: &Mutations,
+    options: Options,
     sender: SyncSender<Event>,
 ) -> Result<(), Disconnected> {
     let send = |event: Event| sender.send(event).map_err(|_| Disconnected);
@@ -112,7 +121,7 @@ fn produce(
     pool.install(|| {
         loader.par_bridge().for_each(|(file, loaded)| {
             let outcome = match loaded {
-                Ok(loaded) => match file_diff(&loaded, mutations) {
+                Ok(loaded) => match file_diff(&loaded, mutations, options) {
                     Ok(diff) => Outcome::Diff { diff },
                     Err(error) => {
                         // A run-level failure: stop pulling files, let the ones in
@@ -168,12 +177,20 @@ fn wire_error(error: &anyhow::Error) -> Problem {
 }
 
 /// `Err` here is a run-level failure, not a file-level one.
-fn file_diff(loaded: &LoadedFile, mutations: &Mutations) -> anyhow::Result<Diff> {
+fn file_diff(loaded: &LoadedFile, mutations: &Mutations, options: Options) -> anyhow::Result<Diff> {
     let diff = loaded.diff();
+    let syntax = if options.syntax {
+        let (Pairing::Both { rhs: side, .. }
+        | Pairing::LeftOnly { lhs: side }
+        | Pairing::RightOnly { rhs: side }) = &loaded.file.sides;
+        syntax_spans(&diff, &loaded.params, std::path::Path::new(&side.path))
+    } else {
+        (Vec::new(), Vec::new())
+    };
     let inputs = Inputs {
         file: &loaded.file.sides,
         sizes: loaded.sizes(),
-        syntax: (Vec::new(), Vec::new()),
+        syntax,
     };
     let mut entry = loaded.file.manifest_entry();
     mutations.apply_file(&mut entry)?;
@@ -194,6 +211,35 @@ fn mutate(mutations: &Mutations, entry: &FileChange, diff: Diff) -> anyhow::Resu
         }
         binary @ Diff::Binary { .. } => Ok(binary),
     }
+}
+
+/// Highlight spans for both sides. A line-diff fallback still has a
+/// language, guessed from the path, so its sides get colours too.
+pub(crate) fn syntax_spans(
+    diff: &DiffResult,
+    params: &crate::config::Params,
+    path: &std::path::Path,
+) -> (Vec<SyntaxSpan>, Vec<SyntaxSpan>) {
+    let language = match &diff.file_format {
+        FileFormat::SupportedLanguage(language) => Some(*language),
+        FileFormat::TextFallback { .. } => {
+            let sample = match (&diff.lhs_src, &diff.rhs_src) {
+                (FileContent::Text(src), _) | (_, FileContent::Text(src)) => src.as_str(),
+                _ => "",
+            };
+            crate::parse::guess_language::guess(path, sample, &[])
+        }
+        FileFormat::PlainText | FileFormat::Binary => None,
+    };
+    let Some(language) = language else {
+        return (Vec::new(), Vec::new());
+    };
+    let parser = params.language(language).parser;
+    let spans = |content: &FileContent| match content {
+        FileContent::Text(src) => project::syntax_spans(src, parser),
+        FileContent::Binary => Vec::new(),
+    };
+    (spans(&diff.lhs_src), spans(&diff.rhs_src))
 }
 
 /// Reads sources serially on whichever worker pulls next; diffing then
@@ -219,7 +265,9 @@ pub(crate) fn write_file(
     after: &str,
     sizes: (u64, u64),
     compute: impl FnOnce() -> DiffResult,
+    params: &crate::config::Params,
     mutations: &Mutations,
+    options: Options,
     output: &mut impl Write,
 ) -> anyhow::Result<Ended> {
     let file = crate::git::FileChange::standalone(before, after);
@@ -241,12 +289,18 @@ pub(crate) fn write_file(
     )?;
     output.write_all(b"\n")?;
     output.flush()?;
+    let diff = compute();
+    let syntax = if options.syntax {
+        syntax_spans(&diff, params, std::path::Path::new(after))
+    } else {
+        (Vec::new(), Vec::new())
+    };
     let projected = project::diff(
-        &compute(),
+        &diff,
         Inputs {
             file: &file.sides,
             sizes,
-            syntax: (Vec::new(), Vec::new()),
+            syntax,
         },
     );
     let aborted = match mutate(mutations, &entry, projected) {

@@ -2,13 +2,14 @@
 import { memo } from "react";
 import { StyledText, parseColor } from "@opentui/core";
 import type {
+  MoveJump,
   RenderSpan,
   SplitLineCell,
   UnifiedLineCell,
 } from "./diffRowModel";
 import type { Geometry, MeasuredRow } from "../../diffr/geometry";
-import type { Palette } from "../../diffr/rows";
-import type { RowFold } from "../../diffr/folds";
+import type { Palette } from "../../diffr/theme";
+import type { FoldTint, RowFold } from "../../diffr/regions";
 import { measureTextWidth } from "../lib/text";
 const colors = new Map<string, ReturnType<typeof parseColor>>();
 function color(value: string) {
@@ -29,13 +30,19 @@ function styled(spans: RenderSpan[], theme: Palette, bg: string) {
     })),
   );
 }
+/** A collapsed fold takes its side's change tint when it is one-sided, like Review's bands. */
+export function foldBackground(theme: Palette, tint: FoldTint | undefined) {
+  if (tint === undefined) throw new Error("A collapsed fold row has no tint");
+  return tint === "inserted" ? theme.addition : tint === "removed" ? theme.deletion : theme.foldBackground;
+}
 /** VS Code's showFoldingControls "always": expandable rows keep their chevron visible. */
 function chevron(fold: RowFold | undefined) {
   if (!fold) return " ";
   return fold.collapsed ? "▸" : "▾";
 }
+/** A multi-line label (pseudocode) hangs under the header, so the header shows only the ellipsis. */
 const placeholderText = (fold: RowFold) =>
-  fold.placeholder === "…" ? " ⋯" : ` ⋯ ${fold.placeholder}`;
+  fold.label === "" || fold.label.includes("\n") ? " ⋯" : ` ⋯ ${fold.label}`;
 export const CodeRowView = memo(function CodeRowView({
   measured,
   visualLine,
@@ -45,6 +52,7 @@ export const CodeRowView = memo(function CodeRowView({
   onSelect,
   onExtend,
   onFold,
+  onJump,
 }: {
   measured: MeasuredRow;
   visualLine: number;
@@ -54,6 +62,8 @@ export const CodeRowView = memo(function CodeRowView({
   onSelect: (side: "left" | "right") => void;
   onExtend: () => void;
   onFold: (fold: RowFold, recursive: boolean) => void;
+  /** Jump to the other copy of moved code. */
+  onJump: (jump: MoveJump) => void;
 }) {
   const row = measured.row;
   const lastLine = visualLine === measured.height - 1;
@@ -67,13 +77,15 @@ export const CodeRowView = memo(function CodeRowView({
     const fold = value.fold;
     const bg =
       selectedSide === side
-        ? "#264f78"
-        : value.kind === "addition"
-          ? theme.addition
-          : value.kind === "deletion"
-            ? theme.deletion
-            : fold?.collapsed
-              ? theme.foldBackground
+        ? theme.highlight
+        : value.foldLabel || fold?.collapsed
+          ? foldBackground(theme, value.foldTint ?? fold?.tint)
+          : value.moveKind === "moved"
+            ? theme.moved
+          : value.kind === "addition"
+            ? theme.addition
+            : value.kind === "deletion"
+              ? theme.deletion
               : theme.bg;
     // Row colours carry addition and deletion, so the gutter holds numbers and the chevron only.
     const digits = geometry.gutter - 4;
@@ -95,7 +107,10 @@ export const CodeRowView = memo(function CodeRowView({
         flexDirection="row"
         backgroundColor={bg}
         onMouseDown={(event) => {
-          if (event.button === 0) onSelect(side);
+          if (event.button === 0 && !value.moveLabel) onSelect(side);
+        }}
+        onMouseUp={(event) => {
+          if (event.button === 0 && value.moveLabel && value.jump) onJump(value.jump);
         }}
         onMouseMove={onExtend}
       >

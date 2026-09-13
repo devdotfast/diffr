@@ -15,21 +15,23 @@ import { buildFileTree, flattenFileTree, parentDirectories, lineCounts } from ".
 import { matchesKey } from "./lib/keys";
 import { resizeSidebarWidth } from "./lib/sidebar";
 import { CodeRowView } from "./diff/CodeRowView";
+import type { MoveJump } from "./diff/diffRowModel";
 import {
-  dark,
-  light,
   rowsForFile,
   type Layout,
   type ViewerRow,
 } from "../diffr/rows";
+import type { Palette, ThemeSet } from "../diffr/theme";
 import { measureRows, visibleRows } from "../diffr/geometry";
 import {
   copySelection,
   selectionBounds,
   type SourceSelection,
 } from "../diffr/selection";
-import { fileIdentity, type DiffFile } from "../diffr/wire";
-import { foldRegions, nestedRegions, type FoldRegion, type RowFold } from "../diffr/folds";
+import { fileIdentity, filePath, type DiffFile } from "../diffr/wire";
+import { defaultCollapsed, foldIds, gapIds, nestedIds, type RowFold } from "../diffr/regions";
+import { placeholderRows } from "../diffr/rows";
+import { add, blockBar, comparisonLabel, zero, type LineCounts } from "../diffr/counts";
 import type { DiffStore } from "../diffr/store";
 import { sanitizeTerminalLine } from "../lib/terminalText";
 import { sliceTextByWidth } from "./lib/text";
@@ -38,9 +40,11 @@ const fit = (text: string, width: number) =>
 export function App({
   store,
   onQuit,
+  themes,
 }: {
   store: DiffStore;
   onQuit: () => void;
+  themes: ThemeSet;
 }) {
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot);
   const renderer = useRenderer(),
@@ -48,39 +52,50 @@ export function App({
   const [mode, setMode] = useState<Layout | "auto">("auto"),
     [showSidebar, setShowSidebar] = useState(true),
     [wrap, setWrap] = useState(false),
-    [fullContext, setFullContext] = useState(false),
-    [isLight, setLight] = useState(false);
+    [theme, setTheme] = useState<Palette>(themes.initial);
   const [scroll, setScroll] = useState(0),
-    [horizontal, setHorizontal] = useState(0),
-    [closed, setClosed] = useState<Set<number>>(new Set());
+    [horizontal, setHorizontal] = useState(0);
+  // Files the user closed or opened; unset files follow the manifest's visibility.
+  const [closed, setClosed] = useState<Map<number, boolean>>(new Map());
   const [selection, setSelection] = useState<SourceSelection | null>(null),
     [message, setMessage] = useState("");
-  // Fold ids collapsed per loaded file; VS Code keeps this per editor model.
-  const [collapsed, setCollapsed] = useState<Map<number, ReadonlySet<string>>>(new Map());
+  // Fold ids collapsed per loaded file; unset files start where diffr's visibility says.
+  const [collapsed, setCollapsed] = useState<Map<number, ReadonlySet<number>>>(new Map());
   // Vim's z prefix: the next key names the fold command.
   const pendingZ = useRef(false);
+  // `g` goes home at once but remembers where the view was, so a following `m` can jump from there
+  // to the other copy of moved code.
+  const pendingG = useRef<number | null>(null);
   const [closedDirectories, setClosedDirectories] = useState<Set<string>>(new Set());
   const [treeScroll, setTreeScroll] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(28);
   const sidebarDrag = useRef<{ x: number; width: number } | null>(null);
   const [pendingFile, setPendingFile] = useState<string | null>(null);
   const [menu, setMenu] = useState<string | null>(null);
+  const [showBreakdown, setShowBreakdown] = useState(false);
   const dragging = useRef(false),
     thumbDragging = useRef(false);
-  const theme = isLight ? light : dark,
-    sidebar = showSidebar && width >= 60 ? Math.max(16, Math.min(sidebarWidth, width - 40)) : 0;
+  // `t` swaps between the two bundled defaults; a configured theme is left by the first press.
+  const toggleTheme = () => setTheme((current) => (current.isLight ? themes.dark : themes.light));
+  const sidebar = showSidebar && width >= 60 ? Math.max(16, Math.min(sidebarWidth, width - 40)) : 0;
   const contentWidth = Math.max(10, width - sidebar - 1),
-    viewportHeight = Math.max(1, height - 2);
+    viewportHeight = Math.max(1, height - 3);
   const layout =
     mode === "auto" ? (contentWidth >= 100 ? "split" : "unified") : mode;
   const loadedByIdentity = useMemo(() => new Map(snapshot.files.map((f, i) => [fileIdentity(f.file), i])), [snapshot.files]);
-  const inventory = useMemo(() => snapshot.inventory.map(file => ({file})), [snapshot.inventory]);
+  const inventory = snapshot.inventory;
+  const manifestOf = (file: DiffFile) => inventory.find(entry => fileIdentity(entry.file) === fileIdentity(file.file));
+  const foldsOf = (index: number): ReadonlySet<number> => {
+    const file = snapshot.files[index];
+    return collapsed.get(index) ?? (file.diff.type === "text" ? defaultCollapsed(file.diff) : new Set());
+  };
+  const isClosed = (index: number) => closed.get(index) ?? manifestOf(snapshot.files[index])?.visibility.collapsed ?? false;
   const tree = useMemo(() => buildFileTree(inventory), [inventory]);
   // Keep loaded indexes stable for row keys, selections and file expansion.
   // Present arriving diffs in tree order throughout loading.
   const fileOrder = useMemo(() => flattenFileTree(tree, new Set()).flatMap(({node}) => {
         if (node.fileIndex === undefined) return [];
-        const loaded = loadedByIdentity.get(fileIdentity(snapshot.inventory[node.fileIndex]));
+        const loaded = loadedByIdentity.get(fileIdentity(snapshot.inventory[node.fileIndex].file));
         return loaded === undefined ? [] : [loaded];
       }),
     [snapshot.inventory, tree, loadedByIdentity]);
@@ -90,19 +105,23 @@ export function App({
   const rows = useMemo(() => {
     const all = fileOrder.flatMap(index => {
       const file = snapshot.files[index];
-      const folds = collapsed.get(index) ?? new Set<string>();
-      const key = `${index}:${layout}:${isLight}:${fullContext}:${[...folds].sort().join(",")}`;
+      const folds = foldsOf(index);
+      const key = `${index}:${layout}:${theme.name}:${[...folds].sort((a, b) => a - b).join(",")}`;
       let cached = rowCache.current.get(file);
       if (cached?.key !== key) {
-        cached = { key, rows: rowsForFile(file, index, layout, theme, fullContext, folds) };
+        cached = { key, rows: rowsForFile(file, index, layout, theme, folds) };
         rowCache.current.set(file, cached);
       }
-      return closed.has(index) ? cached.rows.slice(0, 1) : cached.rows;
+      if (!isClosed(index)) return cached.rows;
+      const manifest = manifestOf(file);
+      return manifest?.visibility.collapsed
+        ? [cached.rows[0], ...placeholderRows(index, manifest.visibility.label)]
+        : cached.rows.slice(0, 1);
     });
     for (const [i, error] of snapshot.errors.entries())
       all.push({ key: `error:${i}`, fileIndex: -1, label: error });
     return all;
-  }, [snapshot.files, snapshot.errors, layout, theme, closed, fullContext, fileOrder, collapsed]);
+  }, [snapshot.files, snapshot.errors, snapshot.inventory, layout, theme, closed, fileOrder, collapsed]);
   const geometry = useMemo(
     () => measureRows(rows, contentWidth, wrap, horizontal),
     [rows, contentWidth, wrap, horizontal],
@@ -127,38 +146,28 @@ export function App({
   }
   const move = (amount: number) =>
     setScroll((current) => Math.max(0, Math.min(maxScroll, current + amount)));
-  const toggleFile = (index: number) => {
-    setClosed((old) => {
-      const next = new Set(old);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
-      return next;
-    });
-  };
-  const regionCache = useRef(new WeakMap<DiffFile, FoldRegion[]>());
-  const regionsOf = (file: DiffFile) => {
-    let regions = regionCache.current.get(file);
-    if (!regions) {
-      regions = foldRegions(file.diff);
-      regionCache.current.set(file, regions);
-    }
-    return regions;
-  };
-  const setFolds = (fileIndex: number, ids: string[], collapse: boolean) =>
+  const toggleFile = (index: number) =>
+    setClosed((old) => new Map(old).set(index, !isClosed(index)));
+  const setFolds = (fileIndex: number, ids: number[], collapse: boolean) =>
     setCollapsed((old) => {
-      const next = new Set(old.get(fileIndex) ?? []);
+      const next = new Set(foldsOf(fileIndex));
       for (const id of ids) if (collapse) next.add(id); else next.delete(id);
       return new Map(old).set(fileIndex, next);
     });
-  // Recursive commands (Alt-click, zC, zO, zA) include every region nested inside.
+  // Recursive commands (Alt-click, zC, zO, zA) include every fold nested inside.
   const setFold = (fileIndex: number, fold: RowFold, collapse: boolean, recursive: boolean) => {
-    const regions = regionsOf(snapshot.files[fileIndex]);
-    const region = regions.find((r) => r.id === fold.id);
-    if (!region) throw new Error(`Unknown fold ${fold.id}`);
-    const ids = recursive
-      ? [fold.id, ...nestedRegions(regions, region).map((r) => r.id)]
-      : [fold.id];
+    const file = snapshot.files[fileIndex];
+    if (file.diff.type !== "text") throw new Error("Binary files have no folds");
+    const ids = recursive ? [fold.id, ...nestedIds(file.diff, fold.id)] : [fold.id];
     setFolds(fileIndex, ids, collapse);
+  };
+  // `c`: reveal every context gap, or hide them again.
+  const toggleContext = () => {
+    const opened = snapshot.files.some((file, index) =>
+      file.diff.type === "text" && gapIds(file.diff).some((id) => !foldsOf(index).has(id)));
+    snapshot.files.forEach((file, index) => {
+      if (file.diff.type === "text") setFolds(index, gapIds(file.diff), opened);
+    });
   };
   const toggleFold = (fileIndex: number, fold: RowFold, recursive: boolean) =>
     setFold(fileIndex, fold, !fold.collapsed, recursive);
@@ -186,18 +195,30 @@ export function App({
     else if (letter === "o") setFold(current.fileIndex, fold, false, recursive);
     else if (letter === "c") setFold(current.fileIndex, fold, true, recursive);
   };
-  const foldAll = (collapse: boolean) => {
-    const byFile = new Map<number, string[]>();
-    for (const row of rows) {
-      const fold = rowFold(row);
-      if (fold) byFile.set(row.fileIndex, [...(byFile.get(row.fileIndex) ?? []), fold.id]);
-    }
-    if (collapse) for (const [fileIndex, ids] of byFile) setFolds(fileIndex, ids, true);
-    else setCollapsed(new Map());
-  };
+  const foldAll = (collapse: boolean) =>
+    snapshot.files.forEach((file, index) => {
+      if (file.diff.type === "text") setFolds(index, foldIds(file.diff), collapse);
+    });
   const jump = (index: number) => {
     const row = geometry.rows.find((r) => r.row.fileIndex === index);
     if (row) setScroll(Math.min(maxScroll, row.top));
+  };
+  // Moved code: scroll to the counterpart line on the other side, in the same file.
+  const jumpToMove = (fileIndex: number, target: MoveJump) => {
+    const lineOf = (row: ViewerRow) => target.side === "left"
+      ? (row.left?.lineNumber ?? row.cell?.oldLineNumber)
+      : (row.right?.lineNumber ?? row.cell?.newLineNumber);
+    const found = geometry.rows.find((r) => r.row.fileIndex === fileIndex && lineOf(r.row) === target.line);
+    if (!found) return setMessage(`Line ${target.line} is folded or not loaded`);
+    setScroll(Math.min(maxScroll, found.top));
+    setMessage(`Moved code: ${target.side} line ${target.line}`);
+  };
+  const jumpFromTop = (from = top) => {
+    const current = visibleRows(geometry, from, Math.max(1, viewportHeight)).map((r) => r.row)
+      .find((row) => (row.cell ?? row.right)?.jump ?? row.left?.jump);
+    const jumpOf = current && ((current.cell ?? current.right)?.jump ?? current.left?.jump);
+    if (!current || !jumpOf) return setMessage("No moved code on screen");
+    jumpToMove(current.fileIndex, jumpOf);
   };
   const navigateHunk = (direction: number) => {
     const headers = geometry.rows.filter((r) => r.row.hunkStart);
@@ -218,6 +239,11 @@ export function App({
   useKeyboard((key) => {
     // Hunk's chord matcher handles raw control bytes and Kitty events alike.
     const is = (...chords: string[]) => !key.super && chords.some(chord => matchesKey(chord, key));
+    if (pendingG.current !== null) {
+      const from = pendingG.current;
+      pendingG.current = null;
+      if (is("m")) return jumpFromTop(from);
+    }
     if (pendingZ.current) {
       pendingZ.current = false;
       const command = key.shift ? key.name?.toUpperCase() : key.name;
@@ -235,7 +261,8 @@ export function App({
     else if (is("pageup", "b", "shift+space", "ctrl+b")) move(-viewportHeight);
     else if (is("down", "j")) move(1);
     else if (is("up", "k")) move(-1);
-    else if (is("g", "home")) setScroll(0);
+    else if (is("g")) { pendingG.current = top; setScroll(0); }
+    else if (is("home")) setScroll(0);
     else if (is("G", "end")) setScroll(maxScroll);
     else if (is("right", "shift+right", "l")) setHorizontal(n => n + (key.shift ? 16 : 4));
     else if (is("left", "shift+left", "h")) setHorizontal(n => Math.max(0, n - (key.shift ? 16 : 4)));
@@ -245,10 +272,11 @@ export function App({
       setMode(layout === "split" ? "unified" : "split");
       setSelection(null);
     } else if (key.name === "w") setWrap((v) => !v);
-    else if (key.name === "c") { setFullContext(v => !v); setSelection(null); }
-    else if (key.name === "t") setLight((v) => !v);
+    else if (key.name === "c") { toggleContext(); setSelection(null); }
+    else if (key.name === "t") toggleTheme();
     else if (key.name === "y") copy();
-    else if (key.name === "escape") { setSelection(null); setMenu(null); }
+    else if (key.name === "escape") { setSelection(null); setMenu(null); setShowBreakdown(false); }
+    else if (key.name === "i") setShowBreakdown((v) => !v);
     else if (key.name === "return") {
       const current = visibleRows(geometry, top, 1)[0];
       if (current && current.row.fileIndex >= 0)
@@ -266,7 +294,7 @@ export function App({
   const viewport = visibleRows(geometry, top, viewportHeight);
   const currentFile = viewport[0]?.row.fileIndex ?? 0;
   const activeIdentity = pendingFile ?? (snapshot.files[currentFile] ? fileIdentity(snapshot.files[currentFile].file) : null);
-  const currentTreeFile = snapshot.inventory.findIndex(file => fileIdentity(file) === activeIdentity);
+  const currentTreeFile = snapshot.inventory.findIndex(entry => fileIdentity(entry.file) === activeIdentity);
   useEffect(() => {
     if (pendingFile === null) return;
     const index = loadedByIdentity.get(pendingFile);
@@ -280,6 +308,13 @@ export function App({
   }, [pendingFile, loadedByIdentity, geometry, maxScroll, snapshot.failedFiles, snapshot.complete]);
   const treeRows = useMemo(() => flattenFileTree(tree, closedDirectories), [tree, closedDirectories]);
   const counts = useMemo(() => snapshot.files.map(lineCounts), [snapshot.files]);
+  // Headline numbers are diffr's stats.visible, verbatim: folding never changes them.
+  const totals = useMemo(() => ({
+    visible: counts.reduce((sum, c) => add(sum, c.visible), zero),
+    textual: counts.reduce((sum, c) => add(sum, c.textual), zero),
+    fallbacks: counts.filter((c) => c.fallback).length,
+  }), [counts]);
+  const plusMinus = (c: LineCounts) => `+${c.added} −${c.removed}`;
   useEffect(() => {
     const file = inventory[currentTreeFile];
     if (!file) return;
@@ -296,18 +331,18 @@ export function App({
   }, [currentTreeFile, treeRows, viewportHeight]);
   const sidebarStart = Math.min(treeScroll, Math.max(0, treeRows.length - viewportHeight));
   const fileHeader = (fileIndex: number, key: string) => {
-    const file = snapshot.files[fileIndex], count = counts[fileIndex];
-    if (!file) return null;
-    const path = file.file.new_path ?? file.file.old_path ?? file.diff.display_path;
+    const file = snapshot.files[fileIndex], count = counts[fileIndex]?.visible;
+    if (!file || !count) return null;
+    const path = filePath(file.file);
     const statsWidth = String(count.added).length + String(count.removed).length + 5;
     return <box key={key} height={1} width={contentWidth} flexDirection="row"
-      backgroundColor={isLight ? "#f0f2f5" : "#161b22"}
+      backgroundColor={theme.chrome}
       onMouseUp={() => toggleFile(fileIndex)}>
       <text width={Math.max(1, contentWidth - statsWidth)} fg={theme.fg} selectable={false}>
-        {fit(sanitizeTerminalLine(`${closed.has(fileIndex) ? "▸" : "▾"} ${path}`), Math.max(1, contentWidth - statsWidth))}
+        {fit(sanitizeTerminalLine(`${isClosed(fileIndex) ? "▸" : "▾"} ${path}`), Math.max(1, contentWidth - statsWidth))}
       </text>
-      <text fg={isLight ? "#1a7f37" : "#7ee787"} selectable={false}>{` +${count.added}`}</text>
-      <text fg={isLight ? "#cf222e" : "#ffa198"} selectable={false}>{` -${count.removed} `}</text>
+      <text fg={theme.addedText} selectable={false}>{` +${count.added}`}</text>
+      <text fg={theme.removedText} selectable={false}>{` −${count.removed} `}</text>
     </box>;
   };
   const rendered = [];
@@ -328,20 +363,13 @@ export function App({
             key={row.key}
             height={1}
             width={contentWidth}
-            fg={theme.muted}
+            fg={row.loadDiff ? theme.accent : theme.muted}
             selectable={false}
             onMouseUp={() => {
-              if (row.key.endsWith(":header")) toggleFile(row.fileIndex);
+              if (row.loadDiff) toggleFile(row.fileIndex);
             }}
           >
-            {fit(
-              sanitizeTerminalLine(
-                row.key.endsWith(":header")
-                  ? `${closed.has(row.fileIndex) ? "▸" : "▾"} ${row.label}`
-                  : row.label,
-              ),
-              contentWidth,
-            )}
+            {fit(sanitizeTerminalLine(row.loadDiff ? `    ${row.label}` : row.label), contentWidth)}
           </text>,
         );
       else
@@ -366,6 +394,7 @@ export function App({
                 setSelection((s) => (s ? { ...s, end: row.key } : s));
             }}
             onFold={(fold, recursive) => toggleFold(row.fileIndex, fold, recursive)}
+            onJump={(target) => jumpToMove(row.fileIndex, target)}
           />,
         );
     }
@@ -396,15 +425,16 @@ export function App({
     File: [["Toggle file tree  ⌘B / \\", () => setShowSidebar(v => !v)], ["Copy selection  y", copy], ["Quit  q", onQuit]],
     View: [[`Layout: ${layout}  s`, () => { setMode(layout === "split" ? "unified" : "split"); setSelection(null); }],
       [`Wrap: ${wrap ? "on" : "off"}  w`, () => setWrap(v => !v)],
-      [`Context: ${fullContext ? "all" : "compact"}  c`, () => { setFullContext(v => !v); setSelection(null); }],
+      ["Toggle context gaps  c", () => { toggleContext(); setSelection(null); }],
       ["Fold all  zM", () => foldAll(true)], ["Unfold all  zR", () => foldAll(false)]],
     Navigate: [["Previous change  [", () => navigateHunk(-1)], ["Next change  ]", () => navigateHunk(1)],
       ["First file  Home", () => setScroll(0)], ["Last file  End", () => setScroll(maxScroll)]],
-    Theme: [["Dark", () => setLight(false)], ["Light", () => setLight(true)]],
+    Theme: [[`Dark (${themes.dark.name})  t`, () => setTheme(themes.dark)], [`Light (${themes.light.name})  t`, () => setTheme(themes.light)]],
     Help: [["Scroll: j/k · h/l · gg/G", () => setMessage("j/k scroll · h/l pan · gg first · G last")],
       ["Half page: Ctrl-D / Ctrl-U", () => setMessage("d / Ctrl-D: half down · u / Ctrl-U: half up")],
       ["Full page: Ctrl-F / Ctrl-B", () => setMessage("Ctrl-F: page down · Ctrl-B: page up")],
       ["Drag to select · y to copy", () => setMessage("Drag source lines; y copies original source")],
+      ["Change breakdown  i", () => setShowBreakdown(true)],
       ["Folds: click ▾ · za zo zc · zM zR", () => setMessage("Click the chevron or ⋯ · za toggle, zo open, zc close the top fold (zA zO zC recursive) · zM/zR fold/unfold all · zj/zk next/previous fold")]],
   };
   return (
@@ -434,17 +464,29 @@ export function App({
         sidebarDrag.current = null;
       }}
     >
-      <box height={1} flexDirection="row" backgroundColor={isLight ? "#f0f2f5" : "#161b22"}>
+      <box height={1} flexDirection="row" backgroundColor={theme.chrome}>
         {["File", "View", "Navigate", "Theme", "Help"].map(name => (
           <text key={name} fg={menu === name ? theme.fg : theme.muted} selectable={false}
             onMouseUp={() => setMenu(old => old === name ? null : name)}>
             {` ${name} `}
           </text>
         ))}
-        <text fg={theme.type} selectable={false} onMouseUp={() => {
+        <text fg={theme.accent} selectable={false} onMouseUp={() => {
           setMode(layout === "split" ? "unified" : "split"); setSelection(null);
         }}>{`  ${layout} [s] `}</text>
-        <text fg={theme.muted} selectable={false}>{` · ${snapshot.total || snapshot.inventory.length} files`}</text>
+      </box>
+      <box height={1} flexDirection="row" backgroundColor={theme.chrome}>
+        <text fg={theme.fg} selectable={false}>
+          {` ${snapshot.comparison ? comparisonLabel(snapshot.comparison.lhs, snapshot.comparison.rhs) : "diffr"}`}
+        </text>
+        <text fg={theme.muted} selectable={false}>{` · ${snapshot.total || snapshot.inventory.length} files · `}</text>
+        <text fg={theme.addedText} selectable={false} onMouseUp={() => setShowBreakdown((v) => !v)}>{`+${totals.visible.added}`}</text>
+        <text fg={theme.removedText} selectable={false} onMouseUp={() => setShowBreakdown((v) => !v)}>{` −${totals.visible.removed}`}</text>
+        <text fg={theme.muted} selectable={false}>{snapshot.complete ? " " : "… "}</text>
+        {blockBar(totals.visible).map((block, i) => (
+          <text key={i} fg={block === "added" ? theme.addedText : block === "removed" ? theme.removedText : theme.muted}
+            selectable={false} onMouseUp={() => setShowBreakdown((v) => !v)}>{block === "neutral" ? "□" : "■"}</text>
+        ))}
       </box>
       <box
         height={viewportHeight}
@@ -473,11 +515,11 @@ export function App({
             {treeRows.slice(sidebarStart, sidebarStart + viewportHeight).map(({node, depth}) => (
               <text key={node.key} height={1} width={sidebar - 1}
                 fg={node.fileIndex === currentTreeFile ? theme.fg : theme.muted}
-                bg={node.fileIndex === currentTreeFile ? (isLight ? "#ddf4ff" : "#1c3045") : theme.bg}
+                bg={node.fileIndex === currentTreeFile ? theme.highlight : theme.bg}
                 selectable={false}
                 onMouseUp={() => {
                   if (node.fileIndex !== undefined) {
-                    const identity = fileIdentity(snapshot.inventory[node.fileIndex]);
+                    const identity = fileIdentity(snapshot.inventory[node.fileIndex].file);
                     const loaded = loadedByIdentity.get(identity);
                     if (loaded !== undefined) { setPendingFile(null); setMessage(""); jump(loaded); }
                     else if (snapshot.failedFiles.has(identity)) setMessage(snapshot.failedFiles.get(identity)!);
@@ -490,8 +532,8 @@ export function App({
                   });
                 }}>
                 {fit(sanitizeTerminalLine("  ".repeat(depth) + (node.fileIndex === undefined
-                  ? (closedDirectories.has(node.key) ? "▸ " : "▾ ") : snapshot.failedFiles.has(fileIdentity(snapshot.inventory[node.fileIndex])) ? "! "
-                    : loadedByIdentity.has(fileIdentity(snapshot.inventory[node.fileIndex])) ? "  " : "◌ ") + node.name), sidebar - 1)}
+                  ? (closedDirectories.has(node.key) ? "▸ " : "▾ ") : snapshot.failedFiles.has(fileIdentity(snapshot.inventory[node.fileIndex].file)) ? "! "
+                    : loadedByIdentity.has(fileIdentity(snapshot.inventory[node.fileIndex].file)) ? "  " : "◌ ") + node.name), sidebar - 1)}
               </text>
             ))}
           </box>
@@ -545,9 +587,30 @@ export function App({
           />
         </box>
       </box>
+      {showBreakdown && (() => {
+        const file = snapshot.files[currentFile];
+        const fallback = file && counts[currentFile].fallback;
+        const sections: [string, LineCounts, LineCounts, string | null][] = [
+          ["All files", totals.visible, totals.textual, totals.fallbacks ? `line diff: ${totals.fallbacks} files` : null],
+          ...(file ? [[filePath(file.file), counts[currentFile].visible, counts[currentFile].textual,
+            fallback ? `line diff: ${fallback.code}` : null] as [string, LineCounts, LineCounts, string | null]] : []),
+        ];
+        const boxWidth = Math.min(width, 44);
+        const rowCount = sections.reduce((n, s) => n + 3 + (s[3] ? 1 : 0), 0);
+        return <box position="absolute" top={2} left={Math.max(0, width - boxWidth - 1)} width={boxWidth}
+          height={rowCount + 1} flexDirection="column" zIndex={10} backgroundColor={theme.chrome}>
+          {sections.flatMap(([title, visible, textual, note]) => [
+            <text key={`${title}:t`} height={1} fg={theme.fg} selectable={false}>{fit(` ${title}`, boxWidth)}</text>,
+            <text key={`${title}:v`} height={1} fg={theme.muted} selectable={false}>{fit(`   visible   ${plusMinus(visible)}`, boxWidth)}</text>,
+            <text key={`${title}:x`} height={1} fg={theme.muted} selectable={false}>{fit(`   textual   ${plusMinus(textual)}`, boxWidth)}</text>,
+            ...(note ? [<text key={`${title}:f`} height={1} fg={theme.muted} selectable={false}>{fit(`   ${note}`, boxWidth)}</text>] : []),
+          ])}
+          <text height={1} fg={theme.muted} selectable={false}>{fit(" esc close", boxWidth)}</text>
+        </box>;
+      })()}
       {menu && <box position="absolute" top={1} left={0} width={38}
         height={menuItems[menu].length} flexDirection="column" zIndex={10}
-        backgroundColor={isLight ? "#eaeef2" : "#21262d"}>
+        backgroundColor={theme.chrome}>
         {menuItems[menu].map(([label, action]) => (
           <text key={label} height={1} width={38} fg={theme.fg} selectable={false}
             onMouseUp={() => { action(); setMenu(null); }}>
@@ -557,7 +620,7 @@ export function App({
       </box>}
       <text height={1} fg={theme.muted} selectable={false}>
         {fit(
-          `${snapshot.files.length}/${snapshot.total} files ${snapshot.complete ? "" : "loading…"} ${snapshot.errors.length ? `${snapshot.errors.length} errors` : ""}  [/] hunks · za fold · drag selects lines · y copy · q quit ${message}`,
+          `${snapshot.files.length}/${snapshot.total} files ${snapshot.complete ? "" : "loading…"} ${snapshot.errors.length ? `${snapshot.errors.length} errors` : ""}  [/] hunks · za fold · i breakdown · drag selects lines · y copy · q quit ${message}`,
           width,
         )}
       </text>

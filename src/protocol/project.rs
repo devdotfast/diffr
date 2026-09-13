@@ -27,6 +27,7 @@ use crate::line_parser;
 use crate::pairing::Pairing;
 use crate::parse::folds::{self, Fold};
 use crate::parse::syntax::{MatchKind, MatchedPos, SyntaxId};
+use crate::parse::tree_sitter_parser::{highlight_captures, TreeSitterConfig};
 use crate::summary::{DiffResult, FileContent, FileFormat};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -124,6 +125,47 @@ fn fallback_code(reason: &str) -> &'static str {
     } else {
         "text_fallback"
     }
+}
+
+/// Highlight spans for one side, per line, sorted, non-overlapping. Where
+/// captures nest the innermost wins.
+pub(crate) fn syntax_spans(src: &str, parser: &'static TreeSitterConfig) -> Vec<SyntaxSpan> {
+    let mut captures = highlight_captures(src, parser);
+    // Paint larger captures first so smaller (inner) ones overwrite them.
+    captures.sort_by_key(|(start, end, _)| std::cmp::Reverse(end - start));
+    let mut owner: Vec<Option<&'static str>> = vec![None; src.len()];
+    for (start, end, name) in captures {
+        for slot in &mut owner[start..end] {
+            *slot = Some(name);
+        }
+    }
+    let mut spans = Vec::new();
+    let mut line_start = 0;
+    for (line, text) in src.split_inclusive('\n').enumerate() {
+        let content_len = text.trim_end_matches('\n').len();
+        let mut run: Option<(usize, &'static str)> = None;
+        for column in 0..=content_len {
+            let current = (column < content_len)
+                .then(|| owner[line_start + column])
+                .flatten();
+            match (run, current) {
+                (Some((_, name)), Some(now)) if now == name => {}
+                (Some((start, name)), _) => {
+                    spans.push(SyntaxSpan {
+                        line: line as u32,
+                        start_column: start as u32,
+                        end_column: column as u32,
+                        capture: name.to_owned(),
+                    });
+                    run = current.map(|name| (column, name));
+                }
+                (None, Some(name)) => run = Some((column, name)),
+                (None, None) => {}
+            }
+        }
+        line_start += text.len();
+    }
+    spans
 }
 
 // ── regions ───────────────────────────────────────────────────────────────
@@ -1476,5 +1518,26 @@ mod tests {
             panic!("a binary diff with both sides: {diff:?}");
         };
         assert_eq!((lhs.size, rhs.size), (3, 5));
+    }
+
+    #[test]
+    fn syntax_spans_are_per_line_sorted_and_innermost() {
+        let parser = crate::parse::tree_sitter_parser::from_language(
+            crate::parse::guess_language::Language::Python,
+        );
+        let spans = syntax_spans("def f(x):\n    return \"a\"\n", parser);
+        for pair in spans.windows(2) {
+            assert!(
+                pair[0].line < pair[1].line
+                    || (pair[0].line == pair[1].line && pair[0].end_column <= pair[1].start_column),
+                "{pair:?}"
+            );
+        }
+        assert!(spans
+            .iter()
+            .any(|span| span.capture == "keyword" && span.line == 0));
+        assert!(spans
+            .iter()
+            .any(|span| span.capture.starts_with("string") && span.line == 1));
     }
 }

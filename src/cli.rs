@@ -62,6 +62,7 @@ pub(crate) fn run() -> Result<i32> {
         .arg(flag("find-renames").short('M').conflicts_with("no-renames"))
         .arg(Arg::new("unified").short('U').long("unified").value_parser(clap::value_parser!(u32)).help("Unchanged lines kept around each change; defaults to folds.context_lines"))
         .arg(Arg::new("format").long("format").value_parser(["text", "ndjson", "snapshot"]).default_value("text"))
+        .arg(flag("syntax").help("Include every token's tree-sitter capture name in --format ndjson output"))
         .arg(Arg::new("display").long("display").value_parser(["inline", "side-by-side", "side-by-side-show-both"]).default_value("side-by-side"))
         .arg(Arg::new("color").long("color").num_args(0..=1).require_equals(true).default_missing_value("always").default_value("auto").value_parser(["auto", "always", "never"]))
         .arg(flag("no-color"))
@@ -105,6 +106,9 @@ pub(crate) fn run() -> Result<i32> {
     if streaming && (args.get_flag("quiet") || args.contains_id("metadata")) {
         return Err("--format ndjson cannot be combined with --quiet or metadata output".into());
     }
+    let stream_options = crate::protocol::stream::Options {
+        syntax: args.get_flag("syntax"),
+    };
     let items: Vec<OsString> = args
         .get_many::<OsString>("items")
         .into_iter()
@@ -137,6 +141,7 @@ pub(crate) fn run() -> Result<i32> {
             &args,
             items.into_iter().chain(explicit_paths).collect(),
             &display,
+            stream_options,
         );
     }
     if args.get_flag("null") && !args.get_flag("name-only") && !args.get_flag("name-status") {
@@ -191,8 +196,13 @@ pub(crate) fn run() -> Result<i32> {
             if jobs == 0 {
                 return Err("--jobs must be at least 1".into());
             }
-            let ended =
-                crate::protocol::stream::write(session, jobs, mutations, &mut io::stdout().lock())?;
+            let ended = crate::protocol::stream::write(
+                session,
+                jobs,
+                mutations,
+                stream_options,
+                &mut io::stdout().lock(),
+            )?;
             let failed = ended.failed || ended.aborted;
             return Ok(if failed {
                 2
@@ -425,7 +435,12 @@ fn print_metadata(diff: &git2::Diff<'_>, args: &ArgMatches, width: usize) -> Res
     Ok(())
 }
 
-fn no_index(args: &ArgMatches, paths: Vec<OsString>, display: &DisplayOptions) -> Result<i32> {
+fn no_index(
+    args: &ArgMatches,
+    paths: Vec<OsString>,
+    display: &DisplayOptions,
+    stream_options: crate::protocol::stream::Options,
+) -> Result<i32> {
     if paths.len() != 2 {
         return Err("--no-index requires two file paths".into());
     }
@@ -487,7 +502,9 @@ fn no_index(args: &ArgMatches, paths: Vec<OsString>, display: &DisplayOptions) -
             &paths[1].to_string_lossy(),
             (before.len() as u64, after.len() as u64),
             compute,
+            &config,
             &mutations,
+            stream_options,
             &mut io::stdout().lock(),
         )?;
         Ok(if ended.failed || ended.aborted {

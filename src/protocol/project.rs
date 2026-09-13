@@ -1143,8 +1143,14 @@ mod tests {
     fn a_fold_ending_inside_a_gap_does_not_split_it() {
         // The inner block's closer sits inside a long unchanged stretch that
         // continues in the enclosing function: one gap, not two back to back.
-        let body: String = (1..=7).map(|n| format!("        u{n}();\n")).collect();
-        let tail: String = (1..=5).map(|n| format!("    v{n}();\n")).collect();
+        let body = (1..=7)
+            .map(|n| format!("        u{n}();\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        let tail = (1..=5)
+            .map(|n| format!("    v{n}();\n"))
+            .collect::<Vec<_>>()
+            .concat();
         let lhs = format!("fn f() {{\n    if a {{\n        x();\n{body}    }}\n{tail}}}\n");
         let rhs = format!("fn f() {{\n    if a {{\n        y();\n{body}    }}\n{tail}}}\n");
         let diff = project("a.rs", &lhs, &rhs, 1);

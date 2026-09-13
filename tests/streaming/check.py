@@ -65,7 +65,7 @@ def stream(repo, *args, code=0):
         env=ENV,
     ) as process:
         first = json.loads(process.stdout.readline())
-        assert first["type"] == "start" and first["version"] == 2, first
+        assert first["type"] == "start" and first["version"] == 3, first
         events = [first, *[json.loads(line) for line in process.stdout]]
         for event in events:
             diff = event.get("diff") if event.get("type") == "file" else None
@@ -133,6 +133,10 @@ def check_tree(source):
                 walk(region["children"], region)
 
     walk(source["regions"], None)
+    # Two identities per region: alignment pairs across sides, fold state
+    # groups toggles. Until a mutation bundles regions, they coincide.
+    for region in all_regions(source["regions"]):
+        assert region["fold_state_id"] == region["alignment_id"], region
 
 
 def check_tiling(source):
@@ -213,7 +217,9 @@ with tempfile.TemporaryDirectory(prefix="diffr-stream-") as temp:
     same = records["renamed.py"]["diff"]
     only = list(leaves(same["lhs"]["regions"]))
     assert only[0]["visibility"] == {"collapsed": True, "label": "1 unchanged line"}
-    assert only[0]["id"] == next(leaves(same["rhs"]["regions"]))["id"]
+    assert (
+        only[0]["alignment_id"] == next(leaves(same["rhs"]["regions"]))["alignment_id"]
+    )
     # Syntax spans are opt-in and carry tree-sitter capture names.
     events = stream(repo, base, head, "--syntax", "--", "a.rs")
     syntax = events[1]["diff"]["rhs"]["syntax"]

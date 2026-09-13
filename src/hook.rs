@@ -113,7 +113,7 @@ impl Hook {
     }
 
     fn qualifies(&self, region: &Region, lhs_ids: &crate::hash::DftHashSet<u32>) -> bool {
-        if !is_fold(region) || lhs_ids.contains(&region.id) {
+        if !is_fold(region) || lhs_ids.contains(&region.alignment_id) {
             return false;
         }
         if line_count(region) < self.min_lines {
@@ -173,7 +173,7 @@ impl FoldMutation for Hook {
         walk(&rhs.regions, &mut |region| {
             if self.qualifies(region, &lhs_ids) {
                 folds.push(RequestFold {
-                    id: region.id,
+                    id: region.alignment_id,
                     range: region.range,
                     tags: region.tags.clone(),
                     placeholder: region.visibility.label.clone(),
@@ -216,7 +216,7 @@ impl FoldMutation for Hook {
             unreachable!("rhs regions were selected");
         };
         walk_mut(&mut rhs.regions, &mut |region| {
-            if let Some(text) = by_id.get(&region.id) {
+            if let Some(text) = by_id.get(&region.alignment_id) {
                 collapse(region, summary_label(language, text));
             }
         });

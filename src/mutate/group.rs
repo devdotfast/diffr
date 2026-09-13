@@ -27,7 +27,7 @@ pub(super) fn next_id(sides: &Pairing<Source>) -> u32 {
     let mut max = None;
     for source in [sides.lhs(), sides.rhs()].into_iter().flatten() {
         walk(&source.regions, &mut |region| {
-            max = max.max(Some(region.id));
+            max = max.max(Some(region.alignment_id));
         });
     }
     max.map_or(0, |max| max + 1)
@@ -45,7 +45,7 @@ fn is_gap(region: &Region) -> bool {
 fn adjacent_gaps(regions: &[Region], out: &mut DftHashMap<u32, u32>) {
     for pair in regions.windows(2) {
         if is_gap(&pair[0]) && is_gap(&pair[1]) && pair[0].range.end == pair[1].range.start {
-            out.insert(pair[0].id, pair[1].id);
+            out.insert(pair[0].alignment_id, pair[1].alignment_id);
         }
     }
     for region in regions {
@@ -110,7 +110,7 @@ fn merge_gap_runs(regions: &mut Vec<Region>, merges: &DftHashSet<u32>) {
             merge_gap_runs(children, merges);
         }
         match merged.last_mut() {
-            Some(last) if merges.contains(&last.id) && is_gap(&region) => {
+            Some(last) if merges.contains(&last.alignment_id) && is_gap(&region) => {
                 last.range.end = region.range.end;
                 let count = last.range.lines().len();
                 last.visibility.label = format!("{count} unchanged lines");
@@ -192,7 +192,12 @@ fn collapsed_fold_runs(regions: &[Region], other_ids: &DftHashSet<u32>, out: &mu
             }
         }
         if units >= 2 {
-            out.push(regions[first..=last].iter().map(|r| r.id).collect());
+            out.push(
+                regions[first..=last]
+                    .iter()
+                    .map(|r| r.alignment_id)
+                    .collect(),
+            );
         }
         at = last + 1;
     }
@@ -241,7 +246,7 @@ fn wrap_runs(regions: &mut Vec<Region>, by_first: &DftHashMap<u32, (usize, u32)>
     let mut wrapped: Vec<Region> = Vec::with_capacity(regions.len());
     let mut pending = std::mem::take(regions).into_iter();
     while let Some(region) = pending.next() {
-        let Some(&(len, id)) = by_first.get(&region.id) else {
+        let Some(&(len, id)) = by_first.get(&region.alignment_id) else {
             wrapped.push(region);
             continue;
         };
@@ -279,7 +284,8 @@ fn group(id: u32, children: Vec<Region>) -> Region {
         format!("{count} folded regions")
     };
     Region {
-        id,
+        alignment_id: id,
+        fold_state_id: id,
         range: SourceRange {
             start: children[0].range.start,
             end: children[children.len() - 1].range.end,
@@ -317,7 +323,8 @@ mod tests {
     fn removed_groups_only_wrap_one_sided_folds() {
         use crate::protocol::SourcePos;
         let leaf = |id: u32, start: u32, end: u32| Region {
-            id,
+            alignment_id: id,
+            fold_state_id: id,
             range: SourceRange {
                 start: SourcePos {
                     line: start,
@@ -333,7 +340,8 @@ mod tests {
             node: Node::Leaf { changed: vec![] },
         };
         let removed_fold = |id: u32, start: u32, end: u32, child: Region| Region {
-            id,
+            alignment_id: id,
+            fold_state_id: id,
             range: SourceRange {
                 start: SourcePos {
                     line: start,
@@ -402,7 +410,7 @@ mod tests {
         for child in children {
             eprintln!(
                 "child {} {:?} {:?} fold={}",
-                child.id,
+                child.alignment_id,
                 child.range.lines(),
                 child.visibility.label,
                 is_fold(child)
@@ -416,12 +424,16 @@ mod tests {
         assert_eq!(group.range.end, folds[2].range.end);
         let rhs_ids = super::super::ids(&sides.rhs().unwrap().regions);
         assert!(
-            !rhs_ids.contains(&group.id),
+            !rhs_ids.contains(&group.alignment_id),
             "a one-sided group has a fresh id"
         );
         let mut seen = DftHashSet::default();
         walk(&lhs.regions, &mut |region| {
-            assert!(seen.insert(region.id), "duplicate id {}", region.id);
+            assert!(
+                seen.insert(region.alignment_id),
+                "duplicate id {}",
+                region.alignment_id
+            );
         });
     }
 
@@ -450,7 +462,7 @@ mod tests {
         merge_gaps(&mut sides);
         for source in [sides.lhs().unwrap(), sides.rhs().unwrap()] {
             assert_eq!(source.regions.len(), 2);
-            assert_eq!(source.regions[0].id, 0);
+            assert_eq!(source.regions[0].alignment_id, 0);
             assert_eq!(source.regions[0].range.lines(), 0..7);
             assert_eq!(source.regions[0].visibility.label, "7 unchanged lines");
         }
@@ -490,7 +502,8 @@ mod tests {
 
     fn gap(id: u32, start: u32, end: u32) -> Region {
         Region {
-            id,
+            alignment_id: id,
+            fold_state_id: id,
             range: range(start, end),
             tags: vec!["unchanged".to_owned()],
             visibility: Visibility {
@@ -503,7 +516,8 @@ mod tests {
 
     fn leaf(id: u32, start: u32, end: u32) -> Region {
         Region {
-            id,
+            alignment_id: id,
+            fold_state_id: id,
             range: range(start, end),
             tags: vec![],
             visibility: Visibility::default(),

@@ -350,7 +350,7 @@ pub(crate) fn write_file(
 pub(crate) fn visible_counts(sides: &Pairing<Source>) -> LineCounts {
     fn ids(regions: &[Region], out: &mut DftHashSet<u32>) {
         for region in regions {
-            out.insert(region.id);
+            out.insert(region.alignment_id);
             if let Node::Fold { children } = &region.node {
                 ids(children, out);
             }
@@ -365,7 +365,7 @@ pub(crate) fn visible_counts(sides: &Pairing<Source>) -> LineCounts {
                     if hidden {
                         continue;
                     }
-                    if other.contains(&region.id) {
+                    if other.contains(&region.alignment_id) {
                         let lines: DftHashSet<u32> = changed.iter().map(|span| span.line).collect();
                         total += lines.len() as u32;
                     } else {
@@ -406,7 +406,8 @@ mod visible_tests {
 
     fn leaf(id: u32, lines: (u32, u32), changed: &[u32], collapsed: bool) -> Region {
         Region {
-            id,
+            alignment_id: id,
+            fold_state_id: id,
             range: SourceRange {
                 start: pos(lines.0),
                 end: pos(lines.1),
@@ -431,7 +432,8 @@ mod visible_tests {
 
     fn fold(id: u32, lines: (u32, u32), collapsed: bool, children: Vec<Region>) -> Region {
         Region {
-            id,
+            alignment_id: id,
+            fold_state_id: id,
             range: SourceRange {
                 start: pos(lines.0),
                 end: pos(lines.1),

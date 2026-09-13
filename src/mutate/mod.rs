@@ -110,11 +110,11 @@ pub(crate) fn walk(regions: &[Region], visit: &mut impl FnMut(&Region)) {
     }
 }
 
-/// Every id on a side, to tell one-sided regions from paired ones.
+/// Every alignment id on a side, to tell one-sided regions from paired ones.
 pub(crate) fn ids(regions: &[Region]) -> DftHashSet<u32> {
     let mut ids = DftHashSet::default();
     walk(regions, &mut |region| {
-        ids.insert(region.id);
+        ids.insert(region.alignment_id);
     });
     ids
 }
@@ -125,7 +125,7 @@ pub(crate) fn ids(regions: &[Region]) -> DftHashSet<u32> {
 pub(crate) fn one_sided(region: &Region, other_ids: &DftHashSet<u32>) -> bool {
     let mut paired = false;
     walk(std::slice::from_ref(region), &mut |inner| {
-        paired |= other_ids.contains(&inner.id);
+        paired |= other_ids.contains(&inner.alignment_id);
     });
     !paired
 }

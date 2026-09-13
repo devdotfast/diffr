@@ -40,7 +40,9 @@ class Handler(BaseHTTPRequestHandler):
         else:
             if MODE == "echo":
                 texts = {
-                    str(f["id"]): "pseudo " + f["placeholder"] for f in params["folds"]
+                    # `id` is the region's alignment_id on the after side.
+                    str(f["id"]): "pseudo " + f["placeholder"]
+                    for f in params["folds"]
                 }
             elif MODE == "first":
                 texts = {str(params["folds"][0]["id"]): "summary of f"}

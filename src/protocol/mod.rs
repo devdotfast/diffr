@@ -21,7 +21,7 @@ pub(crate) mod project;
 pub(crate) mod stream;
 
 /// The current wire version. Changes within a version are additive.
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     *value == T::default()
@@ -296,17 +296,25 @@ pub struct SyntaxSpan {
     pub capture: String,
 }
 
-/// A range on one side. The same `id` on the other side is its
-/// counterpart. Two leaves correspond when the line alignment pairs their
-/// lines. Two folds correspond when the alignment pairs their header
-/// lines, changed or not, whichever engine produced it. Ids appear
-/// at most once per side. A paired leaf has the same line count on both
-/// sides and its rows pair line for line; a paired leaf whose counterpart
-/// is behind the reading cursor is a move, and the frontend chooses how to
-/// show it.
+/// A range on one side, carrying two identities that must never be
+/// conflated. `alignment_id` says what the region *is* across sides:
+/// the same value on the other side means the two regions are aligned
+/// visually, one-to-one. Two leaves correspond when the line alignment
+/// pairs their lines. Two folds correspond when the alignment pairs their
+/// header lines, or, failing that, when one contains the counterpart of a
+/// leaf the other contains, whichever engine produced the alignment.
+/// A paired leaf has the same line count on both sides and its rows pair
+/// line for line; a paired leaf whose counterpart is behind the reading
+/// cursor is a move, and the frontend chooses how to show it.
+/// `fold_state_id` says what the region *moves with*: regions sharing it
+/// open and close together. It may span sides (a paired region has the
+/// same value on both) and may bundle several same-side regions. For an
+/// ordinary region both fields hold the same number. Consumers key the
+/// row zip by `alignment_id` and collapse state by `fold_state_id`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Region {
-    pub id: u32,
+    pub alignment_id: u32,
+    pub fold_state_id: u32,
     #[serde(flatten)]
     pub range: SourceRange,
     /// `body`, `import`, `test`, `unchanged`, or hook-supplied tags.
@@ -400,7 +408,8 @@ mod tests {
 
     fn leaf(id: u32, start: u32, end: u32, changed: Vec<Span>) -> Region {
         Region {
-            id,
+            alignment_id: id,
+            fold_state_id: id,
             range: SourceRange {
                 start: pos(start, 0),
                 end: pos(end, 0),
@@ -423,7 +432,8 @@ mod tests {
             text: text.to_owned(),
             syntax: vec![],
             regions: vec![Region {
-                id: 1,
+                alignment_id: 1,
+                fold_state_id: 1,
                 range: SourceRange {
                     start: pos(0, 0),
                     end: pos(3, 0),
@@ -475,17 +485,17 @@ mod tests {
     #[test]
     fn file_record_serializes_to_the_documented_shape() {
         let region = |changed: serde_json::Value| {
-            let mut middle = json!({"id": 3, "kind": "leaf", "start": {"line": 1, "column": 0}, "end": {"line": 2, "column": 0}});
+            let mut middle = json!({"alignment_id": 3, "fold_state_id": 3, "kind": "leaf", "start": {"line": 1, "column": 0}, "end": {"line": 2, "column": 0}});
             if let Some(spans) = changed.as_array().filter(|spans| !spans.is_empty()) {
                 middle["changed"] = json!(spans);
             }
             json!({
-                "id": 1, "kind": "fold", "tags": ["body"],
+                "alignment_id": 1, "fold_state_id": 1, "kind": "fold", "tags": ["body"],
                 "start": {"line": 0, "column": 0}, "end": {"line": 3, "column": 0},
                 "children": [
-                    {"id": 2, "kind": "leaf", "start": {"line": 0, "column": 0}, "end": {"line": 1, "column": 0}},
+                    {"alignment_id": 2, "fold_state_id": 2, "kind": "leaf", "start": {"line": 0, "column": 0}, "end": {"line": 1, "column": 0}},
                     middle,
-                    {"id": 4, "kind": "leaf", "start": {"line": 2, "column": 0}, "end": {"line": 3, "column": 0}},
+                    {"alignment_id": 4, "fold_state_id": 4, "kind": "leaf", "start": {"line": 2, "column": 0}, "end": {"line": 3, "column": 0}},
                 ],
             })
         };

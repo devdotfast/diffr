@@ -236,11 +236,11 @@ pub(crate) fn select(sides: &Pairing<Source>, min_lines: usize) -> Vec<(u32, u32
                 && tag("function")
                 && !tag("test")
                 && !region.visibility.collapsed
-                && !lhs_ids.contains(&region.id)
+                && !lhs_ids.contains(&region.alignment_id)
                 && line_count(region) >= min_lines
             {
                 let lines = region.range.lines();
-                selected.push((region.id, lines.start + 1, lines.end));
+                selected.push((region.alignment_id, lines.start + 1, lines.end));
                 continue;
             }
             if let Node::Fold { children } = &region.node {
@@ -318,7 +318,7 @@ impl FoldMutation for Summarizer {
             unreachable!("selection found rhs regions");
         };
         walk_mut(&mut rhs.regions, &mut |region| {
-            if let Some(text) = texts.get(&region.id) {
+            if let Some(text) = texts.get(&region.alignment_id) {
                 collapse(region, summary_label(language, text));
             }
         });

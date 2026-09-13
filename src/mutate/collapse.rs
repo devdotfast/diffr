@@ -167,7 +167,7 @@ fn split_removed_runs(
         let collapsed = under_collapsed || region.visibility.collapsed;
         let splits = !under_collapsed
             && gates.open()
-            && !rhs_ids.contains(&region.id)
+            && !rhs_ids.contains(&region.alignment_id)
             && line_count(&region) >= threshold;
         let inner = if is_fold(&region) {
             gates.enter(&region, rhs_ids)
@@ -203,7 +203,8 @@ fn split_leaf(region: Region, next_id: &mut u32) -> Vec<Region> {
             .filter(|span| range.lines().contains(&span.line))
             .collect();
         Region {
-            id,
+            alignment_id: id,
+            fold_state_id: id,
             range,
             tags,
             visibility,
@@ -216,7 +217,7 @@ fn split_leaf(region: Region, next_id: &mut u32) -> Vec<Region> {
     let hidden = last - first - 1;
     vec![
         piece(
-            region.id,
+            region.alignment_id,
             SourceRange {
                 start: region.range.start,
                 end: at(first + 1),
@@ -351,7 +352,8 @@ mod tests {
 
     fn removed_leaf(id: u32, start: u32, end: u32, changed: &[u32]) -> Region {
         Region {
-            id,
+            alignment_id: id,
+            fold_state_id: id,
             range: SourceRange {
                 start: SourcePos {
                     line: start,
@@ -396,7 +398,7 @@ mod tests {
                 };
                 let lines = region.range.lines();
                 (
-                    region.id,
+                    region.alignment_id,
                     lines.start,
                     lines.end,
                     region.visibility.collapsed,
@@ -458,7 +460,8 @@ mod tests {
                 regions: vec![
                     paired.clone(),
                     Region {
-                        id: 1,
+                        alignment_id: 1,
+                        fold_state_id: 1,
                         range: SourceRange {
                             start: SourcePos { line: 8, column: 0 },
                             end: SourcePos {
@@ -489,7 +492,7 @@ mod tests {
             .unwrap();
         let lhs = &sides.lhs().unwrap().regions;
         assert_eq!(lhs.len(), 5, "paired leaf, collapsed fold, three pieces");
-        assert_eq!(lhs[0].id, 7);
+        assert_eq!(lhs[0].alignment_id, 7);
         let Node::Fold { children } = &lhs[1].node else {
             panic!("fold expected");
         };
@@ -510,7 +513,8 @@ mod tests {
 
     fn function_fold(id: u32, start: u32, end: u32, children: Vec<Region>) -> Region {
         Region {
-            id,
+            alignment_id: id,
+            fold_state_id: id,
             range: SourceRange {
                 start: SourcePos {
                     line: start,

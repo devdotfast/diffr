@@ -66,7 +66,7 @@ lines; pipe reads can split records or contain several.
 
 | Record | Fields | Consumer action |
 | --- | --- | --- |
-| `start` | `version: 2`, `lhs`, `rhs`, `files` | Lay out every file up front. |
+| `start` | `version: 3`, `lhs`, `rhs`, `files` | Lay out every file up front. |
 | `file` | `file`, then `diff` or `error` | Render a result, or mark the file failed. |
 | `complete` | `succeeded`, `failed`, optional `aborted` | Mark complete; `aborted` means the run stopped early. |
 
@@ -153,25 +153,32 @@ leaves alone.
 ### Regions
 
 Each side carries a tree of regions. A region is a line range on that side with
-an `id`, and the same `id` on the other side marks its counterpart.
+two identities. `alignment_id` says what the region is across sides: the
+same value on the other side marks its counterpart, one-to-one. `fold_state_id`
+says what it moves with: regions sharing it open and close together, on either
+side. For an ordinary region the two hold the same number; a mutation that
+bundles regions (a docstring with its function, say) gives them one
+`fold_state_id` while each keeps its own `alignment_id`. Consumers key the row
+zip by `alignment_id` and collapse state by `fold_state_id`, never the reverse.
 
 ```jsonc
-{"id": 7, "kind": "fold",
+{"alignment_id": 7, "fold_state_id": 7, "kind": "fold",
  "start": {"line": 18, "column": 4}, "end": {"line": 52, "column": 33},
  "tags": ["body"],
  "visibility": {"collapsed": false, "label": "Body"},
  "children": [
-   {"id": 8, "kind": "leaf", "start": {"line": 18, "column": 0}, "end": {"line": 30, "column": 0}},
-   {"id": 9, "kind": "leaf", "start": {"line": 30, "column": 0}, "end": {"line": 31, "column": 0},
+   {"alignment_id": 8, "fold_state_id": 8, "kind": "leaf", "start": {"line": 18, "column": 0}, "end": {"line": 30, "column": 0}},
+   {"alignment_id": 9, "fold_state_id": 9, "kind": "leaf", "start": {"line": 30, "column": 0}, "end": {"line": 31, "column": 0},
     "changed": [{"line": 30, "start_column": 8, "end_column": 9}]},
-   {"id": 10, "kind": "leaf", "start": {"line": 31, "column": 0}, "end": {"line": 53, "column": 0}}]}
+   {"alignment_id": 10, "fold_state_id": 10, "kind": "leaf", "start": {"line": 31, "column": 0}, "end": {"line": 53, "column": 0}}]}
 ```
 
 **Leaves** tile the file: read in order, their line ranges cover every line once.
-They always start and end at column 0. A leaf with an `id` on both sides is
+They always start and end at column 0. A leaf with an `alignment_id` on both sides is
 paired: the two have the same line count and their rows pair line for line. A
 leaf on one side only has no counterpart, and the other side shows blank rows
-against it. The row table is the walk over both sides' leaves, zipped by id.
+against it. The row table is the walk over both sides' leaves, zipped by
+`alignment_id`.
 A paired leaf whose counterpart lies behind the reading cursor is a move; the
 frontend chooses how to show it.
 
@@ -187,7 +194,7 @@ first line is its header and stays visible when it collapses. Regions form a
 strict tree: every child lies inside its parent's range and siblings never
 overlap. When the parser hands over two folds that cross on one line, such as a
 collection whose closer sits on the line that opens the next body, the earlier
-fold gives that line to the later one. A fold with an `id` on both sides is the
+fold gives that line to the later one. A fold with an `alignment_id` on both sides is the
 same syntax node on both sides; its contents may differ. A syntactic region that
 spans a single line is not a region: it hides nothing.
 
@@ -266,7 +273,7 @@ polls the port until the hook accepts connections, exits 2 before `start` if
 the hook exits or misses `startup_timeout_ms`, and kills the hook when the
 comparison ends.
 
-Only new fold regions on the after side qualify: folds whose id has no
+Only new fold regions on the after side qualify: folds whose `alignment_id` has no
 counterpart on the before side, of at least `min_lines` lines. Files with no
 qualifying fold never reach the hook. Streaming is the only output mode that
 runs mutations.
@@ -285,7 +292,8 @@ requests concurrently rather than one at a time.
 {"jsonrpc": "2.0", "id": 7, "result": {"3": "def refresh_token(session):\n    ..."}}
 ```
 
-A fold `id` is the region's id in that file's `rhs.regions`. The matching
+A fold `id` in the request is the region's `alignment_id` in that file's
+`rhs.regions`. The matching
 region starts collapsed with the returned text as its label, behind a
 `# pseudocode` comment line in the file's own syntax. Folds missing from the
 result keep their placeholder. An error object, a timeout, an unknown fold id,

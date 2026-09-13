@@ -107,6 +107,7 @@ export function rowsForFile(
   // Every line of a novel leaf is tinted; the spans inside get the darker word tint on top.
   const novelSet = novelLeaves(leaves);
   const novel = (leaf: Leaf) => novelSet.has(leaf);
+  const moves = movedLeaves(leaves);
   const cell = (leaf: Leaf | null, line: number | null, side: 0 | 1): SplitLineCell => {
     if (line === null || leaf === null) return { kind: "empty", sign: " ", spans: [] };
     const text = texts[side][line];
@@ -117,6 +118,19 @@ export function rowsForFile(
         side ? "right" : "left", theme);
       caches[side].set(line, spans);
     }
+    const partner = moves.partner[side].get(leaf);
+    if (partner) {
+      // Moved code is neither added nor removed; edits inside keep their word tint.
+      return {
+        kind: "context",
+        sign: " ",
+        moveKind: "moved",
+        jump: { side: side ? "left" : "right", line: partner.startLine + (line - leaf.startLine) + 1 },
+        lineNumber: line + 1,
+        spans,
+        fold: headers[side].get(line),
+      };
+    }
     const changed = novel(leaf);
     return {
       kind: changed ? (side ? "addition" : "deletion") : "context",
@@ -125,6 +139,22 @@ export function rowsForFile(
       spans,
       fold: headers[side].get(line),
     };
+  };
+  /** "moved to line M" on the left, "moved from line N" on the right, at the top of a moved copy. */
+  const moveLabel = (leaf: Leaf) => {
+    const target = moves.runStart[leaf.side].get(leaf);
+    if (target === undefined || hidden[leaf.side].has(leaf.startLine)) return;
+    const text = leaf.side ? `moved from line ${target}` : `moved to line ${target}`;
+    const labelled: SplitLineCell = { kind: "context", sign: " ", moveKind: "moved", moveLabel: true,
+      jump: { side: leaf.side ? "left" : "right", line: target }, spans: [{ text, fg: theme.movedText }] };
+    const empty: SplitLineCell = { kind: "empty", sign: " ", spans: [] };
+    const key = `${fileIndex}:moved:${leaf.side}:${leaf.startLine}`;
+    if (layout === "split") {
+      rows.push({ key, fileIndex, left: leaf.side ? empty : labelled, right: leaf.side ? labelled : empty });
+      return;
+    }
+    const cell = { ...labelled, kind: "context" as const };
+    (leaf.side ? pendingNew : pendingOld).push({ key, fileIndex, cell });
   };
   let pendingOld: ViewerRow[] = [], pendingNew: ViewerRow[] = [];
   const flush = () => {
@@ -162,10 +192,10 @@ export function rowsForFile(
     }
     if (l !== null)
       pendingOld.push({ key: `${key}:old`, fileIndex, cell: { kind: a.kind === "deletion" ? "deletion" : "context",
-        sign: a.sign, oldLineNumber: l + 1, fold: a.fold, spans: a.spans } });
+        sign: a.sign, oldLineNumber: l + 1, fold: a.fold, spans: a.spans, moveKind: a.moveKind, jump: a.jump } });
     if (r !== null)
       pendingNew.push({ key: `${key}:new`, fileIndex, cell: { kind: b.kind === "addition" ? "addition" : "context",
-        sign: b.sign, newLineNumber: r + 1, fold: b.fold, spans: b.spans } });
+        sign: b.sign, newLineNumber: r + 1, fold: b.fold, spans: b.spans, moveKind: b.moveKind, jump: b.jump } });
   };
   const leafRows = (left: Leaf | null, right: Leaf | null) => {
     const anchor = left ?? right;
@@ -174,6 +204,7 @@ export function rowsForFile(
       if (!hidden[anchor.side].has(anchor.startLine)) collapsedLeaf(left, right);
       return;
     }
+    if (!left || !right) moveLabel(anchor);
     const length = Math.max(left ? left.endLine - left.startLine : 0, right ? right.endLine - right.startLine : 0);
     for (let i = 0; i < length; i++)
       emit(left && i < left.endLine - left.startLine ? left.startLine + i : null,
@@ -200,12 +231,47 @@ export function rowsForFile(
   flush();
   return withFoldLabels(markHunks(rows), texts, theme);
 }
+/**
+ * Moves: a leaf whose counterpart the zip has already passed. Both copies are moved, and each run
+ * of consecutive moved leaves on a side is one copy whose label names where the other copy starts.
+ */
+export function movedLeaves(leaves: readonly [Leaf[], Leaf[]]) {
+  const partner = [new Map<Leaf, Leaf>(), new Map<Leaf, Leaf>()] as const;
+  const rightIndex = new Map(leaves[1].map((leaf, index) => [leaf.alignmentId, index]));
+  let cursor = 0;
+  for (const left of leaves[0]) {
+    const index = rightIndex.get(left.alignmentId);
+    if (index === undefined) continue;
+    if (index < cursor) {
+      partner[0].set(left, leaves[1][index]);
+      partner[1].set(leaves[1][index], left);
+      continue;
+    }
+    cursor = index + 1;
+  }
+  // First leaf of each copy -> the other copy's first line, 1-based.
+  const runStart = [new Map<Leaf, number>(), new Map<Leaf, number>()] as const;
+  for (const side of [0, 1] as const) {
+    let run: Leaf[] = [];
+    const close = () => {
+      if (run.length) runStart[side].set(run[0], Math.min(...run.map((leaf) => partner[side].get(leaf)!.startLine)) + 1);
+      run = [];
+    };
+    for (const leaf of leaves[side]) {
+      if (partner[side].has(leaf)) run.push(leaf);
+      else close();
+    }
+    close();
+  }
+  return { partner, runStart };
+}
 function markHunks(rows: ViewerRow[]): ViewerRow[] {
   let inHunk = false;
   for (const row of rows) {
     const changed = row.cell
-      ? row.cell.kind !== "context"
-      : row.left !== undefined && (row.left.kind !== "context" || row.right!.kind !== "context");
+      ? row.cell.kind !== "context" || row.cell.moveKind === "moved"
+      : row.left !== undefined && (row.left.kind !== "context" || row.right!.kind !== "context"
+        || row.left.moveKind === "moved" || row.right!.moveKind === "moved");
     if (changed && !inHunk) row.hunkStart = true;
     inHunk = changed;
   }

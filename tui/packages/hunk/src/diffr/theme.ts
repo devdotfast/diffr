@@ -28,6 +28,9 @@ export interface Palette {
   deleteWord: string;
   addedText: string;
   removedText: string;
+  /** Background and label colour for code that moved. */
+  moved: string;
+  movedText: string;
   /** An accent for interactive text such as links and the layout badge. */
   accent: string;
   /** VS Code's editor.foldBackground and foldPlaceholderForeground. */
@@ -116,6 +119,10 @@ export function paletteFromHelix(theme: HelixTheme): Palette {
   const muted = scopeFg(theme, "ui.linenr") ?? scopeFg(theme, "comment") ?? mix(fg, bg, 0.4);
   const plus = scopeFg(theme, "diff.plus") ?? (isLight ? "#1a7f37" : "#7ee787");
   const minus = scopeFg(theme, "diff.minus") ?? (isLight ? "#cf222e" : "#ffa198");
+  const selection = scopeBg(theme, "ui.selection") ?? mix(bg, fg, 0.15);
+  // Moved code: the theme's own delta colour, else a muted blue drawn from the selection.
+  const delta = scopeFg(theme, "diff.delta.moved") ?? scopeFg(theme, "diff.delta")
+    ?? mix(selection, isLight ? "#2f6fbf" : "#6fa8f0", 0.6);
   return {
     name: theme.name,
     isLight,
@@ -123,13 +130,15 @@ export function paletteFromHelix(theme: HelixTheme): Palette {
     fg,
     muted,
     chrome: scopeBg(theme, "ui.statusline") ?? mix(bg, fg, 0.06),
-    highlight: scopeBg(theme, "ui.selection") ?? mix(bg, fg, 0.15),
+    highlight: selection,
     addition: mix(bg, plus, 0.18),
     deletion: mix(bg, minus, 0.18),
     addWord: mix(bg, plus, 0.42),
     deleteWord: mix(bg, minus, 0.42),
     addedText: plus,
     removedText: minus,
+    moved: mix(bg, delta, 0.16),
+    movedText: delta,
     accent: scopeFg(theme, "function") ?? scopeFg(theme, "ui.text.focus") ?? fg,
     foldBackground: scopeBg(theme, "ui.cursorline.primary") ?? mix(bg, fg, 0.1),
     foldPlaceholder: muted,

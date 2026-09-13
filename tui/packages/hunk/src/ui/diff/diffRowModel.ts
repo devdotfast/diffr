@@ -17,11 +17,21 @@ export interface RenderSpan {
   transformFg?: (sourceFg: string | undefined, renderedBg: string) => string;
 }
 
+/** Where a moved copy's counterpart starts: the other side and its 1-based line. */
+export interface MoveJump {
+  side: "left" | "right";
+  line: number;
+}
+
 export interface SplitLineCell {
   kind: "context" | "addition" | "deletion" | "empty";
   sign: string;
   lineNumber?: number;
   moveKind?: DiffLineMoveKind;
+  /** Moved code: the counterpart line to jump to. */
+  jump?: MoveJump;
+  /** The "moved from/to line N" row at the top of a moved copy. */
+  moveLabel?: boolean;
   /** This cell starts a fold region; the chevron and placeholder come from here. */
   fold?: RowFold;
   /** A line of a collapsed fold's label, painted in the fold tint without a line number. */
@@ -35,6 +45,8 @@ export interface UnifiedLineCell {
   oldLineNumber?: number;
   newLineNumber?: number;
   moveKind?: DiffLineMoveKind;
+  jump?: MoveJump;
+  moveLabel?: boolean;
   fold?: RowFold;
   foldLabel?: boolean;
   spans: RenderSpan[];

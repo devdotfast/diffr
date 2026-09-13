@@ -15,6 +15,7 @@ import { buildFileTree, flattenFileTree, parentDirectories, lineCounts } from ".
 import { matchesKey } from "./lib/keys";
 import { resizeSidebarWidth } from "./lib/sidebar";
 import { CodeRowView } from "./diff/CodeRowView";
+import type { MoveJump } from "./diff/diffRowModel";
 import {
   rowsForFile,
   type Layout,
@@ -62,6 +63,9 @@ export function App({
   const [collapsed, setCollapsed] = useState<Map<number, ReadonlySet<number>>>(new Map());
   // Vim's z prefix: the next key names the fold command.
   const pendingZ = useRef(false);
+  // `g` goes home at once but remembers where the view was, so a following `m` can jump from there
+  // to the other copy of moved code.
+  const pendingG = useRef<number | null>(null);
   const [closedDirectories, setClosedDirectories] = useState<Set<string>>(new Set());
   const [treeScroll, setTreeScroll] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(28);
@@ -199,6 +203,23 @@ export function App({
     const row = geometry.rows.find((r) => r.row.fileIndex === index);
     if (row) setScroll(Math.min(maxScroll, row.top));
   };
+  // Moved code: scroll to the counterpart line on the other side, in the same file.
+  const jumpToMove = (fileIndex: number, target: MoveJump) => {
+    const lineOf = (row: ViewerRow) => target.side === "left"
+      ? (row.left?.lineNumber ?? row.cell?.oldLineNumber)
+      : (row.right?.lineNumber ?? row.cell?.newLineNumber);
+    const found = geometry.rows.find((r) => r.row.fileIndex === fileIndex && lineOf(r.row) === target.line);
+    if (!found) return setMessage(`Line ${target.line} is folded or not loaded`);
+    setScroll(Math.min(maxScroll, found.top));
+    setMessage(`Moved code: ${target.side} line ${target.line}`);
+  };
+  const jumpFromTop = (from = top) => {
+    const current = visibleRows(geometry, from, Math.max(1, viewportHeight)).map((r) => r.row)
+      .find((row) => (row.cell ?? row.right)?.jump ?? row.left?.jump);
+    const jumpOf = current && ((current.cell ?? current.right)?.jump ?? current.left?.jump);
+    if (!current || !jumpOf) return setMessage("No moved code on screen");
+    jumpToMove(current.fileIndex, jumpOf);
+  };
   const navigateHunk = (direction: number) => {
     const headers = geometry.rows.filter((r) => r.row.hunkStart);
     const target =
@@ -218,6 +239,11 @@ export function App({
   useKeyboard((key) => {
     // Hunk's chord matcher handles raw control bytes and Kitty events alike.
     const is = (...chords: string[]) => !key.super && chords.some(chord => matchesKey(chord, key));
+    if (pendingG.current !== null) {
+      const from = pendingG.current;
+      pendingG.current = null;
+      if (is("m")) return jumpFromTop(from);
+    }
     if (pendingZ.current) {
       pendingZ.current = false;
       const command = key.shift ? key.name?.toUpperCase() : key.name;
@@ -235,7 +261,8 @@ export function App({
     else if (is("pageup", "b", "shift+space", "ctrl+b")) move(-viewportHeight);
     else if (is("down", "j")) move(1);
     else if (is("up", "k")) move(-1);
-    else if (is("g", "home")) setScroll(0);
+    else if (is("g")) { pendingG.current = top; setScroll(0); }
+    else if (is("home")) setScroll(0);
     else if (is("G", "end")) setScroll(maxScroll);
     else if (is("right", "shift+right", "l")) setHorizontal(n => n + (key.shift ? 16 : 4));
     else if (is("left", "shift+left", "h")) setHorizontal(n => Math.max(0, n - (key.shift ? 16 : 4)));
@@ -367,6 +394,7 @@ export function App({
                 setSelection((s) => (s ? { ...s, end: row.key } : s));
             }}
             onFold={(fold, recursive) => toggleFold(row.fileIndex, fold, recursive)}
+            onJump={(target) => jumpToMove(row.fileIndex, target)}
           />,
         );
     }

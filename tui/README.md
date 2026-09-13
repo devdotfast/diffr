@@ -85,13 +85,17 @@ list; Esc returns without saving. Both views carry a footer hint line.
 - Click folders to expand/collapse them; click files to navigate. The active file is highlighted and revealed as the diff scrolls.
 - A summary strip under the menubar shows the comparison (`main…HEAD`, `index…working
   tree`), the file count, the totals `+N −M` in the theme's diff colours, and GitHub's
-  five-block bar. Totals and file-header counts are the changed lines currently visible:
-  diffr's `stats.visible` (its default fold state) adjusted as folds, gaps, and files are
-  toggled, so lines hidden inside a collapsed region are not counted. While results are
-  still arriving the total ends in `…`.
+  five-block bar. Totals and file-header counts are diffr's `stats.visible`, shown verbatim
+  and summed over loaded files: folding changes what is on screen, never the numbers.
+  Files still pending add nothing, and the total ends in `…` until the stream completes.
 - `i` (or clicking the totals) opens a breakdown for the whole comparison and the current
-  file: `visible` and `textual`, plus a `line diff: <code>` line when tree-sitter fell
-  back to a line diff for that file. Esc closes it.
+  file, straight from the wire: `visible` and `textual`, plus a `line diff: <code>` line
+  when tree-sitter fell back to a line diff for that file. Esc closes it.
+- Moved code: a region whose `alignment_id` counterpart comes earlier in reading order is a
+  move. Both copies render in the theme's moved tint (`diff.delta.moved`, else `diff.delta`,
+  else a muted blue from `ui.selection`) with no `+`/`−`, under a label row: `moved from
+  line N` on the right, `moved to line M` on the left. Edits inside a moved copy keep the
+  word tint. Click the label, or press `gm` with the copy on screen, to jump to the other copy.
 - A file diffr marks hidden by default (generated, test) opens collapsed with a GitHub-style
   placeholder: `Load diff` and the reason line. Click it or press Enter to reveal.
 - File, View, Navigate, Theme and Help menus expose the supported controls.
@@ -104,7 +108,9 @@ list; Esc returns without saving. Both views carry a footer hint line.
   header is the top row: `za` toggle, `zo` open, `zc` close, with `zA` / `zO` / `zC`
   recursive; `zM` / `zR` (and View > Fold all / Unfold all) fold or unfold every fold;
   `zj` / `zk` scroll to the next or previous fold header. The header and closing
-  delimiter stay visible; regions that share a `fold_state_id` collapse together, on both sides. A fold on one
+  delimiter stay visible; regions that share a `fold_state_id` collapse together, on both sides
+  and within one side (a docstring bundled with its function folds and unfolds with it; an
+  empty label shows as a bare `⋯`). A fold on one
   side only blanks that side's cells, keeping the other side's lines in Rust's alignment.
 - Context gaps are folds too: an unchanged run diffr trimmed to N lines around changes
   arrives as a collapsed leaf tagged `unchanged`, and renders as one fold row with its
@@ -205,7 +211,8 @@ width survives hiding and reopening the tree and is clamped on terminal resize.
 
 Navigation uses Hunk's key matcher and defaults: j/k or arrows scroll lines;
 d/u or Ctrl-D/Ctrl-U scroll half pages; f/b, PageDown/PageUp, or Ctrl-F/Ctrl-B
-scroll full pages; Space/Shift-Space also page; g (or gg)/G go to start/end.
+scroll full pages; Space/Shift-Space also page; g (or gg)/G go to start/end; `gm` jumps
+between the two copies of moved code.
 h/l or arrows pan horizontally. Cmd-B toggles the tree; backslash is its fallback.
 
 The first NDJSON event includes `files` in comparison order, each with its status,

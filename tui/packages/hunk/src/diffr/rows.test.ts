@@ -27,15 +27,31 @@ test("split zips leaves on their ids, unified groups old before new", () => {
   ]);
   expect(rowsForFile(file, 0, "split", dark).filter((r) => r.hunkStart)).toHaveLength(1);
 });
-test("moved leaves render one-sided on each side", () => {
+test("moved code renders as moved on both copies, labelled with where the other copy starts", () => {
   const file = createTestDiffFile();
   if (file.diff.type !== "text") throw new Error();
-  file.diff.lhs = { text: "a\nb\n", syntax: [], regions: [leaf(1, 0, 1), leaf(2, 1, 2)] };
-  file.diff.rhs = { text: "b\na\n", syntax: [], regions: [leaf(2, 0, 1), leaf(1, 1, 2)] };
+  // `b` moved above `a`, and its line was also edited.
+  file.diff.lhs = { text: "a\nb\n", syntax: [], regions: [leaf(1, 0, 1), leaf(2, 1, 2, [line(1, 0, 1)])] };
+  file.diff.rhs = { text: "b2\na\n", syntax: [], regions: [leaf(2, 0, 1, [line(0, 0, 2)]), leaf(1, 1, 2)] };
   const rows = rowsForFile(file, 0, "split", dark).filter((r) => r.left);
-  expect(rows.map((r) => [r.left!.lineNumber, r.right!.lineNumber])).toEqual([
-    [undefined, 1], [1, 2], [2, undefined],
+  const text = (c: { spans: { text: string }[] }) => c.spans.map((s) => s.text).join("");
+  expect(rows.map((r) => [r.left!.moveLabel ? text(r.left!) : r.left!.lineNumber,
+    r.right!.moveLabel ? text(r.right!) : r.right!.lineNumber])).toEqual([
+    [undefined, "moved from line 2"], [undefined, 1], [1, 2], ["moved to line 1", undefined], [2, undefined],
   ]);
+  const movedRight = rows[1].right!, movedLeft = rows[4].left!;
+  // No +/−, the moved tint instead of added or removed, and each copy points at the other.
+  expect([movedRight.kind, movedRight.sign, movedRight.moveKind, movedRight.jump]).toEqual(
+    ["context", " ", "moved", { side: "left", line: 2 }]);
+  expect([movedLeft.kind, movedLeft.sign, movedLeft.moveKind, movedLeft.jump]).toEqual(
+    ["context", " ", "moved", { side: "right", line: 1 }]);
+  expect(rows[0].right!.jump).toEqual({ side: "left", line: 2 });
+  // The edit inside the moved copy still gets the strong word tint.
+  expect(movedRight.spans.some((s) => s.bg === dark.addWord)).toBe(true);
+  expect(dark.moved).not.toBe(dark.addition);
+  expect(dark.moved).not.toBe(dark.deletion);
+  // The unchanged line between the copies is plain context.
+  expect([rows[2].left!.moveKind, rows[2].left!.kind]).toEqual([undefined, "context"]);
 });
 test("changed spans paint the darker word tint, distinct from the line tint", () => {
   for (const theme of [dark, light]) {

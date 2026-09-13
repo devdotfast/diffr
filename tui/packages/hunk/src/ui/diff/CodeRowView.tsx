@@ -2,6 +2,7 @@
 import { memo } from "react";
 import { StyledText, parseColor } from "@opentui/core";
 import type {
+  MoveJump,
   RenderSpan,
   SplitLineCell,
   UnifiedLineCell,
@@ -46,6 +47,7 @@ export const CodeRowView = memo(function CodeRowView({
   onSelect,
   onExtend,
   onFold,
+  onJump,
 }: {
   measured: MeasuredRow;
   visualLine: number;
@@ -55,6 +57,8 @@ export const CodeRowView = memo(function CodeRowView({
   onSelect: (side: "left" | "right") => void;
   onExtend: () => void;
   onFold: (fold: RowFold, recursive: boolean) => void;
+  /** Jump to the other copy of moved code. */
+  onJump: (jump: MoveJump) => void;
 }) {
   const row = measured.row;
   const lastLine = visualLine === measured.height - 1;
@@ -71,6 +75,8 @@ export const CodeRowView = memo(function CodeRowView({
         ? theme.highlight
         : value.foldLabel || fold?.collapsed
           ? theme.foldBackground
+          : value.moveKind === "moved"
+            ? theme.moved
           : value.kind === "addition"
             ? theme.addition
             : value.kind === "deletion"
@@ -96,7 +102,10 @@ export const CodeRowView = memo(function CodeRowView({
         flexDirection="row"
         backgroundColor={bg}
         onMouseDown={(event) => {
-          if (event.button === 0) onSelect(side);
+          if (event.button === 0 && !value.moveLabel) onSelect(side);
+        }}
+        onMouseUp={(event) => {
+          if (event.button === 0 && value.moveLabel && value.jump) onJump(value.jump);
         }}
         onMouseMove={onExtend}
       >

@@ -50,7 +50,6 @@ ignore = ">= 0.4, < 0.4.30"
 owo-colors = "4.2.3"
 imara-diff = { version = "0.2.0", default-features = false }
 rayon = "1.7.0"
-jsonrpsee = { version = "0.26", default-features = false, features = ["http-client", "macros"] }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "time"] }
 tree_magic_mini = "3.2.0"
 
@@ -135,6 +134,7 @@ tree-sitter-yaml = "0.7.0"
 tree-sitter-zig = "1.1.2"
 ts-parser-perl = "1.2.0"
 toml = { version = "0.8", default-features = false, features = ["parse"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "http2"] }
 
 
 [target.'cfg(not(any(windows, target_os = "illumos", target_os = "freebsd")))'.dependencies]

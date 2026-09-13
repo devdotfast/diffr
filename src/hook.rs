@@ -10,15 +10,13 @@ use crate::config::HookConfig;
 use crate::parse::folds::FoldMatch;
 use crate::review::wire;
 use crate::summary::{DiffResult, FileContent, FileFormat};
-use jsonrpsee::core::ClientError;
-use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
-use jsonrpsee::proc_macros::rpc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -31,25 +29,44 @@ pub(crate) struct RequestFold {
     placeholder: String,
 }
 
-/// The interface every hook implements. Params are sent by name; the result
-/// maps fold ids, as strings, to replacement text.
-#[rpc(client)]
-trait FoldHook {
-    #[method(name = "summarize", param_kind = map)]
-    async fn summarize(
-        &self,
-        path: String,
-        language: Option<String>,
-        src: String,
-        folds: Vec<RequestFold>,
-    ) -> jsonrpsee::core::RpcResult<BTreeMap<String, String>>;
+/// The one method every hook implements, `summarize`. Params are sent by
+/// name; the result maps fold ids, as strings, to replacement text.
+#[derive(Serialize)]
+struct Params<'a> {
+    path: &'a str,
+    language: Option<&'a str>,
+    src: &'a str,
+    folds: Vec<RequestFold>,
+}
+
+#[derive(Serialize)]
+struct Request<'a> {
+    jsonrpc: &'static str,
+    id: u64,
+    method: &'static str,
+    params: Params<'a>,
+}
+
+#[derive(Deserialize)]
+struct Response {
+    #[serde(default)]
+    result: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    error: Option<RpcError>,
+}
+
+#[derive(Deserialize)]
+struct RpcError {
+    message: String,
 }
 
 pub(crate) struct Hook {
     config: HookConfig,
     child: Mutex<Child>,
     runtime: tokio::runtime::Runtime,
-    client: HttpClient,
+    client: reqwest::Client,
+    url: String,
+    next_id: AtomicU64,
 }
 
 impl Hook {
@@ -76,16 +93,53 @@ impl Hook {
             .thread_name("diffr-hook-client")
             .enable_all()
             .build()?;
-        let client = runtime.block_on(async {
-            HttpClientBuilder::default()
-                .request_timeout(Duration::from_millis(config.timeout_ms))
-                .build(format!("http://127.0.0.1:{port}"))
-        })?;
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(config.timeout_ms))
+            .build()?;
         Ok(Self {
             config: config.clone(),
             child: Mutex::new(child),
             runtime,
             client,
+            url: format!("http://127.0.0.1:{port}/"),
+            next_id: AtomicU64::new(1),
+        })
+    }
+
+    /// One JSON-RPC 2.0 call over loopback HTTP, blocking the worker on its reply.
+    fn call(&self, params: Params<'_>) -> Result<BTreeMap<String, String>, String> {
+        let request = Request {
+            jsonrpc: "2.0",
+            id: self.next_id.fetch_add(1, Ordering::Relaxed),
+            method: "summarize",
+            params,
+        };
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .post(&self.url)
+                .json(&request)
+                .send()
+                .await
+                .map_err(|error| {
+                    if error.is_timeout() {
+                        format!("fold hook timed out after {}ms", self.config.timeout_ms)
+                    } else {
+                        format!("fold hook: {error}")
+                    }
+                })?;
+            let status = response.status();
+            let body = response
+                .text()
+                .await
+                .map_err(|error| format!("fold hook: {error}"))?;
+            let response: Response = serde_json::from_str(&body)
+                .map_err(|error| format!("fold hook: invalid response ({status}): {error}"))?;
+            match (response.result, response.error) {
+                (_, Some(error)) => Err(format!("fold hook reported: {}", error.message)),
+                (Some(result), None) => Ok(result),
+                (None, None) => Err("fold hook: response has neither result nor error".to_owned()),
+            }
         })
     }
 
@@ -123,22 +177,12 @@ impl Hook {
                 }
             })
             .collect();
-        let texts = self
-            .runtime
-            .block_on(FoldHookClient::summarize(
-                &self.client,
-                diff.display_path.clone(),
-                language,
-                src.clone(),
-                folds,
-            ))
-            .map_err(|error| match error {
-                ClientError::Call(error) => format!("fold hook reported: {}", error.message()),
-                ClientError::RequestTimeout => {
-                    format!("fold hook timed out after {}ms", self.config.timeout_ms)
-                }
-                other => format!("fold hook: {other}"),
-            })?;
+        let texts = self.call(Params {
+            path: &diff.display_path,
+            language: language.as_deref(),
+            src,
+            folds,
+        })?;
         for (key, text) in texts {
             let index: usize = key
                 .parse()

@@ -1,0 +1,1150 @@
+import { defineSoftwareMap } from "@dev.fast/progressive-review/software-map-model";
+
+export default defineSoftwareMap({
+  people: {
+    developer: {
+      label: "Developer",
+      description:
+        "Runs diffr in a terminal to compare revisions, the index and the working tree, reads the structural diff in text or the interactive viewer, and edits settings through diffr config.",
+    },
+    toolingConsumer: {
+      label: "Tooling consumer",
+      description:
+        "A script or agent that spawns diffr with --format ndjson and consumes the event stream line by line.",
+    },
+  },
+  systems: {
+    diffr: {
+      label: "diffr",
+      description:
+        "A structural diff that understands syntax. A Rust CLI fork of difftastic that computes syntax-aware comparisons of Git repositories and streams them to a terminal frontend or NDJSON consumers.",
+      containers: {
+        cli: {
+          label: "Rust CLI (diffr binary)",
+          description:
+            "The difftastic-derived Rust binary. Parses git-style arguments, discovers changed files through libgit2, diffs them with tree-sitter, projects each diff onto the region-based v2 wire, applies collapse and summary mutations, and renders text, JSON, NDJSON, snapshot or interactive output.",
+          coverage: {
+            files: ["Cargo.toml", "build.rs", "docs/cli.md", "docs/streaming.md", "docs/config.md"],
+            globs: ["src/**"],
+          },
+          components: {
+            entry: {
+              label: "Entry point",
+              description:
+                "main.rs wires the modules together, resets SIGPIPE, and dispatches to the git-style CLI or the legacy debug parser.",
+              coverage: { files: ["src/main.rs"] },
+              codeElements: {
+                main: {
+                  label: "main",
+                  sourceRanges: [{ file: "src/main.rs", fromLine: 145, toLine: 165 }],
+                },
+                runDebug: {
+                  label: "run_debug",
+                  description:
+                    "The old file/external-diff parser kept under the debug subcommand for diagnostics.",
+                  sourceRanges: [{ file: "src/main.rs", fromLine: 166, toLine: 428 }],
+                },
+              },
+            },
+            cli: {
+              label: "Git-style CLI",
+              description:
+                "Interprets git diff-style arguments, resolves operands and pathspecs, prints libgit2 metadata output, resolves the layered configuration, hosts the diffr config subcommand, and chooses between text, JSON, ndjson, ndjson-v1, snapshot and interactive output.",
+              coverage: { files: ["src/cli.rs"] },
+              codeElements: {
+                run: {
+                  label: "run",
+                  description:
+                    "Parses arguments, opens the repository, resolves config, derives the engine limits from it, builds Mutations for ndjson and selects the output mode.",
+                  sourceRanges: [{ file: "src/cli.rs", fromLine: 19, toLine: 231 }],
+                },
+                select: {
+                  label: "select",
+                  description: "Builds the Comparison from revisions, --cached, --merge-base and range syntax.",
+                  sourceRanges: [{ file: "src/cli.rs", fromLine: 246, toLine: 351 }],
+                },
+                printMetadata: {
+                  label: "print_metadata",
+                  description: "--name-only, --name-status, --stat, --shortstat and --numstat output.",
+                  sourceRanges: [{ file: "src/cli.rs", fromLine: 375, toLine: 442 }],
+                },
+                noIndex: {
+                  label: "no_index",
+                  description: "Standalone two-file comparison outside a repository, now also for ndjson; resolves config and the engine limits itself.",
+                  sourceRanges: [{ file: "src/cli.rs", fromLine: 444, toLine: 537 }],
+                },
+                diffOptions: {
+                  label: "diff_options",
+                  description:
+                    "The engine limits in precedence order: the configured [diff] table, then the DFT_* variables, then --byte-limit, --graph-limit and --parse-error-limit.",
+                  sourceRanges: [{ file: "src/cli.rs", fromLine: 539, toLine: 553 }],
+                },
+                loadConfig: {
+                  label: "load_config",
+                  description: "Gathers the global file, repository diffr.toml, DIFFR_* environment and --set overrides into Config::load.",
+                  sourceRanges: [{ file: "src/cli.rs", fromLine: 555, toLine: 569 }],
+                },
+                runConfig: {
+                  label: "run_config",
+                  description: "diffr config: opens the settings screen, or prints the schema, shows the resolved config, or sets one key.",
+                  sourceRanges: [{ file: "src/cli.rs", fromLine: 580, toLine: 629 }],
+                },
+                launchTui: {
+                  label: "launch_tui",
+                  description:
+                    "Starts the Bun frontend with the same comparison arguments when output is an interactive terminal, or with --settings for diffr config.",
+                  sourceRanges: [{ file: "src/cli.rs", fromLine: 636, toLine: 670 }],
+                },
+              },
+            },
+            options: {
+              label: "Legacy options and display settings",
+              description: "clap definitions for the debug parser plus DisplayOptions and DiffOptions shared by every output mode. DiffOptions is now filled from the [diff] config rather than from DFT_* variables directly.",
+              coverage: { files: ["src/options.rs", "src/exit_codes.rs", "src/constants.rs"] },
+            },
+            git: {
+              label: "Repository comparison",
+              description:
+                "libgit2 operand resolution, diff and rename detection, file categorization and language guessing, and a lazy DiffSession that reads each changed file's sources and reports typed FileProblems.",
+              coverage: { files: ["src/git.rs", "src/gitattributes.rs", "src/category.rs"] },
+              codeElements: {
+                comparison: {
+                  label: "Comparison",
+                  description: "Two Operands (revision, index, working tree, empty tree) and the libgit2 diff between them.",
+                  sourceRanges: [{ file: "src/git.rs", fromLine: 18, toLine: 120 }],
+                },
+                fileChange: {
+                  label: "FileChange",
+                  description:
+                    "The internal file descriptor with old/new path, category, status and blob ids; manifest_entry projects it onto the protocol FileChange.",
+                  sourceRanges: [{ file: "src/git.rs", fromLine: 121, toLine: 231 }],
+                },
+                fileProblem: {
+                  label: "FileProblem",
+                  description: "A coded per-file failure (binary, not_utf8, unsupported_file_type, unmerged, read_failed).",
+                  sourceRanges: [{ file: "src/git.rs", fromLine: 232, toLine: 265 }],
+                },
+                diffSession: {
+                  label: "DiffSession",
+                  description: "Builds the priority-ordered manifest and lazily loads each file's before/after sources.",
+                  sourceRanges: [{ file: "src/git.rs", fromLine: 353, toLine: 549 }],
+                },
+                checkDiffAttr: {
+                  label: "check_diff_attr",
+                  description: "Reads Git attributes for a path via git check-attr.",
+                  sourceRanges: [{ file: "src/gitattributes.rs", fromLine: 29, toLine: 75 }],
+                },
+                categoryFromPath: {
+                  label: "category::from_path",
+                  description: "Built-in path rules that classify lockfiles and build output as generated, test layouts as test, and docs.",
+                  sourceRanges: [{ file: "src/category.rs", fromLine: 33, toLine: 68 }],
+                },
+              },
+            },
+            config: {
+              label: "Configuration",
+              description:
+                "Resolves one layered configuration from bundled defaults, the global file, the repository diffr.toml, DIFFR_* variables and --set overrides; exposes a JSON Schema; carries the [diff] structural limits; compiles tree-sitter fold and context queries per language; and reads and writes single keys for the settings screen. The bundled fold queries now tag function bodies `function` beside `body`, so the collapse and summary rules can tell a function from any other block.",
+              changeStatus: "modified",
+              coverage: {
+                files: ["src/config.rs", "src/config/query.rs", "src/config/store.rs", "src/config/defaults.toml", "src/config/README.md"],
+              },
+              codeElements: {
+                config: {
+                  label: "Config",
+                  description: "Deserialized configuration with folds, summarize, theme, diff, hook and per-language sections.",
+                  sourceRanges: [{ file: "src/config.rs", fromLine: 22, toLine: 44 }],
+                },
+                diffConfig: {
+                  label: "DiffConfig",
+                  description:
+                    "The [diff] table: byte_limit, graph_limit and parse_error_limit, each defaulting to difftastic's own limit. DiffConfig::options turns it into engine DiffOptions with the DFT_* variables applied on top, rejecting non-numeric values.",
+                  sourceRanges: [{ file: "src/config.rs", fromLine: 45, toLine: 93 }],
+                },
+                foldsConfig: {
+                  label: "FoldsConfig",
+                  description:
+                    "The [folds] table: min_lines, collapse_deleted, collapse_removed_lines, collapse_generated, collapse_tests, the new collapse_test_bodies (default true), context_lines and the optional hook.",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "src/config.rs", fromLine: 95, toLine: 132 }],
+                },
+                summarizeConfig: {
+                  label: "SummarizeConfig",
+                  description:
+                    "The [summarize] table: enabled, provider, model, the new min_lines threshold (default 20) that replaces folds.min_lines for the summarizer, api_key, endpoint, timeout and retries.",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "src/config.rs", fromLine: 134, toLine: 176 }],
+                },
+                themeConfig: {
+                  label: "ThemeConfig",
+                  description: "The [theme] table: a bundled theme name or a path to a Helix theme file, now read by the terminal viewer at startup.",
+                  sourceRanges: [{ file: "src/config.rs", fromLine: 184, toLine: 202 }],
+                },
+                defaults: {
+                  label: "defaults.toml",
+                  description:
+                    "Bundled per-language fold and context queries. Each language's `body` query is now joined by a `function` query over function, method, generator and named arrow or function-expression bodies (Rust, Python, Go, JavaScript, TypeScript, TSX, JSX).",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "src/config/defaults.toml", fromLine: 1, toLine: 331 }],
+                },
+                sources: {
+                  label: "Sources",
+                  description: "The set of layers to resolve: explicit or global file, repository file, environment and overrides.",
+                  sourceRanges: [{ file: "src/config.rs", fromLine: 280, toLine: 322 }],
+                },
+                load: {
+                  label: "Config::load",
+                  description: "Merges the layers with figment, key by key, rejecting unknown keys.",
+                  sourceRanges: [{ file: "src/config.rs", fromLine: 326, toLine: 393 }],
+                },
+                schema: {
+                  label: "Config::schema",
+                  description: "JSON Schema with a description and default per key, the contract frontends use.",
+                  sourceRanges: [{ file: "src/config.rs", fromLine: 394, toLine: 397 }],
+                },
+                compile: {
+                  label: "Config::compile",
+                  description: "Turns the config into Params with compiled per-language queries and copies the diff limits across.",
+                  sourceRanges: [{ file: "src/config.rs", fromLine: 398, toLine: 454 }],
+                },
+                params: {
+                  label: "Params",
+                  description: "Compiled configuration: per-language queries, folds, summarize, diff limits and the optional hook.",
+                  sourceRanges: [{ file: "src/config.rs", fromLine: 248, toLine: 279 }],
+                },
+                annotationQuery: {
+                  label: "AnnotationQuery",
+                  description: "A compiled tree-sitter query with tag and delimiter captures.",
+                  sourceRanges: [{ file: "src/config/query.rs", fromLine: 5, toLine: 79 }],
+                },
+                storeShow: {
+                  label: "store::show",
+                  description: "The resolved configuration as JSON with a non-empty api_key redacted unless revealed.",
+                  sourceRanges: [{ file: "src/config/store.rs", fromLine: 10, toLine: 26 }],
+                },
+                storeSet: {
+                  label: "store::set",
+                  description: "Writes one typed key into the global file with toml_edit, validating before writing.",
+                  sourceRanges: [{ file: "src/config/store.rs", fromLine: 27, toLine: 128 }],
+                },
+              },
+            },
+            engine: {
+              label: "Diff engine",
+              description:
+                "Parses both sides with tree-sitter, runs the structural graph diff, and produces a DiffResult with matched positions, hunks, folds and syntax context. Now also exposes raw highlight captures for --syntax. When the AST match does not run but the trees parsed, the fallback still collects every fold and the enclosing-context annotations from the parse.",
+              changeStatus: "modified",
+              coverage: {
+                files: ["src/engine.rs", "src/summary.rs", "src/hash.rs", "src/words.rs", "src/lines.rs", "src/line_parser.rs", "src/conflicts.rs", "src/files.rs"],
+                globs: ["src/diff/**", "src/parse/**"],
+              },
+              codeElements: {
+                diffResult: {
+                  label: "DiffResult",
+                  description: "The domain object: sources, positions, hunks, folds and context for one file.",
+                  sourceRanges: [{ file: "src/summary.rs", fromLine: 1, toLine: 69 }],
+                },
+                fromSources: {
+                  label: "DiffResult::from_sources_with_params",
+                  sourceRanges: [{ file: "src/engine.rs", fromLine: 22, toLine: 67 }],
+                },
+                diffFileContent: {
+                  label: "diff_file_content",
+                  description:
+                    "Parses and diffs one file. When it exceeds a limit it falls back to a line diff with a reason naming the diff.byte_limit or diff.graph_limit key and its value. The too_complex and parse_error fallbacks now keep the parse: they take every fold from each side with folds::unmatched and collect SyntaxAnnotations, so only unsupported_language and too_large produce leaves alone.",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "src/engine.rs", fromLine: 98, toLine: 407 }],
+                },
+                foldClassify: {
+                  label: "folds::classify",
+                  description: "Classifies foldable syntax nodes as paired, added or removed folds.",
+                  sourceRanges: [{ file: "src/parse/folds.rs", fromLine: 33, toLine: 94 }],
+                },
+                foldUnmatched: {
+                  label: "folds::unmatched",
+                  description:
+                    "Every fold in a parsed side as a Novel fold with no correspondence, walking the Syntax tree. Used when the AST match did not run; the projection pairs these folds through the line alignment instead.",
+                  changeStatus: "added",
+                  sourceRanges: [{ file: "src/parse/folds.rs", fromLine: 147, toLine: 158 }],
+                },
+                treeSitterParser: {
+                  label: "tree_sitter_parser",
+                  description: "Language grammars, highlight queries and parsing into the Syntax tree.",
+                  sourceRanges: [{ file: "src/parse/tree_sitter_parser.rs", fromLine: 1, toLine: 60 }],
+                },
+                highlightCaptures: {
+                  label: "highlight_captures",
+                  description: "Every highlight capture in a source as byte intervals with the capture name.",
+                  sourceRanges: [{ file: "src/parse/tree_sitter_parser.rs", fromLine: 1474, toLine: 1497 }],
+                },
+              },
+            },
+            display: {
+              label: "Terminal renderer",
+              description: "Side-by-side and inline text rendering, hunks, context selection and styling for the text output mode.",
+              coverage: { globs: ["src/display/**"] },
+            },
+            wire: {
+              label: "Legacy JSON wire format (v1)",
+              description:
+                "Serializes a DiffResult as domain JSON for --format json and ndjson-v1, and as the snapshot fixture text.",
+              coverage: { globs: ["src/review/**"] },
+              codeElements: {
+                domainJson: {
+                  label: "DiffResult::domain_json",
+                  sourceRanges: [{ file: "src/review/wire.rs", fromLine: 115, toLine: 141 }],
+                },
+                viewerJson: {
+                  label: "DiffResult::viewer_json",
+                  sourceRanges: [{ file: "src/review/wire.rs", fromLine: 142, toLine: 153 }],
+                },
+                snapshot: {
+                  label: "DiffResult::snapshot",
+                  sourceRanges: [{ file: "src/review/render.rs", fromLine: 7, toLine: 107 }],
+                },
+              },
+            },
+            stream: {
+              label: "Legacy NDJSON streaming (ndjson-v1)",
+              description:
+                "The previous event stream, kept as --format ndjson-v1 while frontends migrate. No longer runs the fold hook.",
+              coverage: { files: ["src/stream.rs"] },
+              codeElements: {
+                event: {
+                  label: "Event",
+                  description: "The v1 start/file/file_error/complete event enum.",
+                  sourceRanges: [{ file: "src/stream.rs", fromLine: 16, toLine: 43 }],
+                },
+                write: {
+                  label: "write",
+                  description: "Repository v1 stream entry: emits the manifest, then serializes and flushes each event.",
+                  sourceRanges: [{ file: "src/stream.rs", fromLine: 44, toLine: 77 }],
+                },
+                produce: {
+                  label: "produce",
+                  description: "The v1 worker pool that diffs files concurrently.",
+                  sourceRanges: [{ file: "src/stream.rs", fromLine: 79, toLine: 131 }],
+                },
+                writeFile: {
+                  label: "write_file",
+                  description: "Standalone --no-index v1 stream with file operands.",
+                  sourceRanges: [{ file: "src/stream.rs", fromLine: 152, toLine: 182 }],
+                },
+              },
+            },
+            protocol: {
+              label: "Region-based wire protocol (v2)",
+              description:
+                "The serde types behind docs/streaming.md: start, file and complete records, presence-based lhs/rhs pairings, per-side sources with syntax spans and a region tree whose leaves tile the file and share ids across sides.",
+              coverage: { files: ["src/protocol/mod.rs"] },
+              codeElements: {
+                event: {
+                  label: "Event",
+                  description: "start (version 2, lhs, rhs, files), file (file, then diff or error) and complete (succeeded, failed, aborted).",
+                  sourceRanges: [{ file: "src/protocol/mod.rs", fromLine: 35, toLine: 90 }],
+                },
+                pairing: {
+                  label: "Pairing",
+                  description: "Both, lhs-only or rhs-only, serialized by presence.",
+                  sourceRanges: [{ file: "src/protocol/mod.rs", fromLine: 114, toLine: 208 }],
+                },
+                fileChange: {
+                  label: "FileChange",
+                  description: "Manifest entry: file refs, status, category, language and default visibility.",
+                  sourceRanges: [{ file: "src/protocol/mod.rs", fromLine: 210, toLine: 257 }],
+                },
+                diff: {
+                  label: "Diff and Source",
+                  description: "A text diff with per-side text, syntax spans, regions and stats, or a binary diff with sizes.",
+                  sourceRanges: [{ file: "src/protocol/mod.rs", fromLine: 257, toLine: 297 }],
+                },
+                region: {
+                  label: "Region",
+                  description:
+                    "A leaf with changed spans or a fold with children; id, kind, range, tags and visibility. Leaves correspond when the line alignment pairs their lines; folds correspond when it pairs their header lines, whichever engine produced the alignment.",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "src/protocol/mod.rs", fromLine: 299, toLine: 366 }],
+                },
+                stats: {
+                  label: "Stats and LineCounts",
+                  description:
+                    "Per-file line counts. `textual` counts lines with any byte change; `visible` counts the changed lines still on screen under the default visibility, computed after mutations so hooks and config change it; the `structural` count is gone. `fallback` is present when the AST match did not run: the alignment is then a line diff with word-level changed spans, and folds are still present, paired through that alignment.",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "src/protocol/mod.rs", fromLine: 368, toLine: 390 }],
+                },
+              },
+            },
+            projection: {
+              label: "Wire projection",
+              description:
+                "Projects a DiffResult onto the v2 Diff: builds runs of paired and one-sided lines, collapses every unchanged row no hunk shows (the -U padding plus difftastic's syntax context) into `unchanged` gaps, drops folds that lie wholly inside a gap, pairs the surviving folds across sides through the line alignment rather than the matcher's FoldMatch, splits leaves at fold edges, assigns dense ids in preorder, turns highlight captures into per-line syntax spans, and seeds the stats. The structural line count and its matched-position walk are gone.",
+              changeStatus: "modified",
+              coverage: { files: ["src/protocol/project.rs"] },
+              codeElements: {
+                diff: {
+                  label: "project::diff",
+                  description: "Binary sides short-circuit; text sides get regions, syntax and the seeded stats.",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "src/protocol/project.rs", fromLine: 40, toLine: 84 }],
+                },
+                stats: {
+                  label: "project::stats",
+                  description:
+                    "Counts textual added and removed lines from the line-level change positions, codes the fallback from the FileFormat (unsupported_language for plain text), and seeds `visible` equal to `textual` because nothing but empty context gaps starts collapsed before mutations run.",
+                  changeStatus: "added",
+                  sourceRanges: [{ file: "src/protocol/project.rs", fromLine: 85, toLine: 112 }],
+                },
+                fallbackCode: {
+                  label: "fallback_code",
+                  description: "Maps the engine's fallback prose to the wire codes too_large, too_complex, parse_error or text_fallback by the config key it names.",
+                  sourceRanges: [{ file: "src/protocol/project.rs", fromLine: 113, toLine: 125 }],
+                },
+                syntaxSpans: {
+                  label: "project::syntax_spans",
+                  description: "Per-line, sorted, innermost-wins spans from highlight captures.",
+                  sourceRanges: [{ file: "src/protocol/project.rs", fromLine: 126, toLine: 168 }],
+                },
+                regions: {
+                  label: "regions and runs",
+                  description:
+                    "Line runs from matched positions, gap-aware fold filtering and fold-edge splitting. side_folds now reads one side alone and leaves every fold unpaired; the fold_pairing error and the Side enum are gone.",
+                  changeStatus: "modified",
+                  sourceRanges: [
+                    { file: "src/protocol/project.rs", fromLine: 169, toLine: 318 },
+                    { file: "src/protocol/project.rs", fromLine: 398, toLine: 426 },
+                    { file: "src/protocol/project.rs", fromLine: 476, toLine: 599 },
+                  ],
+                },
+                pairFolds: {
+                  label: "pair_folds",
+                  description:
+                    "Pairs folds across sides: two folds correspond when the line alignment pairs their header lines, changed or not, and their tags agree. Folds sharing a header line pair in order of span length. The same rule serves the structural engine and the text-diff fallback.",
+                  changeStatus: "added",
+                  sourceRanges: [{ file: "src/protocol/project.rs", fromLine: 427, toLine: 475 }],
+                },
+                contextTrim: {
+                  label: "shown_lines and trim_context",
+                  description:
+                    "Collects the lines difftastic's hunks display on each side and collapses the paired unchanged rows outside them into gaps of at least MIN_GAP lines; inside_gap drops folds hidden by a gap.",
+                  sourceRanges: [{ file: "src/protocol/project.rs", fromLine: 319, toLine: 397 }],
+                },
+                tree: {
+                  label: "tree and leaf_region",
+                  description: "Nests leaves under folds by containment and paints changed spans on each leaf.",
+                  sourceRanges: [{ file: "src/protocol/project.rs", fromLine: 600, toLine: 787 }],
+                },
+              },
+            },
+            protocolStream: {
+              label: "NDJSON streaming (v2)",
+              description:
+                "Writes the v2 stream: builds and mutates the manifest before start, runs a pool of --jobs workers that load, diff, project and mutate each file, recounts `stats.visible` once the fold mutations have settled what starts collapsed, and finishes with complete, aborting the run when a mutation fails.",
+              changeStatus: "modified",
+              coverage: { files: ["src/protocol/stream.rs"] },
+              codeElements: {
+                options: {
+                  label: "Options and Ended",
+                  description: "--syntax in; succeeded, failed and aborted out.",
+                  sourceRanges: [{ file: "src/protocol/stream.rs", fromLine: 18, toLine: 30 }],
+                },
+                write: {
+                  label: "write",
+                  description: "Repository v2 stream entry.",
+                  sourceRanges: [{ file: "src/protocol/stream.rs", fromLine: 32, toLine: 80 }],
+                },
+                manifest: {
+                  label: "manifest",
+                  description: "Projects the session's files and applies file mutations before start.",
+                  sourceRanges: [{ file: "src/protocol/stream.rs", fromLine: 85, toLine: 97 }],
+                },
+                produce: {
+                  label: "produce",
+                  description: "The worker pool: load, diff, project, mutate, then queue the record.",
+                  sourceRanges: [{ file: "src/protocol/stream.rs", fromLine: 99, toLine: 158 }],
+                },
+                fileOutcome: {
+                  label: "file_outcome and mutate",
+                  description:
+                    "One file's record: passes the file's path to syntax_spans, projects the diff, applies file and fold mutations, then replaces the seeded `stats.visible` with visible_counts over the mutated sides. A per-file failure passes through untouched.",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "src/protocol/stream.rs", fromLine: 167, toLine: 210 }],
+                },
+                syntaxSpans: {
+                  label: "syntax_spans",
+                  description:
+                    "Highlight spans for both sides. Now takes the file path: a TextFallback diff still gets colours, its language guessed from the path and a text sample, so only plain-text and binary files stay uncoloured.",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "src/protocol/stream.rs", fromLine: 212, toLine: 239 }],
+                },
+                writeFile: {
+                  label: "write_file",
+                  description: "Standalone --no-index v2 stream with path snapshots.",
+                  sourceRanges: [{ file: "src/protocol/stream.rs", fromLine: 258, toLine: 344 }],
+                },
+                visibleCounts: {
+                  label: "visible_counts",
+                  description:
+                    "Walks each side's region tree: a leaf's line counts when it carries a `changed` span, or every line of it when the leaf has no counterpart id on the other side; anything inside a collapsed region, or under one, is skipped. Removed comes from lhs against rhs ids, added from rhs against lhs ids.",
+                  changeStatus: "added",
+                  sourceRanges: [{ file: "src/protocol/stream.rs", fromLine: 346, toLine: 396 }],
+                },
+              },
+            },
+            mutate: {
+              label: "Mutations",
+              description:
+                "Post-projection adjustments to what starts collapsed and what its label says: hidden categories in the manifest, collapsed deleted function bodies, collapsed test bodies on both sides, collapsed middles of large removed runs, the built-in Gemini summarizer over outermost new function bodies, the external fold hook, and last a grouping pass that merges adjacent gaps and wraps runs of collapsed folds. Never touches the diff itself.",
+              changeStatus: "modified",
+              coverage: { globs: ["src/mutate/**"] },
+              codeElements: {
+                traits: {
+                  label: "FileMutation and FoldMutation",
+                  sourceRanges: [{ file: "src/mutate/mod.rs", fromLine: 19, toLine: 25 }],
+                },
+                mutations: {
+                  label: "Mutations",
+                  description:
+                    "The ordered set built from Params; apply_file and apply_fold run them in order. Now registers TestBodies between DeletedBodies and RemovedRuns when folds.collapse_test_bodies is set, and builds the summarizer from its own config alone.",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "src/mutate/mod.rs", fromLine: 29, toLine: 91 }],
+                },
+                helpers: {
+                  label: "region helpers",
+                  description: "walk, ids, line_count, is_fold, comment_marker, summary_label and collapse.",
+                  sourceRanges: [{ file: "src/mutate/mod.rs", fromLine: 92, toLine: 182 }],
+                },
+                hiddenCategories: {
+                  label: "HiddenCategories",
+                  description: "collapse_generated and collapse_tests set manifest visibility.",
+                  sourceRanges: [{ file: "src/mutate/collapse.rs", fromLine: 12, toLine: 31 }],
+                },
+                deletedBodies: {
+                  label: "DeletedBodies",
+                  description: "Collapses lhs-only folds tagged `function` (no longer any `body`) of at least min_lines with an '<n> lines removed' label.",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "src/mutate/collapse.rs", fromLine: 32, toLine: 57 }],
+                },
+                testBodies: {
+                  label: "TestBodies",
+                  description:
+                    "Collapses folds tagged `test` of three or more lines on both sides, paired or not, with a 'test body' label, so the diff reads as the code under test first. Runs after DeletedBodies.",
+                  changeStatus: "added",
+                  sourceRanges: [{ file: "src/mutate/collapse.rs", fromLine: 59, toLine: 88 }],
+                },
+                removedRuns: {
+                  label: "RemovedRuns",
+                  description:
+                    "Splits lhs-only leaves of at least folds.collapse_removed_lines lines (minimum 3) into an open first line, a collapsed middle labelled with its line count, and an open last line; skips leaves under an already-collapsed fold. Runs after TestBodies and before the summarizer.",
+                  sourceRanges: [{ file: "src/mutate/collapse.rs", fromLine: 90, toLine: 200 }],
+                },
+                summarizer: {
+                  label: "Summarizer",
+                  description:
+                    "Built-in summarizer: asks Gemini over reqwest for python-flavored pseudocode of new function bodies, with retries and bounded concurrency, and collapses them with a pseudocode comment label. The threshold is now summarize.min_lines; the prompt asks for at most a third of the body's lines and the output budget grew; answers that do not compress are dropped and the body stays open.",
+                  changeStatus: "modified",
+                  sourceRanges: [
+                    { file: "src/mutate/summarize.rs", fromLine: 15, toLine: 220 },
+                    { file: "src/mutate/summarize.rs", fromLine: 284, toLine: 329 },
+                  ],
+                },
+                summarizeSelect: {
+                  label: "summarize::select",
+                  description:
+                    "Chooses rhs-only folds tagged `function` of at least min_lines lines. Now takes only the outermost qualifying body, never a nested one, and skips test bodies and folds that already start collapsed.",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "src/mutate/summarize.rs", fromLine: 221, toLine: 256 }],
+                },
+                compresses: {
+                  label: "compresses",
+                  description: "True when the summary has at most half the body's non-blank lines; longer answers are discarded.",
+                  changeStatus: "added",
+                  sourceRanges: [{ file: "src/mutate/summarize.rs", fromLine: 258, toLine: 265 }],
+                },
+                groupCollapsed: {
+                  label: "GroupCollapsed",
+                  description:
+                    "The last fold mutation: merges adjacent `unchanged` gaps into one and wraps runs of two or more adjacent collapsed sibling folds (with their header lines) in a new collapsed `group` fold labelled '<n> functions removed', '<n> test bodies', 'summarized' or 'folded regions'. It no longer descends into collapsed folds. Ids stay paired: a side merges or groups only when the other side does the same or holds none of the ids.",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "src/mutate/group.rs", fromLine: 15, toLine: 297 }],
+                },
+              },
+            },
+            hook: {
+              label: "Fold hook client",
+              description:
+                "Starts the configured JSON-RPC 2.0 hook process on a loopback port, waits for it to listen, and as a FoldMutation calls summarize once per file over the v2 regions after the built-in summarizer.",
+              coverage: { files: ["src/hook.rs"] },
+              codeElements: {
+                hook: {
+                  label: "Hook",
+                  sourceRanges: [{ file: "src/hook.rs", fromLine: 63, toLine: 72 }],
+                },
+                spawn: {
+                  label: "Hook::spawn",
+                  sourceRanges: [{ file: "src/hook.rs", fromLine: 74, toLine: 127 }],
+                },
+                call: {
+                  label: "Hook::call",
+                  description: "One JSON-RPC summarize request over the shared HTTP client.",
+                  sourceRanges: [{ file: "src/hook.rs", fromLine: 128, toLine: 164 }],
+                },
+                apply: {
+                  label: "FoldMutation for Hook",
+                  description: "Selects qualifying rhs-only folds, calls the hook, and collapses each fold with the returned text.",
+                  sourceRanges: [{ file: "src/hook.rs", fromLine: 165, toLine: 228 }],
+                },
+              },
+            },
+          },
+        },
+        tui: {
+          label: "Terminal viewer (Bun/OpenTUI)",
+          description:
+            "The React/OpenTUI frontend adapted from Hunk. Spawns the Rust CLI with --format ndjson --syntax, validates the v2 records, zips per-side region leaves by id into split or unified rows, colours them from a Helix theme chosen by diffr's [theme] config, and hosts the diffr config settings screen.",
+          changeStatus: "modified",
+          coverage: { files: ["tui/package.json", "tui/README.md", "tui/tsconfig.json"], globs: ["tui/packages/**", "tui/themes/**"] },
+          components: {
+            launcher: {
+              label: "Launcher",
+              description:
+                "main.tsx: with --settings renders the Settings screen over a diffr binary; otherwise spawns the diffr subprocess or reads a saved --input stream, then mounts the App. Now resolves the theme set first: from diffr config show when a binary is given, or from --theme <name|file.toml> (default default-dark) for a recording.",
+              changeStatus: "modified",
+              coverage: { files: ["tui/packages/hunk/src/main.tsx"] },
+              codeElements: {
+                main: {
+                  label: "main.tsx",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/main.tsx", fromLine: 1, toLine: 126 }],
+                },
+              },
+            },
+            theme: {
+              label: "Helix themes",
+              description:
+                "Loads Helix editor themes (TOML keyed by tree-sitter capture names with a [palette] and ui.* chrome keys) into the row painter's Palette. A capture falls back to its parent scope; change tints are mixed from the background and diff.plus/diff.minus; inherited themes and unknown names are errors. Four themes are vendored under tui/themes (onedark, onelight, gruvbox, solarized_light) with default-dark and default-light as aliases.",
+              changeStatus: "added",
+              coverage: { files: ["tui/packages/hunk/src/diffr/theme.ts"], globs: ["tui/themes/**"] },
+              codeElements: {
+                palette: {
+                  label: "Palette",
+                  description: "The colours the painter reads: bg, fg, muted, chrome, highlight, change tints, added/removed text, accent, fold colours, and a syntax(capture) lookup.",
+                  changeStatus: "added",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/theme.ts", fromLine: 4, toLine: 39 }],
+                },
+                parseHelixTheme: {
+                  label: "parseHelixTheme",
+                  description: "Parses the TOML into scope styles and a palette map; rejects `inherits`.",
+                  changeStatus: "added",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/theme.ts", fromLine: 52, toLine: 74 }],
+                },
+                scopeLookup: {
+                  label: "colorOf and scopeStyle",
+                  description: "Resolves a palette name, hex or Helix terminal colour name; finds a scope's style by walking up its dotted parents.",
+                  changeStatus: "added",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/theme.ts", fromLine: 75, toLine: 110 }],
+                },
+                paletteFromHelix: {
+                  label: "paletteFromHelix",
+                  description: "Builds the Palette: chrome from ui.*, light/dark from the background luminance, tints mixed toward diff.plus and diff.minus.",
+                  changeStatus: "added",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/theme.ts", fromLine: 111, toLine: 139 }],
+                },
+                loadTheme: {
+                  label: "bundledThemes, loadBundledTheme and loadThemeFile",
+                  changeStatus: "added",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/theme.ts", fromLine: 140, toLine: 156 }],
+                },
+                themesFromConfig: {
+                  label: "ThemeSet, themesFromConfig and themeConfig",
+                  description: "Reads theme.name and theme.path out of diffr config show and resolves the initial palette plus the two defaults the t key toggles between.",
+                  changeStatus: "added",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/theme.ts", fromLine: 157, toLine: 173 }],
+                },
+              },
+            },
+            wire: {
+              label: "Wire schemas (v2)",
+              description:
+                "zod schemas that validate the v2 records, pairings, sources, regions and stats, filling omitted defaults. Stats now carry `textual`, `visible` and an optional `fallback` problem; the `structural` field is gone and LineCounts is exported for the summary.",
+              changeStatus: "modified",
+              coverage: { files: ["tui/packages/hunk/src/diffr/wire.ts"] },
+              codeElements: {
+                diffSchema: {
+                  label: "diff, source, region and stats schemas",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/wire.ts", fromLine: 5, toLine: 84 }],
+                },
+                eventSchema: {
+                  label: "eventSchema",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/wire.ts", fromLine: 85, toLine: 100 }],
+                },
+              },
+            },
+            stream: {
+              label: "Stream reader",
+              description: "Validates record ordering, version 2 and completion counts across arbitrary chunk boundaries.",
+              coverage: { files: ["tui/packages/hunk/src/diffr/stream.ts"] },
+              codeElements: {
+                readDiffStream: {
+                  label: "readDiffStream",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/stream.ts", fromLine: 3, toLine: 63 }],
+                },
+              },
+            },
+            store: {
+              label: "Diff store",
+              description:
+                "Holds the manifest, completed files and per-file errors so the UI can render while results arrive. The snapshot now also keeps the two comparison ends from the start event for the header label.",
+              changeStatus: "modified",
+              coverage: { files: ["tui/packages/hunk/src/diffr/store.ts"] },
+              codeElements: {
+                diffStore: {
+                  label: "DiffStore",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/store.ts", fromLine: 14, toLine: 71 }],
+                },
+              },
+            },
+            counts: {
+              label: "Change summary counts",
+              description:
+                "The GitHub-style headline for the header bar: visible added and removed lines, adjusted locally from diffr's `stats.visible` as the reader folds, unfolds or closes files; the five-block share bar; and the lhs…rhs comparison label built from the start snapshots.",
+              changeStatus: "added",
+              coverage: { files: ["tui/packages/hunk/src/diffr/counts.ts"] },
+              codeElements: {
+                visibleCounts: {
+                  label: "visibleCounts and shownLines",
+                  description:
+                    "Counts novel-leaf lines not hidden by the given collapsed set, then applies the delta between that and diffr's default fold state to `stats.visible`, the same rule the CLI used. A closed or binary file counts as zero.",
+                  changeStatus: "added",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/counts.ts", fromLine: 8, toLine: 31 }],
+                },
+                blockBar: {
+                  label: "blockBar",
+                  description: "Whole blocks by share; any non-zero side keeps one block; the rest are neutral.",
+                  changeStatus: "added",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/counts.ts", fromLine: 32, toLine: 49 }],
+                },
+                comparisonLabel: {
+                  label: "snapshotLabel and comparisonLabel",
+                  description: "Short hashes for 40-hex revisions; index, working tree, empty tree and paths by name.",
+                  changeStatus: "added",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/counts.ts", fromLine: 50, toLine: 70 }],
+                },
+              },
+            },
+            regions: {
+              label: "Region flattening",
+              description:
+                "Flattens each side's region tree into leaves and folds, classifies novel leaves, seeds the default collapsed set from visibility, computes hidden lines per side, and finds context gaps and fold headers.",
+              changeStatus: "modified",
+              coverage: { files: ["tui/packages/hunk/src/diffr/regions.ts"] },
+              codeElements: {
+                flatten: {
+                  label: "flattenSide and flatten",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/regions.ts", fromLine: 38, toLine: 73 }],
+                },
+                novelLeaves: {
+                  label: "novelLeaves",
+                  description: "A leaf is novel when it carries change spans or has no counterpart id on the other side. Lifted out of rowsForFile so the counts share the rule.",
+                  changeStatus: "added",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/regions.ts", fromLine: 74, toLine: 82 }],
+                },
+                defaultCollapsed: {
+                  label: "defaultCollapsed, foldIds, nestedIds, gapIds",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/regions.ts", fromLine: 83, toLine: 105 }],
+                },
+                hiddenLines: {
+                  label: "hiddenLines",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/regions.ts", fromLine: 106, toLine: 116 }],
+                },
+                foldHeaders: {
+                  label: "foldHeaders",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/regions.ts", fromLine: 117, toLine: 133 }],
+                },
+              },
+            },
+            rows: {
+              label: "Row projection",
+              description:
+                "Zips the two leaf lists by id into split or unified viewer rows, tints every line of a novel leaf (one with changed spans or no counterpart on the other side) as an addition or deletion with the darker word tint on its spans, paints syntax capture colours from the theme's scope lookup, adds collapsed-file placeholders and hanging fold labels, and measures wrapped row geometry. The hard-coded GitHub palettes and capture-to-key table are gone; dark and light are now the bundled Helix defaults.",
+              changeStatus: "modified",
+              coverage: {
+                files: ["tui/packages/hunk/src/diffr/rows.ts", "tui/packages/hunk/src/diffr/geometry.ts", "tui/packages/hunk/src/diffr/selection.ts", "tui/packages/hunk/src/diffr/fileTree.ts"],
+              },
+              codeElements: {
+                rowsForFile: {
+                  label: "rowsForFile",
+                  description:
+                    "Builds the rows; a cell is an addition or deletion when its leaf is novel, not only on lines that carry a changed span. Now asks regions.novelLeaves instead of computing the set inline.",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/rows.ts", fromLine: 90, toLine: 202 }],
+                },
+                lineCounts: {
+                  label: "fileTree.lineCounts",
+                  description: "Per-file textual and visible counts plus the fallback problem; zeros for a binary file.",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/fileTree.ts", fromLine: 55, toLine: 59 }],
+                },
+                lineSpans: {
+                  label: "lineSpans and captureColor",
+                  description: "captureColor now asks the Palette's syntax(capture) lookup and falls back to plain text.",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/rows.ts", fromLine: 22, toLine: 82 }],
+                },
+                placeholderRows: {
+                  label: "placeholderRows",
+                  description: "The Load diff placeholder for files diffr marks hidden.",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/rows.ts", fromLine: 83, toLine: 89 }],
+                },
+                measureRows: {
+                  label: "measureRows",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/geometry.ts", fromLine: 24, toLine: 65 }],
+                },
+                buildFileTree: {
+                  label: "buildFileTree",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/fileTree.ts", fromLine: 14, toLine: 43 }],
+                },
+                copySelection: {
+                  label: "copySelection",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/selection.ts", fromLine: 18, toLine: 48 }],
+                },
+              },
+            },
+            settings: {
+              label: "Settings client",
+              description:
+                "Flattens the diffr config schema and resolved values into settings, fuzzy-filters them, parses typed edits, and drives the diffr config schema/show/set commands.",
+              coverage: { files: ["tui/packages/hunk/src/diffr/config.ts"] },
+              codeElements: {
+                flattenSchema: {
+                  label: "flattenSchema",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/config.ts", fromLine: 56, toLine: 81 }],
+                },
+                filterSettings: {
+                  label: "fuzzyScore and filterSettings",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/config.ts", fromLine: 82, toLine: 107 }],
+                },
+                parseValue: {
+                  label: "parseValue",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/config.ts", fromLine: 112, toLine: 130 }],
+                },
+                cliClient: {
+                  label: "cliClient",
+                  description: "A ConfigClient that shells out to diffr config schema, show --json and set.",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/diffr/config.ts", fromLine: 131, toLine: 146 }],
+                },
+              },
+            },
+            ui: {
+              label: "OpenTUI views",
+              description:
+                "App.tsx owns layout, file expansion, viewport, collapsed region ids, selection and mouse/keyboard coordination, and now a GitHub-style header: the comparison label, visible +/− totals with a five-block bar, and an `i` breakdown overlay of visible and textual counts per file and overall with line-diff notes; CodeRowView paints measured cells and fold labels; Settings is the searchable settings list with a dedicated edit view per setting. Chrome, highlight and accent colours now come from the Palette instead of literals.",
+              changeStatus: "modified",
+              coverage: { globs: ["tui/packages/hunk/src/ui/**", "tui/packages/hunk/src/lib/**"] },
+              codeElements: {
+                app: {
+                  label: "App",
+                  description:
+                    "Takes a ThemeSet prop and holds the current Palette in state; t and the Theme menu swap between the bundled dark and light defaults, leaving a configured theme after the first press. The row cache key carries the theme name. Recomputes visibleCounts per file whenever the collapsed set or closed files change, sums them into the header totals, and toggles the breakdown overlay on click or `i`.",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/ui/App.tsx", fromLine: 39, toLine: 605 }],
+                },
+                codeRowView: {
+                  label: "CodeRowView",
+                  description: "Imports Palette from theme.ts and paints the selected side with the theme's highlight colour.",
+                  changeStatus: "modified",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/ui/diff/CodeRowView.tsx", fromLine: 40, toLine: 187 }],
+                },
+                settings: {
+                  label: "Settings",
+                  description:
+                    "Searchable list of settings; Enter opens a full-screen edit view showing the key, description and default, where booleans and enums pick from a list and numbers and strings use a text field, saved through the config client.",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/ui/Settings.tsx", fromLine: 28, toLine: 130 }],
+                },
+                settingsDisplay: {
+                  label: "isSecret and displayValue",
+                  description: "Masks credential-looking keys such as api_key and renders empty values as <unset>.",
+                  sourceRanges: [{ file: "tui/packages/hunk/src/ui/Settings.tsx", fromLine: 18, toLine: 22 }],
+                },
+              },
+            },
+          },
+        },
+        referenceHook: {
+          label: "Reference fold hook",
+          description:
+            "examples/hooks/summarize.py: an aiohttp + jsonrpcserver process that answers summarize calls with Gemini-generated pseudocode. tests/hooks/rpc_server.py is the dependency-free hook used by tests.",
+          coverage: { globs: ["examples/hooks/**"] },
+          components: {
+            summarize: {
+              label: "summarize handler",
+              coverage: { files: ["examples/hooks/summarize.py"] },
+              codeElements: {
+                handle: {
+                  label: "handle",
+                  sourceRanges: [{ file: "examples/hooks/summarize.py", fromLine: 111, toLine: 121 }],
+                },
+                complete: {
+                  label: "complete",
+                  description: "Asks Gemini for pseudocode for the requested folds.",
+                  sourceRanges: [{ file: "examples/hooks/summarize.py", fromLine: 68, toLine: 110 }],
+                },
+              },
+            },
+          },
+        },
+        fixtureViewer: {
+          label: "Fixture viewer and examples",
+          description:
+            "Static browser viewer for captured v1 CLI streams beside Git/Myers output, plus real-PR fixtures with expected DiffResult additions. Its build script now captures --format ndjson-v1.",
+          coverage: { globs: ["examples/review/**"] },
+        },
+        tests: {
+          label: "Test suites",
+          description:
+            "Rust CLI and review integration tests, the Python v2 streaming contract check (tiling, pairing, errors, and the [diff] limit fallback via --graph-limit and --set), and the Bun unit and PTY integration tests.",
+          coverage: { globs: ["tests/**", "tui/test/**"] },
+        },
+      },
+      dataStores: {
+        diffrToml: {
+          label: "Configuration files",
+          kind: "fileStore",
+          description:
+            "The global $XDG_CONFIG_HOME/diffr/config.toml written by diffr config set, and the repository-root diffr.toml for language queries, team-wide rules and the [diff] structural limits.",
+        },
+      },
+    },
+    git: {
+      label: "Git repository",
+      external: true,
+      description: "The repository being compared, read through libgit2 and git check-attr.",
+    },
+    treeSitter: {
+      label: "tree-sitter grammars",
+      external: true,
+      description: "Vendored tree-sitter parsers and highlight queries used to parse each source file.",
+    },
+    gemini: {
+      label: "Gemini API",
+      external: true,
+      description: "Google's model API called by the built-in summarizer and the reference hook for fold pseudocode.",
+    },
+  },
+  relationships: [
+    { kind: "semantic", from: "developer", to: "diffr.cli", label: "runs git-style comparisons and diffr config" },
+    { kind: "semantic", from: "developer", to: "diffr.tui", label: "reads the diff and edits settings" },
+    { kind: "semantic", from: "toolingConsumer", to: "diffr.cli.protocolStream", label: "consumes --format ndjson" },
+    { kind: "semantic", from: "toolingConsumer", to: "diffr.cli.stream", label: "consumes --format ndjson-v1 during migration" },
+    { kind: "semantic", from: "diffr.cli.cli", to: "diffr.tui.launcher", label: "launches Bun with the same arguments when interactive, or --settings" },
+    { kind: "semantic", from: "diffr.tui.launcher", to: "diffr.cli.cli", label: "spawns diffr --format ndjson --syntax, after diffr config show for the theme" },
+    { kind: "semantic", from: "diffr.tui.launcher", to: "diffr.tui.theme", label: "resolves the theme set at startup" },
+    { kind: "semantic", from: "diffr.tui.rows", to: "diffr.tui.theme", label: "colours captures through the palette's scope lookup" },
+    { kind: "semantic", from: "diffr.tui.ui", to: "diffr.tui.theme", label: "paints chrome from the palette; t toggles the bundled defaults" },
+    { kind: "semantic", from: "diffr.tui.theme", to: "diffr.cli.config", label: "reads [theme] name and path from config show" },
+    { kind: "semantic", from: "diffr.tui.settings", to: "diffr.cli.cli", label: "diffr config schema, show --json, set" },
+    { kind: "semantic", from: "diffr.cli.cli", to: "diffr.cli.git", label: "resolves operands and opens a DiffSession" },
+    { kind: "semantic", from: "diffr.cli.cli", to: "diffr.cli.config", label: "resolves the layered configuration" },
+    { kind: "semantic", from: "diffr.cli.cli", to: "diffr.cli.protocolStream", label: "writes the v2 stream" },
+    { kind: "semantic", from: "diffr.cli.cli", to: "diffr.cli.stream", label: "writes the v1 stream" },
+    { kind: "semantic", from: "diffr.cli.cli", to: "diffr.cli.mutate", label: "builds Mutations from Params" },
+    { kind: "semantic", from: "diffr.cli.cli", to: "diffr.cli.display", label: "renders text output" },
+    { kind: "semantic", from: "diffr.cli.stream", to: "diffr.cli.git", label: "pulls files from the DiffSession" },
+    { kind: "semantic", from: "diffr.cli.stream", to: "diffr.cli.engine", label: "diffs each file" },
+    { kind: "semantic", from: "diffr.cli.stream", to: "diffr.cli.wire", label: "serializes DiffResult as domain JSON" },
+    { kind: "semantic", from: "diffr.cli.protocolStream", to: "diffr.cli.git", label: "pulls files from the DiffSession" },
+    { kind: "semantic", from: "diffr.cli.protocolStream", to: "diffr.cli.engine", label: "diffs each file" },
+    { kind: "semantic", from: "diffr.cli.protocolStream", to: "diffr.cli.projection", label: "projects each DiffResult" },
+    { kind: "semantic", from: "diffr.cli.protocolStream", to: "diffr.cli.mutate", label: "applies file and fold mutations" },
+    { kind: "semantic", from: "diffr.cli.protocolStream", to: "diffr.cli.protocol", label: "serializes records" },
+    { kind: "semantic", from: "diffr.cli.projection", to: "diffr.cli.protocol", label: "produces Diff, Source and Region" },
+    { kind: "semantic", from: "diffr.cli.projection", to: "diffr.cli.engine", label: "reads matched positions, folds and highlight captures" },
+    { kind: "semantic", from: "diffr.cli.mutate", to: "diffr.cli.protocol", label: "sets visibility on files and regions" },
+    { kind: "semantic", from: "diffr.cli.mutate", to: "diffr.cli.hook", label: "runs the fold hook last" },
+    { kind: "semantic", from: "diffr.cli.mutate", to: "gemini", label: "built-in summarizer requests pseudocode" },
+    { kind: "semantic", from: "diffr.cli.engine", to: "diffr.cli.config", label: "uses compiled fold and context queries" },
+    { kind: "semantic", from: "diffr.cli.engine", to: "treeSitter", label: "parses sources" },
+    { kind: "semantic", from: "diffr.cli.git", to: "git", label: "reads trees, index, worktree and attributes" },
+    { kind: "semantic", from: "diffr.cli.git", to: "diffr.cli.protocol", label: "projects manifest entries and snapshots" },
+    { kind: "semantic", from: "diffr.cli.config", to: "diffr.diffrToml", label: "reads layers and writes single keys" },
+    { kind: "semantic", from: "diffr.cli.hook", to: "diffr.referenceHook", label: "JSON-RPC summarize over loopback HTTP" },
+    { kind: "semantic", from: "diffr.referenceHook", to: "gemini", label: "requests pseudocode" },
+    { kind: "semantic", from: "diffr.tui.launcher", to: "diffr.tui.stream", label: "feeds stdout chunks" },
+    { kind: "semantic", from: "diffr.tui.stream", to: "diffr.tui.wire", label: "validates records" },
+    { kind: "semantic", from: "diffr.tui.stream", to: "diffr.tui.store", label: "records manifest and results" },
+    { kind: "semantic", from: "diffr.tui.ui", to: "diffr.tui.store", label: "renders loaded files" },
+    { kind: "semantic", from: "diffr.tui.ui", to: "diffr.tui.rows", label: "projects rows and measures geometry" },
+    { kind: "semantic", from: "diffr.tui.ui", to: "diffr.tui.regions", label: "seeds and toggles collapsed region ids" },
+    { kind: "semantic", from: "diffr.tui.ui", to: "diffr.tui.settings", label: "settings screen edits values" },
+    { kind: "semantic", from: "diffr.tui.rows", to: "diffr.tui.regions", label: "zips leaves and masks hidden lines" },
+    { kind: "semantic", from: "diffr.tests", to: "diffr.cli", label: "exercises the CLI and the v2 stream contract" },
+    { kind: "semantic", from: "diffr.tests", to: "diffr.tui", label: "unit and PTY tests" },
+    { kind: "semantic", from: "diffr.fixtureViewer", to: "diffr.cli.stream", label: "replays captured v1 streams" },
+
+    { kind: "call", from: "diffr.cli.entry.main", to: "diffr.cli.cli.run", label: "dispatches git-style arguments" },
+    { kind: "call", from: "diffr.cli.entry.main", to: "diffr.cli.entry.runDebug", label: "debug subcommand" },
+    { kind: "semantic", from: "diffr.cli.cli.run", to: "diffr.cli.options", label: "builds DisplayOptions" },
+    { kind: "call", from: "diffr.cli.cli.run", to: "diffr.cli.cli.diffOptions", label: "engine limits from Params" },
+    { kind: "call", from: "diffr.cli.cli.noIndex", to: "diffr.cli.cli.diffOptions", label: "engine limits from the compiled config" },
+    { kind: "call", from: "diffr.cli.cli.diffOptions", to: "diffr.cli.config.diffConfig", label: "DiffConfig::options, then command-line flags win" },
+    { kind: "semantic", from: "diffr.cli.config.diffConfig", to: "diffr.cli.options", label: "produces DiffOptions" },
+    { kind: "call", from: "diffr.cli.config.compile", to: "diffr.cli.config.diffConfig", label: "copies into Params" },
+    { kind: "semantic", from: "diffr.tui.ui", to: "diffr.tui.counts", label: "header totals, block bar and comparison label" },
+    { kind: "semantic", from: "diffr.tui.counts", to: "diffr.tui.regions", label: "counts novel leaves under a collapsed set" },
+    { kind: "semantic", from: "diffr.tui.counts", to: "diffr.tui.wire", label: "starts from stats.visible" },
+    { kind: "semantic", from: "diffr.cli.engine.diffFileContent", to: "diffr.cli.projection.fallbackCode", label: "fallback reasons name diff.byte_limit or diff.graph_limit" },
+    { kind: "call", from: "diffr.cli.cli.run", to: "diffr.cli.cli.select" },
+    { kind: "call", from: "diffr.cli.cli.run", to: "diffr.cli.cli.printMetadata" },
+    { kind: "call", from: "diffr.cli.cli.run", to: "diffr.cli.cli.noIndex" },
+    { kind: "call", from: "diffr.cli.cli.run", to: "diffr.cli.cli.runConfig", label: "config subcommand" },
+    { kind: "call", from: "diffr.cli.cli.run", to: "diffr.cli.cli.loadConfig" },
+    { kind: "call", from: "diffr.cli.cli.run", to: "diffr.cli.cli.launchTui" },
+    { kind: "call", from: "diffr.cli.cli.loadConfig", to: "diffr.cli.config.sources", label: "assembles" },
+    { kind: "call", from: "diffr.cli.cli.loadConfig", to: "diffr.cli.config.load" },
+    { kind: "call", from: "diffr.cli.config.load", to: "diffr.cli.config.config", label: "deserializes" },
+    { kind: "call", from: "diffr.cli.cli.run", to: "diffr.cli.config.compile" },
+    { kind: "call", from: "diffr.cli.config.compile", to: "diffr.cli.config.annotationQuery", label: "compiles queries" },
+    { kind: "call", from: "diffr.cli.config.compile", to: "diffr.cli.config.params", label: "produces" },
+    { kind: "call", from: "diffr.cli.cli.runConfig", to: "diffr.cli.config.schema" },
+    { kind: "call", from: "diffr.cli.cli.runConfig", to: "diffr.cli.config.storeShow" },
+    { kind: "call", from: "diffr.cli.cli.runConfig", to: "diffr.cli.config.storeSet" },
+    { kind: "call", from: "diffr.cli.cli.runConfig", to: "diffr.cli.cli.launchTui", label: "opens the settings screen" },
+    { kind: "call", from: "diffr.cli.config.storeSet", to: "diffr.cli.config.config", label: "validates against" },
+    { kind: "call", from: "diffr.cli.cli.select", to: "diffr.cli.git.comparison", label: "builds" },
+    { kind: "call", from: "diffr.cli.cli.run", to: "diffr.cli.git.diffSession", label: "opens" },
+    { kind: "call", from: "diffr.cli.cli.run", to: "diffr.cli.mutate.mutations", label: "builds for ndjson" },
+    { kind: "call", from: "diffr.cli.git.diffSession", to: "diffr.cli.git.comparison", label: "runs the libgit2 diff" },
+    { kind: "call", from: "diffr.cli.git.diffSession", to: "diffr.cli.git.fileChange", label: "builds the manifest" },
+    { kind: "call", from: "diffr.cli.git.diffSession", to: "diffr.cli.git.fileProblem", label: "reports read failures" },
+    { kind: "call", from: "diffr.cli.git.fileChange", to: "diffr.cli.git.checkDiffAttr", label: "diffr-classify and linguist-generated" },
+    { kind: "call", from: "diffr.cli.git.fileChange", to: "diffr.cli.git.categoryFromPath", label: "built-in path rules" },
+    { kind: "call", from: "diffr.cli.git.fileChange", to: "diffr.cli.protocol.fileChange", label: "manifest_entry" },
+    { kind: "call", from: "diffr.cli.cli.run", to: "diffr.cli.stream.write", label: "ndjson-v1 output" },
+    { kind: "call", from: "diffr.cli.cli.noIndex", to: "diffr.cli.stream.writeFile", label: "standalone ndjson-v1 output" },
+    { kind: "call", from: "diffr.cli.cli.run", to: "diffr.cli.protocolStream.write", label: "ndjson output" },
+    { kind: "call", from: "diffr.cli.cli.noIndex", to: "diffr.cli.protocolStream.writeFile", label: "standalone ndjson output" },
+    { kind: "call", from: "diffr.cli.cli.run", to: "diffr.cli.protocolStream.options", label: "fills from -U, --syntax and --jobs" },
+    { kind: "call", from: "diffr.cli.cli.run", to: "diffr.cli.wire.viewerJson", label: "json output" },
+    { kind: "call", from: "diffr.cli.cli.run", to: "diffr.cli.wire.snapshot", label: "snapshot output" },
+    { kind: "semantic", from: "diffr.cli.cli.launchTui", to: "diffr.tui.launcher.main", label: "spawns bun with the entry file" },
+    { kind: "call", from: "diffr.cli.stream.write", to: "diffr.cli.stream.produce" },
+    { kind: "call", from: "diffr.cli.stream.write", to: "diffr.cli.stream.event", label: "serializes" },
+    { kind: "call", from: "diffr.cli.stream.produce", to: "diffr.cli.git.diffSession", label: "loads next file" },
+    { kind: "call", from: "diffr.cli.stream.produce", to: "diffr.cli.engine.fromSources" },
+    { kind: "call", from: "diffr.cli.stream.event", to: "diffr.cli.wire.domainJson", label: "file event payload" },
+    { kind: "call", from: "diffr.cli.protocolStream.write", to: "diffr.cli.protocolStream.manifest" },
+    { kind: "call", from: "diffr.cli.protocolStream.write", to: "diffr.cli.protocolStream.produce" },
+    { kind: "call", from: "diffr.cli.protocolStream.write", to: "diffr.cli.protocol.event", label: "serializes start, file and complete" },
+    { kind: "call", from: "diffr.cli.protocolStream.manifest", to: "diffr.cli.git.diffSession", label: "file_manifest" },
+    { kind: "call", from: "diffr.cli.protocolStream.manifest", to: "diffr.cli.mutate.mutations", label: "apply_file" },
+    { kind: "call", from: "diffr.cli.protocolStream.produce", to: "diffr.cli.git.diffSession", label: "loads next file" },
+    { kind: "call", from: "diffr.cli.protocolStream.produce", to: "diffr.cli.engine.fromSources" },
+    { kind: "call", from: "diffr.cli.protocolStream.produce", to: "diffr.cli.projection.diff" },
+    { kind: "call", from: "diffr.cli.protocolStream.produce", to: "diffr.cli.protocolStream.syntaxSpans", label: "with --syntax" },
+    { kind: "call", from: "diffr.cli.protocolStream.produce", to: "diffr.cli.mutate.mutations", label: "apply_fold" },
+    { kind: "call", from: "diffr.cli.protocolStream.produce", to: "diffr.cli.protocol.pairing", label: "sides by presence" },
+    { kind: "call", from: "diffr.cli.protocolStream.syntaxSpans", to: "diffr.cli.projection.syntaxSpans" },
+    { kind: "call", from: "diffr.cli.protocolStream.writeFile", to: "diffr.cli.protocolStream.produce" },
+    { kind: "call", from: "diffr.cli.projection.diff", to: "diffr.cli.projection.regions" },
+    { kind: "call", from: "diffr.cli.projection.diff", to: "diffr.cli.projection.tree" },
+    { kind: "call", from: "diffr.cli.projection.diff", to: "diffr.cli.protocol.diff", label: "produces" },
+    { kind: "call", from: "diffr.cli.projection.diff", to: "diffr.cli.projection.stats", label: "seeds the stats" },
+    { kind: "call", from: "diffr.cli.projection.stats", to: "diffr.cli.protocol.stats", label: "textual, visible seeded from textual, fallback" },
+    { kind: "call", from: "diffr.cli.projection.stats", to: "diffr.cli.projection.fallbackCode", label: "codes a TextFallback reason" },
+    { kind: "call", from: "diffr.cli.protocolStream.produce", to: "diffr.cli.protocolStream.fileOutcome", label: "one record per file" },
+    { kind: "call", from: "diffr.cli.protocolStream.fileOutcome", to: "diffr.cli.protocolStream.visibleCounts", label: "recounts stats.visible after fold mutations" },
+    { kind: "call", from: "diffr.cli.protocolStream.visibleCounts", to: "diffr.cli.protocol.region", label: "walks leaves, folds and collapsed visibility" },
+    { kind: "call", from: "diffr.cli.protocolStream.visibleCounts", to: "diffr.cli.protocol.stats", label: "produces LineCounts" },
+    { kind: "call", from: "diffr.cli.projection.tree", to: "diffr.cli.protocol.region", label: "builds leaves and folds" },
+    { kind: "call", from: "diffr.cli.projection.regions", to: "diffr.cli.engine.diffResult", label: "reads matched positions and per-side folds" },
+    { kind: "call", from: "diffr.cli.projection.regions", to: "diffr.cli.projection.pairFolds", label: "pairs folds through the aligned rows" },
+    { kind: "call", from: "diffr.cli.projection.regions", to: "diffr.cli.projection.contextTrim" },
+    { kind: "call", from: "diffr.cli.projection.contextTrim", to: "diffr.cli.display", label: "reads the Hunk lines difftastic selected" },
+    { kind: "call", from: "diffr.cli.projection.syntaxSpans", to: "diffr.cli.engine.highlightCaptures" },
+    { kind: "call", from: "diffr.cli.engine.fromSources", to: "diffr.cli.engine.diffFileContent" },
+    { kind: "call", from: "diffr.cli.engine.diffFileContent", to: "diffr.cli.engine.treeSitterParser", label: "parses both sides" },
+    { kind: "call", from: "diffr.cli.engine.diffFileContent", to: "diffr.cli.engine.foldClassify" },
+    { kind: "call", from: "diffr.cli.engine.diffFileContent", to: "diffr.cli.engine.foldUnmatched", label: "too_complex and parse_error fallbacks" },
+    { kind: "call", from: "diffr.cli.engine.diffFileContent", to: "diffr.cli.engine.diffResult", label: "produces" },
+    { kind: "call", from: "diffr.cli.engine.treeSitterParser", to: "diffr.cli.config.params", label: "reads language queries" },
+    { kind: "call", from: "diffr.cli.mutate.mutations", to: "diffr.cli.mutate.traits", label: "holds boxed mutations" },
+    { kind: "call", from: "diffr.cli.mutate.mutations", to: "diffr.cli.mutate.hiddenCategories" },
+    { kind: "call", from: "diffr.cli.mutate.mutations", to: "diffr.cli.mutate.deletedBodies" },
+    { kind: "call", from: "diffr.cli.mutate.mutations", to: "diffr.cli.mutate.removedRuns", label: "after deleted bodies, when collapse_removed_lines > 0" },
+    { kind: "call", from: "diffr.cli.mutate.removedRuns", to: "diffr.cli.mutate.helpers", label: "ids and walk" },
+    { kind: "call", from: "diffr.cli.mutate.removedRuns", to: "diffr.cli.mutate.groupCollapsed", label: "next_id for the split leaves" },
+    { kind: "call", from: "diffr.cli.mutate.removedRuns", to: "diffr.cli.protocol.region", label: "splits leaves into three regions" },
+    { kind: "call", from: "diffr.cli.mutate.mutations", to: "diffr.cli.mutate.testBodies", label: "after deleted bodies, when collapse_test_bodies" },
+    { kind: "call", from: "diffr.cli.mutate.testBodies", to: "diffr.cli.mutate.helpers", label: "walk, is_fold, line_count and collapse" },
+    { kind: "call", from: "diffr.cli.mutate.mutations", to: "diffr.cli.mutate.summarizer", label: "Summarizer::new from [summarize] alone" },
+    { kind: "call", from: "diffr.cli.mutate.mutations", to: "diffr.cli.config.foldsConfig", label: "collapse_deleted, collapse_test_bodies, collapse_removed_lines" },
+    { kind: "call", from: "diffr.cli.mutate.mutations", to: "diffr.cli.config.summarizeConfig", label: "enabled and min_lines" },
+    { kind: "call", from: "diffr.cli.mutate.summarizer", to: "diffr.cli.mutate.summarizeSelect", label: "picks outermost new function bodies" },
+    { kind: "call", from: "diffr.cli.mutate.summarizer", to: "diffr.cli.mutate.compresses", label: "drops answers longer than half the body" },
+    { kind: "call", from: "diffr.cli.mutate.summarizeSelect", to: "diffr.cli.mutate.helpers", label: "ids, is_fold and line_count" },
+    { kind: "call", from: "diffr.cli.config.load", to: "diffr.cli.config.defaults", label: "bundled defaults are the first layer" },
+    { kind: "semantic", from: "diffr.cli.config.defaults", to: "diffr.cli.mutate", label: "the function and test tags select folds for the rules" },
+    { kind: "semantic", from: "diffr.cli.protocolStream.syntaxSpans", to: "diffr.cli.engine", label: "guesses a text fallback's language from the path" },
+    { kind: "semantic", from: "diffr.tui.theme.themesFromConfig", to: "diffr.cli.config.themeConfig", label: "theme.name and theme.path" },
+    { kind: "call", from: "diffr.tui.launcher.main", to: "diffr.tui.theme.themesFromConfig", label: "with --diffr, from config show" },
+    { kind: "call", from: "diffr.tui.launcher.main", to: "diffr.tui.theme.loadTheme", label: "--input --theme <name|file.toml>" },
+    { kind: "call", from: "diffr.tui.theme.themesFromConfig", to: "diffr.tui.theme.loadTheme" },
+    { kind: "call", from: "diffr.tui.theme.loadTheme", to: "diffr.tui.theme.parseHelixTheme", label: "reads tui/themes or a path" },
+    { kind: "call", from: "diffr.tui.theme.loadTheme", to: "diffr.tui.theme.paletteFromHelix" },
+    { kind: "call", from: "diffr.tui.theme.paletteFromHelix", to: "diffr.tui.theme.scopeLookup", label: "ui.* and diff.* scopes" },
+    { kind: "call", from: "diffr.tui.theme.paletteFromHelix", to: "diffr.tui.theme.palette", label: "produces" },
+    { kind: "call", from: "diffr.tui.rows.lineSpans", to: "diffr.tui.theme.palette", label: "syntax(capture)" },
+    { kind: "call", from: "diffr.tui.ui.app", to: "diffr.tui.theme.palette", label: "chrome, highlight, accent and change text colours" },
+    { kind: "call", from: "diffr.tui.ui.codeRowView", to: "diffr.tui.theme.palette", label: "highlight and fold background" },
+    { kind: "call", from: "diffr.cli.mutate.mutations", to: "diffr.cli.hook.spawn", label: "when folds.hook is configured" },
+    { kind: "call", from: "diffr.cli.mutate.mutations", to: "diffr.cli.hook.apply", label: "after the summarizer" },
+    { kind: "call", from: "diffr.cli.mutate.mutations", to: "diffr.cli.mutate.groupCollapsed", label: "runs last" },
+    { kind: "call", from: "diffr.cli.mutate.groupCollapsed", to: "diffr.cli.mutate.helpers", label: "walk, ids and is_fold" },
+    { kind: "call", from: "diffr.cli.mutate.groupCollapsed", to: "diffr.cli.protocol.region", label: "merges gaps and builds group folds" },
+    { kind: "call", from: "diffr.cli.mutate.deletedBodies", to: "diffr.cli.mutate.helpers", label: "collapse" },
+    { kind: "call", from: "diffr.cli.mutate.summarizer", to: "diffr.cli.mutate.helpers", label: "summary_label and collapse" },
+    { kind: "call", from: "diffr.cli.mutate.hiddenCategories", to: "diffr.cli.protocol.fileChange", label: "sets visibility" },
+    { kind: "call", from: "diffr.cli.mutate.helpers", to: "diffr.cli.protocol.region", label: "walks and collapses" },
+    { kind: "semantic", from: "diffr.cli.mutate.summarizer", to: "gemini", label: "generateContent over reqwest with retries" },
+    { kind: "call", from: "diffr.cli.hook.spawn", to: "diffr.cli.hook.hook", label: "constructs" },
+    { kind: "call", from: "diffr.cli.hook.apply", to: "diffr.cli.hook.call" },
+    { kind: "call", from: "diffr.cli.hook.apply", to: "diffr.cli.mutate.helpers", label: "summary_label and collapse" },
+    { kind: "semantic", from: "diffr.cli.hook.call", to: "diffr.referenceHook.summarize.handle", label: "JSON-RPC summarize" },
+    { kind: "call", from: "diffr.referenceHook.summarize.handle", to: "diffr.referenceHook.summarize.complete" },
+    { kind: "semantic", from: "diffr.referenceHook.summarize.complete", to: "gemini", label: "generateContent" },
+    { kind: "call", from: "diffr.tui.launcher.main", to: "diffr.tui.stream.readDiffStream" },
+    { kind: "call", from: "diffr.tui.launcher.main", to: "diffr.tui.store.diffStore", label: "creates" },
+    { kind: "call", from: "diffr.tui.launcher.main", to: "diffr.tui.ui.app", label: "renders" },
+    { kind: "call", from: "diffr.tui.launcher.main", to: "diffr.tui.ui.settings", label: "renders with --settings" },
+    { kind: "call", from: "diffr.tui.launcher.main", to: "diffr.tui.settings.cliClient", label: "creates over --diffr; show() for the theme" },
+    { kind: "call", from: "diffr.tui.stream.readDiffStream", to: "diffr.tui.wire.eventSchema", label: "parses each line" },
+    { kind: "call", from: "diffr.tui.wire.eventSchema", to: "diffr.tui.wire.diffSchema", label: "file record diff" },
+    { kind: "call", from: "diffr.tui.ui.app", to: "diffr.tui.store.diffStore", label: "subscribes" },
+    { kind: "call", from: "diffr.tui.ui.app", to: "diffr.tui.rows.rowsForFile" },
+    { kind: "call", from: "diffr.tui.ui.app", to: "diffr.tui.rows.lineCounts", label: "textual counts and fallbacks for the breakdown" },
+    { kind: "call", from: "diffr.tui.ui.app", to: "diffr.tui.counts.visibleCounts", label: "per file, under the current folds and closed files" },
+    { kind: "call", from: "diffr.tui.ui.app", to: "diffr.tui.counts.blockBar", label: "header share bar" },
+    { kind: "call", from: "diffr.tui.ui.app", to: "diffr.tui.counts.comparisonLabel", label: "from the store's comparison ends" },
+    { kind: "call", from: "diffr.tui.counts.visibleCounts", to: "diffr.tui.regions.novelLeaves" },
+    { kind: "call", from: "diffr.tui.counts.visibleCounts", to: "diffr.tui.regions.flatten" },
+    { kind: "call", from: "diffr.tui.counts.visibleCounts", to: "diffr.tui.regions.hiddenLines" },
+    { kind: "call", from: "diffr.tui.counts.visibleCounts", to: "diffr.tui.regions.defaultCollapsed", label: "diffr's default fold state as the baseline" },
+    { kind: "call", from: "diffr.tui.rows.rowsForFile", to: "diffr.tui.regions.novelLeaves", label: "tints novel leaves" },
+    { kind: "call", from: "diffr.tui.ui.app", to: "diffr.tui.rows.placeholderRows", label: "hidden files" },
+    { kind: "call", from: "diffr.tui.ui.app", to: "diffr.tui.rows.measureRows" },
+    { kind: "call", from: "diffr.tui.ui.app", to: "diffr.tui.rows.buildFileTree" },
+    { kind: "call", from: "diffr.tui.ui.app", to: "diffr.tui.rows.copySelection" },
+    { kind: "call", from: "diffr.tui.ui.app", to: "diffr.tui.regions.defaultCollapsed", label: "seeds collapsed ids and gap toggles" },
+    { kind: "call", from: "diffr.tui.ui.app", to: "diffr.tui.regions.foldHeaders" },
+    { kind: "call", from: "diffr.tui.ui.app", to: "diffr.tui.ui.codeRowView", label: "mounts viewport rows" },
+    { kind: "call", from: "diffr.tui.rows.rowsForFile", to: "diffr.tui.rows.lineSpans" },
+    { kind: "call", from: "diffr.tui.rows.rowsForFile", to: "diffr.tui.regions.flatten", label: "leaves and folds per side" },
+    { kind: "call", from: "diffr.tui.rows.rowsForFile", to: "diffr.tui.regions.hiddenLines", label: "masks collapsed lines" },
+    { kind: "call", from: "diffr.tui.ui.settings", to: "diffr.tui.settings.flattenSchema" },
+    { kind: "call", from: "diffr.tui.ui.settings", to: "diffr.tui.settings.filterSettings" },
+    { kind: "call", from: "diffr.tui.ui.settings", to: "diffr.tui.settings.parseValue" },
+    { kind: "call", from: "diffr.tui.ui.settings", to: "diffr.tui.ui.settingsDisplay", label: "masks secrets, shows <unset>" },
+    { kind: "call", from: "diffr.tui.ui.settings", to: "diffr.tui.settings.cliClient", label: "schema, show, set" },
+  ],
+});

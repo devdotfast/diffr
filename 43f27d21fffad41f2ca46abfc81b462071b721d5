@@ -1,0 +1,707 @@
+import { defineSoftwareMap } from "@dev.fast/progressive-review/software-map-model";
+
+export default defineSoftwareMap({
+  "people": {
+    "developer": {
+      "label": "Developer",
+      "description": "Compares source revisions and inspects meaningful code changes."
+    }
+  },
+  "systems": {
+    "difftastic": {
+      "label": "Difftastic",
+      "description": "Syntax-aware source diffing CLI with experimental review annotations.",
+      "containers": {
+        "cli": {
+          "label": "Rust difft binary",
+          "coverage": {
+            "globs": [
+              "src/**"
+            ],
+            "files": [
+              "Cargo.toml",
+              "Cargo.lock",
+              "build.rs",
+              "rust-toolchain.toml"
+            ]
+          },
+          "components": {
+            "entry": {
+              "label": "Diff CLI and orchestration",
+              "description": "diff_file_content owns local SyntaxAnnotations, projects domain folds during change_positions, and collects context candidates once. It attaches paired unchanged context before merging hunks on padding or context overlap, then compacts context unions.",
+              "coverage": {
+                "files": [
+                  "src/main.rs",
+                  "src/options.rs",
+                  "src/exit_codes.rs"
+                ]
+              },
+              "codeElements": {
+                "diffContent": {
+                  "label": "diff_file_content",
+                  "sourceRanges": [
+                    {
+                      "file": "src/main.rs",
+                      "fromLine": 616,
+                      "toLine": 915
+                    }
+                  ]
+                }
+              }
+            },
+            "inputs": {
+              "label": "Source and Git input handling",
+              "description": "Loads files, directory entries, attributes, and conflict inputs.",
+              "coverage": {
+                "files": [
+                  "src/files.rs",
+                  "src/gitattributes.rs",
+                  "src/conflicts.rs"
+                ]
+              }
+            },
+            "parsing": {
+              "label": "Language detection and syntax trees",
+              "description": "Parser queries attach one FoldMetadata kind with an optional range override. Normal nodes reuse existing syntax spans. Flattening a delimiter-free single-child list preserves its boundary as the surviving child's override. change_positions projects folds alongside MatchedPos using source line slices.",
+              "coverage": {
+                "globs": [
+                  "src/parse/**"
+                ]
+              },
+              "codeElements": {
+                "foldMetadata": {
+                  "label": "FoldMetadata and SyntaxInfo",
+                  "sourceRanges": [
+                    {
+                      "file": "src/parse/syntax.rs",
+                      "fromLine": 53,
+                      "toLine": 132
+                    }
+                  ]
+                },
+                "changePositions": {
+                  "label": "change_positions and traversal",
+                  "sourceRanges": [
+                    {
+                      "file": "src/parse/syntax.rs",
+                      "fromLine": 1041,
+                      "toLine": 1162
+                    }
+                  ]
+                }
+              }
+            },
+            "matching": {
+              "label": "Structural matching",
+              "description": "Marks unchanged regions, finds shortest-path syntax matches, repairs sliders, and records change correspondence.",
+              "coverage": {
+                "globs": [
+                  "src/diff/**"
+                ]
+              }
+            },
+            "fallback": {
+              "label": "Text fallback and source coordinates",
+              "description": "Line and word differencing plus byte and line helpers support unsupported or limited parsing.",
+              "coverage": {
+                "files": [
+                  "src/line_parser.rs",
+                  "src/lines.rs",
+                  "src/words.rs"
+                ]
+              }
+            },
+            "result": {
+              "label": "Diff result model",
+              "description": "DiffResult directly owns source data, matched positions, hunks with syntax context, fold candidates, and change flags.",
+              "coverage": {
+                "files": [
+                  "src/summary.rs"
+                ]
+              },
+              "codeElements": {
+                "diffResult": {
+                  "label": "DiffResult",
+                  "sourceRanges": [
+                    {
+                      "file": "src/summary.rs",
+                      "fromLine": 34,
+                      "toLine": 54
+                    }
+                  ]
+                }
+              }
+            },
+            "display": {
+              "label": "Hunk layout and output",
+              "description": "Hunk directly owns paired ContextRange values. A single merge pass combines hunks whose ordinary padding or selected context overlaps and accumulates the context union; output supports inline, side-by-side, and JSON formats.",
+              "coverage": {
+                "globs": [
+                  "src/display/**"
+                ]
+              }
+            },
+            "reviewModel": {
+              "label": "Fold and source region model",
+              "description": "Domain Fold includes FoldKind and paired or one-sided regions; ContextRange pairs unchanged source regions. LineSelection names lhs/rhs row sets for internal selection. Serialized domain shapes remain unchanged.",
+              "coverage": {
+                "files": [
+                  "src/review/mod.rs",
+                  "src/review/domain.rs"
+                ]
+              },
+              "codeElements": {
+                "fold": {
+                  "label": "FoldKind and Fold",
+                  "sourceRanges": [
+                    {
+                      "file": "src/review/domain.rs",
+                      "fromLine": 5,
+                      "toLine": 36
+                    }
+                  ]
+                },
+                "correspondence": {
+                  "label": "Correspondence, ContextRange, and source coordinates",
+                  "sourceRanges": [
+                    {
+                      "file": "src/review/domain.rs",
+                      "fromLine": 38,
+                      "toLine": 69
+                    }
+                  ]
+                }
+              }
+            },
+            "reviewCli": {
+              "label": "Git-ref review command",
+              "description": "Validates repository-relative regular text paths, resolves commit refs and blobs, and emits text, domain JSON, or viewer JSON.",
+              "coverage": {
+                "files": [
+                  "src/review/cli.rs"
+                ]
+              }
+            },
+            "folds": {
+              "label": "Query-driven fold discovery and pairing",
+              "description": "Classifies parser nodes and projects final domain Fold values during change_positions, deriving ranges from syntax spans and flattened-wrapper overrides. Each fold carries FoldKind; individual semantic folds are retained without primitive wrapping or coalescing.",
+              "coverage": {
+                "files": [
+                  "src/review/folds.rs"
+                ]
+              },
+              "codeElements": {
+                "classify": {
+                  "label": "classify",
+                  "sourceRanges": [
+                    {
+                      "file": "src/review/folds.rs",
+                      "fromLine": 25,
+                      "toLine": 55
+                    }
+                  ]
+                },
+                "project": {
+                  "label": "project",
+                  "sourceRanges": [
+                    {
+                      "file": "src/review/folds.rs",
+                      "fromLine": 149,
+                      "toLine": 182
+                    }
+                  ]
+                },
+                "interiorRange": {
+                  "label": "interior_range",
+                  "sourceRanges": [
+                    {
+                      "file": "src/review/folds.rs",
+                      "fromLine": 58,
+                      "toLine": 74
+                    }
+                  ]
+                }
+              }
+            },
+            "foldQueries": {
+              "label": "Language fold queries",
+              "description": "Parser-time captures classify bodies, collections, individual import statements, tests, comments, and strings for JavaScript/TypeScript, Python, Rust, and Go.",
+              "coverage": {
+                "globs": [
+                  "src/review/queries/**"
+                ]
+              }
+            },
+            "reviewContext": {
+              "label": "Syntax context selection",
+              "description": "SyntaxAnnotations retains per-side context candidates collected once from parse trees. Hunk changes select candidates on their own side; shared row alignment supplies paired context without opposite-side anchor propagation.",
+              "coverage": {
+                "files": [
+                  "src/review/context.rs"
+                ]
+              },
+              "codeElements": {
+                "collect": {
+                  "label": "SyntaxAnnotations::collect",
+                  "sourceRanges": [
+                    {
+                      "file": "src/review/context.rs",
+                      "fromLine": 19,
+                      "toLine": 27
+                    }
+                  ]
+                },
+                "contextForHunk": {
+                  "label": "SyntaxAnnotations::context_for_hunk",
+                  "sourceRanges": [
+                    {
+                      "file": "src/review/context.rs",
+                      "fromLine": 29,
+                      "toLine": 34
+                    }
+                  ]
+                }
+              }
+            },
+            "reviewRender": {
+              "label": "Aligned review snapshots",
+              "description": "Writes deterministic uncolored snapshots with selected context and expanded folds; SnapshotWriter buffers deletions before additions and manages gaps.",
+              "coverage": {
+                "files": [
+                  "src/review/render.rs"
+                ]
+              },
+              "codeElements": {
+                "snapshot": {
+                  "label": "DiffResult::snapshot and snapshot renderer",
+                  "sourceRanges": [
+                    {
+                      "file": "src/review/render.rs",
+                      "fromLine": 7,
+                      "toLine": 74
+                    }
+                  ]
+                }
+              }
+            },
+            "reviewWire": {
+              "label": "Review JSON serialization",
+              "description": "Serializes DiffResult with Fold.kind and fold correspondence regions. Hunk context serializes directly as paired lhs/rhs ranges; viewer JSON adds shared row layout.",
+              "coverage": {
+                "files": [
+                  "src/review/wire.rs"
+                ]
+              }
+            },
+            "reviewBuild": {
+              "label": "Review assembly",
+              "description": "Before hunk merging, add_hunk_context indexes shared aligned rows with no novel content and maps selected syntax context to paired ContextRange values. After merging, compact_hunk_context deduplicates and combines consecutive context pairs.",
+              "coverage": {
+                "files": [
+                  "src/review/build.rs"
+                ]
+              },
+              "codeElements": {
+                "fromSources": {
+                  "label": "DiffResult::from_sources",
+                  "sourceRanges": [
+                    {
+                      "file": "src/review/build.rs",
+                      "fromLine": 7,
+                      "toLine": 20
+                    }
+                  ]
+                },
+                "addHunkContext": {
+                  "label": "add_hunk_context",
+                  "sourceRanges": [
+                    {
+                      "file": "src/review/build.rs",
+                      "fromLine": 23,
+                      "toLine": 68
+                    }
+                  ]
+                },
+                "compactContext": {
+                  "label": "compact_hunk_context",
+                  "sourceRanges": [
+                    {
+                      "file": "src/review/build.rs",
+                      "fromLine": 72,
+                      "toLine": 93
+                    }
+                  ]
+                }
+              }
+            },
+            "reviewLayout": {
+              "label": "Shared review layout",
+              "description": "Shared lhs/rhs tuple helpers provide sources, aligned rows, and reindentation pairs. novel_lines extracts novel row sets; baseline returns a named LineSelection used by rendering and context assembly.",
+              "coverage": {
+                "files": [
+                  "src/review/layout.rs"
+                ]
+              }
+            }
+          }
+        },
+        "validation": {
+          "label": "Examples and regression fixtures",
+          "components": {
+            "reviewFixtures": {
+              "label": "Real PR review targets",
+              "description": "Eleven pinned real PR source pairs with provenance, annotation targets, and generated expanded review snapshots.",
+              "coverage": {
+                "globs": [
+                  "examples/review/real/**"
+                ],
+                "files": [
+                  "examples/review/README.md"
+                ]
+              }
+            },
+            "regressions": {
+              "label": "Diff regression tests",
+              "coverage": {
+                "files": [
+                  "tests/cli.rs"
+                ],
+                "globs": [
+                  "sample_files/**",
+                  "demo_files/**"
+                ]
+              }
+            },
+            "reviewTests": {
+              "label": "Review behavior and Git fixture harness",
+              "description": "Exercises source range and context behavior plus CLI comparisons using temporary Git repositories built from pinned fixture blobs.",
+              "coverage": {
+                "files": [
+                  "tests/review.rs"
+                ],
+                "globs": [
+                  "tests/review_support/**"
+                ]
+              }
+            }
+          }
+        },
+        "grammars": {
+          "label": "Vendored language grammars",
+          "coverage": {
+            "globs": [
+              "vendored_parsers/**"
+            ]
+          }
+        },
+        "viewer": {
+          "label": "Local fixture browser",
+          "description": "Static browser comparing Git patches with syntax-aware review output.",
+          "components": {
+            "build": {
+              "label": "Fixture viewer data builder",
+              "description": "Verifies fixture hashes, reconstructs commits, invokes the real review CLI, and writes viewer data with Git patches.",
+              "coverage": {
+                "files": [
+                  "examples/review/viewer/build.py"
+                ]
+              }
+            },
+            "ui": {
+              "label": "Interactive comparison viewer",
+              "description": "Renders Git and review columns, hunk context, nested fold toggles, and UTF-8 inline folds; tracks reviewed examples locally.",
+              "coverage": {
+                "files": [
+                  "examples/review/viewer/app.js",
+                  "examples/review/viewer/inline-folds.mjs",
+                  "examples/review/viewer/index.html",
+                  "examples/review/viewer/style.css",
+                  "examples/review/viewer/inline-folds.test.mjs",
+                  "examples/review/viewer/README.md"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "relationships": [
+    {
+      "kind": "semantic",
+      "from": "developer",
+      "to": "difftastic.cli.entry",
+      "label": "Runs source comparisons"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.inputs",
+      "label": "Reads source pairs"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.parsing",
+      "label": "Parses supported languages"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing",
+      "to": "difftastic.grammars",
+      "label": "Uses language grammars"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.matching",
+      "label": "Matches syntax trees"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.matching",
+      "to": "difftastic.cli.parsing",
+      "label": "Uses syntax nodes"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.fallback",
+      "label": "Falls back to text matching"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.result",
+      "label": "Builds DiffResult"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.display",
+      "to": "difftastic.cli.result",
+      "label": "Renders hunks and matched positions"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.display",
+      "label": "Dispatches output"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.reviewModel",
+      "to": "difftastic.cli.result",
+      "label": "Defines source regions stored in diff data"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.validation.reviewFixtures",
+      "to": "difftastic.cli.reviewModel",
+      "label": "Specifies proposed annotations"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.reviewCli",
+      "label": "Dispatches review command"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.reviewCli",
+      "to": "difftastic.cli.reviewBuild.fromSources",
+      "label": "Builds annotations for Git blobs"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.reviewBuild.fromSources",
+      "to": "difftastic.cli.entry.diffContent",
+      "label": "Invokes existing diff pipeline"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry.diffContent",
+      "to": "difftastic.cli.parsing.changePositions",
+      "label": "Projects matched positions and folds together"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.folds.classify",
+      "to": "difftastic.cli.foldQueries",
+      "label": "Loads language queries"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.folds.project",
+      "to": "difftastic.cli.matching",
+      "label": "Uses change correspondence"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.folds",
+      "to": "difftastic.cli.reviewModel.fold",
+      "label": "Produces fold regions"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.reviewBuild.addHunkContext",
+      "to": "difftastic.cli.reviewContext.contextForHunk",
+      "label": "Requests context per hunk"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.reviewContext",
+      "to": "difftastic.cli.parsing",
+      "label": "Collects context candidates once from parse trees"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.reviewContext",
+      "to": "difftastic.cli.reviewModel.correspondence",
+      "label": "Supplies lines for region correspondence"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.reviewBuild.addHunkContext",
+      "to": "difftastic.cli.reviewLayout",
+      "label": "Subtracts baseline and aligns context"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.reviewLayout",
+      "to": "difftastic.cli.display",
+      "label": "Reuses matched-line alignment"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.reviewRender.snapshot",
+      "to": "difftastic.cli.result.diffResult",
+      "label": "Reads per-hunk context and sources"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.reviewCli",
+      "to": "difftastic.cli.reviewRender.snapshot",
+      "label": "Prints expanded snapshots"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.reviewCli",
+      "to": "difftastic.cli.reviewWire",
+      "label": "Emits JSON"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.reviewWire",
+      "to": "difftastic.cli.result.diffResult",
+      "label": "Serializes annotations"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.reviewWire",
+      "to": "difftastic.cli.reviewLayout",
+      "label": "Adds viewer layout"
+    },
+    {
+      "kind": "semantic",
+      "from": "developer",
+      "to": "difftastic.viewer.ui",
+      "label": "Inspects fixture comparisons"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.viewer.build",
+      "to": "difftastic.validation.reviewFixtures",
+      "label": "Verifies pinned sources"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.viewer.build",
+      "to": "difftastic.cli.reviewCli",
+      "label": "Generates viewer JSON"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.viewer.ui",
+      "to": "difftastic.viewer.build",
+      "label": "Loads generated fixture data"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.viewer.ui",
+      "to": "difftastic.cli.reviewWire",
+      "label": "Consumes domain and layout contract"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.validation.reviewTests",
+      "to": "difftastic.cli.reviewModel",
+      "label": "Checks annotation behavior"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.validation.regressions",
+      "to": "difftastic.cli.entry",
+      "label": "Exercises diff behavior"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.reviewRender",
+      "to": "difftastic.cli.reviewLayout",
+      "label": "Uses shared row layout"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.reviewBuild",
+      "to": "difftastic.cli.result",
+      "label": "Constructs annotated DiffResult"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry.diffContent",
+      "to": "difftastic.cli.reviewBuild.addHunkContext",
+      "label": "Adds paired unchanged context before merging hunks"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.display",
+      "to": "difftastic.cli.reviewModel.correspondence",
+      "label": "Hunk stores syntax context ranges"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing",
+      "to": "difftastic.cli.folds.classify",
+      "label": "Classifies tree nodes during parsing"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.folds.project",
+      "to": "difftastic.cli.parsing.foldMetadata",
+      "label": "Reads fold kind and optional flattened-wrapper override"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing.changePositions",
+      "to": "difftastic.cli.folds.project",
+      "label": "Projects fold from existing node change"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing",
+      "to": "difftastic.cli.folds.interiorRange",
+      "label": "Preserves boundary only when flattening a wrapper"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry.diffContent",
+      "to": "difftastic.cli.reviewContext.collect",
+      "label": "Collects syntax candidates before hunk construction"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry.diffContent",
+      "to": "difftastic.cli.reviewBuild.compactContext",
+      "label": "Compacts context unions after hunk merging"
+    }
+  ]
+});

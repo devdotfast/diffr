@@ -493,6 +493,18 @@ export default defineSoftwareMap({
       "to": "diffr.frontend.projection",
       "kind": "semantic",
       "label": "Supplies syntax colors"
+    },
+    {
+      "from": "diffr.backend.protocol.project",
+      "to": "diffr.backend.protocol.pairing",
+      "kind": "semantic",
+      "label": "Preserves side presence"
+    },
+    {
+      "from": "diffr.backend.protocol.project",
+      "to": "diffr.backend.engine",
+      "kind": "semantic",
+      "label": "Consumes DiffResult"
     }
   ]
 });

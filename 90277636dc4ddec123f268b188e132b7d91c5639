@@ -1,0 +1,277 @@
+import { defineSoftwareMap } from "@dev.fast/progressive-review/software-map-model";
+
+export default defineSoftwareMap({
+  "people": {
+    "developer": {
+      "label": "Developer",
+      "description": "Compares source revisions and inspects meaningful code changes."
+    }
+  },
+  "systems": {
+    "difftastic": {
+      "label": "Difftastic",
+      "description": "Syntax-aware source diffing CLI.",
+      "containers": {
+        "cli": {
+          "label": "Rust difft binary",
+          "coverage": {
+            "globs": [
+              "src/**"
+            ],
+            "files": [
+              "Cargo.toml",
+              "Cargo.lock",
+              "build.rs"
+            ]
+          },
+          "components": {
+            "entry": {
+              "label": "Diff CLI and orchestration",
+              "description": "Reads options and source inputs, coordinates syntax or text diffing, and dispatches output.",
+              "coverage": {
+                "files": [
+                  "src/main.rs",
+                  "src/options.rs",
+                  "src/exit_codes.rs"
+                ]
+              },
+              "codeElements": {
+                "diffContent": {
+                  "label": "diff_file_content",
+                  "sourceRanges": [
+                    {
+                      "file": "src/main.rs",
+                      "fromLine": 616,
+                      "toLine": 895
+                    }
+                  ]
+                }
+              }
+            },
+            "inputs": {
+              "label": "Source and Git input handling",
+              "description": "Loads files, directory entries, attributes, and conflict inputs.",
+              "coverage": {
+                "files": [
+                  "src/files.rs",
+                  "src/gitattributes.rs",
+                  "src/conflicts.rs"
+                ]
+              }
+            },
+            "parsing": {
+              "label": "Language detection and syntax trees",
+              "description": "Selects Tree-sitter grammars and extracts syntax nodes, fold candidates, and enclosing context annotations.",
+              "coverage": {
+                "globs": [
+                  "src/parse/**"
+                ]
+              }
+            },
+            "matching": {
+              "label": "Structural matching",
+              "description": "Marks unchanged regions, finds shortest-path syntax matches, repairs sliders, and records change correspondence.",
+              "coverage": {
+                "globs": [
+                  "src/diff/**"
+                ]
+              }
+            },
+            "fallback": {
+              "label": "Text fallback and source coordinates",
+              "description": "Line and word differencing plus byte and line helpers support unsupported or limited parsing.",
+              "coverage": {
+                "files": [
+                  "src/line_parser.rs",
+                  "src/lines.rs",
+                  "src/words.rs"
+                ]
+              }
+            },
+            "result": {
+              "label": "Diff result model",
+              "description": "Owns source text, token matches, folds, and change hunks with paired syntax context.",
+              "coverage": {
+                "files": [
+                  "src/summary.rs"
+                ]
+              }
+            },
+            "display": {
+              "label": "Hunk layout and output",
+              "description": "Aligns lines, adds and compacts paired syntax context on change hunks, and renders terminal or JSON output.",
+              "coverage": {
+                "globs": [
+                  "src/display/**"
+                ]
+              },
+              "codeElements": {
+                "syntaxContext": {
+                  "label": "Syntax context selection",
+                  "sourceRanges": [
+                    {
+                      "file": "src/display/syntax_context.rs",
+                      "fromLine": 1,
+                      "toLine": 220
+                    }
+                  ]
+                },
+                "alignment": {
+                  "label": "Shared line alignment",
+                  "sourceRanges": [
+                    {
+                      "file": "src/display/line_layout.rs",
+                      "fromLine": 1,
+                      "toLine": 122
+                    }
+                  ]
+                },
+                "hunks": {
+                  "label": "Change hunks and paired context",
+                  "sourceRanges": [
+                    {
+                      "file": "src/display/hunks.rs",
+                      "fromLine": 1,
+                      "toLine": 889
+                    }
+                  ]
+                }
+              }
+            },
+            "review": {
+              "label": "Review adapters",
+              "description": "Experimental Git-ref CLI exposes deterministic snapshots and domain/viewer JSON from DiffResult.",
+              "coverage": {
+                "globs": [
+                  "src/review/**"
+                ]
+              }
+            }
+          }
+        },
+        "validation": {
+          "label": "Examples and regression fixtures",
+          "components": {
+            "regressions": {
+              "label": "Diff regression tests",
+              "coverage": {
+                "globs": [
+                  "tests/**",
+                  "sample_files/**",
+                  "demo_files/**",
+                  "examples/review/**"
+                ]
+              }
+            }
+          }
+        },
+        "grammars": {
+          "label": "Vendored language grammars",
+          "coverage": {
+            "globs": [
+              "vendored_parsers/**"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "relationships": [
+    {
+      "kind": "semantic",
+      "from": "developer",
+      "to": "difftastic.cli.entry",
+      "label": "Runs source comparisons"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.inputs",
+      "label": "Reads source pairs"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.parsing",
+      "label": "Parses supported languages"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing",
+      "to": "difftastic.grammars",
+      "label": "Uses language grammars"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.matching",
+      "label": "Matches syntax trees"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.matching",
+      "to": "difftastic.cli.parsing",
+      "label": "Uses syntax nodes"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.fallback",
+      "label": "Falls back to text matching"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.result",
+      "label": "Builds DiffResult"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.display",
+      "to": "difftastic.cli.result",
+      "label": "Renders hunks and matched positions"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.display",
+      "label": "Dispatches output"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.validation.regressions",
+      "to": "difftastic.cli.entry",
+      "label": "Exercises diff behavior"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.review",
+      "to": "difftastic.cli.entry",
+      "label": "Compares Git-ref source pairs"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.review",
+      "to": "difftastic.cli.result",
+      "label": "Serializes domain and snapshots"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.review",
+      "to": "difftastic.cli.display.alignment",
+      "label": "Builds snapshot and viewer rows"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.display.syntaxContext",
+      "label": "Attaches enclosing context to hunks"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.display.syntaxContext",
+      "to": "difftastic.cli.display.hunks",
+      "label": "Adds paired context ranges"
+    }
+  ]
+});

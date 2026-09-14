@@ -1,0 +1,205 @@
+import { defineSoftwareMap } from "@dev.fast/progressive-review/software-map-model";
+
+export default defineSoftwareMap({
+  "people": {
+    "developer": {
+      "label": "Developer",
+      "description": "Compares source revisions and inspects meaningful code changes."
+    }
+  },
+  "systems": {
+    "difftastic": {
+      "label": "Difftastic",
+      "description": "Syntax-aware source diffing CLI.",
+      "containers": {
+        "cli": {
+          "label": "Rust difft binary",
+          "coverage": {
+            "globs": [
+              "src/**"
+            ],
+            "files": [
+              "Cargo.toml",
+              "Cargo.lock",
+              "build.rs"
+            ]
+          },
+          "components": {
+            "entry": {
+              "label": "Diff CLI and orchestration",
+              "description": "Reads options and source inputs, coordinates syntax or text diffing, and dispatches output.",
+              "coverage": {
+                "files": [
+                  "src/main.rs",
+                  "src/options.rs",
+                  "src/exit_codes.rs"
+                ]
+              },
+              "codeElements": {
+                "diffContent": {
+                  "label": "diff_file_content",
+                  "sourceRanges": [
+                    {
+                      "file": "src/main.rs",
+                      "fromLine": 605,
+                      "toLine": 864
+                    }
+                  ]
+                }
+              }
+            },
+            "inputs": {
+              "label": "Source and Git input handling",
+              "description": "Loads files, directory entries, attributes, and conflict inputs.",
+              "coverage": {
+                "files": [
+                  "src/files.rs",
+                  "src/gitattributes.rs",
+                  "src/conflicts.rs"
+                ]
+              }
+            },
+            "parsing": {
+              "label": "Language detection and syntax trees",
+              "description": "Selects Tree-sitter grammars and converts parsed trees into syntax nodes and matched source positions.",
+              "coverage": {
+                "globs": [
+                  "src/parse/**"
+                ]
+              }
+            },
+            "matching": {
+              "label": "Structural matching",
+              "description": "Marks unchanged regions, finds shortest-path syntax matches, repairs sliders, and records change correspondence.",
+              "coverage": {
+                "globs": [
+                  "src/diff/**"
+                ]
+              }
+            },
+            "fallback": {
+              "label": "Text fallback and source coordinates",
+              "description": "Line and word differencing plus byte and line helpers support unsupported or limited parsing.",
+              "coverage": {
+                "files": [
+                  "src/line_parser.rs",
+                  "src/lines.rs",
+                  "src/words.rs"
+                ]
+              }
+            },
+            "result": {
+              "label": "Diff result model",
+              "description": "Owns source text, matched positions, file format, change flags, and ordinary hunks.",
+              "coverage": {
+                "files": [
+                  "src/summary.rs"
+                ]
+              }
+            },
+            "display": {
+              "label": "Hunk layout and output",
+              "description": "Builds contextual hunks and emits inline, side-by-side, or JSON representations.",
+              "coverage": {
+                "globs": [
+                  "src/display/**"
+                ]
+              }
+            }
+          }
+        },
+        "validation": {
+          "label": "Examples and regression fixtures",
+          "components": {
+            "regressions": {
+              "label": "Diff regression tests",
+              "coverage": {
+                "globs": [
+                  "tests/**",
+                  "sample_files/**",
+                  "demo_files/**"
+                ]
+              }
+            }
+          }
+        },
+        "grammars": {
+          "label": "Vendored language grammars",
+          "coverage": {
+            "globs": [
+              "vendored_parsers/**"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "relationships": [
+    {
+      "kind": "semantic",
+      "from": "developer",
+      "to": "difftastic.cli.entry",
+      "label": "Runs source comparisons"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.inputs",
+      "label": "Reads source pairs"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.parsing",
+      "label": "Parses supported languages"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing",
+      "to": "difftastic.grammars",
+      "label": "Uses language grammars"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.matching",
+      "label": "Matches syntax trees"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.matching",
+      "to": "difftastic.cli.parsing",
+      "label": "Uses syntax nodes"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.fallback",
+      "label": "Falls back to text matching"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.result",
+      "label": "Builds DiffResult"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.display",
+      "to": "difftastic.cli.result",
+      "label": "Renders hunks and matched positions"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.display",
+      "label": "Dispatches output"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.validation.regressions",
+      "to": "difftastic.cli.entry",
+      "label": "Exercises diff behavior"
+    }
+  ]
+});

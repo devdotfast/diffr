@@ -1,0 +1,610 @@
+import { defineSoftwareMap } from "@dev.fast/progressive-review/software-map-model";
+
+export default defineSoftwareMap({
+  "people": {
+    "developer": {
+      "label": "Developer",
+      "description": "Compares source revisions and inspects meaningful code changes."
+    }
+  },
+  "systems": {
+    "difftastic": {
+      "label": "Difftastic",
+      "description": "Syntax-aware source diffing CLI.",
+      "containers": {
+        "cli": {
+          "label": "Rust difft binary",
+          "coverage": {
+            "globs": [
+              "src/**"
+            ],
+            "files": [
+              "Cargo.toml",
+              "Cargo.lock",
+              "build.rs"
+            ]
+          },
+          "components": {
+            "entry": {
+              "label": "Diff CLI and orchestration",
+              "description": "Reads options and source inputs, coordinates syntax or text diffing, and dispatches output.",
+              "coverage": {
+                "files": [
+                  "src/main.rs",
+                  "src/options.rs",
+                  "src/exit_codes.rs"
+                ]
+              }
+            },
+            "inputs": {
+              "label": "Source and Git input handling",
+              "description": "Loads files, directory entries, attributes, and conflict inputs.",
+              "coverage": {
+                "files": [
+                  "src/files.rs",
+                  "src/gitattributes.rs",
+                  "src/conflicts.rs"
+                ]
+              }
+            },
+            "parsing": {
+              "label": "Language detection and syntax trees",
+              "description": "Parsing and tree highlighting receive only LanguageParams, including resolved embedded languages and their queries. Independent fold/context classifiers retain metadata through matching and projection.",
+              "coverage": {
+                "globs": [
+                  "src/parse/**"
+                ]
+              },
+              "codeElements": {
+                "metadata": {
+                  "label": "Owned fold and context metadata",
+                  "sourceRanges": [
+                    {
+                      "file": "src/parse/syntax.rs",
+                      "fromLine": 57,
+                      "toLine": 130
+                    }
+                  ],
+                  "description": "Owned syntax nodes retain fold tags, ranges, and enclosing context through wrapper flattening."
+                },
+                "contextMetadata": {
+                  "label": "Classify enclosing context",
+                  "sourceRanges": [
+                    {
+                      "file": "src/parse/context.rs",
+                      "fromLine": 1,
+                      "toLine": 72
+                    }
+                  ],
+                  "description": "Traverses the context query independently and retains whole-line scope, header, and closing metadata."
+                },
+                "folds": {
+                  "label": "Classify and project tagged folds",
+                  "sourceRanges": [
+                    {
+                      "file": "src/parse/folds.rs",
+                      "fromLine": 1,
+                      "toLine": 177
+                    }
+                  ],
+                  "description": "Uses fold.open and fold.close node boundaries to select delimiter interiors, merges coincident tags, excludes ambiguous ranges, and projects side-local fold correspondence."
+                },
+                "positions": {
+                  "label": "Matched positions and fold projection",
+                  "sourceRanges": [
+                    {
+                      "file": "src/parse/syntax.rs",
+                      "fromLine": 1033,
+                      "toLine": 1131
+                    }
+                  ]
+                },
+                "queryHelpers": {
+                  "label": "Shared query coordinates",
+                  "description": "Converts captured node coordinates to source ranges and computes the final occupied line.",
+                  "sourceRanges": [
+                    {
+                      "file": "src/parse/query.rs",
+                      "fromLine": 1,
+                      "toLine": 20
+                    }
+                  ]
+                }
+              }
+            },
+            "matching": {
+              "label": "Structural matching",
+              "description": "Marks unchanged regions, finds shortest-path syntax matches, repairs sliders, and records change correspondence.",
+              "coverage": {
+                "globs": [
+                  "src/diff/**"
+                ]
+              }
+            },
+            "fallback": {
+              "label": "Text fallback and source coordinates",
+              "description": "Line and word differencing plus byte and line helpers support unsupported or limited parsing.",
+              "coverage": {
+                "files": [
+                  "src/line_parser.rs",
+                  "src/lines.rs",
+                  "src/words.rs"
+                ]
+              }
+            },
+            "result": {
+              "label": "Diff result model",
+              "description": "Owns source text, matched positions, complete selected hunk rows, and separate lhs_folds and rhs_folds with side-local ranges and optional opposite matches.",
+              "coverage": {
+                "files": [
+                  "src/summary.rs"
+                ]
+              }
+            },
+            "display": {
+              "label": "Hunk layout and output",
+              "description": "Prepares syntax context and ordinary padding once before publishing DiffResult; terminal renderers consume completed rows and display gaps.",
+              "coverage": {
+                "globs": [
+                  "src/display/**"
+                ]
+              },
+              "codeElements": {
+                "context": {
+                  "label": "Enclosing syntax candidates",
+                  "sourceRanges": [
+                    {
+                      "file": "src/display/syntax_context.rs",
+                      "fromLine": 1,
+                      "toLine": 147
+                    }
+                  ]
+                },
+                "hunks": {
+                  "label": "Complete selected hunk rows",
+                  "sourceRanges": [
+                    {
+                      "file": "src/display/hunks.rs",
+                      "fromLine": 1,
+                      "toLine": 865
+                    }
+                  ]
+                },
+                "alignment": {
+                  "label": "Alignment and selected-row helpers",
+                  "sourceRanges": [
+                    {
+                      "file": "src/display/line_layout.rs",
+                      "fromLine": 1,
+                      "toLine": 106
+                    }
+                  ]
+                },
+                "prepare": {
+                  "label": "Prepare complete rows",
+                  "description": "Pads aligned change rows, then adds exact enclosing syntax rows without extra padding; merges touching windows and preserves hidden gaps.",
+                  "sourceRanges": [
+                    {
+                      "file": "src/display/prepare.rs",
+                      "fromLine": 1,
+                      "toLine": 106
+                    }
+                  ]
+                }
+              }
+            },
+            "review": {
+              "label": "Review snapshots and wire output",
+              "description": "Serializes prepared DiffResult rows and side-local fold matches; derives alignment from source and matched positions for snapshots and viewer output.",
+              "coverage": {
+                "globs": [
+                  "src/review/**"
+                ]
+              },
+              "codeElements": {
+                "wire": {
+                  "label": "Domain and viewer JSON",
+                  "sourceRanges": [
+                    {
+                      "file": "src/review/wire.rs",
+                      "fromLine": 1,
+                      "toLine": 145
+                    }
+                  ]
+                },
+                "snapshot": {
+                  "label": "Deterministic review snapshot",
+                  "sourceRanges": [
+                    {
+                      "file": "src/review/render.rs",
+                      "fromLine": 1,
+                      "toLine": 157
+                    }
+                  ]
+                }
+              }
+            },
+            "configuration": {
+              "label": "Annotation configuration and Params",
+              "description": "Loads an explicit config or workspace diffr.toml, falls back to bundled defaults when the workspace file is absent, and compiles reusable language parameters plus file-class order.",
+              "coverage": {
+                "files": [
+                  "src/config.rs"
+                ],
+                "globs": [
+                  "src/config/**"
+                ]
+              },
+              "codeElements": {
+                "compile": {
+                  "label": "Resolve Config and language parameters",
+                  "sourceRanges": [
+                    {
+                      "file": "src/config.rs",
+                      "fromLine": 10,
+                      "toLine": 167
+                    }
+                  ]
+                },
+                "query": {
+                  "label": "Validate captures and tag metadata",
+                  "sourceRanges": [
+                    {
+                      "file": "src/config/query.rs",
+                      "fromLine": 1,
+                      "toLine": 79
+                    }
+                  ],
+                  "description": "Compiles supported fold/context captures and tag settings; rejects unsupported directives."
+                }
+              }
+            },
+            "git": {
+              "label": "Git classification and lazy file iterator",
+              "description": "Pins base/head OIDs, discovers renames and selected paths, classifies from diffr-classify attributes, sorts by class then path, and computes one DiffResult per next().",
+              "coverage": {
+                "files": [
+                  "src/git.rs"
+                ]
+              }
+            },
+            "server": {
+              "label": "Local HTTP NDJSON server",
+              "description": "Binds a single workspace on loopback, loads shared Params, and serves POST /diff. Sends start, file or file_error, and complete events; each body poll schedules at most one next file.",
+              "coverage": {
+                "files": [
+                  "src/server.rs"
+                ]
+              },
+              "codeElements": {
+                "stream": {
+                  "label": "Request-to-event stream",
+                  "description": "Prepares the Git session off-thread, rejects setup errors before streaming, and serializes domain JSON with optional layout under response backpressure.",
+                  "sourceRanges": [
+                    {
+                      "file": "src/server.rs",
+                      "fromLine": 76,
+                      "toLine": 152
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "validation": {
+          "label": "Examples and regression fixtures",
+          "components": {
+            "regressions": {
+              "label": "Diff regression tests",
+              "coverage": {
+                "globs": [
+                  "tests/**",
+                  "sample_files/**",
+                  "demo_files/**"
+                ]
+              }
+            }
+          }
+        },
+        "grammars": {
+          "label": "Vendored language grammars",
+          "coverage": {
+            "globs": [
+              "vendored_parsers/**"
+            ]
+          }
+        }
+      }
+    },
+    "consumer": {
+      "label": "HTTP diff consumer",
+      "external": true,
+      "description": "Requests comparisons and reads NDJSON events incrementally."
+    }
+  },
+  "relationships": [
+    {
+      "kind": "semantic",
+      "from": "developer",
+      "to": "difftastic.cli.entry",
+      "label": "Runs source comparisons"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.inputs",
+      "label": "Reads source pairs"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.parsing",
+      "label": "Parses supported languages"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing",
+      "to": "difftastic.grammars",
+      "label": "Uses language grammars"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.matching",
+      "label": "Matches syntax trees"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.matching",
+      "to": "difftastic.cli.parsing",
+      "label": "Uses syntax nodes"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.fallback",
+      "label": "Falls back to text matching"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.result",
+      "label": "Builds DiffResult"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.display",
+      "to": "difftastic.cli.result",
+      "label": "Renders hunks and matched positions"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.display",
+      "label": "Dispatches output"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.validation.regressions",
+      "to": "difftastic.cli.entry",
+      "label": "Exercises diff behavior"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.review",
+      "to": "difftastic.cli.entry",
+      "label": "Compares supplied sources"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.review",
+      "to": "difftastic.cli.result",
+      "label": "Serializes domain and snapshots"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.review",
+      "to": "difftastic.cli.display",
+      "label": "Uses prepared-row selection and indentation helpers"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.display",
+      "to": "difftastic.cli.parsing",
+      "label": "Selects enclosing syntax annotations"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.display.hunks",
+      "label": "Builds and merges change hunks"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.display.prepare",
+      "label": "Prepares rows before returning DiffResult"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.display.prepare",
+      "to": "difftastic.cli.display.context",
+      "label": "Selects enclosing syntax seeds"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.display.prepare",
+      "to": "difftastic.cli.display.alignment",
+      "label": "Aligns source rows"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.display.prepare",
+      "to": "difftastic.cli.display.hunks",
+      "label": "Stores padded selected rows"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing.contextMetadata",
+      "to": "difftastic.cli.parsing.metadata",
+      "label": "Attaches context to owned nodes"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing.folds",
+      "to": "difftastic.cli.parsing.metadata",
+      "label": "Reads retained tags and source ranges"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.matching",
+      "to": "difftastic.cli.parsing.metadata",
+      "label": "Matches annotated syntax nodes"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing.positions",
+      "to": "difftastic.cli.matching",
+      "label": "Uses change correspondence"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing.positions",
+      "to": "difftastic.cli.parsing.folds",
+      "label": "Projects fold correspondence"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing.positions",
+      "to": "difftastic.cli.result",
+      "label": "Produces matched positions and folds"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.display.context",
+      "to": "difftastic.cli.parsing.metadata",
+      "label": "Selects retained enclosing boundaries"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.review.wire",
+      "to": "difftastic.cli.result",
+      "label": "Serializes side-local folds and prepared rows"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.review.snapshot",
+      "to": "difftastic.cli.result",
+      "label": "Renders prepared rows and derives alignment as needed"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.configuration",
+      "label": "Builds Params before diffing"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.review",
+      "to": "difftastic.cli.configuration",
+      "label": "Accepts reusable Params"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.configuration.compile",
+      "to": "difftastic.cli.configuration.query",
+      "label": "Validates and compiles resolved queries"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing",
+      "to": "difftastic.cli.parsing.folds",
+      "label": "Runs independent classification"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing.folds",
+      "to": "difftastic.cli.configuration",
+      "label": "Uses feature query from LanguageParams"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing.folds",
+      "to": "difftastic.cli.parsing.queryHelpers",
+      "label": "Reads captured node coordinates"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing",
+      "to": "difftastic.cli.parsing.contextMetadata",
+      "label": "Runs independent classification"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing.contextMetadata",
+      "to": "difftastic.cli.configuration",
+      "label": "Uses feature query from LanguageParams"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing.contextMetadata",
+      "to": "difftastic.cli.parsing.queryHelpers",
+      "label": "Reads captured node coordinates"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.parsing",
+      "to": "difftastic.cli.configuration",
+      "label": "Consumes resolved LanguageParams including embedded languages"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.entry",
+      "to": "difftastic.cli.server",
+      "label": "Dispatches difft serve"
+    },
+    {
+      "kind": "semantic",
+      "from": "consumer",
+      "to": "difftastic.cli.server.stream",
+      "label": "POST /diff and consume events"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.server",
+      "to": "difftastic.cli.configuration",
+      "label": "Loads shared workspace Params once"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.server.stream",
+      "to": "difftastic.cli.git",
+      "label": "Pulls one file result when polled"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.git",
+      "to": "difftastic.cli.configuration",
+      "label": "Uses class order and language parameters"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.git",
+      "to": "difftastic.cli.review",
+      "label": "Diffs source pairs with shared Params"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.server.stream",
+      "to": "difftastic.cli.review.wire",
+      "label": "Serializes domain and optional layout"
+    },
+    {
+      "kind": "semantic",
+      "from": "difftastic.cli.review",
+      "to": "difftastic.cli.git",
+      "label": "Reuses session iterator for Git-ref CLI"
+    }
+  ]
+});

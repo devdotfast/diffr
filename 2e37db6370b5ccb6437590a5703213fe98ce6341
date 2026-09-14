@@ -1,0 +1,498 @@
+import { defineSoftwareMap } from "@dev.fast/progressive-review/software-map-model";
+
+export default defineSoftwareMap({
+  "people": {
+    "developer": {
+      "label": "Developer",
+      "description": "Compares source revisions and inspects structural changes in a terminal."
+    }
+  },
+  "systems": {
+    "diffr": {
+      "label": "diffr",
+      "description": "Local syntax-aware Git and file comparison with a Rust backend and interactive terminal frontend.",
+      "containers": {
+        "backend": {
+          "label": "Rust comparison CLI",
+          "components": {
+            "cli": {
+              "label": "Command routing",
+              "description": "Resolves comparison flags, file modes and output selection.",
+              "coverage": {
+                "files": [
+                  "src/main.rs",
+                  "src/cli.rs",
+                  "src/options.rs",
+                  "src/exit_codes.rs",
+                  "src/version.rs"
+                ]
+              }
+            },
+            "config": {
+              "label": "Configuration",
+              "description": "Layers bundled defaults, global and repository TOML, environment and CLI overrides; exposes a schema and edits global settings.",
+              "coverage": {
+                "files": [
+                  "src/config.rs"
+                ],
+                "globs": [
+                  "src/config/**"
+                ]
+              }
+            },
+            "git": {
+              "label": "Git source loading",
+              "description": "Loads Git or no-index sources and classifies files using attributes and path rules.",
+              "coverage": {
+                "files": [
+                  "src/git.rs",
+                  "src/gitattributes.rs",
+                  "src/files.rs",
+                  "src/conflicts.rs",
+                  "src/category.rs"
+                ]
+              }
+            },
+            "engine": {
+              "label": "Diff computation",
+              "description": "Coordinates language parsing, syntax matching and line fallback into a shared DiffResult.",
+              "coverage": {
+                "files": [
+                  "src/engine.rs",
+                  "src/summary.rs",
+                  "src/line_parser.rs",
+                  "src/lines.rs",
+                  "src/words.rs",
+                  "src/constants.rs",
+                  "src/hash.rs",
+                  "src/line_folds.rs"
+                ]
+              }
+            },
+            "parse": {
+              "label": "Syntax and annotations",
+              "description": "Tree-sitter language parsers, syntax nodes, folds and contextual annotations.",
+              "coverage": {
+                "globs": [
+                  "src/parse/**"
+                ]
+              }
+            },
+            "matching": {
+              "label": "Structural matching",
+              "description": "Matches unchanged syntax, searches change graphs and refines edit positions.",
+              "coverage": {
+                "globs": [
+                  "src/diff/**"
+                ]
+              }
+            },
+            "display": {
+              "label": "Layout and terminal output",
+              "description": "Projects matched positions into hunks, correspondence rows and formatted terminal or JSON output.",
+              "coverage": {
+                "globs": [
+                  "src/display/**"
+                ]
+              }
+            },
+            "protocol": {
+              "label": "Streaming wire output",
+              "description": "Protocol v3 typed events, paired sides and source region trees; projects internal results before bounded parallel streaming.",
+              "coverage": {
+                "globs": [
+                  "src/protocol/**"
+                ],
+                "files": [
+                  "src/pairing.rs"
+                ]
+              },
+              "codeElements": {
+                "pairing": {
+                  "label": "Pairing<T>",
+                  "description": "Presence-based representation of one-sided or paired comparison values.",
+                  "sourceRanges": [
+                    {
+                      "file": "src/pairing.rs",
+                      "fromLine": 9,
+                      "toLine": 15
+                    }
+                  ]
+                },
+                "project": {
+                  "label": "Wire projection",
+                  "description": "Converts internal DiffResult into source text, annotations and paired region trees.",
+                  "sourceRanges": [
+                    {
+                      "file": "src/protocol/project.rs",
+                      "fromLine": 34,
+                      "toLine": 44
+                    }
+                  ]
+                }
+              }
+            },
+            "hooks": {
+              "label": "Fold summary client",
+              "description": "Implements a fold mutation using a trusted local JSON-RPC summary server.",
+              "coverage": {
+                "files": [
+                  "src/hook.rs"
+                ]
+              }
+            },
+            "review": {
+              "label": "Review fixture adapters",
+              "description": "Renders fixture output for structural diff examples.",
+              "coverage": {
+                "files": [
+                  "src/review/mod.rs",
+                  "src/review/render.rs",
+                  "src/review/tests.rs"
+                ]
+              }
+            },
+            "mutations": {
+              "label": "Wire mutations",
+              "description": "Ordered visibility, collapse, docstring bundling and grouping passes transform projected region trees; mutation failure aborts the run.",
+              "coverage": {
+                "files": [
+                  "src/mutate/mod.rs",
+                  "src/mutate/collapse.rs",
+                  "src/mutate/docstrings.rs",
+                  "src/mutate/group.rs"
+                ]
+              }
+            },
+            "summarizer": {
+              "label": "Built-in pseudocode summarizer",
+              "description": "Requests bounded concurrent model summaries for new function bodies and attaches validated pseudocode to regions.",
+              "coverage": {
+                "files": [
+                  "src/mutate/summarize.rs"
+                ]
+              }
+            }
+          }
+        },
+        "frontend": {
+          "label": "Hunk terminal frontend",
+          "components": {
+            "launch": {
+              "label": "Terminal process lifecycle",
+              "description": "Launches the Rust backend or opens an NDJSON recording and initializes the terminal renderer.",
+              "coverage": {
+                "files": [
+                  "tui/packages/hunk/src/main.tsx",
+                  "tui/package.json"
+                ]
+              }
+            },
+            "stream": {
+              "label": "Frontend stream store",
+              "description": "Validates wire events and accumulates comparison progress and file results.",
+              "coverage": {
+                "files": [
+                  "tui/packages/hunk/src/diffr/wire.ts",
+                  "tui/packages/hunk/src/diffr/stream.ts",
+                  "tui/packages/hunk/src/diffr/store.ts",
+                  "tui/packages/hunk/src/diffr/fixture.ts",
+                  "tui/packages/hunk/src/diffr/stream.test.ts"
+                ]
+              }
+            },
+            "projection": {
+              "label": "Rows and folds",
+              "description": "Flattens paired region trees into leaf rows and fold controls, with shared collapse identities and backend line counts.",
+              "coverage": {
+                "files": [
+                  "tui/packages/hunk/src/diffr/rows.ts",
+                  "tui/packages/hunk/src/diffr/rows.test.ts",
+                  "tui/packages/hunk/src/diffr/geometry.ts",
+                  "tui/packages/hunk/src/diffr/regions.ts",
+                  "tui/packages/hunk/src/diffr/regions.test.ts",
+                  "tui/packages/hunk/src/diffr/counts.ts",
+                  "tui/packages/hunk/src/diffr/counts.test.ts"
+                ]
+              }
+            },
+            "navigation": {
+              "label": "File navigation and selection",
+              "description": "Builds file trees and tracks selection across rendered rows.",
+              "coverage": {
+                "files": [
+                  "tui/packages/hunk/src/diffr/fileTree.ts",
+                  "tui/packages/hunk/src/diffr/fileTree.test.ts",
+                  "tui/packages/hunk/src/diffr/selection.ts"
+                ]
+              }
+            },
+            "ui": {
+              "label": "Interactive terminal view",
+              "description": "Renders code cells, file sidebar, viewport and keyboard interactions.",
+              "coverage": {
+                "files": [
+                  "tui/packages/hunk/src/ui/App.tsx",
+                  "tui/packages/hunk/src/ui/App.test.tsx"
+                ],
+                "globs": [
+                  "tui/packages/hunk/src/ui/diff/**",
+                  "tui/packages/hunk/src/ui/lib/**",
+                  "tui/packages/hunk/src/lib/**"
+                ]
+              }
+            },
+            "settings": {
+              "label": "Schema-driven settings",
+              "description": "Reads backend settings schema and resolved values, renders editable settings, and persists changes through diffr config.",
+              "coverage": {
+                "files": [
+                  "tui/packages/hunk/src/diffr/config.ts",
+                  "tui/packages/hunk/src/diffr/config.test.ts",
+                  "tui/packages/hunk/src/ui/Settings.tsx",
+                  "tui/packages/hunk/src/ui/Settings.test.tsx"
+                ]
+              }
+            },
+            "theme": {
+              "label": "Helix theme loader",
+              "description": "Loads TOML palettes and Tree-sitter capture styles for terminal rendering.",
+              "coverage": {
+                "files": [
+                  "tui/packages/hunk/src/diffr/theme.ts",
+                  "tui/packages/hunk/src/diffr/theme.test.ts"
+                ],
+                "globs": [
+                  "tui/themes/**"
+                ]
+              }
+            }
+          }
+        },
+        "support": {
+          "label": "Documentation and examples",
+          "components": {
+            "docs": {
+              "label": "User documentation",
+              "description": "Documents installation, CLI comparison selection and the streaming integration contract.",
+              "coverage": {
+                "files": [
+                  "README.md",
+                  "diffr.1",
+                  "diffr.1.md",
+                  "difft.1",
+                  "difft.1.md",
+                  "TUI_UPSTREAM.md",
+                  "tui/README.md"
+                ],
+                "globs": [
+                  "docs/**",
+                  "manual/**"
+                ]
+              }
+            },
+            "examples": {
+              "label": "Examples and validation fixtures",
+              "description": "Example summary server, recorded comparisons and browser fixture viewer.",
+              "coverage": {
+                "globs": [
+                  "examples/**",
+                  "tests/**",
+                  "tui/test/**",
+                  "demo_files/**"
+                ]
+              }
+            },
+            "build": {
+              "label": "Build and dependencies",
+              "description": "Rust dependency and parser build configuration.",
+              "coverage": {
+                "files": [
+                  "Cargo.toml",
+                  "Cargo.lock",
+                  "build.rs"
+                ],
+                "globs": [
+                  ".github/workflows/**"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "git": {
+      "label": "Local Git repository",
+      "external": true,
+      "description": "Revision objects, index and working-tree content used as comparison operands."
+    },
+    "hook": {
+      "label": "Trusted summary server",
+      "external": true,
+      "description": "User-configured local JSON-RPC process supplies fold summaries."
+    },
+    "summaries": {
+      "label": "Configured model endpoint",
+      "description": "Gemini-compatible service returns pseudocode and optional docstring summaries.",
+      "external": true
+    }
+  },
+  "relationships": [
+    {
+      "from": "developer",
+      "to": "diffr.backend.cli",
+      "kind": "semantic",
+      "label": "Selects comparison"
+    },
+    {
+      "from": "developer",
+      "to": "diffr.frontend.ui",
+      "kind": "semantic",
+      "label": "Inspects changes"
+    },
+    {
+      "from": "diffr.backend.cli",
+      "to": "diffr.backend.config",
+      "kind": "semantic",
+      "label": "Resolves settings"
+    },
+    {
+      "from": "diffr.backend.cli",
+      "to": "diffr.backend.git",
+      "kind": "semantic",
+      "label": "Creates comparison session"
+    },
+    {
+      "from": "diffr.backend.git",
+      "to": "diffr.backend.engine",
+      "kind": "semantic",
+      "label": "Computes file changes"
+    },
+    {
+      "from": "diffr.backend.engine",
+      "to": "diffr.backend.parse",
+      "kind": "semantic",
+      "label": "Parses and annotates sources"
+    },
+    {
+      "from": "diffr.backend.engine",
+      "to": "diffr.backend.matching",
+      "kind": "semantic",
+      "label": "Matches syntax"
+    },
+    {
+      "from": "diffr.backend.engine",
+      "to": "diffr.backend.display",
+      "kind": "semantic",
+      "label": "Builds hunks and correspondence"
+    },
+    {
+      "from": "diffr.backend.cli",
+      "to": "diffr.backend.protocol",
+      "kind": "semantic",
+      "label": "Streams results"
+    },
+    {
+      "from": "diffr.backend.protocol",
+      "to": "diffr.backend.display",
+      "kind": "semantic",
+      "label": "Serializes correspondence"
+    },
+    {
+      "from": "diffr.backend.review",
+      "to": "diffr.backend.engine",
+      "kind": "semantic",
+      "label": "Computes fixture diffs"
+    },
+    {
+      "from": "diffr.backend.git",
+      "to": "git",
+      "kind": "semantic",
+      "label": "Reads sources"
+    },
+    {
+      "from": "diffr.backend.hooks",
+      "to": "hook",
+      "kind": "semantic",
+      "label": "Calls JSON-RPC summaries"
+    },
+    {
+      "from": "diffr.frontend.launch",
+      "to": "diffr.backend.cli",
+      "kind": "semantic",
+      "label": "Spawns NDJSON process"
+    },
+    {
+      "from": "diffr.backend.protocol",
+      "to": "diffr.frontend.stream",
+      "kind": "semantic",
+      "label": "Sends NDJSON events"
+    },
+    {
+      "from": "diffr.frontend.stream",
+      "to": "diffr.frontend.projection",
+      "kind": "semantic",
+      "label": "Supplies completed files"
+    },
+    {
+      "from": "diffr.frontend.projection",
+      "to": "diffr.frontend.ui",
+      "kind": "semantic",
+      "label": "Supplies display rows"
+    },
+    {
+      "from": "diffr.frontend.navigation",
+      "to": "diffr.frontend.ui",
+      "kind": "semantic",
+      "label": "Supplies selection and file tree"
+    },
+    {
+      "from": "diffr.backend.protocol",
+      "to": "diffr.backend.mutations",
+      "kind": "semantic",
+      "label": "Applies file and region transformations"
+    },
+    {
+      "from": "diffr.backend.mutations",
+      "to": "diffr.backend.hooks",
+      "kind": "semantic",
+      "label": "Runs configured hook"
+    },
+    {
+      "from": "diffr.backend.mutations",
+      "to": "diffr.backend.summarizer",
+      "kind": "semantic",
+      "label": "Runs built-in summarizer"
+    },
+    {
+      "from": "diffr.backend.summarizer",
+      "to": "summaries",
+      "kind": "semantic",
+      "label": "Requests pseudocode"
+    },
+    {
+      "from": "diffr.backend.config",
+      "to": "diffr.backend.mutations",
+      "kind": "semantic",
+      "label": "Selects ordered passes"
+    },
+    {
+      "from": "diffr.frontend.settings",
+      "to": "diffr.backend.cli",
+      "kind": "semantic",
+      "label": "Reads and writes configuration"
+    },
+    {
+      "from": "diffr.frontend.settings",
+      "to": "diffr.frontend.ui",
+      "kind": "semantic",
+      "label": "Renders settings screen"
+    },
+    {
+      "from": "diffr.frontend.theme",
+      "to": "diffr.frontend.projection",
+      "kind": "semantic",
+      "label": "Supplies syntax colors"
+    }
+  ]
+});

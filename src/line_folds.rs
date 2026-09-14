@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::display::line_layout::{aligned_rows, novel_lines, Row};
 use crate::hash::DftHashMap;
 use crate::lines::SourceRange;
-use crate::parse::folds::Fold;
+use crate::parse::folds::{Fold, FoldMatch};
 use crate::parse::syntax::MatchedPos;
 
 /// The row alignment of a line-diff fallback: the line diff's rows, with
@@ -46,8 +46,8 @@ pub(crate) fn fallback_rows(
 pub(crate) fn pair(
     rows: &[Row],
     (lhs_src, rhs_src): (&str, &str),
-    (lhs_folds, rhs_folds): (&[Fold], &[Fold]),
-) -> Vec<(usize, usize)> {
+    (lhs_folds, rhs_folds): (&mut [Fold], &mut [Fold]),
+) {
     let lhs_spans = spans(lhs_folds, lhs_src.split_terminator('\n').count());
     let rhs_spans = spans(rhs_folds, rhs_src.split_terminator('\n').count());
     let mut lhs_pair: Vec<Option<usize>> = vec![None; lhs_folds.len()];
@@ -176,11 +176,18 @@ pub(crate) fn pair(
         pairs.push((lhs_row, rhs_row));
     }
 
-    lhs_pair
-        .into_iter()
-        .enumerate()
-        .filter_map(|(lhs_index, rhs_index)| Some((lhs_index, rhs_index?)))
-        .collect()
+    for (lhs_index, rhs_index) in lhs_pair.into_iter().enumerate() {
+        let Some(rhs_index) = rhs_index else {
+            continue;
+        };
+        let (lhs_range, rhs_range) = (lhs_folds[lhs_index].range, rhs_folds[rhs_index].range);
+        lhs_folds[lhs_index].match_kind = FoldMatch::Unchanged {
+            opposite: rhs_range,
+        };
+        rhs_folds[rhs_index].match_kind = FoldMatch::Unchanged {
+            opposite: lhs_range,
+        };
+    }
 }
 
 /// The whole lines each fold covers, or `None` for a fold that hides

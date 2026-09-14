@@ -21,7 +21,7 @@ use crate::display::line_layout::{aligned_rows, novel_lines};
 use crate::hash::DftHashMap;
 use crate::line_folds;
 use crate::line_parser;
-use crate::parse::folds::Fold;
+use crate::parse::folds::{self, Fold};
 use crate::parse::syntax::{MatchKind, MatchedPos};
 use crate::parse::tree_sitter_parser::{highlight_captures, TreeSitterConfig};
 use crate::summary::{DiffResult, FileContent, FileFormat};
@@ -250,17 +250,11 @@ fn regions(
         .filter_map(|run| run.rhs)
         .collect();
 
-    // Pairs come with the diff; a pair is keyed by its lhs fold's index.
-    let rhs_key: DftHashMap<usize, usize> = result
-        .fold_pairs
-        .iter()
-        .map(|&(lhs, rhs)| (rhs, lhs))
-        .collect();
-    let lhs_key: DftHashMap<usize, usize> = result
-        .fold_pairs
-        .iter()
-        .map(|&(lhs, _)| (lhs, lhs))
-        .collect();
+    // Each fold records its partner; a pair is keyed by its lhs fold's index.
+    let fold_pairs = folds::pair_matched(&result.lhs_folds, &result.rhs_folds);
+    let rhs_key: DftHashMap<usize, usize> =
+        fold_pairs.iter().map(|&(lhs, rhs)| (rhs, lhs)).collect();
+    let lhs_key: DftHashMap<usize, usize> = fold_pairs.iter().map(|&(lhs, _)| (lhs, lhs)).collect();
     let lhs_folds: Vec<SideFold<'_>> = side_folds(&result.lhs_folds, &lhs_key, &lhs_lines)
         .into_iter()
         .filter_map(|fold| fit_to_gaps(fold, &lhs_gaps))
@@ -1659,7 +1653,6 @@ mod tests {
             hunks: vec![],
             lhs_folds: vec![],
             rhs_folds: vec![],
-            fold_pairs: vec![],
             lhs_positions: vec![],
             rhs_positions: vec![],
             has_byte_changes: Some((3, 5)),

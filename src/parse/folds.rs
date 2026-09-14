@@ -22,7 +22,9 @@ pub(crate) struct Fold {
 
 #[derive(Debug, Clone)]
 pub(crate) enum FoldMatch {
-    /// A corresponding fold, whose contents may differ. Collapsed state is client-owned.
+    /// A corresponding fold, whose contents may differ: recorded by the syntax
+    /// matcher, or by the line alignment when the file fell back to a line diff.
+    /// Collapsed state is client-owned.
     Unchanged {
         opposite: SourceRange,
     },
@@ -177,8 +179,8 @@ pub(crate) fn pair_matched(lhs: &[Fold], rhs: &[Fold]) -> Vec<(usize, usize)> {
 }
 
 /// Every fold in a parsed side, without any correspondence. Used when the
-/// AST match did not run: `line_folds::pair` pairs them through the line
-/// alignment instead.
+/// AST match did not run: `line_folds::pair` then records partners on them
+/// through the line alignment.
 pub(crate) fn unmatched(nodes: &[&Syntax<'_>], folds: &mut Vec<Fold>) {
     for node in nodes {
         folds.extend(project(node, ChangeKind::Novel));

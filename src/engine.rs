@@ -91,7 +91,6 @@ fn check_only_text(
         hunks: vec![],
         lhs_folds: vec![],
         rhs_folds: vec![],
-        fold_pairs: vec![],
         has_byte_changes,
         has_syntactic_changes: lhs_src != rhs_src,
     }
@@ -137,7 +136,6 @@ pub(crate) fn diff_file_content(
             hunks: vec![],
             lhs_folds: vec![],
             rhs_folds: vec![],
-            fold_pairs: vec![],
             has_byte_changes: None,
             has_syntactic_changes: false,
         };
@@ -189,7 +187,6 @@ pub(crate) fn diff_file_content(
                                     hunks: vec![],
                                     lhs_folds: vec![],
                                     rhs_folds: vec![],
-                                    fold_pairs: vec![],
                                     has_byte_changes,
                                     has_syntactic_changes,
                                 };
@@ -394,14 +391,16 @@ pub(crate) fn diff_file_content(
         Some((lhs_src.as_bytes().len(), rhs_src.as_bytes().len()))
     };
 
-    let fold_pairs = match file_format {
-        FileFormat::SupportedLanguage(_) => folds::pair_matched(&lhs_folds, &rhs_folds),
-        _ => line_folds::pair(
+    // A structural diff's folds carry the partner the matcher recorded. A
+    // line-diff fallback's folds arrive unpaired; pair them through the line
+    // alignment and record the partner on the folds the same way.
+    if !matches!(file_format, FileFormat::SupportedLanguage(_)) {
+        line_folds::pair(
             &line_folds::fallback_rows((lhs_src, rhs_src), (&lhs_positions, &rhs_positions)),
             (lhs_src, rhs_src),
-            (&lhs_folds, &rhs_folds),
-        ),
-    };
+            (&mut lhs_folds, &mut rhs_folds),
+        );
+    }
 
     DiffResult {
         extra_info,
@@ -414,7 +413,6 @@ pub(crate) fn diff_file_content(
         hunks,
         lhs_folds,
         rhs_folds,
-        fold_pairs,
         has_byte_changes,
         has_syntactic_changes,
     }

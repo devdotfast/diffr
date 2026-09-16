@@ -1,24 +1,27 @@
 //! An example diffr plugin. `classify` tags a file `fixture` when it sits
-//! under a `fixtures/` directory or its working-tree file starts with a
-//! `// fixture` line, read from the repository's working directory: a plugin
-//! reads files itself, and needs nothing of diffr to do it. A file the
-//! working tree no longer has, a deleted one, is classified by its path
-//! alone. `mutate` hides a fixture behind the subject of the
-//! last commit that touched it, asked of the host's `git`, and collapses all
-//! but the first line of its first leaf, naming the piece its cut creates by
-//! predicting the id.
+//! under a `fixtures/` directory or its first line is `// fixture`, read from
+//! the blob the file entry names: a plugin reads content itself, over the
+//! `git` it already has, and so reads a deleted file as well as a new one.
+//! `mutate` hides a fixture behind the subject of the last commit that
+//! touched it, and collapses all but the first line of its first leaf, naming
+//! the piece its cut creates by predicting the id.
 use diffr_plugin_sdk::apply::Fresh;
 use diffr_plugin_sdk::types::{Cut, Source};
 use diffr_plugin_sdk::{
-    anyhow, export, host, line_count, tree, FileEntry, FileStatus, Move, Node, Pairing, Plugin,
-    ROOT,
+    anyhow, export, host, line_count, tree, FileEntry, Move, Node, Pairing, Plugin, ROOT,
 };
 use serde::Deserialize;
-use std::fs::{symlink_metadata, File};
-use std::io::Read as _;
 
 const TAG: &str = "fixture";
-const MARKER: &[u8] = b"// fixture\n";
+const MARKER: &str = "// fixture\n";
+/// Git's mode for a plain file; a symlink or a submodule has another.
+const REGULAR: &str = "100644";
+
+/// `git`, with its stderr as the error.
+fn git(args: &[&str]) -> anyhow::Result<String> {
+    let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+    host::git(&args).map_err(|stderr| anyhow::anyhow!("git {}: {stderr}", args[0]))
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -38,22 +41,19 @@ impl Plugin for Fixtures {
     }
 
     fn classify(&self, file: &FileEntry) -> anyhow::Result<Vec<String>> {
-        if file.path.starts_with("fixtures/") || file.path.contains("/fixtures/") {
+        let side = file.side();
+        if file.path().starts_with("fixtures/") || file.path().contains("/fixtures/") {
             return Ok(vec![TAG.to_owned()]);
-        }
-        if file.status == FileStatus::Deleted {
-            return Ok(Vec::new());
         }
         // Only a regular file has a first line to read; a symlink or a
         // submodule is not a fixture.
-        if !symlink_metadata(&file.path)?.is_file() {
+        if side.mode != REGULAR {
             return Ok(Vec::new());
         }
-        let mut head = Vec::new();
-        File::open(&file.path)?
-            .take(MARKER.len() as u64)
-            .read_to_end(&mut head)?;
-        Ok(match head == MARKER {
+        // The blob, not the working tree: a deleted file has content too, and
+        // it is the content that was diffed either way.
+        let text = git(&["cat-file", "blob", &side.oid])?;
+        Ok(match text.starts_with(MARKER) {
             true => vec![TAG.to_owned()],
             false => Vec::new(),
         })
@@ -65,14 +65,13 @@ impl Plugin for Fixtures {
         lhs: Option<&Source>,
         rhs: Option<&Source>,
     ) -> anyhow::Result<Vec<Move>> {
-        anyhow::ensure!(!self.options.fail, "asked to fail on {}", file.path);
+        anyhow::ensure!(!self.options.fail, "asked to fail on {}", file.path());
         if !file.tags.iter().any(|tag| tag == TAG) {
             return Ok(Vec::new());
         }
-        let args = ["log", "-1", "--format=%s", "--", &file.path].map(str::to_owned);
-        let subject = host::git(&args).map_err(|stderr| anyhow::anyhow!("git log: {stderr}"))?;
+        let subject = git(&["log", "-1", "--format=%s", "--", file.path()])?;
         let subject = subject.trim();
-        eprintln!("{}: last changed in {subject:?}", file.path);
+        eprintln!("{}: last changed in {subject:?}", file.path());
         let mut moves = vec![
             Move::SetCollapsed((ROOT, true)),
             Move::SetLabel((ROOT, Some(format!("Fixture · {subject}")))),

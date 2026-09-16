@@ -111,8 +111,13 @@ cannot fail.
 - `options`: the plugin's entry as a JSON object, defaults filled in and
   already validated against `plugin.toml`. Only `new` gets it; what the
   plugin keeps from it lasts the run.
-- `file-entry`: `path` (the after path, or the before path of a deleted
-  file), `old-path` (the before path, when there is one), `status` and `tags`.
+- `file-entry`: `file`, `status` and `tags`. `file` is the manifest entry's
+  sides — `both`, `left-only` (a deletion) or `right-only` (an addition) — and
+  each side is a `file-ref` of `path`, `oid` (the blob; empty outside a
+  repository) and `mode`. `status` says how the two sides relate, which the
+  sides alone do not: a path that changed is `renamed`, an object kind that
+  changed `type-changed`. The SDK's `FileEntry::side()` is the side a file is
+  named by and `path()` its path.
 - `source`: one side's `text` and its `regions`, the tree flattened in
   preorder: each `region` carries its `parent` (a fold's `id`, or `0` for a
   top-level region), `id`, `fold-state-id`, `range`, `tags`, `visibility`, and

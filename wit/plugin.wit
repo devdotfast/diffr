@@ -35,13 +35,30 @@ interface types {
         type-changed,
     }
 
-    /// One changed file, as its manifest entry describes it.
-    record file-entry {
-        /// The path on the after side, or on the before side when the file
-        /// was deleted.
+    /// One side of a git delta, as the manifest names it.
+    record file-ref {
         path: string,
-        /// The path on the before side, when the file has one.
-        old-path: option<string>,
+        /// The blob. Empty when the comparison is not of a repository: two
+        /// paths compared directly have no blobs.
+        oid: string,
+        /// Git's octal mode text, e.g. `100644`.
+        mode: string,
+    }
+
+    /// The sides a changed file has. A deletion is `left-only`, an addition
+    /// `right-only`.
+    variant file-sides {
+        both(tuple<file-ref, file-ref>),
+        left-only(file-ref),
+        right-only(file-ref),
+    }
+
+    /// One changed file, as its manifest entry describes it. `file` says
+    /// which sides the file has and names each; `status` says how the two
+    /// relate, which having both sides does not answer: a path that changed
+    /// is `renamed`, an object kind that changed `type-changed`.
+    record file-entry {
+        file: file-sides,
         status: file-status,
         /// Sorted and deduplicated. During `classify`, the tags so far: the
         /// bundled rules, git attributes, and the plugins before this one.

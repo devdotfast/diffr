@@ -301,9 +301,19 @@ impl Runner for WasmInstance {
 }
 
 fn file_entry(file: &contract::FileEntry) -> types::FileEntry {
+    let file_ref = |side: &contract::FileRef| types::FileRef {
+        path: side.path.clone(),
+        oid: side.oid.clone(),
+        mode: side.mode.clone(),
+    };
     types::FileEntry {
-        path: file.path.clone(),
-        old_path: file.old_path.clone(),
+        file: match &file.file {
+            contract::FileSides::Both((lhs, rhs)) => {
+                types::FileSides::Both((file_ref(lhs), file_ref(rhs)))
+            }
+            contract::FileSides::LeftOnly(lhs) => types::FileSides::LeftOnly(file_ref(lhs)),
+            contract::FileSides::RightOnly(rhs) => types::FileSides::RightOnly(file_ref(rhs)),
+        },
         status: match file.status {
             contract::FileStatus::Added => types::FileStatus::Added,
             contract::FileStatus::Deleted => types::FileStatus::Deleted,

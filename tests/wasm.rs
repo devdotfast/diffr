@@ -303,10 +303,14 @@ fn fixtures_repo() -> (Fixture, String, String) {
     fixture.write("fixtures/data.txt", &data("five"));
     fixture.write("src/marked.txt", &format!("// fixture\n{}", data("five")));
     fixture.write("src/plain.txt", &data("five"));
+    // Deleted at head: the working tree no longer has it, so only the blob
+    // the file entry names can say whether it was a fixture.
+    fixture.write("src/gone.txt", &format!("// fixture\n{}", data("five")));
     let base = fixture.commit("Add fixtures\n");
     fixture.write("fixtures/data.txt", &data("six"));
     fixture.write("src/marked.txt", &format!("// fixture\n{}", data("six")));
     fixture.write("src/plain.txt", &data("six"));
+    fixture.remove("src/gone.txt");
     let head = fixture.commit("Update fixtures\n");
     (fixture, base, head)
 }
@@ -342,6 +346,11 @@ fn the_fixtures_example_classifies_reads_files_runs_git_and_moves_regions() {
         "the plugin reads the file and finds the marker"
     );
     assert_eq!(tags("src/plain.txt"), None);
+    assert_eq!(
+        tags("src/gone.txt"),
+        Some(serde_json::json!(["fixture"])),
+        "a deleted file is read from its blob, not the working tree"
+    );
 
     for path in ["fixtures/data.txt", "src/marked.txt"] {
         let record = file_record(&records, path);

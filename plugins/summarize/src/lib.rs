@@ -421,7 +421,7 @@ impl Plugin for Summarize {
         }
         let lines: Vec<&str> = rhs.text.split_terminator('\n').collect();
         let mut texts = self
-            .complete(&file.path, &rhs.text, &folds)
+            .complete(file.path(), &rhs.text, &folds)
             .context("summarizer")?;
         texts.retain(|id, summary| {
             let fold = folds

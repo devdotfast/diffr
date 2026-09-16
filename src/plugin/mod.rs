@@ -167,7 +167,7 @@ impl Pipeline {
         let mut entry = file_entry(file);
         for plugin in &self.plugins {
             let name = &plugin.name;
-            let path = &entry.path;
+            let path = entry.path();
             let added = plugin
                 .runner
                 .classify(self.host(&plugin.name), &entry)
@@ -211,7 +211,7 @@ impl Pipeline {
             log::debug!(
                 "plugin {}: mutate {} took {:?}",
                 plugin.name,
-                entry.path,
+                entry.path(),
                 started.elapsed()
             );
             apply::apply(moves, &mut trees, &mut visibility)
@@ -245,9 +245,17 @@ impl Pipeline {
 
 /// The contract's record of a manifest entry.
 pub(crate) fn file_entry(file: &FileChange) -> types::FileEntry {
+    let file_ref = |side: &protocol::FileRef| types::FileRef {
+        path: side.path.clone(),
+        oid: side.oid.clone(),
+        mode: side.mode.clone(),
+    };
     types::FileEntry {
-        path: file.file.rhs_or_lhs().path.clone(),
-        old_path: file.file.lhs().map(|side| side.path.clone()),
+        file: match &file.file {
+            Pairing::Both { lhs, rhs } => types::FileSides::Both((file_ref(lhs), file_ref(rhs))),
+            Pairing::LeftOnly { lhs } => types::FileSides::LeftOnly(file_ref(lhs)),
+            Pairing::RightOnly { rhs } => types::FileSides::RightOnly(file_ref(rhs)),
+        },
         status: match file.status {
             FileStatus::Added => types::FileStatus::Added,
             FileStatus::Deleted => types::FileStatus::Deleted,

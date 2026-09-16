@@ -38,7 +38,9 @@ pub use tree::{
     before_and_after_ids, docstring_of, has_tag, is_fold, line_count, one_sided, path_to,
     siblings_of, sides_with_other_ids, walk, walk_mut, Node, OtherSide, Pairing, Region, Source,
 };
-pub use types::{FileEntry, FileStatus, Move, Position, Range, Side, Span, Visibility, ROOT};
+pub use types::{
+    FileEntry, FileRef, FileSides, FileStatus, Move, Position, Range, Side, Span, Visibility, ROOT,
+};
 
 /// A diffr plugin: the `plugin` resource of `wit/plugin.wit`. diffr makes one
 /// with [`Plugin::new`] when it builds its pipeline, before any file, and

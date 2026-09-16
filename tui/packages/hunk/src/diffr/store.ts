@@ -21,6 +21,16 @@ export class DiffStore {
     total: 0,
     complete: false,
   };
+  private notification: ReturnType<typeof setTimeout> | undefined;
+  private notify() {
+    if (this.notification !== undefined || this.listeners.size === 0) return;
+    // Stream reads can deliver many records in a single event-loop turn. Let input
+    // and painting run, and rebuild the viewer at most once per frame-sized batch.
+    this.notification = setTimeout(() => {
+      this.notification = undefined;
+      this.listeners.forEach((listener) => listener());
+    }, 16);
+  }
   private listeners = new Set<() => void>();
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -51,7 +61,7 @@ export class DiffStore {
           ? [...this.value.errors, `diffr stopped early: ${event.aborted.message}`]
           : this.value.errors,
       };
-    this.listeners.forEach((listener) => listener());
+    this.notify();
   }
   fail(error: unknown) {
     this.value = {
@@ -59,6 +69,6 @@ export class DiffStore {
       complete: true,
       errors: [...this.value.errors, String(error)],
     };
-    this.listeners.forEach((listener) => listener());
+    this.notify();
   }
 }

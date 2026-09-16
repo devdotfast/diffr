@@ -12,3 +12,6 @@ __pycache__/
 # WASM plugin builds: scripts/build-wasm-plugins.sh
 plugin.wasm
 /crates/*/target
+
+# Generated data left behind by the retired review web viewer.
+/examples/review/viewer/data/

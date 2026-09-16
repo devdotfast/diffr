@@ -6,10 +6,19 @@ import { TextRenderable, type BaseRenderable } from "@opentui/core";
 import { App } from "./App";
 import { DiffStore } from "../diffr/store";
 import { createTestDiffFile, leaf, line, manifestEntry, startFor, withIdenticalLines } from "../diffr/fixture";
-import type { DiffFile } from "../diffr/wire";
+import type { DiffEvent, DiffFile } from "../diffr/wire";
 import { createBundledDiffFile, createFoldedDiffFile } from "../diffr/regions.test";
 import { loadBundledTheme } from "../diffr/theme";
 const themes = { initial: loadBundledTheme("default-dark"), dark: loadBundledTheme("default-dark"), light: loadBundledTheme("default-light") };
+// Wait for the stream batch to be published inside React's act boundary.
+async function accept(store: DiffStore, ...events: DiffEvent[]) {
+  await act(async () => {
+    await new Promise<void>(resolve => {
+      const unsubscribe = store.subscribe(() => { unsubscribe(); resolve(); });
+      events.forEach(event => store.accept(event));
+    });
+  });
+}
 const at = (file: DiffFile, path: string) => {
   file.file = { lhs: { path, oid: "1", mode: "100644" }, rhs: { path, oid: "2", mode: "100644" } };
   return file;
@@ -192,9 +201,9 @@ test("initial manifest renders pending tree and remembers a jump until its diff 
     expect(t.captureCharFrame()).not.toContain('send("old")');
     await act(async () => { await t.mockMouse.click(8,4); });
     await t.waitForFrame(f => f.includes("Waiting for b.ts"));
-    await act(async () => { store.accept(a); });
+    await accept(store, a);
     await t.waitForFrame(f => f.includes("◌ b.ts"));
-    await act(async () => { store.accept(b); });
+    await accept(store, b);
     await t.waitForFrame(f => f.split("\n")[2].includes("src/b.ts"));
     expect(t.captureCharFrame()).not.toContain("◌ b.ts");
   } finally {
@@ -215,7 +224,8 @@ test("streaming diffs follow tree order without moving the visible source row", 
   const t = await testRender(<App store={store} onQuit={() => {}} themes={themes} />, {width:150, height:20});
   const sidebarLines = () => t.captureCharFrame().split("\n").slice(2,9).map(line => line.slice(0,27).trim());
   try {
-    await act(async () => { await t.renderOnce(); store.accept(files[0]); store.accept(files[2]); });
+    await act(async () => { await t.renderOnce(); });
+    await accept(store, files[0], files[2]);
     await t.waitForFrame(f => f.includes("m/middle.ts"));
     expect(sidebarLines().slice(0,6)).toEqual(["▾ a", "◌ first.ts", "▾ m", "middle.ts", "▾ z", "last.ts"]);
     await act(async () => { t.mockInput.pressKey("g"); });
@@ -223,11 +233,11 @@ test("streaming diffs follow tree order without moving the visible source row", 
     await act(async () => { t.mockInput.pressKey("d", {ctrl:true}); });
     await t.renderOnce();
     const before = t.captureCharFrame().split("\n")[3].slice(28);
-    await act(async () => { store.accept(files[1]); });
+    await accept(store, files[1]);
     await t.waitForFrame(f => !f.includes("◌ first.ts") && f.split("\n")[2].includes("m/middle.ts"));
     expect(t.captureCharFrame().split("\n")[3].slice(28)).toBe(before);
     expect(sidebarLines().slice(0,6)).toEqual(["▾ a", "first.ts", "▾ m", "middle.ts", "▾ z", "last.ts"]);
-    await act(async () => { store.accept({type:"complete", succeeded:3, failed:0}); });
+    await accept(store, {type:"complete", succeeded:3, failed:0});
     await t.renderOnce();
     expect(t.captureCharFrame().split("\n")[3].slice(28)).toBe(before);
     await act(async () => { t.mockInput.pressKey("g"); });
@@ -275,7 +285,7 @@ test(`stream arrivals preserve code in every commit (wrap=${wrap}, unified=${uni
     capture = () => { commits.push(sourceCells(t.renderer.root)); };
     for (const file of files.slice(1)) {
       commits.length = 0;
-      await act(async () => { store.accept(file); });
+      await accept(store, file);
       expect(commits.length).toBeGreaterThan(0);
       for (const cells of commits) expect(cells).toEqual(before);
     }
@@ -372,7 +382,7 @@ test("the summary strip shows the wire's visible totals, unmoved by folding, and
     expect(lines()[1]).toContain("+1 −0…");
     expect(lines()[1]).toContain("■■■■■");
     expect(lines()[2]).toContain("+1 −0");
-    await act(async () => { store.accept({ type: "complete", succeeded: 1, failed: 0 }); });
+    await accept(store, { type: "complete", succeeded: 1, failed: 0 });
     await render();
     expect(lines()[1]).not.toContain("−0…");
     // Collapse the closure body: the change is hidden, but the counts are diffr's and stay put.

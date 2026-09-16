@@ -3,7 +3,7 @@
 The caller parses TOML with `Config::from_toml`, then calls `compile()` once.
 The resulting `Params` owns separately compiled fold and context queries and is borrowed by each diff.
 Each classifier runs its own traversal. Combining them is a separate optimization.
-`Config::load` reads repository-root `diffr.toml` or an explicit replacement file.
+`Config::load` reads the global file (`$XDG_CONFIG_HOME/diffr/config.toml`) or an explicit replacement file.
 File selection and ordering belong to the caller, not this configuration.
 
 ```rust

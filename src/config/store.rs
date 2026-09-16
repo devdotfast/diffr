@@ -1,0 +1,299 @@
+//! `diffr config`: read the schema and resolved values, and write one key to
+//! the global file.
+use super::{Config, ConfigError, LanguageConfig};
+use serde_json::Value;
+use std::path::Path;
+
+/// The resolved configuration as JSON, with the same nesting as the TOML.
+pub(crate) fn show(config: &Config) -> serde_json::Value {
+    serde_json::to_value(config).expect("config serializes")
+}
+
+/// Write `key = value` into the global file, keeping everything else in it
+/// as written. `value` is read as the type the schema gives the key (see
+/// [`typed_value`]), then the whole file is validated, before anything
+/// touches the disk: unknown keys, text that is not the key's type, and
+/// values the configuration rejects are errors.
+pub(crate) fn set(path: &Path, key: &str, value: &str) -> Result<(), ConfigError> {
+    if key.is_empty() || key.split('.').any(str::is_empty) {
+        return Err(ConfigError(format!("invalid key {key:?}")));
+    }
+    let typed = typed_value(key, &setting_schema(key)?, value)?;
+    let existing = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(ConfigError(format!("{}: {error}", path.display()))),
+    };
+    let mut document: toml_edit::DocumentMut = existing
+        .parse()
+        .map_err(|error| ConfigError(format!("{}: {error}", path.display())))?;
+    assign(&mut document, key, &typed)?;
+    Config::from_toml(&document.to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| ConfigError(format!("{}: {error}", parent.display())))?;
+    }
+    std::fs::write(path, document.to_string())
+        .map_err(|error| ConfigError(format!("{}: {error}", path.display())))
+}
+
+/// The JSON Schema of the setting at the dotted `key`. `languages` is left
+/// out of `diffr config schema`, so its keys are looked up in
+/// [`LanguageConfig`]'s own schema.
+fn setting_schema(key: &str) -> Result<Value, ConfigError> {
+    let unknown = || ConfigError(format!("{key}: unknown key"));
+    let segments: Vec<&str> = key.split('.').collect();
+    let (root, path) = match segments.as_slice() {
+        ["languages", _language, field] => (
+            serde_json::to_value(schemars::schema_for!(LanguageConfig)).expect("schema serializes"),
+            vec![*field],
+        ),
+        ["languages", ..] => return Err(unknown()),
+        _ => (Config::schema(), segments),
+    };
+    let resolve = |node: &Value| -> Value {
+        match node.get("$ref").and_then(Value::as_str) {
+            Some(reference) => {
+                let name = reference.rsplit('/').next().expect("split yields a piece");
+                root["$defs"][name].clone()
+            }
+            None => node.clone(),
+        }
+    };
+    let mut node = root.clone();
+    for segment in path {
+        node = resolve(
+            resolve(&node)
+                .get("properties")
+                .and_then(|properties| properties.get(segment))
+                .ok_or_else(unknown)?,
+        );
+    }
+    if node.get("properties").is_some() {
+        return Err(ConfigError(format!(
+            "{key} is a table; set one of its keys"
+        )));
+    }
+    Ok(node)
+}
+
+/// `text` read as the type `schema` gives the setting `key`, and nothing
+/// else: a string setting takes the text as it is, an integer, number or
+/// boolean setting takes only that TOML literal, an array setting a TOML
+/// array, and an enum setting one of its choices.
+fn typed_value(key: &str, schema: &Value, text: &str) -> Result<toml::Value, ConfigError> {
+    let mistyped =
+        |expected: &str| ConfigError(format!("{key}: expected {expected}, got {text:?}"));
+    if let Some(choices) = schema.get("enum").and_then(Value::as_array) {
+        if !choices.iter().any(|choice| choice.as_str() == Some(text)) {
+            let choices: Vec<String> = choices.iter().map(Value::to_string).collect();
+            return Err(mistyped(&format!("one of {}", choices.join(", "))));
+        }
+        return Ok(toml::Value::String(text.to_owned()));
+    }
+    // An optional setting is its type or null; `set` writes the type.
+    let kinds: Vec<&str> = match schema.get("type") {
+        Some(Value::String(kind)) => vec![kind.as_str()],
+        Some(Value::Array(kinds)) => kinds
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|kind| *kind != "null")
+            .collect(),
+        _ => Vec::new(),
+    };
+    let [kind] = kinds.as_slice() else {
+        return Err(ConfigError(format!(
+            "{key}: the schema gives it no single type, so config set cannot write it"
+        )));
+    };
+    Ok(match *kind {
+        "string" => toml::Value::String(text.to_owned()),
+        "integer" => toml::Value::Integer(text.parse().map_err(|_| mistyped("an integer"))?),
+        "number" => toml::Value::Float(text.parse().map_err(|_| mistyped("a number"))?),
+        "boolean" => match text {
+            "true" => toml::Value::Boolean(true),
+            "false" => toml::Value::Boolean(false),
+            _ => return Err(mistyped("true or false")),
+        },
+        "array" => {
+            let mut table =
+                toml::from_str::<toml::Table>(&format!("value = {text}")).map_err(|error| {
+                    ConfigError(format!(
+                        "{key}: expected a TOML array such as [\"a\", \"b\"], got {text:?}: {}",
+                        error.message()
+                    ))
+                })?;
+            match table
+                .remove("value")
+                .expect("the table has the one key parsed")
+            {
+                value @ toml::Value::Array(_) => value,
+                _ => return Err(mistyped("a TOML array such as [\"a\", \"b\"]")),
+            }
+        }
+        other => {
+            return Err(ConfigError(format!(
+                "{key}: config set cannot write a value of type {other}"
+            )));
+        }
+    })
+}
+
+fn assign(
+    document: &mut toml_edit::DocumentMut,
+    key: &str,
+    value: &toml::Value,
+) -> Result<(), ConfigError> {
+    let mut segments = key.split('.').peekable();
+    let mut item = document.as_item_mut();
+    while let Some(segment) = segments.next() {
+        if segments.peek().is_none() {
+            match item.as_table_like_mut() {
+                Some(table) => table.insert(segment, toml_edit::Item::Value(edit_value(value)?)),
+                None => return Err(ConfigError(format!("{key}: parent is not a table"))),
+            };
+            return Ok(());
+        }
+        let table = item
+            .as_table_like_mut()
+            .ok_or_else(|| ConfigError(format!("{key}: parent is not a table")))?;
+        if !table.contains_key(segment) {
+            let mut nested = toml_edit::Table::new();
+            nested.set_implicit(true);
+            table.insert(segment, toml_edit::Item::Table(nested));
+        }
+        item = table.get_mut(segment).expect("just inserted");
+    }
+    Err(ConfigError(format!("invalid key {key:?}")))
+}
+
+fn edit_value(value: &toml::Value) -> Result<toml_edit::Value, ConfigError> {
+    Ok(match value {
+        toml::Value::String(text) => toml_edit::Value::from(text.as_str()),
+        toml::Value::Integer(number) => toml_edit::Value::from(*number),
+        toml::Value::Float(number) => toml_edit::Value::from(*number),
+        toml::Value::Boolean(flag) => toml_edit::Value::from(*flag),
+        toml::Value::Array(items) => {
+            let mut array = toml_edit::Array::new();
+            for item in items {
+                array.push(edit_value(item)?);
+            }
+            toml_edit::Value::Array(array)
+        }
+        toml::Value::Table(_) | toml::Value::Datetime(_) => {
+            return Err(ConfigError(
+                "config set takes a scalar or array value".into(),
+            ));
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn set_writes_typed_values_and_keeps_the_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("config.toml");
+        set(&path, "diff.graph_limit", "20").unwrap();
+        // `theme.name` is a string, so digits are its text.
+        set(&path, "theme.name", "1234").unwrap();
+        set(&path, "theme.path", "themes/mine.toml").unwrap();
+        set(&path, "languages.rust.folds", "").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("graph_limit = 20"), "{text}");
+        assert!(text.contains("name = \"1234\""), "{text}");
+        assert!(text.contains("path = \"themes/mine.toml\""), "{text}");
+        let config = Config::from_toml(&text).unwrap();
+        assert_eq!(config.diff.graph_limit, 20);
+        assert_eq!(config.theme.name, "1234");
+        assert_eq!(config.languages["rust"].folds.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn set_rejects_unknown_keys_and_wrong_types_without_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "# keep me\n[diff]\ngraph_limit = 4\n").unwrap();
+        let error = |key: &str, value: &str| set(&path, key, value).unwrap_err().to_string();
+        assert_eq!(error("diff.typo", "1"), "diff.typo: unknown key");
+        assert_eq!(
+            error("diff.graph_limit", "abc"),
+            "diff.graph_limit: expected an integer, got \"abc\""
+        );
+        assert_eq!(
+            error("diff.graph_limit", "\"20\""),
+            "diff.graph_limit: expected an integer, got \"\\\"20\\\"\""
+        );
+        assert!(error("diff.graph_limit", "-1").starts_with("diff.graph_limit: "));
+        assert_eq!(error("diff", "1"), "diff is a table; set one of its keys");
+        assert_eq!(error("languages.rust", "1"), "languages.rust: unknown key");
+        assert_eq!(error("", "1"), "invalid key \"\"");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "# keep me\n[diff]\ngraph_limit = 4\n"
+        );
+    }
+
+    #[test]
+    fn values_are_read_as_the_setting_type_only() {
+        let value = |schema: Value, text: &str| typed_value("k", &schema, text);
+        let error = |schema: Value, text: &str| value(schema, text).unwrap_err().to_string();
+        assert_eq!(
+            value(json!({"type": "string"}), "12").unwrap(),
+            toml::Value::String("12".into())
+        );
+        assert_eq!(
+            value(json!({"type": ["string", "null"]}), "true").unwrap(),
+            toml::Value::String("true".into())
+        );
+        assert_eq!(
+            value(json!({"type": "integer"}), "12").unwrap(),
+            toml::Value::Integer(12)
+        );
+        assert_eq!(
+            error(json!({"type": "integer"}), "1.5"),
+            "k: expected an integer, got \"1.5\""
+        );
+        assert_eq!(
+            value(json!({"type": "number"}), "1.5").unwrap(),
+            toml::Value::Float(1.5)
+        );
+        assert_eq!(
+            value(json!({"type": "boolean"}), "false").unwrap(),
+            toml::Value::Boolean(false)
+        );
+        assert_eq!(
+            error(json!({"type": "boolean"}), "yes"),
+            "k: expected true or false, got \"yes\""
+        );
+        assert_eq!(
+            value(json!({"type": "array"}), "[\"a\", \"b\"]").unwrap(),
+            toml::Value::Array(vec!["a".into(), "b".into()])
+        );
+        assert_eq!(
+            error(json!({"type": "array"}), "12"),
+            "k: expected a TOML array such as [\"a\", \"b\"], got \"12\""
+        );
+        assert!(error(json!({"type": "array"}), "a, b")
+            .starts_with("k: expected a TOML array such as [\"a\", \"b\"], got \"a, b\": "));
+        assert_eq!(
+            value(json!({"enum": ["gemini"]}), "gemini").unwrap(),
+            toml::Value::String("gemini".into())
+        );
+        assert_eq!(
+            error(json!({"enum": ["gemini"]}), "openai"),
+            "k: expected one of \"gemini\", got \"openai\""
+        );
+        assert_eq!(
+            error(json!({"type": ["integer", "string"]}), "1"),
+            "k: the schema gives it no single type, so config set cannot write it"
+        );
+        assert_eq!(
+            error(json!({"type": "object"}), "{}"),
+            "k: config set cannot write a value of type object"
+        );
+    }
+}

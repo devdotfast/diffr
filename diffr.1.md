@@ -43,7 +43,7 @@ compare their trees. A...B compares merge-base(A,B) to B; A..B compares A to B.
 : Select ordinary context padding (default 3).
 
 **--config** FILE
-: Read explicit TOML configuration instead of repository diffr.toml.
+: Read this TOML file in place of the global configuration file (`~/.config/diffr/config.toml`); it must exist.
 
 **--help**
 : List the supported options. Unsupported Git flags are rejected.

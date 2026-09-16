@@ -156,7 +156,7 @@ fn yaml_parse_errors() {
     cmd.arg("sample_files/cli_tests/bad_yaml_1.yml")
         .arg("sample_files/cli_tests/bad_yaml_2.yml");
 
-    let predicate_fn = predicate::str::contains("exceeded DFT_PARSE_ERROR_LIMIT");
+    let predicate_fn = predicate::str::contains("exceeded diff.parse_error_limit (0)");
     cmd.assert().stdout(predicate_fn);
 }
 

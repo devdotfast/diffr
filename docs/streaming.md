@@ -16,9 +16,11 @@ from the internal diff is `src/protocol/project.rs`.
 
 ## Configuration and ordering
 
-Each invocation loads repository-root `diffr.toml` and compiles it once.
-`--config PATH` selects another file instead. Omitted keys retain bundled defaults;
-query strings replace whole values, and empty queries disable that feature.
+Each invocation reads the global configuration file (or `--config PATH`),
+applies command-line flags, and compiles the result once; see
+[config.md](config.md). Omitted keys
+retain defaults; query strings replace whole values, and empty queries disable
+that feature.
 
 File classes come from the current workspace's Git attributes:
 

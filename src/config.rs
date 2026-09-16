@@ -1,21 +1,102 @@
-//! Deserialize user settings, resolve defaults, and compile once before diffing.
+//! diffr's configuration comes from three places: the global file
+//! (`$XDG_CONFIG_HOME/diffr/config.toml`, or `--config PATH` in its place),
+//! command-line flags, and git attributes. This module owns the file: every
+//! key it omits keeps its serde default, and an unknown key or mistyped
+//! value is an error naming the key's dotted path. Flags and attributes are
+//! applied by their callers. Every field carries a doc comment, which becomes
+//! its description in `diffr config schema`, and every setting a `title` and
+//! an `x-group` that settings screens show in place of the dotted key.
 pub(crate) mod query;
+pub(crate) mod store;
 use crate::hash::DftHashMap;
+use crate::options::DiffOptions;
 use crate::parse::{guess_language::Language, tree_sitter_parser};
 use query::AnnotationQuery;
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use strum::IntoEnumIterator;
 
-#[derive(Default, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Config {
+    /// Tree-sitter fold and context queries per language, keyed by the
+    /// lowercase language name. Omitted queries keep the bundled ones; an
+    /// empty string disables that feature.
+    #[schemars(skip)]
     pub(crate) languages: BTreeMap<String, LanguageConfig>,
+    /// Colors for the terminal frontend.
+    pub(crate) theme: ThemeConfig,
+    /// Limits on the structural comparison itself.
+    pub(crate) diff: DiffConfig,
 }
 
-#[derive(Default, Deserialize)]
+/// When a file exceeds one of these, diffr falls back to a line diff for
+/// it: the alignment is line-based and `stats.fallback` carries the
+/// reason; folds still come from the parse where it succeeded. The matching
+/// command-line flags override these for one run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct DiffConfig {
+    /// Files larger than this many bytes on either side get a line diff.
+    #[schemars(title = "Largest file to diff structurally (bytes)", extend("x-group" = "Diff limits"))]
+    pub(crate) byte_limit: usize,
+    /// The largest AST matching graph diffr will explore for one file.
+    /// A large change to a large file can exceed it; raising it costs time
+    /// and memory on those files only.
+    #[schemars(title = "Largest matching graph", extend("x-group" = "Diff limits"))]
+    pub(crate) graph_limit: usize,
+    /// Files with more tree-sitter parse errors than this get a line diff.
+    #[schemars(title = "Parse errors allowed", extend("x-group" = "Diff limits"))]
+    pub(crate) parse_error_limit: usize,
+}
+
+impl Default for DiffConfig {
+    fn default() -> Self {
+        Self {
+            byte_limit: crate::options::DEFAULT_BYTE_LIMIT,
+            graph_limit: crate::options::DEFAULT_GRAPH_LIMIT,
+            parse_error_limit: crate::options::DEFAULT_PARSE_ERROR_LIMIT,
+        }
+    }
+}
+
+impl DiffConfig {
+    /// The engine options for these limits.
+    pub(crate) fn options(&self, ignore_comments: bool) -> DiffOptions {
+        DiffOptions {
+            byte_limit: self.byte_limit,
+            graph_limit: self.graph_limit,
+            parse_error_limit: self.parse_error_limit,
+            ignore_comments,
+            ..DiffOptions::default()
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct ThemeConfig {
+    /// A bundled theme name.
+    #[schemars(title = "Theme", extend("x-group" = "Appearance"))]
+    pub(crate) name: String,
+    /// A Helix-style theme file that replaces the bundled theme.
+    #[schemars(title = "Theme file", extend("x-group" = "Appearance"))]
+    pub(crate) path: Option<PathBuf>,
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        Self {
+            name: "default-dark".to_owned(),
+            path: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct LanguageConfig {
     /// None keeps the bundled query; an empty string disables this feature.
@@ -34,6 +115,7 @@ impl std::error::Error for ConfigError {}
 
 pub(crate) struct Params {
     languages: DftHashMap<Language, OnceLock<Arc<LanguageParams>>>,
+    pub(crate) diff: DiffConfig,
 }
 
 pub(crate) struct LanguageParams {
@@ -59,22 +141,54 @@ impl LanguageParams {
     }
 }
 
+/// The user's global file: `$XDG_CONFIG_HOME/diffr/config.toml`, falling
+/// back to `~/.config/diffr/config.toml`.
+pub(crate) fn global_path() -> Result<PathBuf, ConfigError> {
+    let dir = match std::env::var_os("XDG_CONFIG_HOME") {
+        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => dirs::home_dir()
+            .ok_or_else(|| ConfigError("no home directory for this user".into()))?
+            .join(".config"),
+    };
+    Ok(dir.join("diffr").join("config.toml"))
+}
+
 impl Config {
-    pub(crate) fn load(workspace: &Path, explicit: Option<&Path>) -> Result<Self, ConfigError> {
-        let path = explicit
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| workspace.join("diffr.toml"));
-        match std::fs::read_to_string(&path) {
-            Ok(source) => Self::from_toml(&source),
+    /// Read the global file, or `explicit` in its place. A missing global
+    /// file is the defaults; an explicit file must exist.
+    pub(crate) fn load(explicit: Option<&Path>) -> Result<Self, ConfigError> {
+        let path = match explicit {
+            Some(path) => path.to_path_buf(),
+            None => global_path()?,
+        };
+        let source = match std::fs::read_to_string(&path) {
+            Ok(source) => source,
             Err(error) if explicit.is_none() && error.kind() == std::io::ErrorKind::NotFound => {
-                Ok(Self::default())
+                return Ok(Self::default());
             }
-            Err(error) => Err(ConfigError(format!("{}: {error}", path.display()))),
-        }
+            Err(error) => return Err(ConfigError(format!("{}: {error}", path.display()))),
+        };
+        Self::from_toml(&source)
+            .map_err(|error| ConfigError(format!("{}: {error}", path.display())))
     }
 
+    /// Parse one file's text. Errors lead with the dotted path of the key
+    /// they concern, such as `diff.typo`.
     pub(crate) fn from_toml(source: &str) -> Result<Self, ConfigError> {
-        toml::from_str(source).map_err(|error| ConfigError(error.to_string()))
+        serde_path_to_error::deserialize(toml::Deserializer::new(source)).map_err(|error| {
+            let path = error.path().to_string();
+            let message = error.inner().to_string();
+            ConfigError(match path.as_str() {
+                "." => message,
+                _ => format!("{path}: {message}"),
+            })
+        })
+    }
+
+    /// The JSON Schema of the configuration, with a description and default
+    /// on every setting.
+    pub(crate) fn schema() -> serde_json::Value {
+        serde_json::to_value(schemars::schema_for!(Config)).expect("schema serializes")
     }
 
     pub(crate) fn compile(self) -> Result<Params, ConfigError> {
@@ -111,7 +225,10 @@ impl Config {
                 })),
             );
         }
-        Ok(Params { languages })
+        Ok(Params {
+            languages,
+            diff: self.diff,
+        })
     }
 }
 
@@ -153,6 +270,27 @@ impl Default for Params {
 mod tests {
     use super::*;
     use crate::summary::DiffResult;
+
+    #[test]
+    fn diff_limits_default_and_layer_from_the_file() {
+        let defaults = Config::default().diff;
+        assert_eq!(defaults.graph_limit, crate::options::DEFAULT_GRAPH_LIMIT);
+        assert_eq!(defaults.byte_limit, crate::options::DEFAULT_BYTE_LIMIT);
+        let custom = Config::from_toml("[diff]\ngraph_limit = 5").unwrap();
+        assert_eq!(custom.diff.graph_limit, 5);
+        assert_eq!(custom.diff.byte_limit, defaults.byte_limit);
+        let options = custom.diff.options(true);
+        assert_eq!(options.graph_limit, 5);
+        assert!(options.ignore_comments);
+        let compiled = custom.compile().unwrap();
+        assert_eq!(compiled.diff.graph_limit, 5);
+        let schema = Config::schema();
+        assert!(
+            schema["$defs"]["DiffConfig"]["properties"]["graph_limit"]["description"]
+                .as_str()
+                .is_some_and(|text| !text.is_empty())
+        );
+    }
 
     #[test]
     fn configuration_is_independent_and_omission_keeps_other_defaults() {
@@ -442,5 +580,71 @@ mod tag_tests {
             result.lhs_folds[0].match_kind,
             FoldMatch::Matched { .. }
         ));
+    }
+}
+
+#[cfg(test)]
+mod load_tests {
+    use super::*;
+
+    #[test]
+    fn the_file_overrides_defaults_key_by_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[diff]\ngraph_limit = 5\nbyte_limit = 6\n[theme]\nname = 'mine'\n",
+        )
+        .unwrap();
+        let config = Config::load(Some(&path)).unwrap();
+        assert_eq!(config.diff.graph_limit, 5);
+        assert_eq!(config.diff.byte_limit, 6);
+        assert_eq!(
+            config.diff.parse_error_limit,
+            crate::options::DEFAULT_PARSE_ERROR_LIMIT
+        );
+        assert_eq!(config.theme.name, "mine");
+        assert_eq!(config.theme.path, None);
+    }
+
+    #[test]
+    fn unknown_keys_name_their_path_and_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[diff]\ngraph_limit = 5\ntypo = 1\n").unwrap();
+        let error = Config::load(Some(&path)).unwrap_err().to_string();
+        assert!(
+            error.starts_with(&format!("{}: diff.typo: ", path.display())),
+            "{error}"
+        );
+        std::fs::write(&path, "[diff]\ngraph_limit = 'many'\n").unwrap();
+        let error = Config::load(Some(&path)).unwrap_err().to_string();
+        assert!(error.contains("diff.graph_limit: "), "{error}");
+    }
+
+    #[test]
+    fn a_missing_explicit_file_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(Config::load(Some(&dir.path().join("absent.toml"))).is_err());
+    }
+
+    #[test]
+    fn schema_describes_every_setting_with_its_default() {
+        let schema = Config::schema();
+        let diff = &schema["properties"]["diff"];
+        let diff = match diff.get("$ref") {
+            Some(reference) => {
+                let name = reference.as_str().unwrap().rsplit('/').next().unwrap();
+                &schema["$defs"][name]
+            }
+            None => diff,
+        };
+        let graph_limit = &diff["properties"]["graph_limit"];
+        assert_eq!(graph_limit["default"], crate::options::DEFAULT_GRAPH_LIMIT);
+        assert!(graph_limit["description"]
+            .as_str()
+            .unwrap()
+            .contains("matching graph"));
+        assert!(schema["properties"].get("languages").is_none());
     }
 }

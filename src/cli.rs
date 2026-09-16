@@ -1,5 +1,5 @@
 //! Git-style CLI input; rendering and NDJSON remain adapters over the same engine.
-use crate::config::Config;
+use crate::config::{self, Config};
 use crate::git::{Comparison, DiffSession, FileParams, Operand, Result};
 use crate::options::{DiffOptions, DisplayMode, DisplayOptions};
 use clap::{Arg, ArgAction, ArgGroup, ArgMatches, Command};
@@ -33,7 +33,7 @@ pub(crate) fn run() -> Result<i32> {
         .version(env!("CARGO_PKG_VERSION"))
         .about("Structural diffs with Git-style comparison inputs")
         .arg(Arg::new("repo").long("repo").default_value("."))
-        .arg(Arg::new("config").long("config"))
+        .arg(Arg::new("config_file").long("config").value_name("PATH").help("Replace the global configuration file"))
         .arg(
             Arg::new("jobs")
                 .long("jobs")
@@ -69,8 +69,28 @@ pub(crate) fn run() -> Result<i32> {
         .arg(Arg::new("graph-limit").long("graph-limit").value_parser(clap::value_parser!(usize)))
         .arg(Arg::new("parse-error-limit").long("parse-error-limit").value_parser(clap::value_parser!(usize)))
         .arg(Arg::new("items").num_args(0..).value_parser(clap::value_parser!(OsString)))
+        .subcommand(
+            Command::new("config")
+                .about("Show or edit diffr's configuration")
+                .subcommand_required(true)
+                .subcommand(Command::new("schema").about("Print the configuration's JSON Schema"))
+                .subcommand(
+                    Command::new("show")
+                        .about("Print the resolved configuration")
+                        .arg(flag("json")),
+                )
+                .subcommand(
+                    Command::new("set")
+                        .about("Write one key to the global configuration file")
+                        .arg(Arg::new("key").required(true))
+                        .arg(Arg::new("value").required(true)),
+                ),
+        )
         .after_help("Examples:\n  diffr\n  diffr --cached\n  diffr main...HEAD -- src/\n  diffr --no-index -- before.rs after.rs\n  diffr main HEAD --format ndjson\n\nUnsupported Git flags are rejected; this is not a complete git diff implementation.")
         .get_matches_from(argv);
+    if let Some(("config", sub)) = args.subcommand() {
+        return run_config(&args, sub);
+    }
     if opens_tui(
         args.value_source("format") == Some(clap::parser::ValueSource::CommandLine),
         args.get_flag("quiet") || args.contains_id("metadata"),
@@ -109,25 +129,11 @@ pub(crate) fn run() -> Result<i32> {
         },
         ..DisplayOptions::default()
     };
-    let mut diff_options = DiffOptions {
-        ignore_comments: args.get_flag("ignore-comments"),
-        ..DiffOptions::default()
-    };
-    if let Some(limit) = args.get_one::<usize>("byte-limit") {
-        diff_options.byte_limit = *limit;
-    }
-    if let Some(limit) = args.get_one::<usize>("graph-limit") {
-        diff_options.graph_limit = *limit;
-    }
-    if let Some(limit) = args.get_one::<usize>("parse-error-limit") {
-        diff_options.parse_error_limit = *limit;
-    }
     if args.get_flag("no-index") {
         return no_index(
             &args,
             items.into_iter().chain(explicit_paths).collect(),
             &display,
-            &diff_options,
         );
     }
     if args.get_flag("null") && !args.get_flag("name-only") && !args.get_flag("name-status") {
@@ -162,9 +168,8 @@ pub(crate) fn run() -> Result<i32> {
         }
         changed
     } else {
-        let params = Arc::new(
-            Config::load(workspace, args.get_one::<String>("config").map(Path::new))?.compile()?,
-        );
+        let params = Arc::new(load_config(&args)?.compile()?);
+        let diff_options = diff_options(&args, &params);
         let mut session = DiffSession::open(workspace, comparison, params, &files)?;
         session.diff_options = diff_options;
         let changed = session.remaining() > 0;
@@ -391,12 +396,7 @@ fn print_metadata(diff: &git2::Diff<'_>, args: &ArgMatches, width: usize) -> Res
     Ok(())
 }
 
-fn no_index(
-    args: &ArgMatches,
-    paths: Vec<OsString>,
-    display: &DisplayOptions,
-    options: &DiffOptions,
-) -> Result<i32> {
+fn no_index(args: &ArgMatches, paths: Vec<OsString>, display: &DisplayOptions) -> Result<i32> {
     if paths.len() != 2 {
         return Err("--no-index requires two file paths".into());
     }
@@ -423,11 +423,8 @@ fn no_index(
     if args.get_flag("quiet") {
         return Ok(i32::from(changed));
     }
-    let config = Config::load(
-        Path::new(args.get_one::<String>("repo").unwrap()),
-        args.get_one::<String>("config").map(Path::new),
-    )?
-    .compile()?;
+    let config = load_config(args)?.compile()?;
+    let options = &diff_options(args, &config);
     let lhs = crate::options::FileArgument::from_path_argument(&paths[0]);
     let rhs = crate::options::FileArgument::from_path_argument(&paths[1]);
     let compute = || {
@@ -463,6 +460,62 @@ fn no_index(
         crate::print_diff_result(display, &crate::diff_or_die(compute(), display.use_color));
         Ok(i32::from(changed))
     }
+}
+
+/// The engine limits: the configured `[diff]` table, then the command-line
+/// flags.
+fn diff_options(args: &ArgMatches, params: &config::Params) -> DiffOptions {
+    let mut options = params.diff.options(args.get_flag("ignore-comments"));
+    if let Some(limit) = args.get_one::<usize>("byte-limit") {
+        options.byte_limit = *limit;
+    }
+    if let Some(limit) = args.get_one::<usize>("graph-limit") {
+        options.graph_limit = *limit;
+    }
+    if let Some(limit) = args.get_one::<usize>("parse-error-limit") {
+        options.parse_error_limit = *limit;
+    }
+    options
+}
+
+/// The global file, or the `--config` file in its place.
+fn load_config(args: &ArgMatches) -> Result<Config> {
+    Ok(Config::load(
+        args.get_one::<String>("config_file").map(Path::new),
+    )?)
+}
+
+/// `diffr config schema`, `show` or `set`.
+fn run_config(args: &ArgMatches, sub: &ArgMatches) -> Result<i32> {
+    let mut stdout = io::stdout().lock();
+    match sub.subcommand() {
+        Some(("schema", _)) => {
+            serde_json::to_writer_pretty(&mut stdout, &Config::schema())?;
+            stdout.write_all(b"\n")?;
+        }
+        Some(("show", show)) => {
+            let config = load_config(args)?;
+            if show.get_flag("json") {
+                serde_json::to_writer_pretty(&mut stdout, &config::store::show(&config))?;
+                stdout.write_all(b"\n")?;
+            } else {
+                stdout.write_all(toml::to_string_pretty(&config)?.as_bytes())?;
+            }
+        }
+        Some(("set", set)) => {
+            let path = match args.get_one::<String>("config_file") {
+                Some(path) => PathBuf::from(path),
+                None => config::global_path()?,
+            };
+            config::store::set(
+                &path,
+                set.get_one::<String>("key").unwrap(),
+                set.get_one::<String>("value").unwrap(),
+            )?;
+        }
+        _ => unreachable!("clap requires a config command"),
+    }
+    Ok(0)
 }
 
 /// Explicit machine/text modes and redirected output must never enter the alternate screen.

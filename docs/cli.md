@@ -33,6 +33,10 @@ files at once (default 16) and emitting each as it finishes.
 `-U N` selects ordinary context padding. Matching limits, `--ignore-comments`,
 color, width and inline/split display remain configurable; see `--help`.
 
+Configuration comes from the global file, command-line flags and git
+attributes; `--config PATH` replaces the global file. `diffr config schema`,
+`show` and `set` are the commands frontends use. See [config.md](config.md).
+
 This is a subset of git diff, not full flag parity: unsupported options and Git
 magic pathspecs fail explicitly. Untracked files are excluded as in git diff.
 The old file/external-diff/debug parser is available under `debug` for diagnostic

@@ -281,7 +281,10 @@ pub(crate) fn diff_file_content(
                                 (
                                     FileFormat::TextFallback {
                                         cause: FallbackCause::GraphLimit,
-                                        reason: "exceeded DFT_GRAPH_LIMIT".into(),
+                                        reason: format!(
+                                            "structural diff exceeded diff.graph_limit ({}); raise it in diffr config",
+                                            diff_options.graph_limit
+                                        ),
                                     },
                                     lhs_positions,
                                     rhs_positions,
@@ -347,11 +350,12 @@ pub(crate) fn diff_file_content(
                             let file_format = FileFormat::TextFallback {
                                 cause: FallbackCause::ParseErrorLimit,
                                 reason: format!(
-                                    "{} {} parse error{}, exceeded DFT_PARSE_ERROR_LIMIT{}",
+                                    "{} {} parse error{}{}, exceeded diff.parse_error_limit ({}); raise it in diffr config",
                                     error_count,
                                     language_name(language),
                                     if error_count == 1 { "" } else { "s" },
-                                    location
+                                    location,
+                                    diff_options.parse_error_limit
                                 ),
                             };
 
@@ -409,8 +413,9 @@ pub(crate) fn diff_file_content(
                     let file_format = FileFormat::TextFallback {
                         cause: FallbackCause::ByteLimit,
                         reason: format!(
-                            "{} exceeded DFT_BYTE_LIMIT",
-                            format_size(num_bytes, format_options)
+                            "{} exceeded diff.byte_limit ({}); raise it in diffr config",
+                            format_size(num_bytes, format_options),
+                            diff_options.byte_limit
                         ),
                     };
 

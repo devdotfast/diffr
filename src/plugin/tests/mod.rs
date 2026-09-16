@@ -193,7 +193,7 @@ pub(crate) fn moves(
         sides.rhs().map(tree::Source::to_record),
     );
     plugin.runner.mutate(
-        pipeline.host(&plugin.name, no_head()),
+        pipeline.host(&plugin.name),
         &file_entry(file),
         lhs.as_ref(),
         rhs.as_ref(),
@@ -421,15 +421,14 @@ fn pipeline(plugins: Vec<(&str, native::Constructor)>) -> Pipeline {
 fn classifying_plugins_add_tags_in_order_and_a_bad_tag_is_an_error() {
     let (mut file, _) = project("a.rs", "", "");
     file.tags = vec!["z".to_owned()];
-    let head = no_head();
     let tagging = pipeline(vec![
         ("first", native::native::<TagsAZ>),
         ("second", native::native::<TagsB>),
     ]);
-    assert_eq!(tagging.classify(&file, &head).unwrap(), ["a", "b", "z"]);
+    assert_eq!(tagging.classify(&file).unwrap(), ["a", "b", "z"]);
     let bad = pipeline(vec![("bad", native::native::<NotATag>)]);
     assert_eq!(
-        format!("{:#}", bad.classify(&file, &head).unwrap_err()),
+        format!("{:#}", bad.classify(&file).unwrap_err()),
         "plugin bad: classify a.rs: \"Not A Tag\" is not a tag; use lowercase letters, digits, '-' and '_'"
     );
 }

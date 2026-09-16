@@ -164,19 +164,16 @@ code a plugin predicts ids with.
 Besides WASI, which only a component gets, diffr gives every plugin
 `diffr:plugin/host`:
 
-- `read-head(side, max-bytes) -> option<list<u8>>`: the first bytes of one
-  side of the file. During `classify` it reads the blob (or the working-tree
-  file); it is `none` for a side the file does not have, or one that is not a
-  regular file. During `mutate` it reads the side's text as diffed. During
-  `new` it is `none`.
 - `git(args) -> result<string, string>`: runs `git` with these arguments in
   the repository's working directory (the current directory for
   `--no-index`), returning stdout on success and stderr otherwise.
 - `log(message)`: writes `diffr plugin <name>: <message>` to stderr.
 
-A host failure (git cannot be started, its output is not UTF-8, a blob cannot
-be read) fails the call: it traps a component, and fails a native plugin's
-call when it returns.
+A host failure (git cannot be started, or its output is not UTF-8) is the
+call's error, natively and in a component alike.
+
+A plugin reads files itself: a component has the working directory preopened,
+and reads any side of a file the working tree does not have with `git show`.
 
 ### Access
 
@@ -208,7 +205,7 @@ written with it:
   records are the contract's. Built for anything else, it expands to nothing,
   and diffr's native registry deserializes the options and calls the trait
   itself. The same source builds both ways.
-- `host::{read_head, git, log}`: the host functions, the same call natively
+- `host::{git, log}`: the host functions, the same call natively
   and in a component.
 - `tree::sides(lhs, rhs)` rebuilds the records as region trees
   (`Pairing<Source>`, each `Region` holding its children), and the helpers
@@ -279,8 +276,9 @@ next run.
 ## Examples
 
 - `examples/plugins/fixtures`: `classify` tags a file `fixture` when it is
-  under a `fixtures/` directory or its first line is `// fixture` (read with
-  `read-head`); `mutate` hides a fixture behind the subject of the last
+  under a `fixtures/` directory or its working-tree file starts with a
+  `// fixture` line (read from the filesystem, so a deleted file is
+  classified by its path alone); `mutate` hides a fixture behind the subject of the last
   commit that touched it (from `git log -1 --format=%s -- <path>`), and
   collapses all but the first line of its first leaf, naming the cut's piece
   by predicting its id. Its `fail` option makes `mutate` return an error.

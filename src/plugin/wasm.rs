@@ -69,20 +69,13 @@ impl WasiView for State {
 impl types::Host for State {}
 
 impl host::Host for State {
-    fn read_head(
-        &mut self,
-        side: types::Side,
-        max_bytes: u32,
-    ) -> wasmtime::Result<Option<Vec<u8>>> {
-        let side = match side {
-            types::Side::Lhs => contract::Side::Lhs,
-            types::Side::Rhs => contract::Side::Rhs,
-        };
-        self.host.read_head(side, max_bytes)
-    }
-
+    /// A failure of the host itself reaches the plugin as the call's error,
+    /// as it does for a native plugin, rather than trapping.
     fn git(&mut self, args: Vec<String>) -> wasmtime::Result<Result<String, String>> {
-        self.host.git(&args)
+        Ok(self
+            .host
+            .git(&args)
+            .unwrap_or_else(|error| Err(format!("{error:#}"))))
     }
 
     fn log(&mut self, message: String) -> wasmtime::Result<()> {

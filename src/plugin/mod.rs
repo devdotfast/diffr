@@ -38,7 +38,6 @@ pub(crate) mod wasm;
 #[cfg(test)]
 mod tests;
 
-use crate::constants::Side;
 use crate::pairing::Pairing;
 use crate::protocol::{self, FileChange, FileStatus, SourcePos, SourceRange};
 use anyhow::{anyhow, Context as _};
@@ -51,10 +50,6 @@ use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
-
-/// Up to a number of bytes from the start of one side of a file, or `None`
-/// when the file has no such side or it is not a regular file.
-pub(crate) type Head = Arc<dyn Fn(Side, usize) -> anyhow::Result<Option<Vec<u8>>> + Send + Sync>;
 
 /// One plugin instance: its native code or its component, made once from
 /// its options, behind the contract's two calls on a file. Each call gets
@@ -110,11 +105,6 @@ impl Default for Pipeline {
     }
 }
 
-/// A head that reads nothing: `new` is about no file.
-fn no_head() -> Head {
-    Arc::new(|_, _| Ok(None))
-}
-
 impl Pipeline {
     /// Load every enabled plugin in `plugins.order` and make its instance. A
     /// folder with a component runs it; any other folder runs the native
@@ -158,30 +148,29 @@ impl Pipeline {
     /// end of the pipeline.
     fn push(&mut self, name: &str, options: Value, create: Create<'_>) -> anyhow::Result<()> {
         let name: Arc<str> = name.into();
-        let runner = create(self.host(&name, no_head()), &options.to_string())
+        let runner = create(self.host(&name), &options.to_string())
             .with_context(|| format!("plugins.{name}"))?;
         self.plugins.push(Loaded { name, runner });
         Ok(())
     }
 
-    fn host(&self, name: &Arc<str>, head: Head) -> Host {
+    fn host(&self, name: &Arc<str>) -> Host {
         Host {
             name: Arc::clone(name),
             workdir: Arc::clone(&self.workdir),
-            head,
         }
     }
 
     /// The file's tags once every plugin has classified it, in order: each
     /// sees the tags the ones before it left. Sorted and deduplicated.
-    pub(crate) fn classify(&self, file: &FileChange, head: &Head) -> anyhow::Result<Vec<String>> {
+    pub(crate) fn classify(&self, file: &FileChange) -> anyhow::Result<Vec<String>> {
         let mut entry = file_entry(file);
         for plugin in &self.plugins {
             let name = &plugin.name;
             let path = &entry.path;
             let added = plugin
                 .runner
-                .classify(self.host(&plugin.name, Arc::clone(head)), &entry)
+                .classify(self.host(&plugin.name), &entry)
                 .with_context(|| format!("plugin {name}: classify {path}"))?;
             if let Some(bad) = added.iter().find(|tag| !crate::tags::is_tag(tag)) {
                 anyhow::bail!(
@@ -215,27 +204,9 @@ impl Pipeline {
             let started = Instant::now();
             let lhs = trees.lhs().map(tree::Source::to_record);
             let rhs = trees.rhs().map(tree::Source::to_record);
-            let texts: (Option<Arc<str>>, Option<Arc<str>>) = (
-                lhs.as_ref().map(|side| side.text.as_str().into()),
-                rhs.as_ref().map(|side| side.text.as_str().into()),
-            );
-            let head: Head = Arc::new(move |side, max| {
-                let text = match side {
-                    Side::Left => &texts.0,
-                    Side::Right => &texts.1,
-                };
-                Ok(text
-                    .as_ref()
-                    .map(|text| text.as_bytes()[..text.len().min(max)].to_vec()))
-            });
             let moves = plugin
                 .runner
-                .mutate(
-                    self.host(&plugin.name, head),
-                    &entry,
-                    lhs.as_ref(),
-                    rhs.as_ref(),
-                )
+                .mutate(self.host(&plugin.name), &entry, lhs.as_ref(), rhs.as_ref())
                 .with_context(|| MutationFailed(plugin.name.to_string()))?;
             log::debug!(
                 "plugin {}: mutate {} took {:?}",

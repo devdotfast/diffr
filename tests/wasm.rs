@@ -1,7 +1,6 @@
 //! WASM component plugins: the bundled plugins built as components shape
 //! files exactly as the same source compiled into diffr does, and the
-//! fixtures example classifies, reads the head of a file, runs git and moves
-//! regions.
+//! fixtures example classifies, reads a file, runs git and moves regions.
 use git2::{IndexAddOption, Repository, Signature, Time};
 use serde_json::Value;
 use std::fs;
@@ -313,7 +312,7 @@ fn fixtures_repo() -> (Fixture, String, String) {
 }
 
 #[test]
-fn the_fixtures_example_classifies_reads_heads_runs_git_and_moves_regions() {
+fn the_fixtures_example_classifies_reads_files_runs_git_and_moves_regions() {
     build_plugins();
     let (fixture, base, head) = fixtures_repo();
     let output = fixture.run(&fixtures_config(&fixture, ""), &base, &head);
@@ -340,7 +339,7 @@ fn the_fixtures_example_classifies_reads_heads_runs_git_and_moves_regions() {
     assert_eq!(
         tags("src/marked.txt"),
         Some(serde_json::json!(["fixture"])),
-        "read-head finds the marker"
+        "the plugin reads the file and finds the marker"
     );
     assert_eq!(tags("src/plain.txt"), None);
 

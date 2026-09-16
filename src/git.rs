@@ -1,8 +1,7 @@
 //! Git comparison selection and lazy source loading used by the CLI and its stdout stream.
 use crate::config::Params;
-use crate::constants::Side;
 use crate::pairing::Pairing;
-use crate::plugin::{Head, Pipeline};
+use crate::plugin::Pipeline;
 use crate::protocol;
 use crate::summary::DiffResult;
 use crate::tags::{self, Attributes, Prefix, PREFIX_BYTES};
@@ -13,7 +12,7 @@ use std::{
     fmt,
     io::Read as _,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 pub(crate) type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -426,9 +425,6 @@ impl DiffSession {
         pipeline: &Pipeline,
     ) -> Result<Self> {
         let repo = Repository::open(workspace)?;
-        // A plugin's store owns what it reads sources with, so classifying
-        // plugins share a handle of their own.
-        let shared = Arc::new(Mutex::new(Repository::open(workspace)?));
         let comparison = comparison.resolve(&repo)?;
         let pending = {
             let diff = comparison.diff(&repo, files)?;
@@ -521,9 +517,8 @@ impl DiffSession {
                     }
                 }
                 file.tags = attributes.resolve(bundled);
-                let head = head_of(&shared, &before, &after);
                 file.tags = pipeline
-                    .classify(&file.manifest_entry(), &head)
+                    .classify(&file.manifest_entry())
                     .map_err(|error| format!("{error:#}"))?;
                 pending.push(PendingFile {
                     before,
@@ -555,21 +550,6 @@ impl DiffSession {
             diff_options: crate::options::DiffOptions::default(),
         })
     }
-}
-
-/// What a classifying plugin reads of a file: the start of either side.
-fn head_of(repo: &Arc<Mutex<Repository>>, before: &Source, after: &Source) -> Head {
-    let (repo, before, after) = (Arc::clone(repo), before.clone(), after.clone());
-    Arc::new(move |side, max| {
-        let repo = repo
-            .lock()
-            .expect("no reader panics holding the repository");
-        match side {
-            Side::Left => &before,
-            Side::Right => &after,
-        }
-        .head(&repo, max)
-    })
 }
 
 /// Sources read on the session thread; diffing needs no repository access.

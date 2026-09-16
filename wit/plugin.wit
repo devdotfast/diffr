@@ -165,14 +165,6 @@ interface types {
 /// `.`, the environment is inherited, and the network is open. Its stdout
 /// goes to diffr's stderr, since diffr's stdout is the stream.
 interface host {
-    use types.{side};
-
-    /// Up to `max-bytes` from the start of one side of the file being
-    /// classified, or none when the file has no such side or it is not a
-    /// regular file (a symlink or submodule). During `mutate`, the start of
-    /// the side's text as diffed. During `new`, always none.
-    read-head: func(side: side, max-bytes: u32) -> option<list<u8>>;
-
     /// Run `git` with these arguments in the repository's working
     /// directory: its stdout when it exits successfully, its stderr
     /// otherwise.

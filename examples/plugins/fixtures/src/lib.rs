@@ -1,6 +1,9 @@
 //! An example diffr plugin. `classify` tags a file `fixture` when it sits
-//! under a `fixtures/` directory or its first line is `// fixture`, read with
-//! the host's `read_head`. `mutate` hides a fixture behind the subject of the
+//! under a `fixtures/` directory or its working-tree file starts with a
+//! `// fixture` line, read from the repository's working directory: a plugin
+//! reads files itself, and needs nothing of diffr to do it. A file the
+//! working tree no longer has, a deleted one, is classified by its path
+//! alone. `mutate` hides a fixture behind the subject of the
 //! last commit that touched it, asked of the host's `git`, and collapses all
 //! but the first line of its first leaf, naming the piece its cut creates by
 //! predicting the id.
@@ -8,9 +11,11 @@ use diffr_plugin_sdk::apply::Fresh;
 use diffr_plugin_sdk::types::{Cut, Source};
 use diffr_plugin_sdk::{
     anyhow, export, host, line_count, tree, FileEntry, FileStatus, Move, Node, Pairing, Plugin,
-    Side, ROOT,
+    ROOT,
 };
 use serde::Deserialize;
+use std::fs::{symlink_metadata, File};
+use std::io::Read as _;
 
 const TAG: &str = "fixture";
 const MARKER: &[u8] = b"// fixture\n";
@@ -36,12 +41,19 @@ impl Plugin for Fixtures {
         if file.path.starts_with("fixtures/") || file.path.contains("/fixtures/") {
             return Ok(vec![TAG.to_owned()]);
         }
-        let side = match file.status {
-            FileStatus::Deleted => Side::Lhs,
-            _ => Side::Rhs,
-        };
-        let head = host::read_head(side, MARKER.len() as u32);
-        Ok(match head.as_deref() == Some(MARKER) {
+        if file.status == FileStatus::Deleted {
+            return Ok(Vec::new());
+        }
+        // Only a regular file has a first line to read; a symlink or a
+        // submodule is not a fixture.
+        if !symlink_metadata(&file.path)?.is_file() {
+            return Ok(Vec::new());
+        }
+        let mut head = Vec::new();
+        File::open(&file.path)?
+            .take(MARKER.len() as u64)
+            .read_to_end(&mut head)?;
+        Ok(match head == MARKER {
             true => vec![TAG.to_owned()],
             false => Vec::new(),
         })

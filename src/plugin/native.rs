@@ -2,7 +2,7 @@
 //! is an SDK [`Plugin`], the same trait a component's source implements, made
 //! the same way from the same options string, and diffr calls it with the
 //! same records it hands a component.
-use super::host::{self, Host};
+use super::host::Host;
 use super::Runner;
 use anyhow::anyhow;
 use diffr_plugin_sdk::types::{FileEntry, Move, Source};
@@ -56,10 +56,7 @@ pub(crate) fn native<P: Plugin + Send + Sync + 'static>(
 
 /// Run `call`, one call of a native plugin, inside a host scope of its own.
 fn call<R>(host: Host, call: impl FnOnce() -> anyhow::Result<R>) -> anyhow::Result<R> {
-    let native = Rc::new(host::Native::new(host));
-    let result = diffr_plugin_sdk::host::scope(native.clone(), call);
-    native.finish()?;
-    result
+    diffr_plugin_sdk::host::scope(Rc::new(host), call)
 }
 
 /// A native plugin's instance.

@@ -1,13 +1,9 @@
-//! diffr's side of the host functions every plugin calls: `read_head`,
-//! `git` and `log`. A component reaches them through its imports
-//! ([`super::wasm`]); a native plugin through the SDK's host functions,
-//! which call [`Native`] ([`super::native`]). Both run this code.
-use super::Head;
-use crate::constants::Side;
+//! diffr's side of the host functions every plugin calls: `git` and `log`.
+//! A component reaches them through its imports ([`super::wasm`]); a native
+//! plugin through the SDK's host functions, which call [`Host`] itself
+//! ([`super::native`]). Both run this code.
 use anyhow::Context as _;
 use diffr_plugin_sdk::host::Host as SdkHost;
-use diffr_plugin_sdk::types;
-use std::cell::RefCell;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -17,25 +13,9 @@ use std::sync::Arc;
 pub(crate) struct Host {
     pub(crate) name: Arc<str>,
     pub(crate) workdir: Arc<Path>,
-    /// The start of either side of the file the call is about: the blob
-    /// during `classify`, the text as diffed during `mutate`, nothing during
-    /// `new`.
-    pub(crate) head: Head,
 }
 
 impl Host {
-    pub(crate) fn read_head(
-        &self,
-        side: types::Side,
-        max_bytes: u32,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
-        let side = match side {
-            types::Side::Lhs => Side::Left,
-            types::Side::Rhs => Side::Right,
-        };
-        (self.head)(side, max_bytes as usize)
-    }
-
     /// `git`'s stdout when it exits successfully, its stderr otherwise.
     /// `Err` is the host failing: git could not be started, or wrote
     /// something that is not UTF-8.
@@ -60,54 +40,15 @@ impl Host {
     }
 }
 
-/// The host of one call of a native plugin. The SDK's host functions cannot
-/// fail, as a component's imports cannot; a failure of the host is kept here
-/// and fails the call when the plugin returns, as it would trap a component.
-pub(crate) struct Native {
-    host: Host,
-    failure: RefCell<Option<anyhow::Error>>,
-}
-
-impl Native {
-    pub(crate) fn new(host: Host) -> Self {
-        Self {
-            host,
-            failure: RefCell::new(None),
-        }
-    }
-
-    /// The first failure of the host during the call, if any.
-    pub(crate) fn finish(&self) -> anyhow::Result<()> {
-        match self.failure.borrow_mut().take() {
-            Some(error) => Err(error),
-            None => Ok(()),
-        }
-    }
-
-    fn fail(&self, error: anyhow::Error) {
-        self.failure.borrow_mut().get_or_insert(error);
-    }
-}
-
-impl SdkHost for Native {
-    fn read_head(&self, side: types::Side, max_bytes: u32) -> Option<Vec<u8>> {
-        self.host
-            .read_head(side, max_bytes)
-            .unwrap_or_else(|error| {
-                self.fail(error);
-                None
-            })
-    }
-
+impl SdkHost for Host {
+    /// A failure of the host itself (git cannot be started, or wrote
+    /// something that is not UTF-8) reaches the plugin as the call's error,
+    /// exactly as it does in a component.
     fn git(&self, args: &[String]) -> Result<String, String> {
-        self.host.git(args).unwrap_or_else(|error| {
-            let message = format!("{error:#}");
-            self.fail(error);
-            Err(message)
-        })
+        Host::git(self, args).unwrap_or_else(|error| Err(format!("{error:#}")))
     }
 
     fn log(&self, message: &str) {
-        self.host.log(message)
+        Host::log(self, message)
     }
 }

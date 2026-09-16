@@ -35,18 +35,33 @@ See `defaults.toml` for the complete bundled rules.
 
 `@fold` selects a node's full source range. To fold an interior instead,
 capture its delimiters as `@fold.open` and `@fold.close`. The hidden range runs
-from the opening node's end to the closing node's start. These are direct
+from the opening node's end to the closing node's start. A fold covers only
+the lines it holds whole: code before it on the line it opens on, or after it
+on the line it closes on, belongs to the leaf beside it, so collapsing a fold
+hides its lines and nothing else. These are direct
 Tree-sitter coordinates; labels and comments before the opening brace stay visible.
-Both delimiter captures must be present, ordered, and contained in the fold node.
+With both delimiter captures, they must be ordered and contained in the fold node.
+A `@fold.open` without `@fold.close` hides from the opening node's end to the end
+of the fold node; the opening node may precede the fold node, so
+`(function_definition ":" @fold.open body: (block) @fold)` folds a Python body
+from its header's `:`. A `@fold.close` without `@fold.open` selects no fold.
 
 These fold-boundary captures are our convention. There are no arbitrary byte or
 line offsets, and no `#offset!` or `#make-range!` directives.
 
 `#set! tag "name"` supplies application metadata. Tag names are arbitrary strings;
 dots have no special meaning. Multiple rules selecting the same node and range
-accumulate sorted, unique tags. A node whose rules select conflicting ranges is
-omitted rather than choosing a rule by execution order. Tags do not control context
-selection or initial UI collapse state.
+accumulate sorted, unique tags. A node whose rules select different ranges is a
+query conflict: the file is not diffed, and its record carries a
+`query_conflict` error naming both patterns, so the result never depends on
+query order. Tags do not control context selection or initial UI collapse
+state.
+
+A node has at most one fold, so two folds align exactly when the matcher
+paired their nodes. When a node that has a fold is flattened into its only
+child during conversion (a Python `block` holding one statement, say), the
+fold moves onto the child; a child that has a fold of its own keeps it, and
+the wrapper node stays so that each fold still has a node.
 
 ## Context
 

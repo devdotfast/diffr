@@ -2,7 +2,7 @@
 
 Multiline import groups remain paired while one large context object is split. Preserve the complete enclosing function signature as extra context; do not pair a whole old interface with two new interfaces automatically.
 
-[Original PR](https://github.com/devdotfast/review/pull/108) · [Before](before.tsx) · [After](after.tsx) · [Git patch](change.patch) · [Generated review golden](review.snap) · [Expected annotations](expected.json) · [Provenance](provenance.json)
+[Original PR](https://github.com/devdotfast/review/pull/108) · [Before](before.tsx) · [After](after.tsx) · [Git patch](change.patch) · [Expected annotations](expected.json) · [Provenance](provenance.json)
 
 Annotations are manually selected targets, not recorded matcher output. Coordinates below are zero-based UTF-8 byte positions with exclusive ends.
 

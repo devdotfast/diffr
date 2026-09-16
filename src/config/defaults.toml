@@ -41,7 +41,21 @@ context = '''
 
 [languages.python]
 folds = '''
-((block) @fold
+([
+  (function_definition ":" @fold.open body: (block) @fold)
+  (class_definition ":" @fold.open body: (block) @fold)
+  (if_statement ":" @fold.open consequence: (block) @fold)
+  (elif_clause ":" @fold.open consequence: (block) @fold)
+  (else_clause ":" @fold.open body: (block) @fold)
+  (for_statement ":" @fold.open body: (block) @fold)
+  (while_statement ":" @fold.open body: (block) @fold)
+  (with_statement ":" @fold.open body: (block) @fold)
+  (try_statement ":" @fold.open body: (block) @fold)
+  (except_clause ":" @fold.open (block) @fold)
+  (finally_clause ":" @fold.open (block) @fold)
+  (match_statement ":" @fold.open body: (block) @fold)
+  (case_clause ":" @fold.open consequence: (block) @fold)
+]
   (#set! tag "body"))
 ([
   (list "[" @fold.open "]" @fold.close)
@@ -60,7 +74,7 @@ folds = '''
   (#set! tag "comment"))
 ((string) @fold
   (#set! tag "string"))
-(function_definition name: (identifier) @_name body: (block) @fold
+(function_definition name: (identifier) @_name ":" @fold.open body: (block) @fold
   (#match? @_name "^test_") (#set! tag "test"))
 '''
 context = '''

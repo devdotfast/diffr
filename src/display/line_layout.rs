@@ -1,8 +1,7 @@
-//! Line alignment, ordinary context padding, and indentation classification.
-use super::hunks::Hunk;
+//! Line alignment and ordinary context padding.
 use crate::display::context::all_matched_lines_filled;
+use crate::pairing::Pairing;
 use crate::parse::syntax::MatchedPos;
-use crate::summary::{DiffResult, FileContent};
 use std::collections::BTreeSet;
 
 #[derive(Default)]
@@ -11,25 +10,7 @@ pub(crate) struct LineSelection {
     pub(crate) rhs: BTreeSet<usize>,
 }
 
-impl LineSelection {
-    pub(crate) fn from_hunks(hunks: &[Hunk]) -> Self {
-        let mut selection = Self::default();
-        for (lhs, rhs) in hunks.iter().flat_map(|hunk| &hunk.lines) {
-            selection.lhs.extend(lhs.map(|line| line.as_usize()));
-            selection.rhs.extend(rhs.map(|line| line.as_usize()));
-        }
-        selection
-    }
-}
-
 pub(crate) type Row = (Option<usize>, Option<usize>);
-
-pub(crate) fn sources(diff: &DiffResult) -> (&str, &str) {
-    match (&diff.lhs_src, &diff.rhs_src) {
-        (FileContent::Text(lhs), FileContent::Text(rhs)) => (lhs, rhs),
-        _ => unreachable!("review entry point accepts text only"),
-    }
-}
 
 pub(crate) fn novel_lines(positions: &[MatchedPos]) -> BTreeSet<usize> {
     positions
@@ -101,38 +82,77 @@ pub(crate) fn aligned_rows(
     rows
 }
 
-/// Only treat indentation as formatting when the matcher confirms a pairing
-/// and neither line contains novel syntax. Never normalize string contents.
-pub(crate) fn reindented_pairs(diff: &DiffResult) -> BTreeSet<(usize, usize)> {
-    use crate::parse::syntax::MatchKind;
-    let (lhs_src, rhs_src) = sources(diff);
-    let lhs_lines: Vec<_> = lhs_src.split_terminator('\n').collect();
-    let rhs_lines: Vec<_> = rhs_src.split_terminator('\n').collect();
-    let lhs_novel = novel_lines(&diff.lhs_positions);
-    let rhs_novel = novel_lines(&diff.rhs_positions);
-    let mut pairs = BTreeSet::new();
-    for position in &diff.lhs_positions {
-        let MatchKind::UnchangedToken { opposite_pos, .. } = &position.kind else {
-            continue;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RunKind {
+    Unchanged,
+    Novel,
+}
+
+/// A maximal run of aligned rows of one kind before fold splitting. Each
+/// side present holds a half-open line span.
+#[derive(Clone, Debug)]
+pub(crate) struct Run {
+    pub(crate) kind: RunKind,
+    pub(crate) sides: Pairing<(usize, usize)>,
+}
+
+impl Run {
+    pub(crate) fn len(&self) -> usize {
+        let (start, end) = match self.sides {
+            Pairing::Both { lhs, .. } | Pairing::LeftOnly { lhs } => lhs,
+            Pairing::RightOnly { rhs } => rhs,
         };
-        let lhs = position.pos.line.as_usize();
-        if lhs_novel.contains(&lhs) || lhs >= lhs_lines.len() {
-            continue;
-        }
-        for opposite in opposite_pos {
-            let rhs = opposite.line.as_usize();
-            if rhs_novel.contains(&rhs) || rhs >= rhs_lines.len() {
-                continue;
+        end - start
+    }
+}
+
+/// Rows in order, run-length encoded by kind and side presence.
+pub(crate) fn runs(
+    rows: &[Row],
+    lhs_novel: &BTreeSet<usize>,
+    rhs_novel: &BTreeSet<usize>,
+) -> Vec<Run> {
+    let mut runs: Vec<Run> = Vec::new();
+    for &row in rows {
+        let row = match row {
+            (Some(lhs), Some(rhs)) => Pairing::Both { lhs, rhs },
+            (Some(lhs), None) => Pairing::LeftOnly { lhs },
+            (None, Some(rhs)) => Pairing::RightOnly { rhs },
+            (None, None) => unreachable!("aligned_rows only emits rows with a line on some side"),
+        };
+        let kind = match row {
+            Pairing::Both { lhs, rhs }
+                if !lhs_novel.contains(&lhs) && !rhs_novel.contains(&rhs) =>
+            {
+                RunKind::Unchanged
             }
-            let lhs_text = lhs_lines[lhs];
-            let rhs_text = rhs_lines[rhs];
-            if lhs_text == rhs_text || lhs_text.trim_start() != rhs_text.trim_start() {
-                continue;
+            _ => RunKind::Novel,
+        };
+        let last = runs.last_mut().filter(|run| run.kind == kind);
+        match (last.map(|run| &mut run.sides), row) {
+            (
+                Some(Pairing::Both {
+                    lhs: (_, lhs_end),
+                    rhs: (_, rhs_end),
+                }),
+                Pairing::Both { lhs, rhs },
+            ) if *lhs_end == lhs && *rhs_end == rhs => {
+                *lhs_end += 1;
+                *rhs_end += 1;
             }
-            pairs.insert((lhs, rhs));
+            (Some(Pairing::LeftOnly { lhs: (_, end) }), Pairing::LeftOnly { lhs: line })
+            | (Some(Pairing::RightOnly { rhs: (_, end) }), Pairing::RightOnly { rhs: line })
+                if *end == line =>
+            {
+                *end += 1;
+            }
+            _ => runs.push(Run {
+                kind,
+                sides: row.map(|line| (line, line + 1)),
+            }),
         }
     }
-    pairs
+    runs
 }
 
 #[cfg(test)]

@@ -1,7 +1,6 @@
 //! Git-style CLI input; rendering and NDJSON remain adapters over the same engine.
 use crate::config::Config;
 use crate::git::{Comparison, DiffSession, FileParams, Operand, Result};
-use crate::hook::Hook;
 use crate::options::{DiffOptions, DisplayMode, DisplayOptions};
 use clap::{Arg, ArgAction, ArgGroup, ArgMatches, Command};
 use git2::{DiffStatsFormat, Repository};
@@ -60,7 +59,7 @@ pub(crate) fn run() -> Result<i32> {
         .arg(flag("no-renames"))
         .arg(flag("find-renames").short('M').conflicts_with("no-renames"))
         .arg(Arg::new("unified").short('U').long("unified").default_value("3").value_parser(clap::value_parser!(u32)))
-        .arg(Arg::new("format").long("format").value_parser(["text", "json", "ndjson", "snapshot"]).default_value("text"))
+        .arg(Arg::new("format").long("format").value_parser(["text", "ndjson"]).default_value("text"))
         .arg(Arg::new("display").long("display").value_parser(["inline", "side-by-side", "side-by-side-show-both"]).default_value("side-by-side"))
         .arg(Arg::new("color").long("color").num_args(0..=1).require_equals(true).default_missing_value("always").default_value("auto").value_parser(["auto", "always", "never"]))
         .arg(flag("no-color"))
@@ -166,9 +165,7 @@ pub(crate) fn run() -> Result<i32> {
         let params = Arc::new(
             Config::load(workspace, args.get_one::<String>("config").map(Path::new))?.compile()?,
         );
-        let hook = fold_hook(&params, workspace)?;
         let mut session = DiffSession::open(workspace, comparison, params, &files)?;
-        session.context_lines = display.num_context_lines;
         session.diff_options = diff_options;
         let changed = session.remaining() > 0;
         if streaming {
@@ -176,35 +173,24 @@ pub(crate) fn run() -> Result<i32> {
             if jobs == 0 {
                 return Err("--jobs must be at least 1".into());
             }
-            let failed = crate::stream::write(session, jobs, hook, &mut io::stdout().lock())?;
+            let failed = crate::protocol::stream::write(session, jobs, &mut io::stdout().lock())?;
             return Ok(if failed {
                 2
             } else {
                 i32::from(changed && args.get_flag("exit-code"))
             });
         }
-        for (file, result) in session {
-            let result = result.map_err(|error| format!("{}: {error}", file.path()))?;
-            render(&result, &args, &display)?;
+        while let Some((file, loaded)) = session.load() {
+            let result = loaded
+                .and_then(|loaded| loaded.diff(&display))
+                .map_err(|error| format!("{}: {error:#}", file.path()))?;
+            crate::print_diff_result(&display, &result);
         }
         changed
     };
     Ok(i32::from(
         has_changes && (args.get_flag("exit-code") || args.get_flag("quiet")),
     ))
-}
-
-fn render(
-    diff: &crate::summary::DiffResult,
-    args: &ArgMatches,
-    display: &DisplayOptions,
-) -> Result<()> {
-    match args.get_one::<String>("format").unwrap().as_str() {
-        "json" => println!("{}", diff.domain_json()),
-        "snapshot" => print!("{}", diff.snapshot()),
-        _ => crate::print_diff_result(display, diff),
-    }
-    Ok(())
 }
 
 fn select(
@@ -461,28 +447,22 @@ fn no_index(
         )
     };
     if args.get_one::<String>("format").map(String::as_str) == Some("ndjson") {
-        let hook = fold_hook(&config, Path::new(args.get_one::<String>("repo").unwrap()))?;
-        crate::stream::write_file(
+        let failed = crate::protocol::stream::write_file(
             &paths[0].to_string_lossy(),
             &paths[1].to_string_lossy(),
+            (before.len() as u64, after.len() as u64),
             compute,
-            hook.as_deref(),
             &mut io::stdout().lock(),
         )?;
-        Ok(i32::from(changed && args.get_flag("exit-code")))
+        Ok(if failed {
+            2
+        } else {
+            i32::from(changed && args.get_flag("exit-code"))
+        })
     } else {
-        render(&compute(), args, display)?;
+        crate::print_diff_result(display, &crate::diff_or_die(compute(), display.use_color));
         Ok(i32::from(changed))
     }
-}
-
-/// Streaming output summarizes large novel folds through the configured hook.
-fn fold_hook(params: &crate::config::Params, workspace: &Path) -> Result<Option<Arc<Hook>>> {
-    params
-        .hook
-        .as_ref()
-        .map(|config| Hook::spawn(config, workspace).map(Arc::new))
-        .transpose()
 }
 
 /// Explicit machine/text modes and redirected output must never enter the alternate screen.

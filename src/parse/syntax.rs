@@ -76,7 +76,8 @@ pub(crate) struct FoldMetadata {
 /// (This is deliberately exchanging correctness-by-construction for
 /// performance.)
 pub(crate) struct SyntaxInfo<'a> {
-    /// Parent fold semantics replace the child's when a wrapper is flattened.
+    /// The fold this node owns, if a query gave it one. A node has at most
+    /// one, so two folds align exactly when the matcher paired their nodes.
     pub(crate) fold: RefCell<Option<FoldMetadata>>,
     /// Multiple enclosing contexts can survive on one flattened node.
     pub(crate) context: RefCell<Vec<super::context::ContextMetadata>>,
@@ -280,12 +281,16 @@ impl<'a> Syntax<'a> {
         // This is a small performance win as it makes the difftastic
         // syntax tree smaller. It also really helps when looking at
         // debug output for small inputs.
-        if children.len() == 1 && open_content.is_empty() && close_content.is_empty() {
+        // A fold belongs to the node it was found on, so the wrapper only
+        // goes away when its fold can go with it: onto a child that has none.
+        if children.len() == 1
+            && open_content.is_empty()
+            && close_content.is_empty()
+            && !(fold.is_some() && children[0].info().fold.borrow().is_some())
+        {
             let child = children[0];
-            if let Some(mut fold) = fold {
-                fold.range_override
-                    .get_or_insert_with(|| folds::interior_range(&open_position, &close_position));
-                child.info().fold.replace(Some(fold));
+            if let Some(fold) = fold {
+                *child.info().fold.borrow_mut() = Some(fold);
             }
             return child;
         }
@@ -1088,7 +1093,10 @@ fn change_positions_<'a>(
             .get(node)
             .unwrap_or_else(|| panic!("Should have changes set in all nodes: {:#?}", node));
 
-        folds.extend(folds::project(node, change));
+        folds.extend(folds::project(
+            node,
+            folds::partner(node, change, change_map),
+        ));
 
         if matches!(change, ChangeKind::Unchanged(_)) {
             *seen_unchanged = true;
@@ -1290,7 +1298,7 @@ mod tests {
     }
 
     #[test]
-    fn flattened_parent_fold_replaces_child_fold() {
+    fn flattening_moves_a_fold_down_but_never_onto_a_fold() {
         let arena = Arena::new();
         let point = |col| SingleLineSpan {
             line: 0.into(),
@@ -1299,51 +1307,58 @@ mod tests {
         };
         let metadata = |tag: &str| FoldMetadata {
             tags: vec![tag.to_owned()],
-            range_override: None,
+            range_override: Some(folds::interior_range(&[point(0)], &[point(10)])),
         };
-        let atom = Syntax::new_atom_with_fold(
-            &arena,
-            vec![SingleLineSpan {
-                line: 0.into(),
-                start_col: 4,
-                end_col: 7,
-            }],
-            "abc".into(),
-            AtomKind::Normal,
-            Some(metadata("string")),
-        );
+        let atom = |fold| {
+            Syntax::new_atom_with_fold(
+                &arena,
+                vec![SingleLineSpan {
+                    line: 0.into(),
+                    start_col: 4,
+                    end_col: 7,
+                }],
+                "abc".into(),
+                AtomKind::Normal,
+                fold,
+            )
+        };
+
+        // A child without a fold takes the wrapper's, and stands for both.
+        let plain = atom(None);
         let body = Syntax::new_list_with_fold(
             &arena,
             "",
             vec![point(2)],
-            vec![atom],
+            vec![plain],
             "",
             vec![point(9)],
             Some(metadata("body")),
         );
-        let test = Syntax::new_list_with_fold(
+        assert!(std::ptr::eq(body, plain));
+        assert_eq!(body.info().fold.borrow().clone(), Some(metadata("body")));
+
+        // A child with a fold of its own keeps it: the wrapper stays, so
+        // each fold still has a node of its own.
+        let string = atom(Some(metadata("string")));
+        let wrapper = Syntax::new_list_with_fold(
             &arena,
             "",
-            vec![point(0)],
-            vec![body],
+            vec![point(2)],
+            vec![string],
             "",
-            vec![point(10)],
-            Some(metadata("test")),
+            vec![point(9)],
+            Some(metadata("body")),
         );
-        assert!(std::ptr::eq(test, atom));
+        assert!(!std::ptr::eq(wrapper, string));
+        assert_eq!(wrapper.info().fold.borrow().clone(), Some(metadata("body")));
         assert_eq!(
-            test.info().fold.borrow().clone(),
-            Some(FoldMetadata {
-                tags: vec!["test".to_owned()],
-                range_override: Some(folds::interior_range(&[point(0)], &[point(10)])),
-            })
+            string.info().fold.borrow().clone(),
+            Some(metadata("string"))
         );
-        let wrapper = Syntax::new_list(&arena, "", vec![], vec![test], "", vec![]);
-        assert!(std::ptr::eq(wrapper, atom));
-        assert_eq!(
-            wrapper.info().fold.borrow().clone(),
-            test.info().fold.borrow().clone()
-        );
+
+        // Without a fold to keep, a wrapper still goes away.
+        let bare = Syntax::new_list(&arena, "", vec![], vec![string], "", vec![]);
+        assert!(std::ptr::eq(bare, string));
     }
 
     #[test]

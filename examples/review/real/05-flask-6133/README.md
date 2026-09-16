@@ -2,7 +2,7 @@
 
 New decorated method: fold its added docstring, preserving the decorator, complete signature and return expression. The enclosing class is paired extra context; added lines are already visible in the diff.
 
-[Original PR](https://github.com/pallets/flask/pull/6133) · [Before](before.py) · [After](after.py) · [Git patch](change.patch) · [Generated review golden](review.snap) · [Expected annotations](expected.json) · [Provenance](provenance.json)
+[Original PR](https://github.com/pallets/flask/pull/6133) · [Before](before.py) · [After](after.py) · [Git patch](change.patch) · [Expected annotations](expected.json) · [Provenance](provenance.json)
 
 Annotations are manually selected targets, not recorded matcher output. Coordinates below are zero-based UTF-8 byte positions with exclusive ends.
 

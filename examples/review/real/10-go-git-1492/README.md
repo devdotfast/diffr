@@ -2,7 +2,7 @@
 
 The both-have-nodes branch changes from sequential guards to a nested switch. Pair several statements while retaining other outer cases. Extra context shows the complete function signature, enclosing loop/switch openers and closing braces. The success return is already in the diff.
 
-[Original PR](https://github.com/go-git/go-git/pull/1492) · [Before](before.go) · [After](after.go) · [Git patch](change.patch) · [Generated review golden](review.snap) · [Expected annotations](expected.json) · [Provenance](provenance.json)
+[Original PR](https://github.com/go-git/go-git/pull/1492) · [Before](before.go) · [After](after.go) · [Git patch](change.patch) · [Expected annotations](expected.json) · [Provenance](provenance.json)
 
 Annotations are manually selected targets, not recorded matcher output. Coordinates below are zero-based UTF-8 byte positions with exclusive ends.
 

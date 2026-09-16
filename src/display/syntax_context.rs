@@ -109,6 +109,7 @@ mod tests {
                 Params::default().language(Language::Python),
                 false,
             )
+            .unwrap()
         };
         let selected = select_candidates(
             &candidates(&syntax),
@@ -125,7 +126,8 @@ mod tests {
             "fn run() -> i32 {\n    answer\n}\n",
             Params::default().language(Language::Rust),
             false,
-        );
+        )
+        .unwrap();
         let mut pending = syntax;
         let mut found_tail = false;
         while let Some(node) = pending.pop() {

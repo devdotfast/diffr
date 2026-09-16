@@ -11,8 +11,7 @@ diffr main...HEAD -- src/      # merge-base comparison
 diffr main HEAD --format ndjson
 ```
 
-See the [CLI reference](docs/cli.md), [streaming API](docs/streaming.md)
-including fold hooks, and [fixture viewer](examples/review/viewer/README.md).
+See the [CLI reference](docs/cli.md) and the [streaming API](docs/streaming.md).
 The executable is `diffr`; the Cargo package remains `difftastic`.
 The upstream installation commands below install upstream Difftastic, not this fork.
 

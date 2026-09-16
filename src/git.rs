@@ -1,16 +1,20 @@
 //! Git comparison selection and lazy source loading used by the CLI and its stdout stream.
 use crate::config::Params;
+use crate::pairing::Pairing;
+use crate::protocol;
 use crate::summary::DiffResult;
+use anyhow::Context as _;
 use git2::{AttrCheckFlags, AttrValue, Delta, Diff, DiffFindOptions, DiffOptions, Oid, Repository};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::{
+    fmt,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 pub(crate) type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Operand {
     Revision { r#ref: String },
@@ -113,8 +117,7 @@ impl Comparison {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Debug)]
 pub(crate) enum FileStatus {
     Added,
     Deleted,
@@ -124,12 +127,14 @@ pub(crate) enum FileStatus {
     Conflicted,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub(crate) struct FileChange {
     pub(crate) old_path: Option<String>,
     pub(crate) new_path: Option<String>,
     pub(crate) status: FileStatus,
     pub(crate) class: Option<String>,
+    /// Git's delta sides.
+    pub(crate) sides: Pairing<protocol::FileRef>,
 }
 
 impl FileChange {
@@ -138,6 +143,106 @@ impl FileChange {
             .as_deref()
             .or(self.old_path.as_deref())
             .expect("changed file has a path")
+    }
+
+    /// A standalone comparison of two paths, outside any repository.
+    pub(crate) fn standalone(before: &str, after: &str) -> Self {
+        let file_ref = |path: &str| protocol::FileRef {
+            path: path.to_owned(),
+            oid: String::new(),
+            mode: String::new(),
+        };
+        let old_path = (before != "/dev/null").then(|| before.to_owned());
+        let new_path = (after != "/dev/null").then(|| after.to_owned());
+        let (status, sides) = match (&old_path, &new_path) {
+            (Some(old), Some(new)) => (
+                FileStatus::Modified,
+                Pairing::Both {
+                    lhs: file_ref(old),
+                    rhs: file_ref(new),
+                },
+            ),
+            (Some(old), None) => (
+                FileStatus::Deleted,
+                Pairing::LeftOnly { lhs: file_ref(old) },
+            ),
+            (None, Some(new)) => (FileStatus::Added, Pairing::RightOnly { rhs: file_ref(new) }),
+            (None, None) => panic!("a standalone comparison needs at least one path"),
+        };
+        Self {
+            old_path,
+            new_path,
+            status,
+            class: None,
+            sides,
+        }
+    }
+
+    pub(crate) fn manifest_entry(&self) -> protocol::FileChange {
+        protocol::FileChange {
+            file: self.sides.clone(),
+            status: match self.status {
+                FileStatus::Added => protocol::FileStatus::Added,
+                FileStatus::Deleted => protocol::FileStatus::Deleted,
+                FileStatus::Modified => protocol::FileStatus::Modified,
+                FileStatus::Renamed => protocol::FileStatus::Renamed,
+                FileStatus::TypeChanged => protocol::FileStatus::TypeChanged,
+                // Both sides exist; the file record carries the unmerged error.
+                FileStatus::Conflicted => protocol::FileStatus::Modified,
+            },
+        }
+    }
+}
+
+/// Why one file could not be diffed. Loading attaches it to the error, and
+/// the stream turns it into the record's `code`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FileError {
+    UnsupportedFileType,
+    ReadFailed,
+    Binary,
+    NotUtf8,
+    Unmerged,
+}
+
+impl FileError {
+    pub(crate) fn code(self) -> &'static str {
+        match self {
+            Self::UnsupportedFileType => "unsupported_file_type",
+            Self::ReadFailed => "read_failed",
+            Self::Binary => "binary",
+            Self::NotUtf8 => "not_utf8",
+            Self::Unmerged => "unmerged",
+        }
+    }
+}
+
+impl fmt::Display for FileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::UnsupportedFileType => {
+                "structural diffs currently require regular text files (not symlinks or submodules)"
+            }
+            Self::ReadFailed => "could not read the source",
+            Self::Binary => "structural diffs currently support text files only",
+            Self::NotUtf8 => "the source is not valid UTF-8",
+            Self::Unmerged => {
+                "unmerged index entry: resolve the conflict before requesting a structural diff"
+            }
+        })
+    }
+}
+
+impl std::error::Error for FileError {}
+
+impl From<&Operand> for protocol::Snapshot {
+    fn from(operand: &Operand) -> Self {
+        match operand {
+            Operand::Revision { r#ref } => Self::Revision { rev: r#ref.clone() },
+            Operand::Index => Self::Index,
+            Operand::WorkingTree => Self::WorkingTree,
+            Operand::EmptyTree => Self::EmptyTree,
+        }
     }
 }
 
@@ -191,23 +296,27 @@ impl Source {
         })
     }
 
-    fn read(&self, repo: &Repository) -> Result<String> {
+    fn read(&self, repo: &Repository) -> anyhow::Result<String> {
         let mode = match self {
             Self::Absent => return Ok(String::new()),
             Self::Blob { mode, .. } | Self::WorkingFile { mode, .. } => mode,
         };
         if !matches!(mode, git2::FileMode::Blob | git2::FileMode::BlobExecutable) {
-            return Err("structural diffs currently require regular text files (not symlinks or submodules)".into());
+            return Err(FileError::UnsupportedFileType.into());
         }
         let bytes = match self {
-            Self::Blob { id, .. } => repo.find_blob(*id)?.content().to_vec(),
-            Self::WorkingFile { path, .. } => std::fs::read(path)?,
+            Self::Blob { id, .. } => repo
+                .find_blob(*id)
+                .context(FileError::ReadFailed)?
+                .content()
+                .to_vec(),
+            Self::WorkingFile { path, .. } => std::fs::read(path).context(FileError::ReadFailed)?,
             Self::Absent => unreachable!(),
         };
         if bytes.contains(&0) {
-            return Err("structural diffs currently support text files only".into());
+            return Err(FileError::Binary.into());
         }
-        Ok(String::from_utf8(bytes)?)
+        String::from_utf8(bytes).context(FileError::NotUtf8)
     }
 }
 
@@ -222,7 +331,6 @@ pub(crate) struct DiffSession {
     pub(crate) comparison: Comparison,
     params: Arc<Params>,
     files: std::vec::IntoIter<PendingFile>,
-    pub(crate) context_lines: u32,
     pub(crate) diff_options: crate::options::DiffOptions,
 }
 
@@ -267,19 +375,40 @@ impl DiffSession {
                         .ok_or("non-UTF-8 Git paths are unsupported")?
                         .to_owned())
                 };
+                let old_path = if delta.status() == Delta::Added {
+                    None
+                } else {
+                    Some(path(delta.old_file())?)
+                };
+                let new_path = if delta.status() == Delta::Deleted {
+                    None
+                } else {
+                    Some(path(delta.new_file())?)
+                };
+                let file_ref = |file: git2::DiffFile<'_>, path: &str| protocol::FileRef {
+                    path: path.to_owned(),
+                    oid: file.id().to_string(),
+                    mode: format!("{:o}", u32::from(file.mode())),
+                };
+                let sides = match (&old_path, &new_path) {
+                    (Some(old), Some(new)) => Pairing::Both {
+                        lhs: file_ref(delta.old_file(), old),
+                        rhs: file_ref(delta.new_file(), new),
+                    },
+                    (Some(old), None) => Pairing::LeftOnly {
+                        lhs: file_ref(delta.old_file(), old),
+                    },
+                    (None, Some(new)) => Pairing::RightOnly {
+                        rhs: file_ref(delta.new_file(), new),
+                    },
+                    (None, None) => unreachable!("a delta has a path"),
+                };
                 let mut file = FileChange {
-                    old_path: if delta.status() == Delta::Added {
-                        None
-                    } else {
-                        Some(path(delta.old_file())?)
-                    },
-                    new_path: if delta.status() == Delta::Deleted {
-                        None
-                    } else {
-                        Some(path(delta.new_file())?)
-                    },
+                    old_path,
+                    new_path,
                     status,
                     class: None,
+                    sides,
                 };
                 file.class = match AttrValue::from_string(repo.get_attr(
                     Path::new(file.path()),
@@ -323,7 +452,6 @@ impl DiffSession {
             comparison,
             params,
             files: pending.into_iter(),
-            context_lines: 3,
             diff_options: crate::options::DiffOptions::default(),
         })
     }
@@ -334,52 +462,49 @@ pub(crate) struct LoadedFile {
     pub(crate) file: FileChange,
     before: String,
     after: String,
-    params: Arc<Params>,
-    context_lines: u32,
+    pub(crate) params: Arc<Params>,
     diff_options: crate::options::DiffOptions,
 }
 
 impl LoadedFile {
-    pub(crate) fn diff(&self) -> DiffResult {
-        DiffResult::from_sources_with_options(
+    pub(crate) fn sizes(&self) -> (u64, u64) {
+        (self.before.len() as u64, self.after.len() as u64)
+    }
+
+    /// A fold query conflict fails this file alone. `display` sets the
+    /// unchanged lines around each of difftastic's terminal hunks; nothing
+    /// else in the result depends on it.
+    pub(crate) fn diff(
+        &self,
+        display: &crate::options::DisplayOptions,
+    ) -> anyhow::Result<DiffResult> {
+        Ok(DiffResult::from_sources_with_options(
             self.file.path(),
             &self.before,
             &self.after,
             &self.params,
-            &crate::options::DisplayOptions {
-                num_context_lines: self.context_lines,
-                ..Default::default()
-            },
+            display,
             &self.diff_options,
-        )
+        )?)
     }
 }
 
 impl DiffSession {
     /// Read the next file's sources without diffing them.
-    pub(crate) fn load(&mut self) -> Option<(FileChange, Result<LoadedFile>)> {
+    pub(crate) fn load(&mut self) -> Option<(FileChange, anyhow::Result<LoadedFile>)> {
         let pending = self.files.next()?;
         let result = (|| {
             if matches!(pending.file.status, FileStatus::Conflicted) {
-                return Err("unmerged index entry: resolve the conflict before requesting a structural diff".into());
+                return Err(FileError::Unmerged.into());
             }
             Ok(LoadedFile {
                 before: pending.before.read(&self.repo)?,
                 after: pending.after.read(&self.repo)?,
                 file: pending.file.clone(),
                 params: Arc::clone(&self.params),
-                context_lines: self.context_lines,
                 diff_options: self.diff_options.clone(),
             })
         })();
         Some((pending.file, result))
-    }
-}
-
-impl Iterator for DiffSession {
-    type Item = (FileChange, Result<DiffResult>);
-    fn next(&mut self) -> Option<Self::Item> {
-        let (file, loaded) = self.load()?;
-        Some((file, loaded.map(|loaded| loaded.diff())))
     }
 }

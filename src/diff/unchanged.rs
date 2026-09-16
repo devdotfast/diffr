@@ -499,8 +499,8 @@ mod tests {
         let params = Params::default();
         let config = params.language(guess_language::Language::EmacsLisp);
 
-        let lhs_nodes = parse(&arena, "unchanged A B", config, false);
-        let rhs_nodes = parse(&arena, "unchanged X", config, false);
+        let lhs_nodes = parse(&arena, "unchanged A B", config, false).unwrap();
+        let rhs_nodes = parse(&arena, "unchanged X", config, false).unwrap();
         init_all_info(&lhs_nodes, &rhs_nodes);
 
         let mut change_map = ChangeMap::default();
@@ -526,8 +526,8 @@ mod tests {
         let params = Params::default();
         let config = params.language(guess_language::Language::EmacsLisp);
 
-        let lhs_nodes = parse(&arena, "A B unchanged", config, false);
-        let rhs_nodes = parse(&arena, "X unchanged", config, false);
+        let lhs_nodes = parse(&arena, "A B unchanged", config, false).unwrap();
+        let rhs_nodes = parse(&arena, "X unchanged", config, false).unwrap();
         init_all_info(&lhs_nodes, &rhs_nodes);
 
         let mut change_map = ChangeMap::default();
@@ -558,13 +558,15 @@ mod tests {
             "unchanged-before (more-unchanged (A))",
             config,
             false,
-        );
+        )
+        .unwrap();
         let rhs_nodes = parse(
             &arena,
             "unchanged-before (more-unchanged (B))",
             config,
             false,
-        );
+        )
+        .unwrap();
         init_all_info(&lhs_nodes, &rhs_nodes);
 
         let mut change_map = ChangeMap::default();
@@ -595,13 +597,15 @@ mod tests {
             "(unchanged (1 2 3 4 5 6 7 8 9 10)) A B",
             config,
             false,
-        );
+        )
+        .unwrap();
         let rhs_nodes = parse(
             &arena,
             "(unchanged (1 2 3 4 5 6 7 8 9 10)) X",
             config,
             false,
-        );
+        )
+        .unwrap();
         init_all_info(&lhs_nodes, &rhs_nodes);
 
         let mut change_map = ChangeMap::default();
@@ -634,13 +638,15 @@ mod tests {
             "A B (unchanged (1 2 3 4 5 6 7 8 9 10))",
             config,
             false,
-        );
+        )
+        .unwrap();
         let rhs_nodes = parse(
             &arena,
             "X (unchanged (1 2 3 4 5 6 7 8 9 10))",
             config,
             false,
-        );
+        )
+        .unwrap();
         init_all_info(&lhs_nodes, &rhs_nodes);
 
         let mut change_map = ChangeMap::default();
@@ -668,8 +674,8 @@ mod tests {
         let params = Params::default();
         let config = params.language(guess_language::Language::EmacsLisp);
 
-        let lhs_nodes = parse(&arena, "(A)", config, false);
-        let rhs_nodes = parse(&arena, "(B)", config, false);
+        let lhs_nodes = parse(&arena, "(A)", config, false).unwrap();
+        let rhs_nodes = parse(&arena, "(B)", config, false).unwrap();
         init_all_info(&lhs_nodes, &rhs_nodes);
 
         let mut change_map = ChangeMap::default();
@@ -701,13 +707,15 @@ mod tests {
             "novel-lhs (unchanged (1 2 3 4 5 6 7 8 9 10)) novel-lhs-2",
             config,
             false,
-        );
+        )
+        .unwrap();
         let rhs_nodes = parse(
             &arena,
             "novel-rhs (unchanged (1 2 3 4 5 6 7 8 9 10)) novel-rhs-2",
             config,
             false,
-        );
+        )
+        .unwrap();
         init_all_info(&lhs_nodes, &rhs_nodes);
 
         let mut change_map = ChangeMap::default();
@@ -740,12 +748,12 @@ mod tests {
             &arena,
             "novel-lhs (unchanged-1 (1 2 3 4 5 6 7 8 9 10)) (unchanged-2 (1 2 3 4 5 6 7 8 9 10)) novel-lhs-2",
             config, false,
-        );
+        ).unwrap();
         let rhs_nodes = parse(
             &arena,
             "novel-rhs (unchanged-1 (1 2 3 4 5 6 7 8 9 10)) (unchanged-2 (1 2 3 4 5 6 7 8 9 10)) novel-rhs-2",
             config, false,
-        );
+        ).unwrap();
         init_all_info(&lhs_nodes, &rhs_nodes);
 
         let mut change_map = ChangeMap::default();
@@ -770,13 +778,15 @@ mod tests {
             "(novel-lhs-before (1 2 3 4 5 6 7 8 9 10) novel-lhs-after)",
             config,
             false,
-        );
+        )
+        .unwrap();
         let rhs_nodes = parse(
             &arena,
             "(novel-rhs-before (1 2 3 4 5 6 7 8 9 10) novel-rhs-after)",
             config,
             false,
-        );
+        )
+        .unwrap();
         init_all_info(&lhs_nodes, &rhs_nodes);
 
         let mut change_map = ChangeMap::default();
@@ -800,13 +810,15 @@ mod tests {
             "(1 2 3 4 5 6 7 8 9 10) (91 92 93 94 95 96 97 98 99 100)",
             config,
             false,
-        );
+        )
+        .unwrap();
         let rhs_nodes = parse(
             &arena,
             "(1 2 3 4 5 novel-1 6 7 8 9 10) (91 92 93 94 95 novel-2 96 97 98 99 100)",
             config,
             false,
-        );
+        )
+        .unwrap();
         init_all_info(&lhs_nodes, &rhs_nodes);
 
         let split = split_mostly_unchanged_toplevel(&lhs_nodes, &rhs_nodes);
@@ -829,13 +841,15 @@ mod tests {
             "(shared-1 (shared-2a shared-2b) not-unique not-unique)",
             config,
             false,
-        );
+        )
+        .unwrap();
         let rhs_nodes = parse(
             &arena,
             "(shared-1 (shared-2a shared-2b) not-unique)",
             config,
             false,
-        );
+        )
+        .unwrap();
         init_all_info(&lhs_nodes, &rhs_nodes);
 
         assert_eq!(count_common_unique(lhs_nodes[0], rhs_nodes[0]), 2);
@@ -847,8 +861,8 @@ mod tests {
         let params = Params::default();
         let config = params.language(guess_language::Language::EmacsLisp);
 
-        let lhs_nodes = parse(&arena, "((novel-lhs 1 2 3 4 5)) x", config, false);
-        let rhs_nodes = parse(&arena, "((novel-rhs 1 2 3 4 5)) y", config, false);
+        let lhs_nodes = parse(&arena, "((novel-lhs 1 2 3 4 5)) x", config, false).unwrap();
+        let rhs_nodes = parse(&arena, "((novel-rhs 1 2 3 4 5)) y", config, false).unwrap();
         init_all_info(&lhs_nodes, &rhs_nodes);
 
         assert_eq!(
@@ -862,8 +876,8 @@ mod tests {
         let params = Params::default();
         let config = params.language(guess_language::Language::EmacsLisp);
 
-        let lhs_nodes = parse(&arena, "(novel-lhs 1 2 3 4 5) x", config, false);
-        let rhs_nodes = parse(&arena, "[novel-rhs 1 2 3 4 5] y", config, false);
+        let lhs_nodes = parse(&arena, "(novel-lhs 1 2 3 4 5) x", config, false).unwrap();
+        let rhs_nodes = parse(&arena, "[novel-rhs 1 2 3 4 5] y", config, false).unwrap();
         init_all_info(&lhs_nodes, &rhs_nodes);
 
         assert_eq!(

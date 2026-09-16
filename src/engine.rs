@@ -11,13 +11,44 @@ use crate::display::hunks::{matched_pos_to_hunks, merge_adjacent};
 use crate::line_parser;
 use crate::lines::MaxLine;
 use crate::options::{DiffOptions, DisplayOptions, FileArgument};
+use crate::parse::folds;
 use crate::parse::guess_language::{guess, language_name, LanguageOverride};
 use crate::parse::syntax::{self, init_next_prev};
 use crate::parse::tree_sitter_parser as tsp;
-use crate::summary::{DiffResult, FileContent, FileFormat};
+use crate::summary::{DiffResult, FallbackCause, FileContent, FileFormat};
 use humansize::{format_size, FormatSizeOptions, BINARY};
-use std::{env, path::Path};
+use std::{env, fmt, path::Path};
 use typed_arena::Arena;
+
+/// A file whose fold query captured one syntax node with two different
+/// ranges. The file is not diffed; the stream reports it as a
+/// `query_conflict` error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct QueryConflict {
+    /// The file's display path.
+    pub(crate) path: String,
+    pub(crate) side: Side,
+    pub(crate) conflict: folds::Conflict,
+}
+
+impl fmt::Display for QueryConflict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (first, second) = self.conflict.patterns;
+        write!(
+            f,
+            "{}:{}{}: fold query patterns {first} and {second} capture the same {} with different fold ranges",
+            self.path,
+            self.conflict.line + 1,
+            match self.side {
+                Side::Left => " (before)",
+                Side::Right => "",
+            },
+            self.conflict.kind,
+        )
+    }
+}
+
+impl std::error::Error for QueryConflict {}
 
 impl DiffResult {
     #[cfg(test)]
@@ -25,6 +56,8 @@ impl DiffResult {
         Self::from_sources_with_params(path, lhs, rhs, &Params::default())
     }
 
+    /// A diff with the given parameters, for tests whose queries cannot
+    /// conflict.
     #[cfg(test)]
     pub(crate) fn from_sources_with_params(
         path: &str,
@@ -32,6 +65,17 @@ impl DiffResult {
         rhs: &str,
         params: &Params,
     ) -> Self {
+        Self::try_from_sources_with_params(path, lhs, rhs, params)
+            .expect("the test's fold queries do not conflict")
+    }
+
+    #[cfg(test)]
+    pub(crate) fn try_from_sources_with_params(
+        path: &str,
+        lhs: &str,
+        rhs: &str,
+        params: &Params,
+    ) -> Result<Self, QueryConflict> {
         Self::from_sources_with_options(
             path,
             lhs,
@@ -49,7 +93,7 @@ impl DiffResult {
         params: &Params,
         display: &DisplayOptions,
         options: &DiffOptions,
-    ) -> Self {
+    ) -> Result<Self, QueryConflict> {
         let file = crate::options::FileArgument::NamedPath(path.into());
         diff_file_content(
             params,
@@ -105,7 +149,7 @@ pub(crate) fn diff_file_content(
     display_options: &DisplayOptions,
     diff_options: &DiffOptions,
     overrides: &[(LanguageOverride, Vec<glob::Pattern>)],
-) -> DiffResult {
+) -> Result<DiffResult, QueryConflict> {
     let mut annotations = display::syntax_context::SyntaxAnnotations::default();
     let guess_src = match rhs_path {
         FileArgument::DevNull => &lhs_src,
@@ -123,7 +167,7 @@ pub(crate) fn diff_file_content(
 
         // If the two files are byte-for-byte identical, return early
         // rather than doing any more work.
-        return DiffResult {
+        return Ok(DiffResult {
             extra_info,
             display_path: display_path.to_owned(),
             file_format,
@@ -136,7 +180,7 @@ pub(crate) fn diff_file_content(
             rhs_folds: vec![],
             has_byte_changes: None,
             has_syntactic_changes: false,
-        };
+        });
     }
 
     let mut lhs_folds = Vec::new();
@@ -145,7 +189,13 @@ pub(crate) fn diff_file_content(
         None => {
             let file_format = FileFormat::PlainText;
             if diff_options.check_only {
-                return check_only_text(&file_format, display_path, extra_info, lhs_src, rhs_src);
+                return Ok(check_only_text(
+                    &file_format,
+                    display_path,
+                    extra_info,
+                    lhs_src,
+                    rhs_src,
+                ));
             }
 
             let (lhs_positions, rhs_positions) = line_parser::change_positions(lhs_src, rhs_src);
@@ -174,7 +224,7 @@ pub(crate) fn diff_file_content(
                                     Some((lhs_src.as_bytes().len(), rhs_src.as_bytes().len()))
                                 };
 
-                                return DiffResult {
+                                return Ok(DiffResult {
                                     extra_info,
                                     display_path: display_path.to_owned(),
                                     file_format: FileFormat::SupportedLanguage(language),
@@ -187,7 +237,7 @@ pub(crate) fn diff_file_content(
                                     rhs_folds: vec![],
                                     has_byte_changes,
                                     has_syntactic_changes,
-                                };
+                                });
                             }
 
                             let mut change_map = ChangeMap::default();
@@ -222,6 +272,7 @@ pub(crate) fn diff_file_content(
                                     line_parser::change_positions(lhs_src, rhs_src);
                                 (
                                     FileFormat::TextFallback {
+                                        cause: FallbackCause::GraphLimit,
                                         reason: "exceeded DFT_GRAPH_LIMIT".into(),
                                     },
                                     lhs_positions,
@@ -257,10 +308,19 @@ pub(crate) fn diff_file_content(
                                 )
                             }
                         }
-                        Err(tsp::ExceededParseErrorLimit {
-                            error_count,
-                            first_error_pos,
-                        }) => {
+                        Err(tsp::ToSyntaxError::QueryConflict(conflict, side)) => {
+                            return Err(QueryConflict {
+                                path: display_path.to_owned(),
+                                side,
+                                conflict,
+                            });
+                        }
+                        Err(tsp::ToSyntaxError::ExceededParseErrorLimit(
+                            tsp::ExceededParseErrorLimit {
+                                error_count,
+                                first_error_pos,
+                            },
+                        )) => {
                             let location = match first_error_pos {
                                 Some((line, column, side)) => {
                                     let in_initial = match side {
@@ -277,6 +337,7 @@ pub(crate) fn diff_file_content(
                                 None => "".to_owned(),
                             };
                             let file_format = FileFormat::TextFallback {
+                                cause: FallbackCause::ParseErrorLimit,
                                 reason: format!(
                                     "{} {} parse error{}, exceeded DFT_PARSE_ERROR_LIMIT{}",
                                     error_count,
@@ -287,13 +348,13 @@ pub(crate) fn diff_file_content(
                             };
 
                             if diff_options.check_only {
-                                return check_only_text(
+                                return Ok(check_only_text(
                                     &file_format,
                                     display_path,
                                     extra_info,
                                     lhs_src,
                                     rhs_src,
-                                );
+                                ));
                             }
 
                             let (lhs_positions, rhs_positions) =
@@ -305,6 +366,7 @@ pub(crate) fn diff_file_content(
                 Err(tsp::ExceededByteLimit(num_bytes)) => {
                     let format_options = FormatSizeOptions::from(BINARY).decimal_places(1);
                     let file_format = FileFormat::TextFallback {
+                        cause: FallbackCause::ByteLimit,
                         reason: format!(
                             "{} exceeded DFT_BYTE_LIMIT",
                             format_size(num_bytes, format_options)
@@ -312,13 +374,13 @@ pub(crate) fn diff_file_content(
                     };
 
                     if diff_options.check_only {
-                        return check_only_text(
+                        return Ok(check_only_text(
                             &file_format,
                             display_path,
                             extra_info,
                             lhs_src,
                             rhs_src,
-                        );
+                        ));
                     }
 
                     let (lhs_positions, rhs_positions) =
@@ -328,6 +390,17 @@ pub(crate) fn diff_file_content(
             }
         }
     };
+
+    // Folds are regions of the file, so two nodes that cover the same lines
+    // hold one fold between them.
+    folds::merge_spans(
+        &mut lhs_folds,
+        &lhs_src.split_terminator('\n').collect::<Vec<_>>(),
+    );
+    folds::merge_spans(
+        &mut rhs_folds,
+        &rhs_src.split_terminator('\n').collect::<Vec<_>>(),
+    );
 
     let opposite_to_lhs = opposite_positions(&lhs_positions);
     let opposite_to_rhs = opposite_positions(&rhs_positions);
@@ -356,7 +429,7 @@ pub(crate) fn diff_file_content(
         Some((lhs_src.as_bytes().len(), rhs_src.as_bytes().len()))
     };
 
-    DiffResult {
+    Ok(DiffResult {
         extra_info,
         display_path: display_path.to_owned(),
         file_format,
@@ -369,5 +442,5 @@ pub(crate) fn diff_file_content(
         rhs_folds,
         has_byte_changes,
         has_syntactic_changes,
-    }
+    })
 }

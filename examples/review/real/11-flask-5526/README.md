@@ -2,7 +2,7 @@
 
 An existing method gains a typed encoding parameter; its signature grows from one line to three. Pair the docstring and setup as one fold, keeping complete signatures and final return expressions visible. The enclosing class is extra context; signatures and returns are already in the diff.
 
-[Original PR](https://github.com/pallets/flask/pull/5526) · [Before](before.py) · [After](after.py) · [Git patch](change.patch) · [Generated review golden](review.snap) · [Expected annotations](expected.json) · [Provenance](provenance.json)
+[Original PR](https://github.com/pallets/flask/pull/5526) · [Before](before.py) · [After](after.py) · [Git patch](change.patch) · [Expected annotations](expected.json) · [Provenance](provenance.json)
 
 Annotations are manually selected targets, not recorded matcher output. Coordinates below are zero-based UTF-8 byte positions with exclusive ends.
 

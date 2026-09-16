@@ -17,8 +17,24 @@ pub(crate) enum FileContent {
 pub(crate) enum FileFormat {
     SupportedLanguage(guess_language::Language),
     PlainText,
-    TextFallback { reason: String },
+    /// A file in a supported language diffed by line: `cause` says which
+    /// limit it hit, and `reason` says so in prose, with the numbers.
+    TextFallback {
+        cause: FallbackCause,
+        reason: String,
+    },
     Binary,
+}
+
+/// Why a file in a supported language was diffed by line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FallbackCause {
+    /// A side is larger than the byte limit.
+    ByteLimit,
+    /// The AST matching graph grew past the graph limit.
+    GraphLimit,
+    /// A side has more parse errors than the parse error limit.
+    ParseErrorLimit,
 }
 
 impl Display for FileFormat {
@@ -26,7 +42,7 @@ impl Display for FileFormat {
         match self {
             Self::SupportedLanguage(language) => write!(f, "{}", language_name(*language)),
             Self::PlainText => write!(f, "Text"),
-            Self::TextFallback { reason } => write!(f, "Text ({})", reason),
+            Self::TextFallback { reason, .. } => write!(f, "Text ({})", reason),
             Self::Binary => write!(f, "Binary"),
         }
     }

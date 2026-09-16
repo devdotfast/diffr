@@ -1329,13 +1329,16 @@ pub(crate) fn parse_subtrees(
     src: &str,
     config: &LanguageParams,
     tree: &tree_sitter::Tree,
-) -> DftHashMap<
-    usize,
-    (
-        tree_sitter::Tree,
-        &'static TreeSitterConfig,
-        HighlightedNodeIds,
-    ),
+) -> Result<
+    DftHashMap<
+        usize,
+        (
+            tree_sitter::Tree,
+            &'static TreeSitterConfig,
+            HighlightedNodeIds,
+        ),
+    >,
+    folds::Conflict,
 > {
     let mut subtrees = DftHashMap::default();
 
@@ -1359,13 +1362,13 @@ pub(crate) fn parse_subtrees(
                 .expect("Incompatible tree-sitter version");
 
             let tree = parser.parse(src, None).unwrap();
-            let sub_highlights = tree_highlights(&tree, src, subconfig);
+            let sub_highlights = tree_highlights(&tree, src, subconfig)?;
 
             subtrees.insert(node.id(), (tree, subconfig.parser, sub_highlights));
         }
     }
 
-    subtrees
+    Ok(subtrees)
 }
 
 /// Calculate which tree-sitter node IDs should have which syntax
@@ -1374,7 +1377,7 @@ fn tree_highlights(
     tree: &tree_sitter::Tree,
     src: &str,
     config: &LanguageParams,
-) -> HighlightedNodeIds {
+) -> Result<HighlightedNodeIds, folds::Conflict> {
     let mut keyword_ish_capture_ids: Vec<u32> = vec![];
     let mut string_capture_ids = vec![];
     let mut type_capture_ids = vec![];
@@ -1458,14 +1461,14 @@ fn tree_highlights(
         }
     }
 
-    HighlightedNodeIds {
-        fold_kinds: folds::classify(tree, src, Some(&config.folds)),
+    Ok(HighlightedNodeIds {
+        fold_kinds: folds::classify(tree, src, Some(&config.folds))?,
         contexts: super::context::classify(tree, src, Some(&config.context)),
         comment_ids,
         keyword_ids,
         string_ids,
         type_ids,
-    }
+    })
 }
 
 pub(crate) fn print_tree(src: &str, tree: &tree_sitter::Tree) {
@@ -1510,7 +1513,9 @@ pub(crate) fn comment_positions(
     let arena = Arena::new();
     let ignore_comments = false;
 
-    let (nodes, _errors) = to_syntax(tree, src, &arena, config, ignore_comments);
+    // The caller already converted this tree, so its queries did not conflict.
+    let (nodes, _errors) = to_syntax(tree, src, &arena, config, ignore_comments)
+        .expect("a tree that converted once converts again");
     let positions = syntax::comment_positions(&nodes);
 
     positions
@@ -1522,6 +1527,15 @@ pub(crate) fn comment_positions(
             pos,
         })
         .collect()
+}
+
+/// Why two trees did not become syntax to match on.
+#[derive(Debug)]
+pub(crate) enum ToSyntaxError {
+    /// The trees converted, but with too many parse errors to match on.
+    ExceededParseErrorLimit(ExceededParseErrorLimit),
+    /// The fold query captured one node with two ranges on this side.
+    QueryConflict(folds::Conflict, Side),
 }
 
 #[derive(Debug)]
@@ -1563,21 +1577,23 @@ pub(crate) fn to_syntax_with_limit<'a>(
     arena: &'a Arena<Syntax<'a>>,
     config: &LanguageParams,
     diff_options: &DiffOptions,
-) -> Result<(Vec<&'a Syntax<'a>>, Vec<&'a Syntax<'a>>), ExceededParseErrorLimit> {
+) -> Result<(Vec<&'a Syntax<'a>>, Vec<&'a Syntax<'a>>), ToSyntaxError> {
     let (lhs_nodes, lhs_errors) = to_syntax(
         lhs_tree,
         lhs_src,
         arena,
         config,
         diff_options.ignore_comments,
-    );
+    )
+    .map_err(|conflict| ToSyntaxError::QueryConflict(conflict, Side::Left))?;
     let (rhs_nodes, rhs_errors) = to_syntax(
         rhs_tree,
         rhs_src,
         arena,
         config,
         diff_options.ignore_comments,
-    );
+    )
+    .map_err(|conflict| ToSyntaxError::QueryConflict(conflict, Side::Right))?;
     syntax::init_all_info(&lhs_nodes, &rhs_nodes);
 
     let error_count = lhs_errors.count + rhs_errors.count;
@@ -1590,10 +1606,12 @@ pub(crate) fn to_syntax_with_limit<'a>(
             (None, Some((line, column))) => Some((line, column, Side::Left)),
             (None, None) => None,
         };
-        return Err(ExceededParseErrorLimit {
-            error_count,
-            first_error_pos,
-        });
+        return Err(ToSyntaxError::ExceededParseErrorLimit(
+            ExceededParseErrorLimit {
+                error_count,
+                first_error_pos,
+            },
+        ));
     }
 
     Ok((lhs_nodes, rhs_nodes))
@@ -1605,19 +1623,19 @@ pub(crate) fn to_syntax<'a>(
     arena: &'a Arena<Syntax<'a>>,
     config: &LanguageParams,
     ignore_comments: bool,
-) -> (Vec<&'a Syntax<'a>>, ParseErrors) {
+) -> Result<(Vec<&'a Syntax<'a>>, ParseErrors), folds::Conflict> {
     // Don't return anything on an empty input. Most parsers return a
     // zero-width top-level AST node on empty files, which is
     // confusing and not useful for diffing.
     if src.trim().is_empty() {
-        return (vec![], ParseErrors::default());
+        return Ok((vec![], ParseErrors::default()));
     }
 
-    let highlights = tree_highlights(tree, src, config);
+    let highlights = tree_highlights(tree, src, config)?;
 
     // Parse sub-languages, if any, which will be used both for
     // highlighting and for more precise Syntax nodes where applicable.
-    let subtrees = parse_subtrees(src, config, tree);
+    let subtrees = parse_subtrees(src, config, tree)?;
 
     let nl_pos = LinePositions::from(src);
     let mut cursor = tree.walk();
@@ -1643,7 +1661,7 @@ pub(crate) fn to_syntax<'a>(
         &subtrees,
         ignore_comments,
     );
-    (nodes, errors)
+    Ok((nodes, errors))
 }
 
 /// Parse `src` with tree-sitter and convert to difftastic Syntax.
@@ -1652,10 +1670,10 @@ pub(crate) fn parse<'a>(
     src: &str,
     config: &LanguageParams,
     ignore_comments: bool,
-) -> Vec<&'a Syntax<'a>> {
+) -> Result<Vec<&'a Syntax<'a>>, folds::Conflict> {
     let tree = to_tree(src, config.parser);
-    let (nodes, _errors) = to_syntax(&tree, src, arena, config, ignore_comments);
-    nodes
+    let (nodes, _errors) = to_syntax(&tree, src, arena, config, ignore_comments)?;
+    Ok(nodes)
 }
 
 fn child_tokens<'a>(src: &'a str, cursor: &mut ts::TreeCursor) -> Vec<Option<&'a str>> {
@@ -2122,7 +2140,7 @@ mod tests {
         let arena = Arena::new();
         let params = Params::default();
         let css_config = params.language(guess::Language::Css);
-        parse(&arena, ".foo {}", css_config, false);
+        parse(&arena, ".foo {}", css_config, false).unwrap();
     }
 
     #[test]
@@ -2130,7 +2148,7 @@ mod tests {
         let arena = Arena::new();
         let params = Params::default();
         let config = params.language(guess::Language::EmacsLisp);
-        let res = parse(&arena, "", config, false);
+        let res = parse(&arena, "", config, false).unwrap();
 
         let expected: Vec<&Syntax> = vec![];
         assert_eq!(res, expected);
@@ -2143,7 +2161,7 @@ mod tests {
         let arena = Arena::new();
         let params = Params::default();
         let config = params.language(guess::Language::Html);
-        let res = parse(&arena, "<style>.a { color: red; }</style>", config, false);
+        let res = parse(&arena, "<style>.a { color: red; }</style>", config, false).unwrap();
 
         match res[0] {
             Syntax::List { children, .. } => {

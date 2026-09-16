@@ -5,7 +5,7 @@ use crate::parse::{guess_language::Language, tree_sitter_parser};
 use query::AnnotationQuery;
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use strum::IntoEnumIterator;
 
@@ -13,42 +13,6 @@ use strum::IntoEnumIterator;
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Config {
     pub(crate) languages: BTreeMap<String, LanguageConfig>,
-    pub(crate) folds: FoldsConfig,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub(crate) struct FoldsConfig {
-    pub(crate) hook: Option<HookConfig>,
-}
-
-/// A trusted subprocess that supplies summaries for large novel folds.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct HookConfig {
-    /// Relative command paths resolve against the config file, wherever it lives.
-    #[serde(skip)]
-    pub(crate) dir: PathBuf,
-    pub(crate) command: Vec<String>,
-    /// None sends every tagged fold; otherwise a fold needs one of these tags.
-    #[serde(default)]
-    pub(crate) tags: Option<Vec<String>>,
-    #[serde(default)]
-    pub(crate) min_lines: usize,
-    /// Per-call limit once the hook is listening.
-    #[serde(default = "default_timeout_ms")]
-    pub(crate) timeout_ms: u64,
-    /// How long the hook may take to start listening on its port.
-    #[serde(default = "default_startup_timeout_ms")]
-    pub(crate) startup_timeout_ms: u64,
-}
-
-fn default_timeout_ms() -> u64 {
-    5000
-}
-
-fn default_startup_timeout_ms() -> u64 {
-    30_000
 }
 
 #[derive(Default, Deserialize)]
@@ -70,7 +34,6 @@ impl std::error::Error for ConfigError {}
 
 pub(crate) struct Params {
     languages: DftHashMap<Language, OnceLock<Arc<LanguageParams>>>,
-    pub(crate) hook: Option<HookConfig>,
 }
 
 pub(crate) struct LanguageParams {
@@ -102,16 +65,7 @@ impl Config {
             .map(Path::to_path_buf)
             .unwrap_or_else(|| workspace.join("diffr.toml"));
         match std::fs::read_to_string(&path) {
-            Ok(source) => {
-                let mut config = Self::from_toml(&source)?;
-                if let Some(hook) = &mut config.folds.hook {
-                    hook.dir = path
-                        .parent()
-                        .expect("config file has a parent")
-                        .to_path_buf();
-                }
-                Ok(config)
-            }
+            Ok(source) => Self::from_toml(&source),
             Err(error) if explicit.is_none() && error.kind() == std::io::ErrorKind::NotFound => {
                 Ok(Self::default())
             }
@@ -124,14 +78,6 @@ impl Config {
     }
 
     pub(crate) fn compile(self) -> Result<Params, ConfigError> {
-        if let Some(hook) = &self.folds.hook {
-            if hook.command.is_empty() {
-                return Err(ConfigError("folds.hook.command must not be empty".into()));
-            }
-            if hook.timeout_ms == 0 || hook.startup_timeout_ms == 0 {
-                return Err(ConfigError("folds.hook timeouts must be positive".into()));
-            }
-        }
         let defaults = Self::from_toml(include_str!("config/defaults.toml"))?;
         let mut resolved = defaults.languages;
         for (name, overrides) in self.languages {
@@ -165,10 +111,7 @@ impl Config {
                 })),
             );
         }
-        Ok(Params {
-            languages,
-            hook: self.folds.hook,
-        })
+        Ok(Params { languages })
     }
 }
 
@@ -286,39 +229,6 @@ mod tests {
         );
         assert_eq!(result.rhs_folds.len(), 1);
         assert_eq!(result.rhs_folds[0].tags, ["embedded"]);
-    }
-
-    #[test]
-    fn parses_fold_hook_settings() {
-        let params = Config::from_toml(
-            "[folds.hook]\ncommand = ['uv', 'run', 'summarize.py']\ntags = ['body']\nmin_lines = 30",
-        )
-        .unwrap()
-        .compile()
-        .unwrap();
-        let hook = params.hook.unwrap();
-        assert_eq!(hook.command, ["uv", "run", "summarize.py"]);
-        assert_eq!(hook.tags.as_deref(), Some(&["body".to_owned()][..]));
-        assert_eq!(
-            (hook.min_lines, hook.timeout_ms, hook.startup_timeout_ms),
-            (30, 5000, 30_000)
-        );
-        assert!(Config::from_toml("")
-            .unwrap()
-            .compile()
-            .unwrap()
-            .hook
-            .is_none());
-        for input in [
-            "[folds.hook]\ncommand = []",
-            "[folds.hook]\ncommand = ['x']\ntimeout_ms = 0",
-        ] {
-            assert!(
-                Config::from_toml(input).unwrap().compile().is_err(),
-                "{input}"
-            );
-        }
-        assert!(Config::from_toml("[folds.hook]\ncommand = ['x']\nunknown = 1").is_err());
     }
 
     #[test]
@@ -444,6 +354,7 @@ mod query_tests {
 #[cfg(test)]
 mod tag_tests {
     use super::*;
+    use crate::parse::folds::FoldMatch;
     use crate::summary::DiffResult;
 
     #[test]
@@ -464,7 +375,27 @@ mod tag_tests {
     }
 
     #[test]
-    fn conflicting_ranges_do_not_depend_on_query_order() {
+    fn an_opening_capture_alone_folds_to_the_end_of_the_fold_node() {
+        let query =
+            r#"((function_definition ":" @fold.open body: (block) @fold) (#set! tag "body"))"#;
+        let params = Config::from_toml(&format!("[languages.python]\nfolds = '''{query}'''"))
+            .unwrap()
+            .compile()
+            .unwrap();
+        let rhs = "def f(a):\n    x = a\n    return x\n";
+        let result = DiffResult::from_sources_with_params("a.py", "", rhs, &params);
+        assert_eq!(result.rhs_folds.len(), 1);
+        let range = &result.rhs_folds[0].range;
+        // From just after the `:` to the end of the block.
+        assert_eq!(
+            (range.start.line.as_usize(), range.start.byte_column),
+            (0, 9)
+        );
+        assert_eq!((range.end.line.as_usize(), range.end.byte_column), (2, 12));
+    }
+
+    #[test]
+    fn a_node_captured_with_two_ranges_is_a_query_conflict_naming_both_patterns() {
         let whole = "((block) @fold (#set! tag \"whole\"))";
         let interior = "((block \"{\" @fold.open \"}\" @fold.close) @fold (#set! tag \"inside\"))";
         for query in [
@@ -475,15 +406,27 @@ mod tag_tests {
                 .unwrap()
                 .compile()
                 .unwrap();
-            let result =
-                DiffResult::from_sources_with_params("a.rs", "", "fn f() { work(); }", &params);
-            assert!(result.rhs_folds.is_empty());
+            let conflict = DiffResult::try_from_sources_with_params(
+                "src/lib.rs",
+                "",
+                "fn f() {\n    work();\n}\n",
+                &params,
+            )
+            .expect_err("a conflict");
+            assert_eq!(
+                conflict.to_string(),
+                "src/lib.rs:1: fold query patterns 0 and 1 capture the same block \
+                 with different fold ranges"
+            );
+            // Other files diff as usual.
+            assert!(
+                DiffResult::try_from_sources_with_params("a.py", "", "x = 1\n", &params).is_ok()
+            );
         }
     }
 
     #[test]
     fn test_bodies_keep_both_tags_and_remain_paired() {
-        use crate::parse::folds::FoldMatch;
         let params = Params::default();
         let result = DiffResult::from_sources_with_params(
             "a.rs",
@@ -495,7 +438,9 @@ mod tag_tests {
         assert_eq!(result.rhs_folds.len(), 1);
         assert_eq!(result.lhs_folds[0].tags, ["body", "test"]);
         assert_eq!(result.rhs_folds[0].tags, ["body", "test"]);
-        assert!(matches!(&result.lhs_folds[0].match_kind,
-            FoldMatch::Unchanged { opposite } if *opposite == result.rhs_folds[0].range));
+        assert!(matches!(
+            result.lhs_folds[0].match_kind,
+            FoldMatch::Matched { .. }
+        ));
     }
 }

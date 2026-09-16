@@ -2,7 +2,7 @@
 
 A deleted legacy compatibility block becomes a base-only fold. The replacement hostname expression stays visible on head. Show the enclosing function and outer try/import context, without inventing an opposite range for the deleted block.
 
-[Original PR](https://github.com/psf/requests/pull/6965) · [Before](before.py) · [After](after.py) · [Git patch](change.patch) · [Generated review golden](review.snap) · [Expected annotations](expected.json) · [Provenance](provenance.json)
+[Original PR](https://github.com/psf/requests/pull/6965) · [Before](before.py) · [After](after.py) · [Git patch](change.patch) · [Expected annotations](expected.json) · [Provenance](provenance.json)
 
 Annotations are manually selected targets, not recorded matcher output. Coordinates below are zero-based UTF-8 byte positions with exclusive ends.
 
@@ -93,4 +93,4 @@ def get_netrc_auth(url, raise_errors=False):
 
 Context policy: distant return values are no longer required. Preserve enclosing
 signatures and closing delimiters; return boundaries require a change inside the
-return expression. The updated case assertions and snapshot reflect this rule.
+return expression. The updated case assertions reflect this rule.

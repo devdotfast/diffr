@@ -27,10 +27,9 @@ Text output does not implement Git's path quoting or compact rename formatting.
 for changes; ordinary output exits 0. Errors exit 2. `--no-index` supports two
 files, implies change exit status, and does not yet support metadata options.
 
-Structural output uses the existing terminal renderer. `--format json` emits
-one domain object per line. `--format ndjson` emits a buffered event stream,
-diffing `--jobs N` files at once (default 16) and emitting each as it finishes;
-`--format snapshot` is the fixture text adapter.
+Structural output uses the existing terminal renderer. `--format ndjson` emits
+the event stream described in [streaming.md](streaming.md), diffing `--jobs N`
+files at once (default 16) and emitting each as it finishes.
 `-U N` selects ordinary context padding. Matching limits, `--ignore-comments`,
 color, width and inline/split display remain configurable; see `--help`.
 

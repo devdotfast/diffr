@@ -54,13 +54,12 @@ mod files;
 mod git;
 mod gitattributes;
 mod hash;
-mod hook;
 mod line_parser;
 mod lines;
 mod options;
+mod pairing;
 mod parse;
-mod review;
-mod stream;
+pub(crate) mod protocol;
 mod summary;
 mod version;
 mod words;
@@ -118,7 +117,9 @@ use rayon::prelude::*;
 use strum::IntoEnumIterator;
 use typed_arena::Arena;
 
+use crate::engine::QueryConflict;
 use crate::options::{DiffOptions, DisplayMode, DisplayOptions, FileArgument, Mode};
+use crate::parse::folds::Conflict;
 use crate::parse::syntax::init_all_info;
 use crate::parse::tree_sitter_parser as tsp;
 use crate::summary::{DiffResult, FileContent, FileFormat};
@@ -198,7 +199,7 @@ fn run_debug() {
                 Some(lang) => {
                     let ts_lang = params.language(lang);
                     let arena = Arena::new();
-                    let ast = tsp::parse(&arena, &src, ts_lang, ignore_comments);
+                    let ast = conflict_or_die(tsp::parse(&arena, &src, ts_lang, ignore_comments));
                     init_all_info(&ast, &[]);
                     println!("{:#?}", ast);
                 }
@@ -221,7 +222,7 @@ fn run_debug() {
                 Some(lang) => {
                     let ts_lang = params.language(lang);
                     let arena = Arena::new();
-                    let ast = tsp::parse(&arena, &src, ts_lang, ignore_comments);
+                    let ast = conflict_or_die(tsp::parse(&arena, &src, ts_lang, ignore_comments));
                     init_all_info(&ast, &[]);
                     syntax::print_as_dot(&ast);
                 }
@@ -272,14 +273,17 @@ fn run_debug() {
             language_overrides,
             binary_overrides,
         } => {
-            let diff_result = diff_conflicts_file(
-                params,
-                &display_path,
-                &path,
-                &display_options,
-                &diff_options,
-                &language_overrides,
-                &binary_overrides,
+            let diff_result = diff_or_die(
+                diff_conflicts_file(
+                    params,
+                    &display_path,
+                    &path,
+                    &display_options,
+                    &diff_options,
+                    &language_overrides,
+                    &binary_overrides,
+                ),
+                display_options.use_color,
             );
 
             print_diff_result(&display_options, &diff_result);
@@ -380,19 +384,22 @@ fn run_debug() {
                     }
                 }
                 _ => {
-                    let diff_result = diff_file(
-                        params,
-                        &display_path,
-                        renamed,
-                        &lhs_path,
-                        &rhs_path,
-                        lhs_permissions.as_ref(),
-                        rhs_permissions.as_ref(),
-                        &display_options,
-                        &diff_options,
-                        false,
-                        &language_overrides,
-                        &binary_overrides,
+                    let diff_result = diff_or_die(
+                        diff_file(
+                            params,
+                            &display_path,
+                            renamed,
+                            &lhs_path,
+                            &rhs_path,
+                            lhs_permissions.as_ref(),
+                            rhs_permissions.as_ref(),
+                            &display_options,
+                            &diff_options,
+                            false,
+                            &language_overrides,
+                            &binary_overrides,
+                        ),
+                        display_options.use_color,
                     );
                     if diff_result.has_reportable_change() {
                         encountered_changes = true;
@@ -436,7 +443,7 @@ fn diff_file(
     missing_as_empty: bool,
     overrides: &[(LanguageOverride, Vec<glob::Pattern>)],
     binary_overrides: &[glob::Pattern],
-) -> DiffResult {
+) -> Result<DiffResult, QueryConflict> {
     let (lhs_bytes, rhs_bytes) = read_files_or_die(lhs_path, rhs_path, missing_as_empty);
 
     let (mut lhs_src, mut rhs_src) = match (
@@ -452,7 +459,7 @@ fn diff_file(
             } else {
                 Some((lhs_bytes.len(), rhs_bytes.len()))
             };
-            return DiffResult {
+            return Ok(DiffResult {
                 extra_info: renamed,
                 display_path: display_path.to_owned(),
                 file_format: FileFormat::Binary,
@@ -465,7 +472,7 @@ fn diff_file(
                 rhs_folds: vec![],
                 has_byte_changes,
                 has_syntactic_changes: false,
-            };
+            });
         }
         (ProbableFileKind::Text(lhs_src), ProbableFileKind::Text(rhs_src), _) => (lhs_src, rhs_src),
     };
@@ -531,7 +538,7 @@ fn diff_conflicts_file(
     diff_options: &DiffOptions,
     overrides: &[(LanguageOverride, Vec<glob::Pattern>)],
     binary_overrides: &[glob::Pattern],
-) -> DiffResult {
+) -> Result<DiffResult, QueryConflict> {
     let bytes = read_file_or_die(path);
     let mut src = match guess_content(&bytes, path, binary_overrides) {
         ProbableFileKind::Text(src) => src,
@@ -633,21 +640,53 @@ fn diff_directories<'a>(
         let lhs_path = FileArgument::NamedPath(Path::new(lhs_dir).join(&rel_path));
         let rhs_path = FileArgument::NamedPath(Path::new(rhs_dir).join(&rel_path));
 
-        diff_file(
-            params,
-            &rel_path.display().to_string(),
-            None,
-            &lhs_path,
-            &rhs_path,
-            lhs_path.permissions().as_ref(),
-            rhs_path.permissions().as_ref(),
-            &display_options,
-            &diff_options,
-            true,
-            &overrides,
-            &binary_overrides,
+        diff_or_die(
+            diff_file(
+                params,
+                &rel_path.display().to_string(),
+                None,
+                &lhs_path,
+                &rhs_path,
+                lhs_path.permissions().as_ref(),
+                rhs_path.permissions().as_ref(),
+                &display_options,
+                &diff_options,
+                true,
+                &overrides,
+                &binary_overrides,
+            ),
+            display_options.use_color,
         )
     })
+}
+
+/// The difftastic-style modes stop at a query conflict, as they do at an
+/// unreadable file.
+fn diff_or_die(result: Result<DiffResult, QueryConflict>, use_color: bool) -> DiffResult {
+    match result {
+        Ok(diff) => diff,
+        Err(conflict) => {
+            print_error(&conflict.to_string(), use_color);
+            std::process::exit(EXIT_BAD_ARGUMENTS);
+        }
+    }
+}
+
+/// The syntax dumps stop at a fold query conflict.
+fn conflict_or_die<T>(result: Result<T, Conflict>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(conflict) => {
+            eprintln!(
+                "line {}: fold query patterns {} and {} capture the same {} with different fold ranges",
+                conflict.line + 1,
+                conflict.patterns.0,
+                conflict.patterns.1,
+                conflict.kind
+            );
+            std::process::exit(EXIT_BAD_ARGUMENTS);
+        }
+    }
 }
 
 fn print_diff_result(display_options: &DisplayOptions, summary: &DiffResult) {
@@ -823,7 +862,8 @@ mod tests {
             &DisplayOptions::default(),
             &DiffOptions::default(),
             &[],
-        );
+        )
+        .unwrap();
 
         assert_eq!(res.lhs_positions, vec![]);
         assert_eq!(res.rhs_positions, vec![]);

@@ -30,6 +30,46 @@ impl Plugin for DeletedBodies {
         Ok(Self { options })
     }
 
+    fn queries(&self) -> anyhow::Result<Vec<diffr_plugin_sdk::QuerySource>> {
+        Ok(vec![
+            diffr_plugin_sdk::QuerySource {
+                language: "rust".into(),
+                name: "builtin:deleted-bodies/queries/rust.scm".into(),
+                text: include_str!("../queries/rust.scm").into(),
+            },
+            diffr_plugin_sdk::QuerySource {
+                language: "python".into(),
+                name: "builtin:deleted-bodies/queries/python.scm".into(),
+                text: include_str!("../queries/python.scm").into(),
+            },
+            diffr_plugin_sdk::QuerySource {
+                language: "go".into(),
+                name: "builtin:deleted-bodies/queries/go.scm".into(),
+                text: include_str!("../queries/go.scm").into(),
+            },
+            diffr_plugin_sdk::QuerySource {
+                language: "javascript".into(),
+                name: "builtin:deleted-bodies/queries/javascript.scm".into(),
+                text: include_str!("../queries/javascript.scm").into(),
+            },
+            diffr_plugin_sdk::QuerySource {
+                language: "javascriptjsx".into(),
+                name: "builtin:deleted-bodies/queries/javascript.scm".into(),
+                text: include_str!("../queries/javascript.scm").into(),
+            },
+            diffr_plugin_sdk::QuerySource {
+                language: "typescript".into(),
+                name: "builtin:deleted-bodies/queries/javascript.scm".into(),
+                text: include_str!("../queries/javascript.scm").into(),
+            },
+            diffr_plugin_sdk::QuerySource {
+                language: "typescripttsx".into(),
+                name: "builtin:deleted-bodies/queries/javascript.scm".into(),
+                text: include_str!("../queries/javascript.scm").into(),
+            },
+        ])
+    }
+
     fn classify(&self, _file: &FileEntry) -> anyhow::Result<Vec<String>> {
         Ok(Vec::new())
     }

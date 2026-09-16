@@ -18,6 +18,10 @@ impl<P: Plugin + 'static> guest::GuestPlugin for Instance<P> {
         Ok(guest::Plugin::new(Instance(plugin)))
     }
 
+    fn queries(&self) -> Result<Vec<crate::QuerySource>, String> {
+        self.0.queries().map_err(|error| format!("{error:#}"))
+    }
+
     fn classify(&self, file: FileEntry) -> Result<Vec<String>, String> {
         self.0.classify(&file).map_err(|error| format!("{error:#}"))
     }

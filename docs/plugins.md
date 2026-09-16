@@ -30,11 +30,12 @@ A plugin is made once, then a file passes three points, each in
    later plugins see: each plugin sees the tags the ones before it added. An
    error here, or a tag that is not lowercase letters, digits, `-` and `_`,
    is a setup error.
-2. **During: queries.** The tree-sitter query files a plugin lists in its
-   `plugin.toml` join the per-language fold query the diff runs with
+2. **During: queries.** The named tree-sitter source text returned by a
+   plugin's `queries()` joins the per-language fold query the diff runs with
    ([config.md](config.md#queries)). They decide which folds exist and tag
-   them `<plugin>:<name>`. They are data, not code, and tags are the only
-   syntax a plugin sees: the `context` plugin reads the scopes its queries
+   them `<plugin>:<name>`. diffr collects and validates the sources once
+   during setup, before the stream starts. Tags are the only syntax a plugin
+   sees: the `context` plugin reads the scopes its queries
    tag `context:scope`.
 3. **Post-process: `mutate`.** After the file is diffed and its region trees
    are built, each plugin's `mutate` reads the file and both sides and
@@ -46,7 +47,7 @@ A plugin is made once, then a file passes three points, each in
 
 ```text
 examples/plugins/fixtures/
-  plugin.toml       # name, title, options schema, query files
+  plugin.toml       # name, title, options schema
   plugin.wasm       # the component
   queries/rust.scm  # optional: one query file per language
 ```
@@ -56,9 +57,9 @@ examples/plugins/fixtures/
 `[plugins]`, and the prefix of every tag its queries set), `title`,
 `description`, `[enabled]` (with `default`, whether the plugin is on unless
 its entry says otherwise), `[options.<key>]` (each a JSON Schema with a
-`title`), and `[queries]`. Query paths are relative to the folder, absolute,
-or `builtin:<plugin>/<path>` for a bundled file such as
-`builtin:shared/queries/rust.scm`.
+`title`). Query sources belong to the plugin's code, typically embedded
+with `include_str!`, and are returned by `queries()`; there is no `[queries]`
+manifest section. See [query sources and imports](config.md#queries).
 
 A plugin from disk is an entry with `path`, relative to the configuration
 file's directory (or absolute), and must be listed in `order`:
@@ -88,7 +89,7 @@ folder, or the folder `path` names. Then:
   their components. A folder with neither is a setup error.
 
 So a bundled plugin's entry can set `path` to a folder holding a component,
-which then runs in the native plugin's place with the folder's queries.
+which then supplies queries and runs in the native plugin's place.
 
 ## The contract
 
@@ -100,13 +101,16 @@ optional exports; a plugin that does not classify returns an empty list):
 ```wit
 resource plugin {
     new: static func(options: string) -> result<plugin, string>;
+    queries: func() -> result<list<query-source>, string>;
     classify: func(file: file-entry) -> result<list<string>, string>;
     mutate: func(file: file-entry, sides: source-sides) -> result<list<move>, string>;
 }
 ```
 
 `new` is a static function rather than a constructor, because a constructor
-cannot fail.
+cannot fail. `queries` returns records with `language`, `name`, and `text`
+strings; the Rust SDK defaults to an empty list. Existing WASM components
+must be rebuilt to provide the new export.
 
 - `options`: the plugin's entry as a JSON object, defaults filled in and
   already validated against `plugin.toml`. Only `new` gets it; what the

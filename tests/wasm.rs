@@ -399,3 +399,19 @@ fn a_guest_error_aborts_the_run_with_mutation_failed() {
         "{message}"
     );
 }
+
+#[test]
+fn component_queries_are_validated_before_the_stream_starts() {
+    build_plugins();
+    let (fixture, base, head) = fixtures_repo();
+    let config = fixtures_config(&fixture, "query = '(not_a_rust_node) @fold'\n");
+    let output = fixture.run(&config, &base, &head);
+    assert!(!output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "setup must fail before the stream starts"
+    );
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("fixtures/rust.scm"), "{error}");
+    assert!(error.contains("NodeType"), "{error}");
+}

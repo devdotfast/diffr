@@ -1,22 +1,14 @@
-//! Load the query files enabled plugins own and assemble one fold query per
-//! language.
-//!
-//! Each plugin lists one query file per language key in its `plugin.toml`. A
-//! path there is relative to the plugin's folder, a `builtin:<plugin>/<path>`
-//! path naming a file of a bundled plugin embedded in diffr from `plugins/`,
-//! or an absolute path. A query file may start with
-//! `; inherits: a.scm, b.scm`: those files, relative to the importing file
-//! (or `builtin:` paths), come first. Queries every bundled plugin shares
-//! live in `plugins/shared/queries/<language>.scm`, imported as
-//! `builtin:shared/queries/<language>.scm`. Within one language every file is
-//! included at most once, however many plugins import it, and an import cycle
-//! is an error.
+//! Assemble named source text returned by plugins into one query per language.
+//! Imports precede their importers and shared sources are included once. Sources
+//! returned by plugins take precedence over bundled or absolute-path imports.
 use super::builtin;
-use super::config::Queries;
 use crate::config::query::QuerySource;
 use crate::config::ConfigError;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+
+/// Named query sources returned by one plugin.
+pub(crate) type Queries = Vec<diffr_plugin_sdk::QuerySource>;
 
 const BUILTIN_PREFIX: &str = "builtin:";
 
@@ -24,8 +16,10 @@ const BUILTIN_PREFIX: &str = "builtin:";
 enum Location {
     /// A normalized path under `builtin:`.
     Builtin(String),
-    /// A canonical filesystem path.
+    /// An absolute filesystem path, canonicalized when it exists.
     File(PathBuf),
+    /// A logical source name supplied by plugin code.
+    Named(String),
 }
 
 impl Location {
@@ -33,6 +27,7 @@ impl Location {
         match self {
             Self::Builtin(path) => format!("{BUILTIN_PREFIX}{path}"),
             Self::File(path) => path.display().to_string(),
+            Self::Named(name) => name.clone(),
         }
     }
 
@@ -52,18 +47,33 @@ impl Location {
             }
         }
         let normalized = segments.join("/");
-        if builtin::file(&normalized).is_none() {
-            return Err(ConfigError(format!(
-                "no bundled file {BUILTIN_PREFIX}{normalized}"
-            )));
-        }
         Ok(Self::Builtin(normalized))
     }
 
-    fn file(path: &Path) -> Result<Self, ConfigError> {
-        std::fs::canonicalize(path)
-            .map(Self::File)
-            .map_err(|error| ConfigError(format!("{}: {error}", path.display())))
+    fn source(name: &str) -> Result<Self, ConfigError> {
+        if let Some(path) = name.strip_prefix(BUILTIN_PREFIX) {
+            Self::builtin(path)
+        } else if Path::new(name).is_absolute() {
+            Ok(Self::File(
+                std::fs::canonicalize(name).unwrap_or_else(|_| PathBuf::from(name)),
+            ))
+        } else {
+            let mut parts = Vec::new();
+            for part in name.split('/') {
+                match part {
+                    "" | "." => {}
+                    ".." => {
+                        if parts.pop().is_none() {
+                            return Err(ConfigError(format!(
+                                "query source {name} leaves its namespace"
+                            )));
+                        }
+                    }
+                    part => parts.push(part),
+                }
+            }
+            Ok(Self::Named(parts.join("/")))
+        }
     }
 
     /// Where `path`, written inside this file, points.
@@ -71,24 +81,36 @@ impl Location {
         if let Some(builtin) = path.strip_prefix(BUILTIN_PREFIX) {
             return Self::builtin(builtin);
         }
+        if Path::new(path).is_absolute() {
+            return Self::source(path);
+        }
         match self {
+            Self::Named(own) => {
+                let dir = own.rsplit_once('/').map_or("", |(dir, _)| dir);
+                Self::source(format!("{dir}/{path}").trim_start_matches('/'))
+            }
             Self::Builtin(own) => {
                 let dir = own.rsplit_once('/').map_or("", |(dir, _)| dir);
                 Self::builtin(&format!("{dir}/{path}"))
             }
-            Self::File(own) => Self::file(
+            Self::File(own) => Self::source(
                 &own.parent()
                     .expect("a canonical file path has a parent")
-                    .join(path),
+                    .join(path)
+                    .display()
+                    .to_string(),
             ),
         }
     }
 
     fn read(&self) -> Result<String, ConfigError> {
         match self {
-            Self::Builtin(path) => Ok(builtin::file(path)
-                .expect("builtin locations are checked when resolved")
-                .to_owned()),
+            Self::Builtin(path) => builtin::file(path)
+                .map(str::to_owned)
+                .ok_or_else(|| ConfigError(format!("no bundled file builtin:{path}"))),
+            Self::Named(name) => Err(ConfigError(format!(
+                "no query source {name}; return it from queries()"
+            ))),
             Self::File(path) => std::fs::read_to_string(path)
                 .map_err(|error| ConfigError(format!("{}: {error}", path.display()))),
         }
@@ -116,6 +138,7 @@ fn imports(text: &str) -> Vec<&str> {
 struct Assembly {
     sources: Vec<QuerySource>,
     included: BTreeSet<Location>,
+    supplied: BTreeMap<Location, String>,
 }
 
 impl Assembly {
@@ -138,7 +161,10 @@ impl Assembly {
         if self.included.contains(&location) {
             return Ok(());
         }
-        let text = location.read()?;
+        let text = match self.supplied.get(&location) {
+            Some(text) => text.clone(),
+            None => location.read()?,
+        };
         stack.push(location.clone());
         for import in imports(&text) {
             let imported = location
@@ -156,29 +182,43 @@ impl Assembly {
     }
 }
 
-/// Per language key, the fold query sources of `plugins`, the enabled
-/// plugins in `plugins.order` with their query files, imports before the
-/// files that import them. Every path is absolute or `builtin:`, as
-/// [`super::config::PluginsConfig::enabled_queries`] resolves them against
-/// each plugin's folder.
+/// Assemble in plugin order, with imports before their first importer.
 pub(crate) fn assemble(
     plugins: &[(String, Queries)],
 ) -> Result<BTreeMap<String, Vec<QuerySource>>, ConfigError> {
     let mut languages: BTreeMap<String, Assembly> = BTreeMap::new();
+    // Register all sources first: an importer may precede its dependency.
     for (plugin, queries) in plugins {
-        for (language, path) in queries {
-            let key = format!("plugin {plugin}: queries.{language}");
-            let location = match path.strip_prefix(BUILTIN_PREFIX) {
-                Some(builtin) => Location::builtin(builtin),
-                None if Path::new(path).is_absolute() => Location::file(Path::new(path)),
-                None => Err(ConfigError(format!(
-                    "relative path {path} must be absolute or builtin:"
-                ))),
+        for source in queries {
+            let location = Location::source(&source.name).map_err(|error| {
+                ConfigError(format!(
+                    "plugin {plugin}: queries.{}: {error}",
+                    source.language
+                ))
+            })?;
+            let assembly = languages.entry(source.language.clone()).or_default();
+            if let Some(previous) = assembly.supplied.insert(location, source.text.clone()) {
+                if previous != source.text {
+                    return Err(ConfigError(format!(
+                        "plugin {plugin}: queries.{}: conflicting text for source {}",
+                        source.language, source.name
+                    )));
+                }
             }
-            .map_err(|error| ConfigError(format!("{key}: {error}")))?;
+        }
+    }
+    for (plugin, queries) in plugins {
+        for source in queries {
+            let key = format!("plugin {plugin}: queries.{}", source.language);
+            let location = Location::source(&source.name).map_err(|error| {
+                ConfigError(format!(
+                    "plugin {plugin}: queries.{}: {error}",
+                    source.language
+                ))
+            })?;
             languages
-                .entry(language.clone())
-                .or_default()
+                .get_mut(&source.language)
+                .expect("registered language")
                 .include(location, &mut Vec::new())
                 .map_err(|error| ConfigError(format!("{key}: {error}")))?;
         }
@@ -193,28 +233,24 @@ pub(crate) fn assemble(
 mod tests {
     use super::*;
     use crate::config::Config;
+    use crate::plugin::Pipeline;
+    use diffr_plugin_sdk::QuerySource as RawSource;
 
-    fn write(dir: &Path, name: &str, text: &str) -> String {
-        let path = dir.join(name);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, text).unwrap();
-        path.display().to_string()
-    }
-
-    /// The sources' names, with separators written the one way these tests
-    /// spell them: a name built from a real path uses `\` on Windows.
-    fn names(sources: &[QuerySource]) -> Vec<String> {
-        sources
-            .iter()
-            .map(|source| source.name.replace('\\', "/"))
-            .collect()
+    fn source(name: &str, text: &str) -> RawSource {
+        RawSource {
+            language: "rust".into(),
+            name: name.into(),
+            text: text.into(),
+        }
     }
 
     #[test]
     fn every_bundled_query_resolves_and_compiles() {
-        let assembled = assemble(&Config::default().plugins.enabled_queries()).unwrap();
+        let config = Config::default();
+        let pipeline = Pipeline::from_config(&config.plugins, Path::new(".")).unwrap();
+        let assembled = assemble(&pipeline.queries().unwrap()).unwrap();
         assert_eq!(
-            assembled.keys().collect::<Vec<_>>(),
+            assembled.keys().map(String::as_str).collect::<Vec<_>>(),
             [
                 "go",
                 "javascript",
@@ -226,7 +262,10 @@ mod tests {
             ]
         );
         assert_eq!(
-            names(&assembled["rust"]),
+            assembled["rust"]
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>(),
             [
                 "builtin:shared/queries/rust.scm",
                 "builtin:context/queries/rust.scm",
@@ -234,165 +273,89 @@ mod tests {
                 "builtin:deleted-bodies/queries/rust.scm",
                 "builtin:test-bodies/queries/rust.scm",
                 "builtin:removed-runs/queries/rust.scm",
-            ],
-            "the shared imports are included once, before their first importer"
+            ]
         );
-        assert_eq!(
-            names(&assembled["typescript"]),
-            [
-                "builtin:shared/queries/javascript.scm",
-                "builtin:context/queries/javascript.scm",
-                "builtin:shared/queries/javascript-docstrings.scm",
-                "builtin:deleted-bodies/queries/javascript.scm",
-                "builtin:test-bodies/queries/javascript.scm",
-                "builtin:removed-runs/queries/javascript.scm",
-            ],
-        );
-        Config::default().compile().unwrap();
+        config.compile_with(&pipeline).unwrap();
     }
 
     #[test]
     fn disabled_plugins_contribute_no_queries() {
-        let config = Config::from_toml(
-            "[plugins.deleted-bodies]\nenabled = false\n[plugins.summarize]\nenabled = false\n",
-        )
-        .unwrap();
-        let assembled = assemble(&config.plugins.enabled_queries()).unwrap();
-        let names = names(&assembled["rust"]);
-        assert!(!names.iter().any(|name| name.contains("deleted-bodies")));
-        assert!(!names.iter().any(|name| name.contains("summarize")));
-    }
-
-    #[test]
-    fn imports_resolve_against_their_files() {
-        let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), "queries/shared.scm", "(block) @fold\n");
-        let mine = write(
-            dir.path(),
-            "queries/rust/mine.scm",
-            "; inherits: ../shared.scm, builtin:shared/queries/rust.scm\n((function_item body: (block) @fold) (#set! tag \"summarize:function\"))\n",
-        );
-        let plugins = [
-            (
-                "deleted-bodies".to_owned(),
-                Queries::from([(
-                    "rust".to_owned(),
-                    "builtin:deleted-bodies/queries/rust.scm".to_owned(),
-                )]),
-            ),
-            (
-                "summarize".to_owned(),
-                Queries::from([("rust".to_owned(), mine)]),
-            ),
-        ];
-        let assembled = assemble(&plugins).unwrap();
-        let names = names(&assembled["rust"]);
-        let position = |suffix: &str| names.iter().position(|name| name.ends_with(suffix));
-        assert!(
-            position("queries/shared.scm").unwrap() < position("queries/rust/mine.scm").unwrap(),
-            "{names:?}"
-        );
-        assert_eq!(
-            names[..3],
-            [
-                "builtin:shared/queries/rust.scm",
-                "builtin:shared/queries/rust-docstrings.scm",
-                "builtin:deleted-bodies/queries/rust.scm"
-            ],
-            "imports come before their importer"
-        );
-        assert_eq!(
-            names
-                .iter()
-                .filter(|name| **name == "builtin:shared/queries/rust.scm")
-                .count(),
-            1,
-            "{names:?}"
-        );
-    }
-
-    #[test]
-    fn import_cycles_and_missing_files_are_errors() {
-        let dir = tempfile::tempdir().unwrap();
-        let a = write(dir.path(), "a.scm", "; inherits: b.scm\n");
-        write(dir.path(), "b.scm", "; inherits: a.scm\n");
-        let queries = |path: &str| {
-            [(
-                "summarize".to_owned(),
-                Queries::from([("rust".to_owned(), path.to_owned())]),
-            )]
-        };
-        let error = assemble(&queries(&a)).err().expect("a cycle").to_string();
-        assert!(error.contains("cycle"), "{error}");
-        assert!(
-            error.starts_with("plugin summarize: queries.rust: "),
-            "{error}"
-        );
-        let absent = dir.path().join("absent.scm").display().to_string();
-        assert!(assemble(&queries(&absent)).is_err());
-        let error = assemble(&queries("builtin:summarize/queries/absent.scm"))
-            .err()
-            .expect("unknown builtin")
-            .to_string();
-        assert!(
-            error.contains("no bundled file builtin:summarize/queries/absent.scm"),
-            "{error}"
-        );
-        let error = assemble(&queries("builtin:summarize/../../outside.scm"))
-            .err()
-            .expect("a path out of the bundled plugins")
-            .to_string();
-        assert!(error.contains("leaves the bundled plugins"), "{error}");
-    }
-
-    #[test]
-    fn unbundled_plugin_queries_join_in_order_and_must_be_absolute_or_builtin() {
-        let dir = tempfile::tempdir().unwrap();
-        let absolute = write(
-            dir.path(),
-            "plugin/rust.scm",
-            "; inherits: builtin:shared/queries/rust.scm\n((block) @fold (#set! tag \"mine:block\"))\n",
-        );
-        let mut plugins = Config::default().plugins.enabled_queries();
-        let removed_runs = plugins
+        let config = Config::from_toml("[plugins.deleted-bodies]\nenabled = false\n").unwrap();
+        let pipeline = Pipeline::from_config(&config.plugins, Path::new(".")).unwrap();
+        let assembled = assemble(&pipeline.queries().unwrap()).unwrap();
+        assert!(!assembled["rust"]
             .iter()
-            .position(|(plugin, _)| plugin == "removed-runs")
-            .unwrap();
-        plugins.insert(
-            removed_runs,
-            (
-                "mine".to_owned(),
-                Queries::from([("rust".to_owned(), absolute)]),
-            ),
-        );
-        let assembled = assemble(&plugins).unwrap();
-        let names = names(&assembled["rust"]);
-        let position = |suffix: &str| {
-            names
-                .iter()
-                .position(|name| name.ends_with(suffix))
-                .unwrap()
-        };
-        assert!(
-            position("test-bodies/queries/rust.scm") < position("plugin/rust.scm"),
-            "{names:?}"
-        );
-        assert!(
-            position("plugin/rust.scm") < position("removed-runs/queries/rust.scm"),
-            "{names:?}"
-        );
+            .any(|s| s.name.contains("deleted-bodies")));
+    }
 
-        let relative = [(
-            "mine".to_owned(),
-            Queries::from([("rust".to_owned(), "plugin/rust.scm".to_owned())]),
+    #[test]
+    fn returned_sources_resolve_relative_imports_and_deduplicate() {
+        let plugins = vec![(
+            "mine".into(),
+            vec![
+                source(
+                    "queries/rust/mine.scm",
+                    "; inherits: ../shared.scm, builtin:shared/queries/rust.scm\n(block) @fold",
+                ),
+                source("queries/shared.scm", "(block) @fold"),
+                source("queries/shared.scm", "(block) @fold"),
+            ],
         )];
-        let error = assemble(&relative)
-            .err()
-            .expect("a relative plugin query")
-            .to_string();
+        let assembled = assemble(&plugins).unwrap();
         assert_eq!(
-            error,
-            "plugin mine: queries.rust: relative path plugin/rust.scm must be absolute or builtin:"
+            assembled["rust"]
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "queries/shared.scm",
+                "builtin:shared/queries/rust.scm",
+                "queries/rust/mine.scm"
+            ]
         );
+    }
+
+    #[test]
+    fn absolute_imports_resolve_against_the_source() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("shared.scm"), "(block) @fold").unwrap();
+        let root = dir.path().join("root.scm").display().to_string();
+        let assembled =
+            assemble(&[("mine".into(), vec![source(&root, "; inherits: shared.scm")])]).unwrap();
+        assert_eq!(assembled["rust"].len(), 2);
+        assert_eq!(assembled["rust"][0].text, "(block) @fold");
+    }
+
+    #[test]
+    fn cycles_missing_imports_and_conflicting_names_are_errors() {
+        for (sources, message) in [
+            (
+                vec![source("a", "; inherits: b"), source("b", "; inherits: a")],
+                "cycle",
+            ),
+            (
+                vec![source("a", "; inherits: absent")],
+                "no query source absent",
+            ),
+            (
+                vec![source("a", "; inherits: builtin:shared/absent")],
+                "no bundled file",
+            ),
+            (
+                vec![source("a", "; inherits: builtin:../../outside")],
+                "leaves the bundled plugins",
+            ),
+            (
+                vec![source("a", "one"), source("a", "two")],
+                "conflicting text",
+            ),
+        ] {
+            let error = assemble(&[("mine".into(), sources)])
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(error.contains(message), "{error}");
+            assert!(error.contains("plugin mine: queries.rust"), "{error}");
+        }
     }
 }

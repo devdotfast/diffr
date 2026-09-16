@@ -8,8 +8,8 @@
 //!   of each, and a plugin hands diffr the same records natively and as a
 //!   component.
 //! - [`Plugin`] is the one trait every plugin implements: `new`, which makes
-//!   it from its options, then `classify` and `mutate`, taking and returning
-//!   exactly those records.
+//!   it from its options, `queries`, then `classify` and `mutate`, taking
+//!   and returning exactly those records.
 //! - [`host`] holds what diffr gives every plugin: `git`.
 //! - [`export!`] makes a plugin the `plugin` resource a component exports
 //!   when the crate is built for `wasm32-wasip2`, and expands to nothing
@@ -40,7 +40,8 @@ pub use tree::{
     siblings_of, sides_with_other_ids, walk, walk_mut, Node, OtherSide, Pairing, Region, Source,
 };
 pub use types::{
-    FileEntry, FileRef, FileSides, FileStatus, Move, Position, Range, Side, Span, Visibility, ROOT,
+    FileEntry, FileRef, FileSides, FileStatus, Move, Position, QuerySource, Range, Side, Span,
+    Visibility, ROOT,
 };
 
 /// A diffr plugin: the `plugin` resource of `wit/plugin.wit`. diffr makes one
@@ -55,6 +56,11 @@ pub trait Plugin: Sized {
     /// Make the plugin from its options. An error, like options that do not
     /// deserialize, is a setup error naming the plugin.
     fn new(options: Self::Options) -> anyhow::Result<Self>;
+
+    /// Named query text, collected once during setup and compiled by diffr.
+    fn queries(&self) -> anyhow::Result<Vec<QuerySource>> {
+        Ok(Vec::new())
+    }
 
     /// Tags to add to the file's manifest entry before it is diffed. A
     /// plugin that does not classify returns none.

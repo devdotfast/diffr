@@ -6,8 +6,8 @@
 //! This module adds only what the WIT cannot say: [`ROOT`], the id that names
 //! the file rather than a region, and the impls below.
 pub use crate::bindings::diffr::plugin::types::{
-    Cut, FileEntry, FileRef, FileSides, FileStatus, Kind, Leaf, Move, Position, Range, Region,
-    Side, Source, SourceSides, Span, Visibility,
+    Cut, FileEntry, FileRef, FileSides, FileStatus, Kind, Leaf, Move, Position, QuerySource, Range,
+    Region, Side, Source, SourceSides, Span, Visibility,
 };
 
 use crate::tree::Pairing;

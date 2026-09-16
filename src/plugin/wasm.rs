@@ -263,6 +263,24 @@ impl WasmInstance {
 }
 
 impl Runner for WasmInstance {
+    fn queries(&self, host: Host) -> anyhow::Result<Vec<contract::QuerySource>> {
+        let instance = &mut *self.enter(host);
+        let sources = instance
+            .exports
+            .diffr_plugin_guest()
+            .plugin()
+            .call_queries(&mut instance.store, instance.plugin)?
+            .map_err(anyhow::Error::msg)?;
+        Ok(sources
+            .into_iter()
+            .map(|source| contract::QuerySource {
+                language: source.language,
+                name: source.name,
+                text: source.text,
+            })
+            .collect())
+    }
+
     fn classify(&self, host: Host, file: &contract::FileEntry) -> anyhow::Result<Vec<String>> {
         let instance = &mut *self.enter(host);
         instance

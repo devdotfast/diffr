@@ -1,6 +1,6 @@
 //! The bundled plugins' folders, embedded. Each is a folder under
 //! `plugins/` shaped like any plugin's: a `plugin.toml` (name, title, options
-//! schema, query files), its query files, and its code, a crate that uses the
+//! schema), its query files, and its code, a crate that uses the
 //! plugin SDK. The code is compiled in and reached through the native
 //! registry ([`super::native`]); `plugin.toml` and the query files are
 //! embedded here, so `builtin:<plugin>/<path>` names `plugins/<plugin>/<path>`.

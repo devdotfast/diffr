@@ -129,7 +129,7 @@ as `plugins.deleted-bodies: min_lines: "many" is not of type "integer"`.
 
 An entry that names no bundled plugin is an error unless it sets `path`: a
 plugin folder, relative to the configuration file's directory (or absolute),
-holding `plugin.toml`, its query files and `plugin.wasm`. The folder's
+holding `plugin.toml` and `plugin.wasm`. The folder's
 `plugin.toml` must be named after the entry, and the entry must be listed in
 `order`. A bundled plugin's entry may set `path` too, and that folder runs in
 its place. `path` is diffr's key like `enabled`, so no plugin option may be
@@ -161,7 +161,7 @@ is:
 
 ```text
 plugins/deleted-bodies/
-  plugin.toml           # name, title, options, query files
+  plugin.toml           # name, title, options
   queries/rust.scm      # one query file per language
   Cargo.toml, src/lib.rs  # the plugin's code, a crate using the plugin SDK
   plugin.wasm           # the same code built as a WASM component (not committed)
@@ -188,10 +188,6 @@ minimum = 0
 title = "Shortest body to collapse (lines)"
 description = "Deleted bodies shorter than this stay open."
 default = 12
-
-[queries]                             # per language key, relative to the folder
-rust = "queries/rust.scm"
-typescript = "queries/javascript.scm"
 ```
 
 Every option needs a `title`; one with a `default` is pre-filled in
@@ -201,28 +197,29 @@ settings schema in the order `plugin.toml` declares them.
 ### Queries
 
 Tree-sitter queries decide which folds exist and what they are, as tags;
-plugins decide how they are shown. Each plugin that reads syntax
-(`context`, `deleted-bodies`, `test-bodies`, `removed-runs`,
-`summarize`) lists one query file per language
-key (`rust`, `python`, `go`, `javascript`, `javascriptjsx`, `typescript`,
-`typescripttsx`, or any other lowercase language name) under `[queries]` in
-its `plugin.toml`. Queries are not configured in `[plugins]`.
+plugins decide how they are shown. Each plugin returns named source text from
+`queries()`, called once on its instance during setup. Each source has a
+`language` (a lowercase language name such as `rust` or `typescripttsx`),
+`name` for imports and diagnostics, and `text`. Rust plugins can embed their
+`.scm` files with `include_str!`; no `[queries]` section is used in
+`plugin.toml`, and queries are not configured in `[plugins]`.
 
-- A relative path is inside the plugin's folder (a folder on disk, or a
-  bundled plugin's embedded one).
-- `builtin:<plugin>/<path>` names a file of a bundled plugin, embedded in
-  diffr from `plugins/<plugin>/<path>`.
-- An absolute path is a file.
+For each language, diffr concatenates the sources of every enabled plugin,
+in `order`, into one compiled and validated query before the stream starts.
+A source whose first line is `; inherits: shared.scm` (several names separated
+by commas) includes its dependencies first. Relative imports resolve against
+the importing source's name. Return those sources from `queries()` too;
+source names should include the plugin name to avoid accidental collisions.
+Returned sources take precedence over files. An unresolved `builtin:` import
+loads a bundled file, and an absolute-path import loads a file on disk.
+Relative imports from an absolute source name resolve beside that file.
+Each source is included at most once per language; import cycles and different
+text returned under the same name are setup errors.
 
-For each language, diffr concatenates the query files of every enabled
-plugin, in `order`, into one query and runs it during the diff. A file whose
-first line is `; inherits: shared.scm` (several paths separated by commas;
-relative to the importing file, or `builtin:` paths) includes those files
-first. Each file is included at most once per language, however many plugins
-import it, and an import cycle is an error. The structure every bundled
-plugin shares (blocks, collections, imports, strings) lives in
-`plugins/shared/queries/<language>.scm`, which is not a plugin: the bundled
-query files import it as `builtin:shared/queries/<language>.scm`.
+The structure every bundled plugin shares (blocks, collections, imports,
+strings) lives in `plugins/shared/queries/<language>.scm`, which is not a
+plugin: the bundled queries import it as
+`builtin:shared/queries/<language>.scm`.
 
 Docstrings live beside it, in `plugins/shared/queries/<language>-docstrings.scm`:
 comments directly above a function (Rust `///` and `//` runs and `/** */`

@@ -1,7 +1,6 @@
 //! `[plugins]`: the order plugins run in, and one entry per plugin with its
 //! switch and options. Also `plugin.toml`, the static description every
-//! plugin folder carries: the plugin's name, title, options schema and query
-//! files.
+//! plugin folder carries: the plugin's name, title and options schema.
 //!
 //! Every bundled plugin has an entry, pre-filled with the defaults its
 //! `plugin.toml` declares; a file only writes the keys it changes. `order`
@@ -9,8 +8,8 @@
 //! diffr's; every other key is one of the plugin's options, validated
 //! against the schema in its `plugin.toml`.
 //!
-//! Every entry has a plugin folder: `plugin.toml`, its query files, and for
-//! a component `plugin.wasm`. A bundled plugin's folder is embedded in diffr
+//! Every entry has a plugin folder: `plugin.toml` and, for a component,
+//! `plugin.wasm`. A bundled plugin's folder is embedded in diffr
 //! ([`builtin`]); an entry with `path` names a folder on disk, relative to
 //! the configuration file's directory, whose `plugin.toml` names the entry.
 //! A bundled plugin's entry may set `path` too, and that folder then runs in
@@ -22,9 +21,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-
-/// Query files per language key.
-pub(crate) type Queries = BTreeMap<String, String>;
 
 /// The key in a plugin entry that turns the plugin on and off.
 pub(crate) const ENABLED: &str = "enabled";
@@ -60,9 +56,6 @@ pub(crate) struct Manifest {
     /// Every option has a `title`; one with a `default` is pre-filled.
     #[serde(default)]
     pub(crate) options: Map<String, Value>,
-    /// Query files per language key, relative to the plugin's folder.
-    #[serde(default)]
-    pub(crate) queries: Queries,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -284,24 +277,6 @@ impl Folder {
         }
     }
 
-    /// The folder's query files per language key, each path resolved against
-    /// the folder: `builtin:<name>/<path>` for an embedded folder, absolute
-    /// for one on disk. A `builtin:` path stays as written.
-    pub(crate) fn queries(&self) -> Queries {
-        self.manifest
-            .queries
-            .iter()
-            .map(|(language, path)| {
-                let path = match (path.starts_with("builtin:"), &self.location) {
-                    (true, _) => path.clone(),
-                    (false, Location::Bundled) => format!("builtin:{}/{path}", self.manifest.name),
-                    (false, Location::Disk(dir)) => dir.join(path).display().to_string(),
-                };
-                (language.clone(), path)
-            })
-            .collect()
-    }
-
     /// Load the folder at `dir` for the entry `name`: its `plugin.toml` must
     /// name the entry.
     fn load(name: &str, dir: &Path) -> Result<Self, ConfigError> {
@@ -417,15 +392,6 @@ impl PluginsConfig {
                 .filter(|entry| entry.is_enabled())
                 .map(|entry| (name.as_str(), entry))
         })
-    }
-
-    /// The query files of every enabled plugin, in `order`, resolved
-    /// against each plugin's folder.
-    pub(crate) fn enabled_queries(&self) -> Vec<(String, Queries)> {
-        self.enabled()
-            .map(|(name, entry)| (name.to_owned(), entry.folder().queries()))
-            .filter(|(_, queries)| !queries.is_empty())
-            .collect()
     }
 
     /// The `plugins` property of `diffr config schema`: `order`, and every
@@ -615,15 +581,10 @@ mod tests {
     fn a_path_entry_loads_its_folder_relative_to_the_config_directory() {
         let dir = tempfile::tempdir().unwrap();
         let folder = dir.path().join("plugins/mine");
-        std::fs::create_dir_all(folder.join("queries")).unwrap();
+        std::fs::create_dir_all(&folder).unwrap();
         std::fs::write(
             folder.join("plugin.toml"),
-            "name = 'mine'\ntitle = 'Mine'\n[options.depth]\ntype = 'integer'\ntitle = 'Depth'\ndefault = 2\n[queries]\nrust = 'queries/rust.scm'\npython = 'builtin:shared/queries/python.scm'\n",
-        )
-        .unwrap();
-        std::fs::write(
-            folder.join("queries/rust.scm"),
-            "((block) @fold (#set! tag \"mine:block\"))\n",
+            "name = 'mine'\ntitle = 'Mine'\n[options.depth]\ntype = 'integer'\ntitle = 'Depth'\ndefault = 2\n",
         )
         .unwrap();
         let order = "order = ['context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'summarize', 'group', 'mine']";
@@ -635,15 +596,6 @@ mod tests {
         let entry = &config.plugins.entries["mine"];
         assert_eq!(entry.options["depth"], 2);
         assert!(entry.options.get("path").is_none());
-        let queries = config.plugins.enabled_queries();
-        let (_, mine) = queries.iter().find(|(name, _)| name == "mine").unwrap();
-        let canonical = std::fs::canonicalize(&folder).unwrap();
-        assert_eq!(
-            mine["rust"],
-            canonical.join("queries/rust.scm").display().to_string()
-        );
-        assert_eq!(mine["python"], "builtin:shared/queries/python.scm");
-        config.compile().unwrap();
 
         let error = |toml: &str| {
             Config::from_toml_in(toml, dir.path())

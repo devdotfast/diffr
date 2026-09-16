@@ -7,3 +7,9 @@ type = "boolean"
 title = "Fail on every file"
 description = "Return an error from mutate, to see a plugin abort the run."
 default = false
+
+[options.query]
+type = "string"
+title = "Rust fold query"
+description = "Optional query text returned to diffr for compilation during setup."
+default = ""

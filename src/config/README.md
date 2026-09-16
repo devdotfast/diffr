@@ -1,28 +1,25 @@
 # Syntax annotation configuration
 
-The caller parses TOML with `Config::from_toml`, then calls `compile()` once.
+The caller parses TOML with `Config::from_toml`, builds the plugin pipeline, then calls `compile_with(&pipeline)` once.
 The resulting `Params` owns one compiled query per language, holding the enabled plugins' fold
 patterns, and is borrowed by each diff.
 `Config::load` reads the global file (`$XDG_CONFIG_HOME/diffr/config.toml`) or an explicit replacement file.
 File selection and ordering belong to the caller, not this configuration.
 
 ```rust
-let params = Config::from_toml(toml_source)?.compile()?;
+let config = Config::from_toml(toml_source)?;
+let pipeline = Pipeline::from_config(&config.plugins, workdir)?;
+let params = config.compile_with(&pipeline)?;
 let result = DiffResult::from_sources_with_params(path, before, after, &params);
 ```
 
-Fold queries are files owned by plugins. Each plugin's `plugin.toml` names
-one file per language under `[queries]`, and `compile()` concatenates the
-files of every enabled plugin into one query per language, remembering which
-file each pattern came from (see `src/plugin/queries.rs` and
-[docs/config.md](../../docs/config.md#queries)):
-
-```toml
-# plugins/deleted-bodies/plugin.toml
-[queries]
-rust = "queries/rust.scm"                 # builtin:deleted-bodies/queries/rust.scm
-typescript = "queries/javascript.scm"
-```
+Fold query sources are owned by plugin code. `Plugin::queries()` returns
+`QuerySource { language, name, text }` records, typically embedding `.scm`
+files with `include_str!`. `compile_with()` collects the enabled instances'
+sources and concatenates them into one validated query per language,
+remembering which source each pattern came from (see `src/plugin/queries.rs`
+and [docs/config.md](../../docs/config.md#queries)). Shared `inherits`
+imports remain supported; `plugin.toml` contains only metadata and options.
 
 ```scheme
 ; inherits: builtin:shared/queries/rust.scm

@@ -21,8 +21,8 @@ pub(crate) mod store;
 use crate::hash::DftHashMap;
 use crate::options::DiffOptions;
 use crate::parse::{guess_language::Language, tree_sitter_parser};
-use crate::plugin::config::{PluginsConfig, Queries};
-use crate::plugin::queries;
+use crate::plugin::config::PluginsConfig;
+use crate::plugin::queries::{self, Queries};
 use query::AnnotationQuery;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -118,7 +118,6 @@ impl std::error::Error for ConfigError {}
 
 pub(crate) struct Params {
     languages: DftHashMap<Language, OnceLock<Arc<LanguageParams>>>,
-    pub(crate) plugins: PluginsConfig,
     pub(crate) diff: DiffConfig,
 }
 
@@ -223,13 +222,25 @@ impl Config {
         schema
     }
 
-    /// Compile with the query files of every enabled plugin.
-    pub(crate) fn compile(self) -> Result<Params, ConfigError> {
-        let queries = self.plugins.enabled_queries();
+    /// Compile queries from the enabled plugin instances before processing files.
+    pub(crate) fn compile_with(
+        self,
+        pipeline: &crate::plugin::Pipeline,
+    ) -> Result<Params, ConfigError> {
+        let queries = pipeline
+            .queries()
+            .map_err(|error| ConfigError(format!("{error:#}")))?;
         self.compile_queries(queries)
     }
 
-    /// Compile with `queries`, the enabled plugins' query files in
+    #[cfg(test)]
+    pub(crate) fn compile(self) -> Result<Params, ConfigError> {
+        let pipeline = crate::plugin::Pipeline::from_config(&self.plugins, Path::new("."))
+            .map_err(|error| ConfigError(format!("{error:#}")))?;
+        self.compile_with(&pipeline)
+    }
+
+    /// Compile with `queries`, the enabled plugins' source text in
     /// `plugins.order`.
     pub(crate) fn compile_queries(
         self,
@@ -256,7 +267,6 @@ impl Config {
         }
         Ok(Params {
             languages,
-            plugins: self.plugins,
             diff: self.diff,
         })
     }
@@ -307,8 +317,11 @@ impl Params {
 
 impl Default for Params {
     fn default() -> Self {
-        Config::default()
-            .compile()
+        let config = Config::default();
+        let pipeline = crate::plugin::Pipeline::from_config(&config.plugins, Path::new("."))
+            .expect("invalid bundled plugin configuration");
+        config
+            .compile_with(&pipeline)
             .expect("invalid bundled annotation configuration")
     }
 }
@@ -409,10 +422,11 @@ mod tests {
         let error = Config::default()
             .compile_queries(vec![(
                 "removed-runs".to_owned(),
-                Queries::from([(
-                    "klingon".to_owned(),
-                    "builtin:removed-runs/queries/rust.scm".to_owned(),
-                )]),
+                vec![diffr_plugin_sdk::QuerySource {
+                    language: "klingon".into(),
+                    name: "unknown.scm".into(),
+                    text: "".into(),
+                }],
             )])
             .err()
             .expect("an unknown language")
@@ -441,17 +455,18 @@ mod tests {
 }
 
 /// Params whose only fold query per listed language is the given text,
-/// written to a file the removed-runs plugin owns; no other plugin
+/// returned as source text the removed-runs plugin owns; no other plugin
 /// contributes queries.
 #[cfg(test)]
 pub(crate) fn try_with_queries(queries: &[(&str, &str)]) -> Result<Params, ConfigError> {
-    let dir = tempfile::tempdir().expect("a temporary directory");
-    let mut files = Queries::new();
-    for (language, query) in queries {
-        let path = dir.path().join(format!("{language}-removed-runs.scm"));
-        std::fs::write(&path, query).expect("a query file");
-        files.insert((*language).to_owned(), path.display().to_string());
-    }
+    let files = queries
+        .iter()
+        .map(|(language, text)| diffr_plugin_sdk::QuerySource {
+            language: (*language).into(),
+            name: format!("{language}-removed-runs.scm"),
+            text: (*text).into(),
+        })
+        .collect();
     Config::default().compile_queries(vec![("removed-runs".to_owned(), files)])
 }
 
@@ -466,7 +481,7 @@ fn with_queries(queries: &[(&str, &str)]) -> Params {
 /// over them.
 #[cfg(test)]
 pub(crate) fn body_params() -> Params {
-    Config::from_toml("[plugins.context]\nenabled = false\n[plugins.summarize]\nenabled = true\n")
+    Config::from_toml("[plugins.context]\nenabled = false\n[plugins.summarize]\nenabled = true\napi_key = 'test'\n")
         .expect("a valid configuration")
         .compile()
         .expect("the bundled queries compile")
@@ -601,7 +616,11 @@ mod tag_tests {
         let queries = |plugin: &str, path: &std::path::Path| {
             (
                 plugin.to_owned(),
-                Queries::from([("rust".to_owned(), path.display().to_string())]),
+                vec![diffr_plugin_sdk::QuerySource {
+                    language: "rust".into(),
+                    name: path.display().to_string(),
+                    text: std::fs::read_to_string(path).unwrap(),
+                }],
             )
         };
         for order in [

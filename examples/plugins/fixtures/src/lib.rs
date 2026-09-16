@@ -27,6 +27,7 @@ fn git(args: &[&str]) -> anyhow::Result<String> {
 #[serde(deny_unknown_fields)]
 pub struct Options {
     fail: bool,
+    query: String,
 }
 
 pub struct Fixtures {
@@ -38,6 +39,17 @@ impl Plugin for Fixtures {
 
     fn new(options: Options) -> anyhow::Result<Self> {
         Ok(Self { options })
+    }
+
+    fn queries(&self) -> anyhow::Result<Vec<diffr_plugin_sdk::QuerySource>> {
+        if self.options.query.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(vec![diffr_plugin_sdk::QuerySource {
+            language: "rust".into(),
+            name: "fixtures/rust.scm".into(),
+            text: self.options.query.clone(),
+        }])
     }
 
     fn classify(&self, file: &FileEntry) -> anyhow::Result<Vec<String>> {

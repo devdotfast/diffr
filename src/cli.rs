@@ -158,11 +158,10 @@ pub(crate) fn run() -> Result<i32> {
     }
     let mut config = load_config(&args)?;
     apply_unified(&args, &mut config);
-    let params = Arc::new(config.compile()?);
-    let diff_options = diff_options(&args, &params);
-    // The whole chain: `plugins.<name>` and why the plugin cannot be made.
     let pipeline =
-        Pipeline::from_config(&params.plugins, workspace).map_err(|error| format!("{error:#}"))?;
+        Pipeline::from_config(&config.plugins, workspace).map_err(|error| format!("{error:#}"))?;
+    let params = Arc::new(config.compile_with(&pipeline)?);
+    let diff_options = diff_options(&args, &params);
     let mut session = DiffSession::open(
         workspace,
         comparison,
@@ -421,7 +420,9 @@ fn no_index(
     }
     let mut config = load_config(args)?;
     apply_unified(args, &mut config);
-    let config = config.compile()?;
+    let pipeline = Pipeline::from_config(&config.plugins, &std::env::current_dir()?)
+        .map_err(|error| format!("{error:#}"))?;
+    let config = config.compile_with(&pipeline)?;
     let options = &diff_options(args, &config);
     let lhs = crate::options::FileArgument::from_path_argument(&paths[0]);
     let rhs = crate::options::FileArgument::from_path_argument(&paths[1]);
@@ -437,8 +438,6 @@ fn no_index(
             &[],
         )
     };
-    let pipeline = Pipeline::from_config(&config.plugins, &std::env::current_dir()?)
-        .map_err(|error| format!("{error:#}"))?;
     let ended = crate::protocol::stream::write_file(
         &paths[0].to_string_lossy(),
         &paths[1].to_string_lossy(),

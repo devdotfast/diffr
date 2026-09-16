@@ -10,15 +10,23 @@
 /// decide how the file is diffed (a `generated` file gets a line diff) and
 /// what later plugins see. `mutate` runs after the file is diffed and its
 /// region trees are built, and returns moves that decide how the file starts
-/// out on screen. Between the two, the tree-sitter queries a plugin lists in
-/// its `plugin.toml` decide which folds exist; they are data, not part of
-/// this contract.
+/// out on screen. `queries` returns named tree-sitter source text once during
+/// setup; diffr assembles and validates it before any file is processed.
 ///
 /// diffr makes one instance of each enabled plugin per run and calls it for
 /// every file, so what a plugin keeps from `new` lasts the whole run.
 package diffr:plugin@0.1.0;
 
 interface types {
+    /// A named query source. diffr compiles all enabled sources per language.
+    /// Names identify sources for imports and diagnostics; shared names must
+    /// have identical text. Relative imports resolve against this name.
+    record query-source {
+        language: string,
+        name: string,
+        text: string,
+    }
+
     /// The before (`lhs`) or after (`rhs`) side of a comparison.
     enum side {
         lhs,
@@ -198,7 +206,7 @@ interface host {
 
 /// What every plugin exports: the plugin itself, as a resource.
 interface guest {
-    use types.{file-entry, source-sides, move};
+    use types.{file-entry, source-sides, move, query-source};
 
     resource plugin {
         /// Make the plugin from `options`, the plugin's entry in
@@ -209,6 +217,10 @@ interface guest {
         /// static function rather than a constructor, since a constructor
         /// cannot fail.)
         new: static func(options: string) -> result<plugin, string>;
+
+        /// Query sources, collected once during setup. An error is a setup
+        /// error. Plugins without queries return an empty list.
+        queries: func() -> result<list<query-source>, string>;
 
         /// Tags to add to the file's manifest entry, before any diff runs.
         /// Tags are lowercase letters, digits, `-` and `_`. A plugin that

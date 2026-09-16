@@ -5,7 +5,7 @@
 //! Every plugin implements the one contract in `wit/plugin.wit`, through the
 //! SDK's `Plugin` trait, and diffr loads and runs every plugin the same way.
 //! [`config`] reads each enabled entry's folder, embedded or on disk: its
-//! `plugin.toml` (name, title, options schema, query files) and, when it has
+//! `plugin.toml` (name, title, options schema) and, when it has
 //! one, its component. [`Pipeline::from_config`] then takes the component
 //! ([`wasm`]) or, for a folder without one, the native code registered under
 //! the plugin's name ([`native`]), and makes the plugin's one instance for
@@ -15,7 +15,7 @@
 //!
 //! The pipeline for one file: git lists it and its tags, and each plugin's
 //! `classify` adds its own; the diff runs with one fold query per language,
-//! assembled from the query files of every enabled plugin ([`queries`]); the
+//! assembled from the source text returned by every enabled plugin ([`queries`]); the
 //! projection builds the region trees and pairs them; then each enabled
 //! plugin's `mutate` runs, in `plugins.order`, on the finished trees,
 //! starting with `context`, which collapses unchanged lines far from any
@@ -55,6 +55,8 @@ use std::time::Instant;
 /// its options, behind the contract's two calls on a file. Each call gets
 /// the host for that call.
 pub(crate) trait Runner: Send + Sync {
+    fn queries(&self, host: Host) -> anyhow::Result<Vec<types::QuerySource>>;
+
     fn classify(&self, host: Host, file: &types::FileEntry) -> anyhow::Result<Vec<String>>;
 
     fn mutate(
@@ -151,6 +153,20 @@ impl Pipeline {
             .with_context(|| format!("plugins.{name}"))?;
         self.plugins.push(Loaded { name, runner });
         Ok(())
+    }
+
+    /// Collect raw sources from the same instances that classify and mutate.
+    pub(crate) fn queries(&self) -> anyhow::Result<Vec<(String, Vec<types::QuerySource>)>> {
+        self.plugins
+            .iter()
+            .map(|plugin| {
+                let sources = plugin
+                    .runner
+                    .queries(self.host(&plugin.name))
+                    .with_context(|| format!("plugin {}: queries", plugin.name))?;
+                Ok((plugin.name.to_string(), sources))
+            })
+            .collect()
     }
 
     fn host(&self, name: &Arc<str>) -> Host {

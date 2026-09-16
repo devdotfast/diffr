@@ -71,14 +71,3 @@ possible: about one pseudocode line per five source lines, and never more than a
 of the body's lines. When a fold lists a doc, also set "summary" to one sentence copied \
 verbatim from that doc; otherwise leave it empty. Answer with a JSON array of \
 {"id", "summary", "pseudocode"} objects, one per fold."""
-
-# Folds tagged `summarize:function`, `summarize:test` and, from the shared
-# docstrings query, `summarize:docstring`.
-[queries]
-rust = "queries/rust.scm"
-python = "queries/python.scm"
-go = "queries/go.scm"
-javascript = "queries/javascript.scm"
-javascriptjsx = "queries/javascript.scm"
-typescript = "queries/javascript.scm"
-typescripttsx = "queries/javascript.scm"

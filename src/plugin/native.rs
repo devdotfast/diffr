@@ -63,6 +63,10 @@ fn call<R>(host: Host, call: impl FnOnce() -> anyhow::Result<R>) -> anyhow::Resu
 struct Native<P>(P);
 
 impl<P: Plugin + Send + Sync> Runner for Native<P> {
+    fn queries(&self, host: Host) -> anyhow::Result<Vec<diffr_plugin_sdk::QuerySource>> {
+        call(host, || self.0.queries())
+    }
+
     fn classify(&self, host: Host, file: &FileEntry) -> anyhow::Result<Vec<String>> {
         call(host, || self.0.classify(file))
     }

@@ -158,9 +158,10 @@ fn the_enclosing_header_stays_open_above_a_deep_change() {
     // Without a context query the whole signature collapses with the
     // unchanged lines above it.
     let config = Config::default();
-    let queries = config
-        .plugins
-        .enabled_queries()
+    let queries = Pipeline::from_config(&config.plugins, std::path::Path::new("."))
+        .unwrap()
+        .queries()
+        .unwrap()
         .into_iter()
         .filter(|(plugin, _)| plugin != "context")
         .collect();

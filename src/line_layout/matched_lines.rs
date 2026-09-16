@@ -1,11 +1,11 @@
-//! Calculate which nearby lines should also be displayed.
+//! Pair up the lines of both sides from the matched positions.
 
 use std::cmp::Ordering;
 
 use line_numbers::LineNumber;
 
-use crate::hash::{DftHashMap, DftHashSet};
-use crate::parse::syntax::{zip_repeat_shorter, MatchKind, MatchedPos};
+use crate::hash::DftHashSet;
+use crate::parse::syntax::{MatchKind, MatchedPos};
 
 pub(crate) fn all_matched_lines_filled(
     lhs_mps: &[MatchedPos],
@@ -324,135 +324,6 @@ fn match_preceding_blanks(
     res
 }
 
-pub(crate) fn opposite_positions(
-    mps: &[MatchedPos],
-) -> DftHashMap<LineNumber, DftHashSet<LineNumber>> {
-    let mut res: DftHashMap<LineNumber, DftHashSet<LineNumber>> = DftHashMap::default();
-
-    for mp in mps {
-        match &mp.kind {
-            MatchKind::UnchangedToken {
-                self_pos,
-                opposite_pos,
-                ..
-            } => {
-                for (self_span, opposite_span) in zip_repeat_shorter(self_pos, opposite_pos) {
-                    let opposite_lines = res
-                        .entry(self_span.line)
-                        .or_insert_with(DftHashSet::default);
-                    opposite_lines.insert(opposite_span.line);
-                }
-            }
-            MatchKind::UnchangedPartOfNovelItem {
-                opposite_pos,
-                self_pos,
-                ..
-            } => {
-                let opposite_lines = res.entry(self_pos.line).or_insert_with(DftHashSet::default);
-                for opposite_span in opposite_pos {
-                    opposite_lines.insert(opposite_span.line);
-                }
-            }
-            MatchKind::Novel { .. } | MatchKind::NovelWord { .. } | MatchKind::Ignored { .. } => {}
-        }
-    }
-
-    res
-}
-
-/// Before:
-///
-/// ```text
-/// 118    --
-/// 119    --
-/// 120    -- (novel)
-/// ```
-///
-/// After:
-///
-/// ```text
-/// 118    88 (expanded from closest)
-/// 119    89 (closest match)
-/// 120    -- (novel)
-/// ```
-fn before_with_opposites(
-    before_lines: &[LineNumber],
-    opposite_lines: &DftHashMap<LineNumber, DftHashSet<LineNumber>>,
-) -> Vec<(Option<LineNumber>, Option<LineNumber>)> {
-    let mut lines = before_lines.to_vec();
-    lines.reverse();
-
-    let mut prev_opposite: Option<LineNumber> = None;
-    let mut res = vec![];
-
-    for line in lines {
-        let current_opposite: Option<LineNumber> = match prev_opposite {
-            Some(prev_opposite) => {
-                if prev_opposite.0 > 0 {
-                    Some((prev_opposite.0 - 1).into())
-                } else {
-                    None
-                }
-            }
-            None => match opposite_lines.get(&line) {
-                Some(all_opposites) => {
-                    let mut all_opposites: Vec<LineNumber> =
-                        all_opposites.iter().copied().collect();
-                    all_opposites.sort();
-
-                    all_opposites.last().copied()
-                }
-                None => None,
-            },
-        };
-
-        res.push((Some(line), current_opposite));
-        if current_opposite.is_some() {
-            prev_opposite = current_opposite;
-        }
-    }
-
-    res.reverse();
-    res
-}
-
-fn pad_before(ln: LineNumber, num_context_lines: usize) -> Vec<LineNumber> {
-    let mut line_nums = vec![];
-
-    let mut current = ln;
-    // Use one more line than num_context_lines so we merge
-    // immediately adjacent hunks.
-    for _ in 0..num_context_lines + 1 {
-        if current.0 == 0 {
-            break;
-        }
-
-        current = (current.0 - 1).into();
-        line_nums.push(current);
-    }
-
-    line_nums.reverse();
-    line_nums
-}
-
-fn pad_after(ln: LineNumber, max_line: LineNumber, num_context_lines: usize) -> Vec<LineNumber> {
-    let mut line_nums = vec![];
-
-    let mut current = ln;
-    // Use one more line than num_context_lines so we merge
-    // immediately adjacent hunks.
-    for _ in 0..num_context_lines + 1 {
-        if current >= max_line {
-            break;
-        }
-
-        current = (current.0 + 1).into();
-        line_nums.push(current);
-    }
-
-    line_nums
-}
-
 pub(crate) fn flip_tuple<Tx: Copy, Ty: Copy>(pair: (Tx, Ty)) -> (Ty, Tx) {
     let (x, y) = pair;
     (y, x)
@@ -460,156 +331,6 @@ pub(crate) fn flip_tuple<Tx: Copy, Ty: Copy>(pair: (Tx, Ty)) -> (Ty, Tx) {
 
 pub(crate) fn flip_tuples<Tx: Copy, Ty: Copy>(items: &[(Tx, Ty)]) -> Vec<(Ty, Tx)> {
     items.iter().copied().map(flip_tuple).collect()
-}
-
-/// Before:
-/// 120    -- (novel)
-/// 121    --
-/// 122    --
-///
-/// After:
-/// 120    90 (novel)
-/// 121    --
-/// 122    91 (closest match)
-fn after_with_opposites(
-    after_lines: &[LineNumber],
-    opposite_lines: &DftHashMap<LineNumber, DftHashSet<LineNumber>>,
-    prev_max_opposite: Option<LineNumber>,
-    max_opposite: LineNumber,
-) -> Vec<(Option<LineNumber>, Option<LineNumber>)> {
-    let mut prev_opposite: Option<LineNumber> = None;
-    let mut res: Vec<(Option<LineNumber>, Option<LineNumber>)> = vec![];
-
-    for line in after_lines {
-        let current_opposite: Option<LineNumber> = match prev_opposite {
-            Some(prev_opposite) => {
-                if prev_opposite < max_opposite {
-                    Some((prev_opposite.0 + 1).into())
-                } else {
-                    None
-                }
-            }
-            None => match opposite_lines.get(line) {
-                Some(all_opposites) => {
-                    let mut all_opposites: Vec<LineNumber> =
-                        all_opposites.iter().copied().collect();
-                    all_opposites.sort();
-
-                    if let Some(prev_max_opposite) = prev_max_opposite {
-                        all_opposites.retain(|x| *x > prev_max_opposite);
-                    }
-
-                    all_opposites.first().copied()
-                }
-                None => None,
-            },
-        };
-
-        res.push((Some(*line), current_opposite));
-        if current_opposite.is_some() {
-            prev_opposite = current_opposite;
-        }
-    }
-
-    res
-}
-
-pub(crate) fn calculate_before_context(
-    lines: &[(Option<LineNumber>, Option<LineNumber>)],
-    opposite_to_lhs: &DftHashMap<LineNumber, DftHashSet<LineNumber>>,
-    opposite_to_rhs: &DftHashMap<LineNumber, DftHashSet<LineNumber>>,
-    num_context_lines: usize,
-) -> Vec<(Option<LineNumber>, Option<LineNumber>)> {
-    match lines.first() {
-        Some(first_line) => match *first_line {
-            (Some(lhs_line), _) => {
-                let padded_lines = pad_before(lhs_line, num_context_lines);
-                before_with_opposites(&padded_lines, opposite_to_lhs)
-            }
-            (_, Some(rhs_line)) => {
-                let padded_lines = pad_before(rhs_line, num_context_lines);
-                flip_tuples(&before_with_opposites(&padded_lines, opposite_to_rhs))
-            }
-            (None, None) => vec![],
-        },
-        None => vec![],
-    }
-}
-
-pub(crate) fn calculate_after_context(
-    lines: &[(Option<LineNumber>, Option<LineNumber>)],
-    opposite_to_lhs: &DftHashMap<LineNumber, DftHashSet<LineNumber>>,
-    opposite_to_rhs: &DftHashMap<LineNumber, DftHashSet<LineNumber>>,
-    max_lhs_src_line: LineNumber,
-    max_rhs_src_line: LineNumber,
-    num_context_lines: usize,
-) -> Vec<(Option<LineNumber>, Option<LineNumber>)> {
-    match lines.last() {
-        Some(last_line) => match *last_line {
-            (Some(lhs_line), _) => {
-                let mut max_opposite = None;
-                // TODO: It would be simpler to do one loop over all
-                // the lines and take the last non-None on each side.
-                for (_, rhs_line) in lines {
-                    if let Some(rhs_line) = rhs_line {
-                        max_opposite = Some(*rhs_line);
-                    }
-                }
-
-                let padded_lines = pad_after(lhs_line, max_lhs_src_line, num_context_lines);
-                after_with_opposites(
-                    &padded_lines,
-                    opposite_to_lhs,
-                    max_opposite,
-                    max_rhs_src_line,
-                )
-            }
-            (_, Some(rhs_line)) => {
-                let mut max_opposite = None;
-                for (lhs_line, _) in lines {
-                    if let Some(lhs_line) = lhs_line {
-                        max_opposite = Some(*lhs_line);
-                    }
-                }
-
-                let padded_lines = pad_after(rhs_line, max_rhs_src_line, num_context_lines);
-                flip_tuples(&after_with_opposites(
-                    &padded_lines,
-                    opposite_to_rhs,
-                    max_opposite,
-                    max_lhs_src_line,
-                ))
-            }
-            (None, None) => vec![],
-        },
-        None => vec![],
-    }
-}
-
-pub(crate) fn add_context(
-    lines: &[(Option<LineNumber>, Option<LineNumber>)],
-    opposite_to_lhs: &DftHashMap<LineNumber, DftHashSet<LineNumber>>,
-    opposite_to_rhs: &DftHashMap<LineNumber, DftHashSet<LineNumber>>,
-    max_lhs_src_line: LineNumber,
-    max_rhs_src_line: LineNumber,
-    num_context_lines: usize,
-) -> Vec<(Option<LineNumber>, Option<LineNumber>)> {
-    let before_lines =
-        calculate_before_context(lines, opposite_to_lhs, opposite_to_rhs, num_context_lines);
-    let after_lines = calculate_after_context(
-        &[&before_lines, lines].concat(),
-        opposite_to_lhs,
-        opposite_to_rhs,
-        max_lhs_src_line,
-        max_rhs_src_line,
-        num_context_lines,
-    );
-
-    before_lines
-        .into_iter()
-        .chain(lines.iter().copied())
-        .chain(after_lines)
-        .collect()
 }
 
 /// Ensure that we don't miss any intermediate values.
@@ -728,33 +449,11 @@ fn compact_gaps(
 
 #[cfg(test)]
 mod tests {
-    use std::iter::FromIterator;
-
     use line_numbers::SingleLineSpan;
     use pretty_assertions::assert_eq;
 
     use super::*;
     use crate::syntax::TokenKind;
-
-    #[test]
-    fn test_calculate_before_context() {
-        let num_context_lines = 3;
-        let lines = vec![(Some(1.into()), Some(1.into()))];
-
-        let mut opposite_to_lhs = DftHashMap::default();
-        opposite_to_lhs.insert(0.into(), DftHashSet::from_iter([0.into()]));
-
-        let mut opposite_to_rhs = DftHashMap::default();
-        opposite_to_rhs.insert(0.into(), DftHashSet::from_iter([0.into()]));
-
-        let res = calculate_before_context(
-            &lines,
-            &opposite_to_lhs,
-            &opposite_to_rhs,
-            num_context_lines,
-        );
-        assert_eq!(res, vec![(Some(0.into()), Some(0.into()))]);
-    }
 
     #[test]
     fn test_all_matched_lines() {
@@ -1036,11 +735,5 @@ mod tests {
                 (Some(2.into()), Some(2.into()))
             ]
         );
-    }
-
-    #[test]
-    fn test_pad_after_when_line_exceeds_max() {
-        let res = pad_after(2.into(), 1.into(), 5);
-        assert_eq!(res, vec![]);
     }
 }

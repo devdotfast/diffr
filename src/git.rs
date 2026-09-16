@@ -586,13 +586,8 @@ impl LoadedFile {
         (self.before.len() as u64, self.after.len() as u64)
     }
 
-    /// A fold query conflict fails this file alone. `display` sets the
-    /// unchanged lines around each of difftastic's terminal hunks; nothing
-    /// else in the result depends on it.
-    pub(crate) fn diff(
-        &self,
-        display: &crate::options::DisplayOptions,
-    ) -> anyhow::Result<DiffResult> {
+    /// A fold query conflict fails this file alone.
+    pub(crate) fn diff(&self) -> anyhow::Result<DiffResult> {
         let options = crate::options::DiffOptions {
             generated: self.file.tags.iter().any(|tag| tag == tags::GENERATED),
             ..self.diff_options.clone()
@@ -602,7 +597,6 @@ impl LoadedFile {
             &self.before,
             &self.after,
             &self.params,
-            display,
             &options,
         )?)
     }

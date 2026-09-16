@@ -1,7 +1,10 @@
-//! Line alignment and ordinary context padding.
-use crate::display::context::all_matched_lines_filled;
+//! Full-file line alignment, and the runs of rows the projection builds
+//! leaves from.
+mod matched_lines;
+
 use crate::pairing::Pairing;
 use crate::parse::syntax::MatchedPos;
+use matched_lines::all_matched_lines_filled;
 use std::collections::BTreeSet;
 
 pub(crate) type Row = (Option<usize>, Option<usize>);

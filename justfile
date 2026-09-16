@@ -5,10 +5,6 @@ default:
 doc:
     cd manual && mdbook serve --open
 
-# Run the output regression test.
-compare:
-    sample_files/compare_all.sh
-
 # Create a git tag and push it, to trigger a release on GitHub actions.
 release:
     #!/bin/bash

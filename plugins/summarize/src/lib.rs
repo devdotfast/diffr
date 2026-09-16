@@ -1,4 +1,5 @@
-//! The summarizer: large new function bodies become short pseudocode, shown
+//! The summarizer: large new function bodies become short python-flavored
+//! pseudocode, shown
 //! in place of the collapsed body.
 //!
 //! It needs an API key: `new` fails without one, naming how to set it or

@@ -69,18 +69,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo +stable test
 
-  regression_test:
-    name: Output Regression Test
-    runs-on: ubuntu-22.04
-    steps:
-      # v4.2.2
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: dtolnay/rust-toolchain@1.85.0
-      - name: Generate output for all sample files
-        run: ./sample_files/compare_all.sh
-      - name: Verify output is unchanged
-        run: diff -C2 sample_files/compare.result sample_files/compare.expected
-
   package:
     name: Check Linux Packaging
     runs-on: ubuntu-22.04

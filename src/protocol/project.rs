@@ -29,14 +29,15 @@
 //! which unchanged lines to hide is the `context` plugin's.
 use super::{
     BinaryRef, Diff, FileRef, LineCounts, Node, Problem, Region, Source, SourcePos, SourceRange,
-    Span, Stats, Visibility, ROOT,
+    Span, Stats, SyntaxSpan, Visibility, ROOT,
 };
-use crate::display::line_layout::{aligned_rows, novel_lines, runs, Run};
 use crate::hash::DftHashMap;
+use crate::line_layout::{aligned_rows, novel_lines, runs, Run};
 use crate::line_parser;
 use crate::pairing::Pairing;
 use crate::parse::folds::{self, Fold, FoldMatch};
 use crate::parse::syntax::{MatchKind, MatchedPos, SyntaxId};
+use crate::parse::tree_sitter_parser::{highlight_captures, TreeSitterConfig};
 use crate::summary::{DiffResult, FallbackCause, FileContent, FileFormat};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -46,6 +47,8 @@ pub(crate) struct Inputs<'a> {
     pub(crate) file: &'a Pairing<FileRef>,
     /// Byte length of each side's content, for binary files.
     pub(crate) sizes: (u64, u64),
+    /// Highlight spans per side; empty when the run did not ask for syntax.
+    pub(crate) syntax: (Vec<SyntaxSpan>, Vec<SyntaxSpan>),
 }
 
 pub(crate) fn diff(result: &DiffResult, inputs: Inputs<'_>) -> Diff {
@@ -65,14 +68,17 @@ pub(crate) fn diff(result: &DiffResult, inputs: Inputs<'_>) -> Diff {
         }
     };
     let (lhs_regions, rhs_regions) = regions(result, lhs_src, rhs_src);
+    let (lhs_syntax, rhs_syntax) = inputs.syntax;
     let sides = pair(
         inputs.file,
         Source {
             text: lhs_src.to_owned(),
+            syntax: lhs_syntax,
             regions: lhs_regions,
         },
         Source {
             text: rhs_src.to_owned(),
+            syntax: rhs_syntax,
             regions: rhs_regions,
         },
     );
@@ -126,6 +132,47 @@ fn fallback_code(cause: FallbackCause) -> &'static str {
         FallbackCause::GraphLimit => "too_complex",
         FallbackCause::ParseErrorLimit => "parse_error",
     }
+}
+
+/// Highlight spans for one side, per line, sorted, non-overlapping. Where
+/// captures nest the innermost wins.
+pub(crate) fn syntax_spans(src: &str, parser: &'static TreeSitterConfig) -> Vec<SyntaxSpan> {
+    let mut captures = highlight_captures(src, parser);
+    // Paint larger captures first so smaller (inner) ones overwrite them.
+    captures.sort_by_key(|(start, end, _)| std::cmp::Reverse(end - start));
+    let mut owner: Vec<Option<&'static str>> = vec![None; src.len()];
+    for (start, end, name) in captures {
+        for slot in &mut owner[start..end] {
+            *slot = Some(name);
+        }
+    }
+    let mut spans = Vec::new();
+    let mut line_start = 0;
+    for (line, text) in src.split_inclusive('\n').enumerate() {
+        let content_len = text.trim_end_matches('\n').len();
+        let mut run: Option<(usize, &'static str)> = None;
+        for column in 0..=content_len {
+            let current = (column < content_len)
+                .then(|| owner[line_start + column])
+                .flatten();
+            match (run, current) {
+                (Some((_, name)), Some(now)) if now == name => {}
+                (Some((start, name)), _) => {
+                    spans.push(SyntaxSpan {
+                        line: line as u32,
+                        start_column: start as u32,
+                        end_column: column as u32,
+                        capture: name.to_owned(),
+                    });
+                    run = current.map(|name| (column, name));
+                }
+                (None, Some(name)) => run = Some((column, name)),
+                (None, None) => {}
+            }
+        }
+        line_start += text.len();
+    }
+    spans
 }
 
 // ── regions ───────────────────────────────────────────────────────────────
@@ -546,7 +593,7 @@ fn positions_by_line(positions: &[MatchedPos]) -> BTreeMap<usize, Vec<&MatchedPo
 mod tests {
     use super::*;
     use crate::config::body_params;
-    use crate::options::{DiffOptions, DisplayOptions};
+    use crate::options::DiffOptions;
 
     fn refs(lhs: bool, rhs: bool) -> Pairing<FileRef> {
         let file_ref = FileRef {
@@ -571,20 +618,15 @@ mod tests {
 
     /// `graph_limit: 1` forces the text-diff fallback for any real change.
     fn project_with(path: &str, lhs: &str, rhs: &str, options: DiffOptions) -> Diff {
-        let result = DiffResult::from_sources_with_options(
-            path,
-            lhs,
-            rhs,
-            &body_params(),
-            &DisplayOptions::default(),
-            &options,
-        )
-        .unwrap();
+        let result =
+            DiffResult::from_sources_with_options(path, lhs, rhs, &body_params(), &options)
+                .unwrap();
         diff(
             &result,
             Inputs {
                 file: &refs(!lhs.is_empty(), !rhs.is_empty()),
                 sizes: (lhs.len() as u64, rhs.len() as u64),
+                syntax: (Vec::new(), Vec::new()),
             },
         )
     }
@@ -721,13 +763,104 @@ mod tests {
     }
 
     #[test]
+    fn a_parse_error_fallback_numbers_its_folds() {
+        // Both sides hold a stray `)`, so the parse-error limit of zero sends
+        // the file to a line diff; the folds still come from the parse.
+        let lhs = format!("{RUST_LHS})\n");
+        let rhs = format!("{RUST_RHS})\n");
+        let diff = project_with(
+            "a.rs",
+            &lhs,
+            &rhs,
+            DiffOptions {
+                parse_error_limit: 0,
+                ..DiffOptions::default()
+            },
+        );
+        let Diff::Text { stats, .. } = &diff else {
+            panic!("text diff");
+        };
+        assert_eq!(stats.fallback.as_ref().unwrap().code, "parse_error");
+        let (lhs, rhs) = sources(&diff);
+        let (lhs, rhs) = (lhs.unwrap(), rhs.unwrap());
+        let (lhs_folds, rhs_folds) = (fold_ids(lhs), fold_ids(rhs));
+        let lhs_ids: BTreeSet<u32> = lhs_folds.values().copied().collect();
+        let rhs_ids: BTreeSet<u32> = rhs_folds.values().copied().collect();
+        assert_eq!(
+            lhs_ids.len(),
+            lhs_folds.len(),
+            "lhs folds have distinct ids"
+        );
+        assert_eq!(
+            rhs_ids.len(),
+            rhs_folds.len(),
+            "rhs folds have distinct ids"
+        );
+        let (lhs_states, rhs_states) = (fold_states(lhs), fold_states(rhs));
+        // Nothing matched the nodes these folds belong to, so no fold pairs.
+        let lhs_state_ids: BTreeSet<u32> = lhs_states.values().copied().collect();
+        assert!(
+            !rhs_states
+                .values()
+                .any(|state| lhs_state_ids.contains(state)),
+            "a fallback's folds are unpaired"
+        );
+    }
+
+    #[test]
+    fn folds_pair_only_where_the_matcher_paired_their_nodes() {
+        for options in [
+            DiffOptions::default(),
+            DiffOptions {
+                graph_limit: 1,
+                ..DiffOptions::default()
+            },
+        ] {
+            let structural = options.graph_limit != 1;
+            let diff = project_with("a.rs", RUST_LHS, RUST_RHS, options);
+            let Diff::Text { stats, .. } = &diff else {
+                panic!("text diff");
+            };
+            assert_eq!(stats.fallback.is_none(), structural);
+            let (lhs, rhs) = sources(&diff);
+            let (lhs, rhs) = (lhs.unwrap(), rhs.unwrap());
+            assert_tiles(lhs);
+            assert_tiles(rhs);
+            let (lhs_folds, rhs_folds) = (fold_states(lhs), fold_states(rhs));
+            assert_eq!(lhs_folds.len(), 2);
+            assert_eq!(rhs_folds.len(), 3);
+            let shared: BTreeSet<u32> = lhs_folds
+                .values()
+                .filter(|state| rhs_folds.values().any(|other| other == *state))
+                .copied()
+                .collect();
+            if structural {
+                // `f` changed its signature and stays paired through the
+                // matcher; `keep` is untouched. `added` is rhs-only.
+                assert_eq!(
+                    lhs_folds[&1], rhs_folds[&1],
+                    "f pairs across a changed header"
+                );
+                assert_eq!(lhs_folds[&7], rhs_folds[&7], "keep pairs");
+                assert_eq!(shared.len(), 2);
+            } else {
+                // The matcher never ran, so every fold is on its own.
+                assert!(shared.is_empty(), "a fallback's folds are unpaired");
+            }
+            assert!(
+                !lhs_folds.values().any(|id| *id == rhs_folds[&13]),
+                "added is rhs-only"
+            );
+        }
+    }
+
+    #[test]
     fn structural_folds_pair_exactly_as_the_matcher_recorded() {
         let result = DiffResult::from_sources_with_options(
             "a.rs",
             RUST_LHS,
             RUST_RHS,
             &body_params(),
-            &DisplayOptions::default(),
             &DiffOptions::default(),
         )
         .unwrap();
@@ -831,6 +964,7 @@ mod tests {
             Inputs {
                 file: &refs(true, true),
                 sizes: (lhs.len() as u64, rhs.len() as u64),
+                syntax: (Vec::new(), Vec::new()),
             },
         );
         let (lhs_src, rhs_src) = sources(&diff);
@@ -878,98 +1012,6 @@ mod tests {
             if let Some(&other) = rhs_lengths.get(&id) {
                 assert_eq!(length, other, "paired leaf {id}");
             }
-        }
-    }
-
-    #[test]
-    fn a_parse_error_fallback_numbers_its_folds() {
-        // Both sides hold a stray `)`, so the parse-error limit of zero sends
-        // the file to a line diff; the folds still come from the parse.
-        let lhs = format!("{RUST_LHS})\n");
-        let rhs = format!("{RUST_RHS})\n");
-        let diff = project_with(
-            "a.rs",
-            &lhs,
-            &rhs,
-            DiffOptions {
-                parse_error_limit: 0,
-                ..DiffOptions::default()
-            },
-        );
-        let Diff::Text { stats, .. } = &diff else {
-            panic!("text diff");
-        };
-        assert_eq!(stats.fallback.as_ref().unwrap().code, "parse_error");
-        let (lhs, rhs) = sources(&diff);
-        let (lhs, rhs) = (lhs.unwrap(), rhs.unwrap());
-        let (lhs_folds, rhs_folds) = (fold_ids(lhs), fold_ids(rhs));
-        let lhs_ids: BTreeSet<u32> = lhs_folds.values().copied().collect();
-        let rhs_ids: BTreeSet<u32> = rhs_folds.values().copied().collect();
-        assert_eq!(
-            lhs_ids.len(),
-            lhs_folds.len(),
-            "lhs folds have distinct ids"
-        );
-        assert_eq!(
-            rhs_ids.len(),
-            rhs_folds.len(),
-            "rhs folds have distinct ids"
-        );
-        let (lhs_states, rhs_states) = (fold_states(lhs), fold_states(rhs));
-        // Nothing matched the nodes these folds belong to, so no fold pairs.
-        let lhs_state_ids: BTreeSet<u32> = lhs_states.values().copied().collect();
-        assert!(
-            !rhs_states
-                .values()
-                .any(|state| lhs_state_ids.contains(state)),
-            "a fallback's folds are unpaired"
-        );
-    }
-
-    #[test]
-    fn folds_pair_only_where_the_matcher_paired_their_nodes() {
-        for options in [
-            DiffOptions::default(),
-            DiffOptions {
-                graph_limit: 1,
-                ..DiffOptions::default()
-            },
-        ] {
-            let structural = options.graph_limit != 1;
-            let diff = project_with("a.rs", RUST_LHS, RUST_RHS, options);
-            let Diff::Text { stats, .. } = &diff else {
-                panic!("text diff");
-            };
-            assert_eq!(stats.fallback.is_none(), structural);
-            let (lhs, rhs) = sources(&diff);
-            let (lhs, rhs) = (lhs.unwrap(), rhs.unwrap());
-            assert_tiles(lhs);
-            assert_tiles(rhs);
-            let (lhs_folds, rhs_folds) = (fold_states(lhs), fold_states(rhs));
-            assert_eq!(lhs_folds.len(), 2);
-            assert_eq!(rhs_folds.len(), 3);
-            let shared: BTreeSet<u32> = lhs_folds
-                .values()
-                .filter(|state| rhs_folds.values().any(|other| other == *state))
-                .copied()
-                .collect();
-            if structural {
-                // `f` changed its signature and stays paired through the
-                // matcher; `keep` is untouched. `added` is rhs-only.
-                assert_eq!(
-                    lhs_folds[&1], rhs_folds[&1],
-                    "f pairs across a changed header"
-                );
-                assert_eq!(lhs_folds[&7], rhs_folds[&7], "keep pairs");
-                assert_eq!(shared.len(), 2);
-            } else {
-                // The matcher never ran, so every fold is on its own.
-                assert!(shared.is_empty(), "a fallback's folds are unpaired");
-            }
-            assert!(
-                !lhs_folds.values().any(|id| *id == rhs_folds[&13]),
-                "added is rhs-only"
-            );
         }
     }
 
@@ -1247,24 +1289,20 @@ mod tests {
     #[test]
     fn binary_sides_carry_sizes() {
         let result = DiffResult {
-            display_path: "a.bin".to_owned(),
-            extra_info: None,
             file_format: FileFormat::Binary,
             lhs_src: FileContent::Binary,
             rhs_src: FileContent::Binary,
-            hunks: vec![],
             lhs_folds: vec![],
             rhs_folds: vec![],
             lhs_positions: vec![],
             rhs_positions: vec![],
-            has_byte_changes: Some((3, 5)),
-            has_syntactic_changes: false,
         };
         let diff = diff(
             &result,
             Inputs {
                 file: &refs(true, true),
                 sizes: (3, 5),
+                syntax: (Vec::new(), Vec::new()),
             },
         );
         let Diff::Binary {
@@ -1274,5 +1312,26 @@ mod tests {
             panic!("a binary diff with both sides: {diff:?}");
         };
         assert_eq!((lhs.size, rhs.size), (3, 5));
+    }
+
+    #[test]
+    fn syntax_spans_are_per_line_sorted_and_innermost() {
+        let parser = crate::parse::tree_sitter_parser::from_language(
+            crate::parse::guess_language::Language::Python,
+        );
+        let spans = syntax_spans("def f(x):\n    return \"a\"\n", parser);
+        for pair in spans.windows(2) {
+            assert!(
+                pair[0].line < pair[1].line
+                    || (pair[0].line == pair[1].line && pair[0].end_column <= pair[1].start_column),
+                "{pair:?}"
+            );
+        }
+        assert!(spans
+            .iter()
+            .any(|span| span.capture == "keyword" && span.line == 0));
+        assert!(spans
+            .iter()
+            .any(|span| span.capture.starts_with("string") && span.line == 1));
     }
 }

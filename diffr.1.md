@@ -36,8 +36,9 @@ compare their trees. A...B compares merge-base(A,B) to B; A..B compares A to B.
 **--quiet**, **--exit-code**
 : Exit 1 for changes. Quiet also suppresses output. Errors exit 2.
 
-**--format** text|ndjson
-: Terminal rendering, or the event stream described under STREAMING.
+**--format** ndjson
+: Write the event stream described under STREAMING instead of opening the
+  terminal UI, which needs a terminal.
 
 **-U** N
 : Select ordinary context padding (default 3).

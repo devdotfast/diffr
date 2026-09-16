@@ -130,7 +130,7 @@ pub struct FileRef {
 }
 
 /// How a file or region starts out. `label` is shown while collapsed: a
-/// reason for a file, a placeholder for a region.
+/// reason for a file, a placeholder or pseudocode summary for a region.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Visibility {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -163,10 +163,14 @@ pub enum Diff {
     },
 }
 
-/// One side's text and regions.
+/// One side's text, colors, and regions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Source {
     pub text: String,
+    /// Every token with its tree-sitter capture name. Per line, sorted,
+    /// non-overlapping. Empty unless the run asked for syntax.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub syntax: Vec<SyntaxSpan>,
     /// The largest regions, in order. Leaves tile the file.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub regions: Vec<Region>,
@@ -175,6 +179,15 @@ pub struct Source {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BinaryRef {
     pub size: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyntaxSpan {
+    pub line: u32,
+    pub start_column: u32,
+    pub end_column: u32,
+    /// A tree-sitter capture name such as `keyword` or `function.method`.
+    pub capture: String,
 }
 
 /// The `id` that names the file itself rather than a region. No region
@@ -265,7 +278,8 @@ pub struct SourcePos {
 /// match did not run and the alignment is a line diff, carrying why:
 /// `too_complex`, `too_large`, `unsupported_language`, `parse_error`,
 /// `generated`.
-/// Folds are still present on a fallback whenever the language parsed.
+/// Folds are still present on a fallback whenever the language parsed,
+/// paired through that alignment.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Stats {
     /// Lines with any byte change.
@@ -323,6 +337,7 @@ mod tests {
         };
         let side = |first: u32, text: &str, changed: Vec<Span>| Source {
             text: text.to_owned(),
+            syntax: vec![],
             regions: vec![Region {
                 id: first,
                 fold_state_id: 1,
@@ -479,7 +494,7 @@ mod tests {
                 failed: 1,
                 aborted: Some(Problem {
                     code: "mutation_failed".to_owned(),
-                    message: "mutation context: no region 99999".to_owned(),
+                    message: "mutation summarize: summarizer: gemini-3.8-flash: HTTP 503 Service Unavailable after 4 attempts".to_owned(),
                 }),
             },
         ];
@@ -500,6 +515,7 @@ mod tests {
             "null",
             "visibility",
             "collapsed",
+            "syntax",
             "fallback",
             "\"changed\":[]",
         ] {

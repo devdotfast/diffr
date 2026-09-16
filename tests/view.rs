@@ -198,3 +198,28 @@ fn a_failing_plugin_aborts_the_run() {
         .unwrap()
         .starts_with("mutation summarize: summarizer: "));
 }
+
+#[test]
+fn syntax_spans_come_only_with_the_flag() {
+    let fixture = Fixture::new();
+    fixture.write("a.rs", "fn a() {}\n");
+    let base = fixture.commit();
+    fixture.write("a.rs", "fn b() {}\n");
+    let head = fixture.commit();
+    let plain = records(&fixture.run(&base, &head));
+    assert!(record(&plain, "a.rs")["diff"]["rhs"]
+        .get("syntax")
+        .is_none());
+    let output = fixture.diffr(&[&base, &head, "--format", "ndjson", "--syntax"]);
+    let records = records(&output);
+    let syntax = record(&records, "a.rs")["diff"]["rhs"]["syntax"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert!(
+        syntax
+            .iter()
+            .any(|span| span["capture"] == "keyword" && span["start_column"] == 0),
+        "{syntax:?}"
+    );
+}

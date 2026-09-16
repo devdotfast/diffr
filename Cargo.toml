@@ -44,18 +44,12 @@ log = "0.4.14"
 pretty_env_logger = "0.5.0"
 
 radix-heap = "0.4.2"
-# ignore does not declare a MSRV, but it's part of ripgrep, which has
-# a slightly more aggressive MSRV than difftastic. Ignore 0.4.30
-# requires rust 1.88.
-ignore = ">= 0.4, < 0.4.30"
-owo-colors = "4.2.3"
 imara-diff = { version = "0.2.0", default-features = false }
 rayon = "1.7.0"
-tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "time"] }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "time", "sync"] }
 tree_magic_mini = "3.2.0"
 
 bumpalo = "3.18.0"
-unicode-width = "0.2.0"
 terminal_size = "0.4.1"
 glob = "0.3.2"
 strum = { version = "0.28", features = ["derive"] }
@@ -140,6 +134,7 @@ serde_path_to_error = "0.1.20"
 schemars = { version = "1.2.2", features = ["preserve_order"] }
 dirs = "5"
 toml_edit = "0.25.15"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "http2"] }
 serde_yaml_ng = "0.10.0"
 jsonschema = { version = "0.56.0", default-features = false }
 # WASM component plugins. Wasmtime 34 is the newest release whose
@@ -184,8 +179,8 @@ members = [
 	"plugins/hide-files",
 	"plugins/removed-runs",
 	"plugins/summarize",
-	"examples/plugins/fixtures",
 	"plugins/test-bodies",
+	"examples/plugins/fixtures",
 ]
 default-members = [
 	".",
@@ -196,8 +191,8 @@ default-members = [
 	"plugins/hide-files",
 	"plugins/removed-runs",
 	"plugins/summarize",
-	"examples/plugins/fixtures",
 	"plugins/test-bodies",
+	"examples/plugins/fixtures",
 ]
 
 [profile.release]

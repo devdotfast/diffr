@@ -333,7 +333,7 @@ mod matcher {
 
 mod results {
     use super::text;
-    use crate::display::line_layout::aligned_rows;
+    use crate::line_layout::aligned_rows;
     use crate::parse::folds::FoldMatch;
     use crate::summary::{DiffResult, FileContent, FileFormat};
 
@@ -359,10 +359,7 @@ mod results {
     fn identical_files_keep_alignment_for_showing_hidden_source() {
         let source = "fn unchanged() {\n    work();\n}\n";
         let diff = DiffResult::from_sources("a.rs", source, source);
-        let rows = aligned_rows(
-            (source, source),
-            (&diff.lhs_positions, &diff.rhs_positions),
-        );
+        let rows = aligned_rows((source, source), (&diff.lhs_positions, &diff.rhs_positions));
         assert_eq!(
             rows,
             [(Some(0), Some(0)), (Some(1), Some(1)), (Some(2), Some(2))]
@@ -435,12 +432,10 @@ mod results {
         let diff = crate::diff_file_content(
             &crate::config::Params::default(),
             "a.py",
-            None,
             &file,
             &file,
             "x = 1\n",
             "x = 2\n",
-            &Default::default(),
             &options,
             &[],
         )

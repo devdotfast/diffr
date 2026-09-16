@@ -19,6 +19,8 @@ an error that names the file and the key's dotted path, for example
 ## Commands
 
 ```sh
+diffr config                  # settings screen in the terminal frontend
+diffr config theme            # the same, searching for "theme"
 diffr config schema           # JSON Schema: title, group, description and default per key, plugins included
 diffr config show [--json]    # the resolved configuration
 diffr config set diff.graph_limit 5000000

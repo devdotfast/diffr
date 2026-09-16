@@ -46,12 +46,7 @@ pub(crate) fn project_compiled(
     options: DiffOptions,
 ) -> (FileChange, Pairing<protocol::Source>) {
     let result = crate::summary::DiffResult::from_sources_with_options(
-        path,
-        before,
-        after,
-        params,
-        &crate::options::DisplayOptions::default(),
-        &options,
+        path, before, after, params, &options,
     )
     .unwrap();
     let file_ref = FileRef {
@@ -72,6 +67,7 @@ pub(crate) fn project_compiled(
         project::Inputs {
             file: &file.file,
             sizes: (before.len() as u64, after.len() as u64),
+            syntax: (Vec::new(), Vec::new()),
         },
     );
     let Diff::Text { sides, .. } = diff else {
@@ -117,6 +113,7 @@ pub(crate) fn trees(sides: &Pairing<protocol::Source>) -> tree::Pairing<tree::So
 pub(crate) fn wire(sides: tree::Pairing<tree::Source>) -> Pairing<protocol::Source> {
     let source = |side: tree::Source| protocol::Source {
         text: side.text,
+        syntax: Vec::new(),
         regions: from_tree(side.regions),
     };
     match sides {

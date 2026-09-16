@@ -5,15 +5,14 @@
 use super::project::{self, Inputs};
 use super::{
     Diff, Event, FileChange, LineCounts, Node, Outcome, Problem, Region, Snapshot, Source,
-    Visibility, VERSION,
+    SyntaxSpan, Visibility, VERSION,
 };
 use crate::engine::QueryConflict;
 use crate::git::{DiffSession, FileError, LoadedFile};
 use crate::hash::DftHashSet;
-use crate::options::DisplayOptions;
 use crate::pairing::Pairing;
 use crate::plugin::{MutationFailed, Pipeline};
-use crate::summary::DiffResult;
+use crate::summary::{DiffResult, FileContent, FileFormat};
 use anyhow::anyhow;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::io::{BufWriter, Write};
@@ -21,6 +20,13 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
+
+/// Runtime choices that shape every file record.
+#[derive(Clone, Copy)]
+pub(crate) struct Options {
+    /// Emit every token's capture name (`--syntax`).
+    pub(crate) syntax: bool,
+}
 
 /// What the stream ended with: whether any file failed, and whether a
 /// run-level failure cut it short.
@@ -36,6 +42,7 @@ pub(crate) fn write(
     session: DiffSession,
     jobs: usize,
     pipeline: Arc<Pipeline>,
+    options: Options,
     output: &mut impl Write,
 ) -> anyhow::Result<Ended> {
     let manifest = manifest(&session);
@@ -46,7 +53,7 @@ pub(crate) fn write(
         .build()?;
     let worker = thread::spawn(move || {
         // A disconnected consumer cancels production after the files in flight.
-        let _ = produce(session, manifest, &pool, &pipeline, sender);
+        let _ = produce(session, manifest, &pool, &pipeline, options, sender);
     });
     let mut output = BufWriter::new(output);
     let result: anyhow::Result<Ended> = (|| {
@@ -92,6 +99,7 @@ fn produce(
     manifest: Vec<FileChange>,
     pool: &rayon::ThreadPool,
     pipeline: &Pipeline,
+    options: Options,
     sender: SyncSender<Event>,
 ) -> Result<(), Disconnected> {
     let send = |event: Event| sender.send(event).map_err(|_| Disconnected);
@@ -112,7 +120,7 @@ fn produce(
     };
     pool.install(|| {
         loader.par_bridge().for_each(|(file, loaded)| {
-            let (visibility, outcome) = match loaded.and_then(|loaded| diffed(&loaded)) {
+            let (visibility, outcome) = match loaded.and_then(|loaded| diffed(&loaded, options)) {
                 Ok((entry, diff)) => match shape(pipeline, &entry, diff) {
                     Ok((visibility, diff)) => (visibility, Outcome::Diff { diff }),
                     Err(error) => {
@@ -174,14 +182,35 @@ fn wire_error(error: &anyhow::Error) -> Problem {
 
 /// The projected diff of one loaded file and its manifest entry. `Err` is
 /// this file's failure.
-fn diffed(loaded: &LoadedFile) -> anyhow::Result<(FileChange, Diff)> {
-    // The stream reads no terminal hunks, so their context is moot.
-    let result = loaded.diff(&DisplayOptions::default())?;
+fn diffed(loaded: &LoadedFile, options: Options) -> anyhow::Result<(FileChange, Diff)> {
+    let result = loaded.diff()?;
+    let syntax = match options.syntax {
+        true => syntax_spans(&result, &loaded.params),
+        false => (Vec::new(), Vec::new()),
+    };
     let inputs = Inputs {
         file: &loaded.file.sides,
         sizes: loaded.sizes(),
+        syntax,
     };
     Ok((loaded.file.manifest_entry(), project::diff(&result, inputs)))
+}
+
+/// Highlight spans for both sides of a structurally parsed file. A file that
+/// fell back to a line diff has none.
+fn syntax_spans(
+    diff: &DiffResult,
+    params: &crate::config::Params,
+) -> (Vec<SyntaxSpan>, Vec<SyntaxSpan>) {
+    let FileFormat::SupportedLanguage(language) = &diff.file_format else {
+        return (Vec::new(), Vec::new());
+    };
+    let parser = params.language(*language).parser;
+    let spans = |content: &FileContent| match content {
+        FileContent::Text(src) => project::syntax_spans(src, parser),
+        FileContent::Binary => Vec::new(),
+    };
+    (spans(&diff.lhs_src), spans(&diff.rhs_src))
 }
 
 /// Run the plugins on a diff and recount what stays visible. A binary diff has
@@ -204,6 +233,7 @@ fn shape(
         Diff::Binary { sides } => {
             let mut empty = sides.clone().map(|_| Source {
                 text: String::new(),
+                syntax: Vec::new(),
                 regions: Vec::new(),
             });
             let visibility = pipeline.run(entry, &mut empty)?;
@@ -235,7 +265,9 @@ pub(crate) fn write_file(
     after: &str,
     sizes: (u64, u64),
     compute: impl FnOnce() -> Result<DiffResult, QueryConflict>,
+    params: &crate::config::Params,
     pipeline: &Pipeline,
+    options: Options,
     output: &mut impl Write,
 ) -> anyhow::Result<Ended> {
     let file = crate::git::FileChange::standalone(before, after);
@@ -272,6 +304,10 @@ pub(crate) fn write_file(
                 Inputs {
                     file: &file.sides,
                     sizes,
+                    syntax: match options.syntax {
+                        true => syntax_spans(&result, params),
+                        false => (Vec::new(), Vec::new()),
+                    },
                 },
             );
             match shape(pipeline, &entry, projected) {
@@ -438,6 +474,7 @@ mod visible_tests {
     fn source(regions: Vec<Region>) -> Source {
         Source {
             text: String::new(),
+            syntax: vec![],
             regions,
         }
     }
@@ -491,8 +528,8 @@ mod conflict_tests {
     fn a_query_conflict_is_that_files_error_and_the_run_completes() {
         let params = try_with_queries(&[(
             "rust",
-            "((block) @fold (#set! tag \"context:whole\"))\n\
-             ((block \"{\" @fold.open \"}\" @fold.close) @fold (#set! tag \"context:inside\"))\n",
+            "((block) @fold (#set! tag \"removed-runs:whole\"))\n\
+             ((block \"{\" @fold.open \"}\" @fold.close) @fold (#set! tag \"removed-runs:inside\"))\n",
         )])
         .unwrap();
         let mut output = Vec::new();
@@ -508,7 +545,9 @@ mod conflict_tests {
                     &params,
                 )
             },
+            &params,
             &Pipeline::default(),
+            Options { syntax: false },
             &mut output,
         )
         .unwrap();

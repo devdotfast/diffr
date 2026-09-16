@@ -1134,52 +1134,6 @@ fn change_positions_<'a>(
     }
 }
 
-pub(crate) fn zip_pad_shorter<Tx: Clone, Ty: Clone>(
-    lhs: &[Tx],
-    rhs: &[Ty],
-) -> Vec<(Option<Tx>, Option<Ty>)> {
-    let mut res = vec![];
-
-    let mut lhs_iter = lhs.iter();
-    let mut rhs_iter = rhs.iter();
-    loop {
-        match (lhs_iter.next(), rhs_iter.next()) {
-            (None, None) => break,
-            (x, y) => res.push((x.cloned(), y.cloned())),
-        }
-    }
-
-    res
-}
-
-/// Zip `lhs` with `rhs`, but repeat the last item from the shorter
-/// slice.
-pub(crate) fn zip_repeat_shorter<Tx: Clone, Ty: Clone>(lhs: &[Tx], rhs: &[Ty]) -> Vec<(Tx, Ty)> {
-    let lhs_last: Tx = match lhs.last() {
-        Some(last) => last.clone(),
-        None => return vec![],
-    };
-    let rhs_last: Ty = match rhs.last() {
-        Some(last) => last.clone(),
-        None => return vec![],
-    };
-
-    let mut res = vec![];
-    let mut lhs_iter = lhs.iter();
-    let mut rhs_iter = rhs.iter();
-    loop {
-        match (lhs_iter.next(), rhs_iter.next()) {
-            (None, None) => break,
-            (x, y) => res.push((
-                x.cloned().unwrap_or_else(|| lhs_last.clone()),
-                y.cloned().unwrap_or_else(|| rhs_last.clone()),
-            )),
-        }
-    }
-
-    res
-}
-
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;

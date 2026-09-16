@@ -27,19 +27,22 @@ Text output does not implement Git's path quoting or compact rename formatting.
 for changes; ordinary output exits 0. Errors exit 2. `--no-index` supports two
 files, implies change exit status, and does not yet support metadata options.
 
-Structural output uses the existing terminal renderer. `--format ndjson` emits
-the event stream described in [streaming.md](streaming.md), diffing `--jobs N`
-files at once (default 16) and emitting each as it finishes.
+A comparison opens the terminal UI (`tui/`), which needs a terminal on stdin
+and stdout; without one diffr exits 2. `--format ndjson` instead writes the
+event stream described in [streaming.md](streaming.md), diffing `--jobs N`
+files at once (default 16) and emitting each as it finishes; the terminal UI
+reads the same stream. `ndjson` is the only format.
 `-U N` sets the unchanged lines kept around each change, overriding
-`plugins.context.lines` (default 3). Matching limits, `--ignore-comments`,
-color, width and inline/split display remain configurable; see `--help`.
+`plugins.context.lines` (default 3). Matching limits and `--ignore-comments`
+remain configurable; `--width` sets the columns of `--stat`. See `--help`.
 
 Configuration comes from the global file, command-line flags and git
-attributes; `--config PATH` replaces the global file. `diffr config schema`,
-`show` and `set` are the commands frontends use. See [config.md](config.md).
+attributes; `--config PATH` replaces the global file. `diffr config` opens the
+settings screen, and `diffr config schema`, `show` and `set` are the commands
+frontends use. See [config.md](config.md).
 
 This is a subset of git diff, not full flag parity: unsupported options and Git
 magic pathspecs fail explicitly. Untracked files are excluded as in git diff.
-The old file/external-diff/debug parser is available under `debug` for diagnostic
-use; it is not the default argument syntax. `review` is replaced by the normal
-CLI's `--format` option. The stdout event contract is in [streaming.md](streaming.md).
+`diffr debug` keeps difftastic's syntax dumps (`--dump-ts`, `--dump-syntax`,
+`--dump-syntax-dot`) and `--list-languages` for diagnostics. The stdout event
+contract is in [streaming.md](streaming.md).

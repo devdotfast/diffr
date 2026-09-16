@@ -75,7 +75,7 @@ Each example deliberately specifies a small selected set, not every possible fol
 
 - `before.*` / `after.*`: exact pinned sources. An absent side is an empty fixture file; its provenance path and blob SHA are null.
 - `provenance.json`: PR URL, merge time, comparison commits, paths, local filenames, original Git blob SHAs and SHA-256 hashes. This is the source identity record.
-- `expected.json`: the original flat annotation oracle (`folds` and `context`); this is not the serialized live domain. Generated context now belongs to each `diff.hunks[i]`.
+- `expected.json`: the original flat annotation oracle (`folds` and `context`); this is not the serialized live domain.
 - `case.json`: purpose, exact reviewed excerpts selected by the annotations, and source ranges/text that folds must leave exposed. These excerpt assertions are fixture oracles, not domain fields.
 - `change.patch`: ordinary Git/Myers diff with three context lines, for comparison. Difftastic may choose different hunks; when integrating, context must be deduplicated against its actual visible rows.
 - `README.md`: links and selected ranges with the actual source excerpts.

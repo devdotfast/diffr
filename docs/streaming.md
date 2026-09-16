@@ -2,7 +2,7 @@
 
 ```sh
 diffr main HEAD --format ndjson
-diffr --cached --format ndjson --order test,docs -- src/
+diffr --cached --format ndjson --syntax --order test,docs -- src/
 diffr --no-index --format ndjson -- before.rs after.rs
 ```
 
@@ -131,8 +131,8 @@ any file failed or the run aborted.
 
 ```jsonc
 {"type": "text",
- "lhs": {"text": "…", "regions": [...]},
- "rhs": {"text": "…", "regions": [...]},
+ "lhs": {"text": "…", "syntax": [...], "regions": [...]},
+ "rhs": {"text": "…", "syntax": [...], "regions": [...]},
  "stats": {"textual": {"added": 4, "removed": 1},
            "visible": {"added": 2, "removed": 1}}}          // + "fallback": {code, message} on a line diff
 ```
@@ -141,7 +141,11 @@ A `binary` diff carries only `{"lhs": {"size": n}, "rhs": {"size": n}}`; either
 side being binary makes the whole diff binary. Text sides are a pairing too: a
 deleted file has `lhs` only.
 
-`text` is the complete source.
+`text` is the complete source. `syntax` is present only with `--syntax`: every
+token as `{line, start_column, end_column, capture}`, where `capture` is the
+tree-sitter highlight capture name (`keyword`, `function.method`, …). Spans are
+per line, sorted, and non-overlapping; where captures nest, the innermost wins.
+Files that fell back to a line diff have no syntax.
 
 `stats.textual` counts lines with any byte change. `stats.visible` counts the
 changed lines still on screen under the default visibility: a line that carries

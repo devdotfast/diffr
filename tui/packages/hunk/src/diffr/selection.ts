@@ -33,18 +33,16 @@ export function copySelection(
     const key = `${row.fileIndex}:${n}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const source =
-      selection.side === "left"
-        ? files[row.fileIndex].diff.lhs_src
-        : files[row.fileIndex].diff.rhs_src;
-    if (source !== "Binary") {
-      let lines = sources.get(row.fileIndex);
-      if (!lines) {
-        lines = source.Text.split("\n");
-        sources.set(row.fileIndex, lines);
-      }
-      result.push(lines[n - 1]);
+    const diff = files[row.fileIndex].diff;
+    if (diff.type !== "text") continue;
+    const source = selection.side === "left" ? diff.lhs : diff.rhs;
+    if (!source) continue;
+    let lines = sources.get(row.fileIndex);
+    if (!lines) {
+      lines = source.text.split("\n");
+      sources.set(row.fileIndex, lines);
     }
+    result.push(lines[n - 1]);
   }
   return result.join("\n");
 }

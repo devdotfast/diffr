@@ -7,12 +7,8 @@ use crate::diff::changes::ChangeMap;
 use crate::diff::shortest_path::{mark_syntax, ExceededGraphLimit};
 use crate::diff::sliders::fix_all_sliders;
 use crate::diff::unchanged;
-use crate::display;
-use crate::display::context::opposite_positions;
-use crate::display::hunks::{matched_pos_to_hunks, merge_adjacent};
 use crate::line_parser;
-use crate::lines::MaxLine;
-use crate::options::{DiffOptions, DisplayOptions, FileArgument};
+use crate::options::{DiffOptions, FileArgument};
 use crate::parse::folds;
 use crate::parse::guess_language::{guess, language_name, LanguageOverride};
 use crate::parse::syntax::{self, init_next_prev};
@@ -82,14 +78,7 @@ impl DiffResult {
         rhs: &str,
         params: &Params,
     ) -> Result<Self, QueryConflict> {
-        Self::from_sources_with_options(
-            path,
-            lhs,
-            rhs,
-            params,
-            &DisplayOptions::default(),
-            &DiffOptions::default(),
-        )
+        Self::from_sources_with_options(path, lhs, rhs, params, &DiffOptions::default())
     }
 
     pub(crate) fn from_sources_with_options(
@@ -97,62 +86,19 @@ impl DiffResult {
         lhs: &str,
         rhs: &str,
         params: &Params,
-        display: &DisplayOptions,
         options: &DiffOptions,
     ) -> Result<Self, QueryConflict> {
         let file = crate::options::FileArgument::NamedPath(path.into());
-        diff_file_content(
-            params,
-            path,
-            None,
-            &file,
-            &file,
-            lhs,
-            rhs,
-            display,
-            options,
-            &[],
-        )
+        diff_file_content(params, path, &file, &file, lhs, rhs, options, &[])
     }
 }
-fn check_only_text(
-    file_format: &FileFormat,
-    display_path: &str,
-    extra_info: Option<String>,
-    lhs_src: &str,
-    rhs_src: &str,
-) -> DiffResult {
-    let has_byte_changes = if lhs_src == rhs_src {
-        None
-    } else {
-        Some((lhs_src.as_bytes().len(), rhs_src.as_bytes().len()))
-    };
-
-    DiffResult {
-        display_path: display_path.to_owned(),
-        extra_info,
-        file_format: file_format.clone(),
-        lhs_src: FileContent::Text(lhs_src.into()),
-        rhs_src: FileContent::Text(rhs_src.into()),
-        lhs_positions: vec![],
-        rhs_positions: vec![],
-        hunks: vec![],
-        lhs_folds: vec![],
-        rhs_folds: vec![],
-        has_byte_changes,
-        has_syntactic_changes: lhs_src != rhs_src,
-    }
-}
-
 pub(crate) fn diff_file_content(
     params: &Params,
     display_path: &str,
-    extra_info: Option<String>,
     _lhs_path: &FileArgument,
     rhs_path: &FileArgument,
     lhs_src: &str,
     rhs_src: &str,
-    display_options: &DisplayOptions,
     diff_options: &DiffOptions,
     overrides: &[(LanguageOverride, Vec<glob::Pattern>)],
 ) -> Result<DiffResult, QueryConflict> {
@@ -173,18 +119,13 @@ pub(crate) fn diff_file_content(
         // If the two files are byte-for-byte identical, return early
         // rather than doing any more work.
         return Ok(DiffResult {
-            extra_info,
-            display_path: display_path.to_owned(),
             file_format,
             lhs_src: FileContent::Text(lhs_src.into()),
             rhs_src: FileContent::Text(rhs_src.into()),
             lhs_positions: vec![],
             rhs_positions: vec![],
-            hunks: vec![],
             lhs_folds: vec![],
             rhs_folds: vec![],
-            has_byte_changes: None,
-            has_syntactic_changes: false,
         });
     }
 
@@ -196,30 +137,11 @@ pub(crate) fn diff_file_content(
                 cause: FallbackCause::Generated,
                 reason: GENERATED_FALLBACK.to_owned(),
             };
-            if diff_options.check_only {
-                return Ok(check_only_text(
-                    &file_format,
-                    display_path,
-                    extra_info,
-                    lhs_src,
-                    rhs_src,
-                ));
-            }
             let (lhs_positions, rhs_positions) = line_parser::change_positions(lhs_src, rhs_src);
             (file_format, lhs_positions, rhs_positions)
         }
         None => {
             let file_format = FileFormat::PlainText;
-            if diff_options.check_only {
-                return Ok(check_only_text(
-                    &file_format,
-                    display_path,
-                    extra_info,
-                    lhs_src,
-                    rhs_src,
-                ));
-            }
-
             let (lhs_positions, rhs_positions) = line_parser::change_positions(lhs_src, rhs_src);
             (file_format, lhs_positions, rhs_positions)
         }
@@ -237,31 +159,6 @@ pub(crate) fn diff_file_content(
                         diff_options,
                     ) {
                         Ok((lhs, rhs)) => {
-                            if diff_options.check_only {
-                                let has_syntactic_changes = lhs != rhs;
-
-                                let has_byte_changes = if lhs_src == rhs_src {
-                                    None
-                                } else {
-                                    Some((lhs_src.as_bytes().len(), rhs_src.as_bytes().len()))
-                                };
-
-                                return Ok(DiffResult {
-                                    extra_info,
-                                    display_path: display_path.to_owned(),
-                                    file_format: FileFormat::SupportedLanguage(language),
-                                    lhs_src: FileContent::Text(lhs_src.to_owned()),
-                                    rhs_src: FileContent::Text(rhs_src.to_owned()),
-                                    lhs_positions: vec![],
-                                    rhs_positions: vec![],
-                                    hunks: vec![],
-                                    lhs_folds: vec![],
-                                    rhs_folds: vec![],
-                                                                has_byte_changes,
-                                    has_syntactic_changes,
-                                });
-                            }
-
                             let mut change_map = ChangeMap::default();
                             let possibly_changed = if env::var("DFT_DBG_KEEP_UNCHANGED").is_ok() {
                                 vec![(lhs.clone(), rhs.clone())]
@@ -374,16 +271,6 @@ pub(crate) fn diff_file_content(
                                 ),
                             };
 
-                            if diff_options.check_only {
-                                return Ok(check_only_text(
-                                    &file_format,
-                                    display_path,
-                                    extra_info,
-                                    lhs_src,
-                                    rhs_src,
-                                ));
-                            }
-
                             // The trees parsed, only with too many errors to
                             // match on. Folds and context still come from them.
                             let conflict = |side| {
@@ -432,16 +319,6 @@ pub(crate) fn diff_file_content(
                         ),
                     };
 
-                    if diff_options.check_only {
-                        return Ok(check_only_text(
-                            &file_format,
-                            display_path,
-                            extra_info,
-                            lhs_src,
-                            rhs_src,
-                        ));
-                    }
-
                     let (lhs_positions, rhs_positions) =
                         line_parser::change_positions(lhs_src, rhs_src);
                     (file_format, lhs_positions, rhs_positions)
@@ -461,44 +338,13 @@ pub(crate) fn diff_file_content(
         &rhs_src.split_terminator('\n').collect::<Vec<_>>(),
     );
 
-    let opposite_to_lhs = opposite_positions(&lhs_positions);
-    let opposite_to_rhs = opposite_positions(&rhs_positions);
-
-    let hunks = matched_pos_to_hunks(&lhs_positions, &rhs_positions);
-    let hunks = merge_adjacent(
-        &hunks,
-        &opposite_to_lhs,
-        &opposite_to_rhs,
-        lhs_src.max_line(),
-        rhs_src.max_line(),
-        display_options.num_context_lines as usize,
-    );
-    let has_syntactic_changes = !hunks.is_empty();
-    let hunks = display::prepare::prepare(
-        &hunks,
-        (lhs_src, rhs_src),
-        (&lhs_positions, &rhs_positions),
-        display_options.num_context_lines as usize,
-    );
-
-    let has_byte_changes = if lhs_src == rhs_src {
-        None
-    } else {
-        Some((lhs_src.as_bytes().len(), rhs_src.as_bytes().len()))
-    };
-
     Ok(DiffResult {
-        extra_info,
-        display_path: display_path.to_owned(),
         file_format,
         lhs_src: FileContent::Text(lhs_src.to_owned()),
         rhs_src: FileContent::Text(rhs_src.to_owned()),
         lhs_positions,
         rhs_positions,
-        hunks,
         lhs_folds,
         rhs_folds,
-        has_byte_changes,
-        has_syntactic_changes,
     })
 }

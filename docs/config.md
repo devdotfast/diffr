@@ -23,7 +23,7 @@ diffr config schema           # JSON Schema: title, group, description and defau
 diffr config show [--json]    # the resolved configuration
 diffr config set diff.graph_limit 5000000
 diffr config set theme.name default-light
-diffr config set plugins.context.lines 5
+diffr config set plugins.deleted-bodies.min_lines 20
 ```
 
 `set` writes one key into the global file (or the `--config` file), keeping
@@ -53,7 +53,27 @@ name = "default-dark"      # a bundled terminal theme
 path = "/path/to/theme.toml"  # or a Helix-style theme file
 
 [plugins]                  # see "Plugins" below
-order = ["context"]
+order = ["context", "hide-files", "deleted-bodies", "test-bodies", "removed-runs", "group"]
+
+[plugins.hide-files]
+enabled = true
+tags = ["generated", "vendored", "test"]   # the first listed tag a file carries names the reason
+deleted = true                              # hide deleted files whatever their tags
+
+[plugins.deleted-bodies]                    # deleted function bodies, "12 lines removed"
+enabled = true
+min_lines = 12
+
+[plugins.test-bodies]                       # test functions and test modules, on both sides
+enabled = true
+min_lines = 3
+
+[plugins.removed-runs]                      # the middle of long removed stretches
+enabled = true
+min_lines = 5
+
+[plugins.group]                             # adjacent collapsed regions under one row
+enabled = true
 ```
 
 When a file exceeds a `[diff]` limit it falls back to a line diff: the file's
@@ -75,11 +95,31 @@ produce on the wire.
 
 ```toml
 [plugins]
-order = ["context"]
+order = ["context", "hide-files", "deleted-bodies", "test-bodies", "removed-runs", "group"]
 
 [plugins.context]                           # unchanged lines far from any change collapse
 enabled = true
 lines = 3                                   # kept on either side of a change; -U overrides it
+
+[plugins.hide-files]
+enabled = true
+tags = ["generated", "vendored", "test"]   # the first listed tag a file carries names the reason
+deleted = true                              # hide deleted files whatever their tags
+
+[plugins.deleted-bodies]                    # deleted function bodies, "12 lines removed"
+enabled = true
+min_lines = 12
+
+[plugins.test-bodies]                       # test functions and test modules, on both sides
+enabled = true
+min_lines = 3
+
+[plugins.removed-runs]                      # the middle of long removed stretches
+enabled = true
+min_lines = 5
+
+[plugins.group]                             # adjacent collapsed regions under one row
+enabled = true
 ```
 
 Every bundled plugin has an entry pre-filled with the values above; a file
@@ -89,7 +129,7 @@ when the file loads. In an entry, `enabled` belongs to diffr: set
 `enabled = false` to turn a plugin off. Every other key is one of the
 plugin's options, checked against the options its `plugin.toml` declares: an
 unknown option or a value of the wrong type is an error naming the key, such
-as `plugins.context: lines: "many" is not of type "integer"`.
+as `plugins.deleted-bodies: min_lines: "many" is not of type "integer"`.
 
 Every plugin that is on is made (its `new` runs) when diffr starts, before
 any output, and one that cannot be made stops diffr with an error naming it.
@@ -102,7 +142,7 @@ Every bundled plugin is a folder under `plugins/`, laid out the way any plugin
 is:
 
 ```text
-plugins/context/
+plugins/deleted-bodies/
   plugin.toml           # name, title, options, query files
   queries/rust.scm      # one query file per language
   Cargo.toml, src/lib.rs  # the plugin's code, a crate using the plugin SDK
@@ -141,9 +181,10 @@ settings schema in the order `plugin.toml` declares them.
 
 ### Queries
 
-Tree-sitter queries decide which folds exist and which constructs enclose a
-change; plugins decide how they are shown. Each plugin that reads syntax
-(today `context`) lists one query file per language
+Tree-sitter queries decide which folds exist and what they are, as tags;
+plugins decide how they are shown. Each plugin that reads syntax
+(`context`, `deleted-bodies`, `test-bodies`, `removed-runs`)
+lists one query file per language
 key (`rust`, `python`, `go`, `javascript`, `javascriptjsx`, `typescript`,
 `typescripttsx`, or any other lowercase language name) under `[queries]` in
 its `plugin.toml`. Queries are not configured in `[plugins]`.

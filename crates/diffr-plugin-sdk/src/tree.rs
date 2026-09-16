@@ -284,6 +284,67 @@ pub fn has_tag(region: &Region, tag: &str) -> bool {
     region.tags.iter().any(|own| own == tag)
 }
 
+/// How many lines (attributes and the signature) may sit between a
+/// docstring and the line its function's body opens on.
+const MAX_SIGNATURE_LINES: usize = 12;
+
+/// The `id` of the docstring of `body`, a function body fold on `side`, as
+/// `plugin`'s queries tag it (`<plugin>:docstring`, from
+/// `plugins/shared/queries/<language>-docstrings.scm`): the body's first
+/// fold child when it starts where the body does (Python), or else the fold
+/// just before the body in document order, with
+/// only a signature's worth of lines between them. The search runs back
+/// through the body's siblings and then out through the folds that enclose
+/// it, so a fold wrapping the whole function (another plugin's scope) does
+/// not hide the docstring above it; it stops at a fold carrying one of
+/// `plugin`'s own tags, such as the body of an enclosing function. A plugin
+/// that collapses a body links it to its docstring, so the two open and
+/// close together.
+pub fn docstring_of(side: &Source, body: &Region, plugin: &str) -> Option<u32> {
+    let tag = format!("{plugin}:docstring");
+    let own = format!("{plugin}:");
+    if let Node::Fold { children } = &body.node {
+        if let Some(first) = children
+            .iter()
+            .find(|child| is_fold(child))
+            .filter(|first| has_tag(first, &tag) && first.range.start.line == body.range.start.line)
+        {
+            return Some(first.id);
+        }
+    }
+    let path = path_to(&side.regions, body.id).expect("the body is on this side");
+    let mut between = 0;
+    // From the body's own siblings outwards: at each level, the regions
+    // before the one on the path.
+    let mut level: &[Region] = &side.regions;
+    let mut levels = Vec::new();
+    for &index in &path {
+        levels.push((level, index));
+        if let Node::Fold { children } = &level[index].node {
+            level = children;
+        }
+    }
+    for (depth, (siblings, index)) in levels.iter().enumerate().rev() {
+        if depth + 1 < path.len() {
+            // Leaving the fold at `siblings[index]` for the regions before it.
+            let parent = &siblings[*index];
+            if parent.tags.iter().any(|tag| tag.starts_with(&own)) {
+                return None;
+            }
+        }
+        for region in siblings[..*index].iter().rev() {
+            if is_fold(region) {
+                return has_tag(region, &tag).then_some(region.id);
+            }
+            between += line_count(region);
+            if between > MAX_SIGNATURE_LINES {
+                return None;
+            }
+        }
+    }
+    None
+}
+
 /// Child indices from the root down to the region with this `id`.
 pub fn path_to(regions: &[Region], id: u32) -> Option<Vec<usize>> {
     for (index, region) in regions.iter().enumerate() {

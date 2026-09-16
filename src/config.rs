@@ -21,14 +21,11 @@ pub(crate) mod store;
 use crate::hash::DftHashMap;
 use crate::options::DiffOptions;
 use crate::parse::{guess_language::Language, tree_sitter_parser};
-use crate::plugin::config::PluginsConfig;
-#[cfg(test)]
-use crate::plugin::config::Queries;
+use crate::plugin::config::{PluginsConfig, Queries};
 use crate::plugin::queries;
-use query::{AnnotationQuery, QuerySource};
+use query::AnnotationQuery;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use strum::IntoEnumIterator;
@@ -226,36 +223,22 @@ impl Config {
         schema
     }
 
-    /// Compile with the query files of every enabled plugin, after the
-    /// bundled fold rules no plugin owns yet.
+    /// Compile with the query files of every enabled plugin.
     pub(crate) fn compile(self) -> Result<Params, ConfigError> {
         let queries = self.plugins.enabled_queries();
-        let mut assembled = queries::assemble(&queries)?;
-        for (name, bundled) in bundled_folds() {
-            assembled.entry(name).or_default().insert(0, bundled);
-        }
-        self.compile_assembled(assembled)
+        self.compile_queries(queries)
     }
 
     /// Compile with `queries`, the enabled plugins' query files in
     /// `plugins.order`.
-    #[cfg(test)]
     pub(crate) fn compile_queries(
         self,
         queries: Vec<(String, Queries)>,
     ) -> Result<Params, ConfigError> {
-        let assembled = queries::assemble(&queries)?;
-        self.compile_assembled(assembled)
-    }
-
-    fn compile_assembled(
-        self,
-        assembled: BTreeMap<String, Vec<QuerySource>>,
-    ) -> Result<Params, ConfigError> {
         let mut languages: DftHashMap<_, _> = Language::iter()
             .map(|language| (language, OnceLock::new()))
             .collect();
-        for (name, sources) in assembled {
+        for (name, sources) in queries::assemble(&queries)? {
             let language = Language::iter()
                 .find(|language| format!("{language:?}").to_lowercase() == name)
                 .ok_or_else(|| ConfigError(format!("unknown language: {name}")))?;
@@ -279,44 +262,10 @@ impl Config {
     }
 }
 
-/// The name of the bundled fold queries: config/defaults.toml.
-const BUNDLED_FOLDS: &str = "config/defaults.toml";
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BundledFolds {
-    languages: BTreeMap<String, BundledLanguage>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BundledLanguage {
-    folds: String,
-}
-
-/// Each language's bundled fold query. No bundled plugin owns fold queries
-/// yet, so they stay in config/defaults.toml and come before the plugins'
-/// query files.
-fn bundled_folds() -> impl Iterator<Item = (String, QuerySource)> {
-    let bundled: BundledFolds = toml::from_str(include_str!("config/defaults.toml"))
-        .expect("the bundled fold queries parse");
-    bundled.languages.into_iter().map(|(name, language)| {
-        let source = QuerySource {
-            name: format!("{BUNDLED_FOLDS}: languages.{name}.folds"),
-            text: language.folds,
-        };
-        (name, source)
-    })
-}
-
 /// Every tag a fold query sets is `<plugin>:<name>`, naming a plugin in
-/// `plugins.order`: a plugin reads only the tags its own queries set. The
-/// bundled fold queries' tags predate plugins and carry no prefix.
+/// `plugins.order`: a plugin reads only the tags its own queries set.
 fn check_tags(query: &AnnotationQuery, order: &[String]) -> Result<(), ConfigError> {
     for pattern in &query.patterns {
-        if query.sources[pattern.source].starts_with(BUNDLED_FOLDS) {
-            continue;
-        }
         for tag in &pattern.tags {
             let owned = tag.split_once(':').is_some_and(|(plugin, name)| {
                 !name.is_empty() && order.iter().any(|own| own == plugin)
@@ -403,8 +352,10 @@ mod tests {
             result.file_format,
             crate::summary::FileFormat::SupportedLanguage(Language::C)
         ));
-        assert!(result.has_syntactic_changes);
-        assert!(!result.rhs_positions.is_empty());
+        assert!(result
+            .rhs_positions
+            .iter()
+            .any(|position| position.kind.is_novel()));
         assert!(result.rhs_folds.is_empty());
     }
 
@@ -413,16 +364,16 @@ mod tests {
         let params = with_queries(&[
             (
                 "javascript",
-                r#"((statement_block) @fold (#set! tag "context:plain-js"))"#,
+                r#"((statement_block) @fold (#set! tag "removed-runs:plain-js"))"#,
             ),
             (
                 "javascriptjsx",
-                r#"((statement_block) @fold (#set! tag "context:jsx"))"#,
+                r#"((statement_block) @fold (#set! tag "removed-runs:jsx"))"#,
             ),
         ]);
         for (path, tag) in [
-            ("file.js", "context:plain-js"),
-            ("file.jsx", "context:jsx"),
+            ("file.js", "removed-runs:plain-js"),
+            ("file.jsx", "removed-runs:jsx"),
         ] {
             let result = DiffResult::from_sources_with_params(
                 path,
@@ -439,7 +390,7 @@ mod tests {
     fn embedded_languages_use_the_configured_queries() {
         let params = with_queries(&[(
             "javascript",
-            r#"((statement_block) @fold (#set! tag "context:embedded"))"#,
+            r#"((statement_block) @fold (#set! tag "removed-runs:embedded"))"#,
         )]);
         let result = DiffResult::from_sources_with_params(
             "page.html",
@@ -448,7 +399,7 @@ mod tests {
             &params,
         );
         assert_eq!(result.rhs_folds.len(), 1);
-        assert_eq!(result.rhs_folds[0].tags, ["context:embedded"]);
+        assert_eq!(result.rhs_folds[0].tags, ["removed-runs:embedded"]);
     }
 
     #[test]
@@ -457,10 +408,10 @@ mod tests {
         assert!(Config::from_toml("[languages.rust]\ncontext = '(block) @context'").is_err());
         let error = Config::default()
             .compile_queries(vec![(
-                "context".to_owned(),
+                "removed-runs".to_owned(),
                 Queries::from([(
                     "klingon".to_owned(),
-                    "builtin:context/queries/rust.scm".to_owned(),
+                    "builtin:removed-runs/queries/rust.scm".to_owned(),
                 )]),
             )])
             .err()
@@ -483,25 +434,25 @@ mod tests {
                 .err()
                 .expect(query)
                 .to_string();
-            assert!(error.contains("context.scm"), "{error}");
+            assert!(error.contains("removed-runs.scm"), "{error}");
             assert!(error.contains(message), "{error}");
         }
     }
 }
 
 /// Params whose only fold query per listed language is the given text,
-/// written to a file the context plugin owns; no other plugin
+/// written to a file the removed-runs plugin owns; no other plugin
 /// contributes queries.
 #[cfg(test)]
 pub(crate) fn try_with_queries(queries: &[(&str, &str)]) -> Result<Params, ConfigError> {
     let dir = tempfile::tempdir().expect("a temporary directory");
     let mut files = Queries::new();
     for (language, query) in queries {
-        let path = dir.path().join(format!("{language}-context.scm"));
+        let path = dir.path().join(format!("{language}-removed-runs.scm"));
         std::fs::write(&path, query).expect("a query file");
         files.insert((*language).to_owned(), path.display().to_string());
     }
-    Config::default().compile_queries(vec![("context".to_owned(), files)])
+    Config::default().compile_queries(vec![("removed-runs".to_owned(), files)])
 }
 
 #[cfg(test)]
@@ -509,9 +460,9 @@ fn with_queries(queries: &[(&str, &str)]) -> Params {
     try_with_queries(queries).expect("the test queries compile")
 }
 
-/// Params with the bundled fold rules alone: the bodies and collections the
-/// engine's tests are written against, without the scopes `context` lays
-/// over them.
+/// Params with the folds of every bundled plugin's queries but `context`'s:
+/// the bodies, collections and docstrings the engine's tests are written
+/// against, without the scopes `context` lays over them.
 #[cfg(test)]
 pub(crate) fn body_params() -> Params {
     Config::from_toml("[plugins.context]\nenabled = false\n")
@@ -529,12 +480,12 @@ mod query_tests {
     fn arbitrary_tags_and_delimiter_captures_reach_the_domain() {
         let params = with_queries(&[(
             "rust",
-            r#"((block "{" @fold.open "}" @fold.close) @fold (#set! tag "context:user.validation"))"#,
+            r#"((block "{" @fold.open "}" @fold.close) @fold (#set! tag "removed-runs:user.validation"))"#,
         )]);
         let source = "fn f() { println!(\"☕\"); }";
         let diff = DiffResult::from_sources_with_params("a.rs", "", source, &params);
         let fold = &diff.rhs_folds[0];
-        assert_eq!(fold.tags, ["context:user.validation"]);
+        assert_eq!(fold.tags, ["removed-runs:user.validation"]);
         assert_eq!(
             &source[fold.range.start.byte_column..fold.range.end.byte_column],
             " println!(\"☕\"); "
@@ -554,7 +505,7 @@ mod query_tests {
                 Ok(_) => panic!("accepted {query}"),
                 Err(error) => error.to_string(),
             };
-            assert!(error.contains("rust-context.scm: "), "{error}");
+            assert!(error.contains("rust-removed-runs.scm: "), "{error}");
         }
     }
 
@@ -605,9 +556,9 @@ mod tag_tests {
         let params = with_queries(&[(
             "rust",
             r#"
-            ((block) @fold (#set! tag "context:user.check"))
-            ((block) @fold (#set! tag "context:body"))
-            ((block) @fold (#set! tag "context:user.check"))
+            ((block) @fold (#set! tag "removed-runs:user.check"))
+            ((block) @fold (#set! tag "removed-runs:body"))
+            ((block) @fold (#set! tag "removed-runs:user.check"))
         "#,
         )]);
         let result =
@@ -615,13 +566,13 @@ mod tag_tests {
         assert_eq!(result.rhs_folds.len(), 1);
         assert_eq!(
             result.rhs_folds[0].tags,
-            ["context:body", "context:user.check"]
+            ["removed-runs:body", "removed-runs:user.check"]
         );
     }
 
     #[test]
     fn an_opening_capture_alone_folds_to_the_end_of_the_fold_node() {
-        let query = r#"((function_definition ":" @fold.open body: (block) @fold) (#set! tag "context:body"))"#;
+        let query = r#"((function_definition ":" @fold.open body: (block) @fold) (#set! tag "removed-runs:body"))"#;
         let params = with_queries(&[("python", query)]);
         let rhs = "def f(a):\n    x = a\n    return x\n";
         let result = DiffResult::from_sources_with_params("a.py", "", rhs, &params);
@@ -639,13 +590,13 @@ mod tag_tests {
     fn a_node_captured_with_two_ranges_is_a_query_conflict_naming_both_files() {
         let whole = "((block) @fold (#set! tag \"context:whole\"))";
         let interior =
-            "((block \"{\" @fold.open \"}\" @fold.close) @fold (#set! tag \"context:inside\"))";
+            "((block \"{\" @fold.open \"}\" @fold.close) @fold (#set! tag \"removed-runs:inside\"))";
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("queries/rust")).unwrap();
-        let whole_file = dir.path().join("queries/rust/whole.scm");
-        let interior_file = dir.path().join("queries/rust/interior.scm");
-        std::fs::write(&whole_file, whole).unwrap();
-        std::fs::write(&interior_file, interior).unwrap();
+        let context_file = dir.path().join("queries/rust/context.scm");
+        let removed = dir.path().join("queries/rust/removed-runs.scm");
+        std::fs::write(&context_file, whole).unwrap();
+        std::fs::write(&removed, interior).unwrap();
         let queries = |plugin: &str, path: &std::path::Path| {
             (
                 plugin.to_owned(),
@@ -654,12 +605,12 @@ mod tag_tests {
         };
         for order in [
             [
-                queries("context", &whole_file),
-                queries("context", &interior_file),
+                queries("context", &context_file),
+                queries("removed-runs", &removed),
             ],
             [
-                queries("context", &interior_file),
-                queries("context", &whole_file),
+                queries("removed-runs", &removed),
+                queries("context", &context_file),
             ],
         ] {
             let params = Config::default().compile_queries(order.to_vec()).unwrap();
@@ -673,9 +624,9 @@ mod tag_tests {
             let message = conflict.to_string();
             assert!(message.starts_with("src/lib.rs:1: "), "{message}");
             assert!(
-                message.contains("queries/rust/interior.scm and ")
+                message.contains("queries/rust/context.scm and ")
                     && message.contains(
-                        "queries/rust/whole.scm capture the same block with different fold ranges"
+                        "queries/rust/removed-runs.scm capture the same block with different fold ranges"
                     ),
                 "{message}"
             );
@@ -697,8 +648,13 @@ mod tag_tests {
         );
         assert_eq!(result.lhs_folds.len(), 1);
         assert_eq!(result.rhs_folds.len(), 1);
-        assert_eq!(result.lhs_folds[0].tags, ["body", "test"]);
-        assert_eq!(result.rhs_folds[0].tags, ["body", "test"]);
+        let tags = [
+            "deleted-bodies:function",
+            "removed-runs:function",
+            "test-bodies:test",
+        ];
+        assert_eq!(result.lhs_folds[0].tags, tags);
+        assert_eq!(result.rhs_folds[0].tags, tags);
         assert!(matches!(
             result.lhs_folds[0].match_kind,
             FoldMatch::Matched { .. }

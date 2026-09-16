@@ -2,12 +2,17 @@
 //! them: a file projected with the bundled queries, then each plugin's
 //! native code through a [`Pipeline`].
 mod context;
+mod deleted_bodies;
+mod group;
+mod hide_files;
+mod removed_runs;
+mod test_bodies;
 
 use super::*;
 use crate::config::{Config, Params};
 use crate::options::DiffOptions;
 use crate::protocol::{project, Diff, FileRef};
-use diffr_plugin_sdk::tree::{has_tag, is_fold, walk};
+use diffr_plugin_sdk::tree::{docstring_of, has_tag, is_fold, walk};
 use diffr_plugin_sdk::{FileEntry, Move, Plugin};
 use serde_json::json;
 
@@ -72,6 +77,27 @@ pub(crate) fn project_compiled(
         panic!("text diff expected");
     };
     (file, sides)
+}
+
+/// A manifest entry for `path` on the sides `sides` names.
+pub(crate) fn manifest<T>(path: &str, sides: &tree::Pairing<T>, status: FileStatus) -> FileChange {
+    let file_ref = || FileRef {
+        path: path.to_owned(),
+        oid: String::new(),
+        mode: String::new(),
+    };
+    FileChange {
+        file: match sides {
+            tree::Pairing::Both { .. } => Pairing::Both {
+                lhs: file_ref(),
+                rhs: file_ref(),
+            },
+            tree::Pairing::LeftOnly { .. } => Pairing::LeftOnly { lhs: file_ref() },
+            tree::Pairing::RightOnly { .. } => Pairing::RightOnly { rhs: file_ref() },
+        },
+        status,
+        tags: Vec::new(),
+    }
 }
 
 /// The wire's sides as the trees plugins read.
@@ -154,6 +180,115 @@ pub(crate) fn run_trees(
     *sides = trees(&wired);
 }
 
+/// The moves the only plugin of `pipeline` asks for, not carried out.
+pub(crate) fn moves(
+    pipeline: &Pipeline,
+    file: &FileChange,
+    sides: &Pairing<protocol::Source>,
+) -> anyhow::Result<Vec<Move>> {
+    let [plugin] = &pipeline.plugins[..] else {
+        panic!("one plugin");
+    };
+    let sides = trees(sides);
+    let (lhs, rhs) = (
+        sides.lhs().map(tree::Source::to_record),
+        sides.rhs().map(tree::Source::to_record),
+    );
+    plugin.runner.mutate(
+        pipeline.host(&plugin.name, no_head()),
+        &file_entry(file),
+        lhs.as_ref(),
+        rhs.as_ref(),
+    )
+}
+
+/// For each `deleted-bodies:function` body on the after side, the first line
+/// of the body and the lines of its docstring, as `docstring_of` finds it.
+fn documented(path: &str, after: &str) -> Vec<(u32, Option<(u32, u32)>)> {
+    let (_, sides) = project(path, "", after);
+    let sides = trees(&sides);
+    let source = rhs(&sides);
+    let mut bodies = Vec::new();
+    walk(&source.regions, &mut |region| {
+        if is_fold(region) && has_tag(region, "deleted-bodies:function") {
+            let docstring = docstring_of(source, region, "deleted-bodies").map(|id| {
+                let mut lines = None;
+                walk(&source.regions, &mut |docstring| {
+                    if docstring.id == id {
+                        let range = docstring.range.lines();
+                        lines = Some((range.start, range.end));
+                    }
+                });
+                lines.expect("the docstring is on this side")
+            });
+            bodies.push((region.range.start.line, docstring));
+        }
+    });
+    bodies
+}
+
+#[test]
+fn rust_doc_and_line_comments_above_a_function_are_its_docstring() {
+    let after = "fn keep() -> u32 {\n    let x = 1;\n    x\n}\n\n/// Adds one.\n/// Twice, really.\nfn add(\n    a: u32,\n) -> u32 {\n    let b = a;\n    b + 2\n}\n\n// Plain comment.\n// Two lines.\n#[inline]\nfn sub(a: u32) -> u32 {\n    let b = a;\n    b - 1\n}\n\n// One line.\nfn one(a: u32) -> u32 {\n    let b = a;\n    b - 1\n}\n\n/**\n * Block.\n */\nfn block() {\n    x();\n    y();\n}\n";
+    assert_eq!(
+        documented("a.rs", after),
+        [
+            (1, None),
+            (10, Some((5, 7))),
+            (18, Some((14, 16))),
+            (24, None),
+            (32, Some((28, 31)))
+        ],
+        "a one-line docstring is not a region"
+    );
+}
+
+#[test]
+fn a_comment_separated_from_the_function_by_code_does_not_count() {
+    let after =
+        "// About the constant.\n// Really.\nconst X: u32 = 1;\nfn f() -> u32 {\n    let y = X;\n    y\n}\n";
+    assert_eq!(documented("a.rs", after), [(4, None)]);
+}
+
+#[test]
+fn a_docstring_is_not_found_past_a_one_line_function() {
+    let after = "/// First.\n/// Documented.\nfn a() {}\nfn b() {\n    x();\n    y();\n}\n";
+    assert_eq!(documented("a.rs", after), [(4, None)]);
+    let after =
+        "// First.\n// Documented.\nexport const a = 1;\nfunction b() {\n  x();\n  y();\n}\n";
+    assert_eq!(documented("a.ts", after), [(4, None)]);
+}
+
+#[test]
+fn a_python_string_first_in_the_body_is_its_docstring() {
+    let after =
+        "def f(a):\n    \"\"\"Double a.\n\n    Returns an int.\n    \"\"\"\n    return a * 2\n";
+    assert_eq!(documented("a.py", after), [(1, Some((1, 5)))]);
+}
+
+#[test]
+fn go_and_javascript_comment_runs_document_functions() {
+    for (path, source, expected) in [
+        (
+            "a.go",
+            "package a\n\n// Sum adds.\n// Twice.\nfunc Sum(a int) int {\n\tb := a\n\treturn a + b\n}\n",
+            (5, Some((2, 4))),
+        ),
+        (
+            "a.ts",
+            "// Sum adds.\n// Twice.\nexport function sum(a: number) {\n  const b = a;\n  return a + b;\n}\n",
+            (3, Some((0, 2))),
+        ),
+        (
+            "a.js",
+            "/**\n * Sum adds.\n */\nconst sum = (a) => {\n  const b = a;\n  return a + b;\n};\n",
+            (4, Some((0, 3))),
+        ),
+    ] {
+        assert_eq!(documented(path, source), [expected], "{path}");
+    }
+}
+
 #[test]
 fn the_default_pipeline_makes_every_plugin_that_is_on() {
     let pipeline = Pipeline::from_config(&PluginsConfig::default(), Path::new(".")).unwrap();
@@ -162,7 +297,17 @@ fn the_default_pipeline_makes_every_plugin_that_is_on() {
         .iter()
         .map(|plugin| &*plugin.name)
         .collect();
-    assert_eq!(made, ["context"]);
+    assert_eq!(
+        made,
+        [
+            "context",
+            "hide-files",
+            "deleted-bodies",
+            "test-bodies",
+            "removed-runs",
+            "group"
+        ]
+    );
 }
 
 /// Test plugins without options.

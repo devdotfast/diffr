@@ -79,7 +79,7 @@ mod folds {
         assert!(result
             .rhs_folds
             .iter()
-            .any(|fold| fold.tags.iter().any(|tag| tag == "test")));
+            .any(|fold| fold.tags.iter().any(|tag| tag == "test-bodies:test")));
         assert!(result
             .rhs_folds
             .iter()
@@ -97,7 +97,14 @@ mod folds {
         assert_eq!(result.lhs_folds.len(), 2);
         assert_eq!(result.rhs_folds.len(), 2);
         let fold = &result.lhs_folds[0];
-        assert_eq!(fold.tags, ["body", "test"]);
+        assert_eq!(
+            fold.tags,
+            [
+                "deleted-bodies:function",
+                "removed-runs:function",
+                "test-bodies:test"
+            ]
+        );
         let (left, right) =
             paired(fold, &result.rhs_folds).expect("reuse the replaced-string correspondence");
         assert_eq!(
@@ -132,7 +139,7 @@ mod folds {
                 }
                 assert_eq!(folds.len(), 2);
                 for (fold, expected) in folds.iter().zip(["import os", "import sys"]) {
-                    assert_eq!(fold.tags, ["import"]);
+                    assert!(fold.tags.is_empty(), "imports are untagged structure");
                     assert_eq!(text(own, &fold.range), expected);
                     match counterpart(fold, opposite_folds) {
                         Some(other) => assert_eq!(text(opposite, &other.range), expected),

@@ -14,8 +14,23 @@ pub(crate) type Constructor = fn(Host, &str) -> anyhow::Result<Box<dyn Runner>>;
 
 /// Every plugin diffr has native code for, by the name its `plugin.toml`
 /// gives it.
-pub(crate) const REGISTRY: &[(&str, Constructor)] =
-    &[("context", native::<diffr_plugin_context::Context>)];
+pub(crate) const REGISTRY: &[(&str, Constructor)] = &[
+    ("context", native::<diffr_plugin_context::Context>),
+    ("hide-files", native::<diffr_plugin_hide_files::HideFiles>),
+    (
+        "deleted-bodies",
+        native::<diffr_plugin_deleted_bodies::DeletedBodies>,
+    ),
+    (
+        "test-bodies",
+        native::<diffr_plugin_test_bodies::TestBodies>,
+    ),
+    (
+        "removed-runs",
+        native::<diffr_plugin_removed_runs::RemovedRuns>,
+    ),
+    ("group", native::<diffr_plugin_group::Group>),
+];
 
 /// The constructor of the native plugin `name`, if diffr has one.
 pub(crate) fn lookup(name: &str) -> Option<Constructor> {

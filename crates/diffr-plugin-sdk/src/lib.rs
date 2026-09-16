@@ -18,7 +18,7 @@
 //!
 //! - [`tree`] rebuilds a side's list as a tree ([`tree::sides`]) and holds
 //!   the helpers for reading trees ([`walk`], [`OtherSide`], [`one_sided`],
-//!   and the rest).
+//!   [`docstring_of`], and the rest).
 //! - [`apply`] carries moves out. diffr carries every plugin's moves out with
 //!   it, so [`Draft`], which carries a plugin's moves out on a copy as it
 //!   makes them, and [`apply::Fresh`], which predicts fresh ids, give a
@@ -33,7 +33,7 @@ pub use anyhow;
 pub use draft::Draft;
 use serde::de::DeserializeOwned;
 pub use tree::{
-    before_and_after_ids, has_tag, is_fold, line_count, one_sided, path_to,
+    before_and_after_ids, docstring_of, has_tag, is_fold, line_count, one_sided, path_to,
     siblings_of, sides_with_other_ids, walk, walk_mut, Node, OtherSide, Pairing, Region, Source,
 };
 pub use types::{FileEntry, FileStatus, Move, Position, Range, Side, Span, Visibility, ROOT};

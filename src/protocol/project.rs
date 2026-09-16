@@ -992,7 +992,7 @@ mod tests {
         let rhs = rhs.unwrap();
         let bodies: Vec<_> = all(&rhs.regions)
             .into_iter()
-            .filter(|r| r.tags.iter().any(|tag| tag == "body"))
+            .filter(|r| r.tags.iter().any(|tag| tag == "deleted-bodies:function"))
             .map(|r| r.range.start.line)
             .collect();
         // Nothing is collapsed before the plugins run, so the untouched `keep`
@@ -1066,7 +1066,10 @@ mod tests {
         assert!(leaves(std::slice::from_ref(new_fold))
             .into_iter()
             .all(|leaf| !lhs_leaves.contains_key(&alignment(leaf))));
-        assert_eq!(new_fold.tags, vec!["body"]);
+        assert_eq!(
+            new_fold.tags,
+            vec!["deleted-bodies:function", "removed-runs:function"]
+        );
         // A label is a plugin's to give; the projection leaves it empty.
         assert_eq!(new_fold.visibility.label, "");
     }

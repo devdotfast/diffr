@@ -220,21 +220,91 @@ mod tests {
                 "typescripttsx"
             ]
         );
-        assert_eq!(names(&assembled["rust"]), ["builtin:context/queries/rust.scm"]);
+        assert_eq!(
+            names(&assembled["rust"]),
+            [
+                "builtin:shared/queries/rust.scm",
+                "builtin:context/queries/rust.scm",
+                "builtin:shared/queries/rust-docstrings.scm",
+                "builtin:deleted-bodies/queries/rust.scm",
+                "builtin:test-bodies/queries/rust.scm",
+                "builtin:removed-runs/queries/rust.scm",
+            ],
+            "the shared imports are included once, before their first importer"
+        );
         assert_eq!(
             names(&assembled["typescript"]),
-            ["builtin:context/queries/javascript.scm"]
+            [
+                "builtin:shared/queries/javascript.scm",
+                "builtin:context/queries/javascript.scm",
+                "builtin:shared/queries/javascript-docstrings.scm",
+                "builtin:deleted-bodies/queries/javascript.scm",
+                "builtin:test-bodies/queries/javascript.scm",
+                "builtin:removed-runs/queries/javascript.scm",
+            ],
         );
         Config::default().compile().unwrap();
     }
 
     #[test]
     fn disabled_plugins_contribute_no_queries() {
-        let config = Config::from_toml("[plugins.context]\nenabled = false\n").unwrap();
+        let config = Config::from_toml(
+            "[plugins.deleted-bodies]\nenabled = false\n[plugins.test-bodies]\nenabled = false\n",
+        )
+        .unwrap();
         let assembled = assemble(&config.plugins.enabled_queries()).unwrap();
-        assert!(assembled.is_empty(), "{:?}", assembled.keys());
+        let names = names(&assembled["rust"]);
+        assert!(!names.iter().any(|name| name.contains("deleted-bodies")));
+        assert!(!names.iter().any(|name| name.contains("test-bodies")));
     }
 
+    #[test]
+    fn imports_resolve_against_their_files() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "queries/shared.scm", "(block) @fold\n");
+        let mine = write(
+            dir.path(),
+            "queries/rust/mine.scm",
+            "; inherits: ../shared.scm, builtin:shared/queries/rust.scm\n((function_item body: (block) @fold) (#set! tag \"removed-runs:function\"))\n",
+        );
+        let plugins = [
+            (
+                "deleted-bodies".to_owned(),
+                Queries::from([(
+                    "rust".to_owned(),
+                    "builtin:deleted-bodies/queries/rust.scm".to_owned(),
+                )]),
+            ),
+            (
+                "removed-runs".to_owned(),
+                Queries::from([("rust".to_owned(), mine)]),
+            ),
+        ];
+        let assembled = assemble(&plugins).unwrap();
+        let names = names(&assembled["rust"]);
+        let position = |suffix: &str| names.iter().position(|name| name.ends_with(suffix));
+        assert!(
+            position("queries/shared.scm").unwrap() < position("queries/rust/mine.scm").unwrap(),
+            "{names:?}"
+        );
+        assert_eq!(
+            names[..3],
+            [
+                "builtin:shared/queries/rust.scm",
+                "builtin:shared/queries/rust-docstrings.scm",
+                "builtin:deleted-bodies/queries/rust.scm"
+            ],
+            "imports come before their importer"
+        );
+        assert_eq!(
+            names
+                .iter()
+                .filter(|name| **name == "builtin:shared/queries/rust.scm")
+                .count(),
+            1,
+            "{names:?}"
+        );
+    }
 
     #[test]
     fn import_cycles_and_missing_files_are_errors() {
@@ -243,31 +313,81 @@ mod tests {
         write(dir.path(), "b.scm", "; inherits: a.scm\n");
         let queries = |path: &str| {
             [(
-                "context".to_owned(),
+                "removed-runs".to_owned(),
                 Queries::from([("rust".to_owned(), path.to_owned())]),
             )]
         };
         let error = assemble(&queries(&a)).err().expect("a cycle").to_string();
         assert!(error.contains("cycle"), "{error}");
         assert!(
-            error.starts_with("plugin context: queries.rust: "),
+            error.starts_with("plugin removed-runs: queries.rust: "),
             "{error}"
         );
         let absent = dir.path().join("absent.scm").display().to_string();
         assert!(assemble(&queries(&absent)).is_err());
-        let error = assemble(&queries("builtin:context/queries/absent.scm"))
+        let error = assemble(&queries("builtin:removed-runs/queries/absent.scm"))
             .err()
             .expect("unknown builtin")
             .to_string();
         assert!(
-            error.contains("no bundled file builtin:context/queries/absent.scm"),
+            error.contains("no bundled file builtin:removed-runs/queries/absent.scm"),
             "{error}"
         );
-        let error = assemble(&queries("builtin:summarize/../../outside.scm"))
+        let error = assemble(&queries("builtin:removed-runs/../../outside.scm"))
             .err()
             .expect("a path out of the bundled plugins")
             .to_string();
         assert!(error.contains("leaves the bundled plugins"), "{error}");
     }
 
+    #[test]
+    fn unbundled_plugin_queries_join_in_order_and_must_be_absolute_or_builtin() {
+        let dir = tempfile::tempdir().unwrap();
+        let absolute = write(
+            dir.path(),
+            "plugin/rust.scm",
+            "; inherits: builtin:shared/queries/rust.scm\n((block) @fold (#set! tag \"mine:block\"))\n",
+        );
+        let mut plugins = Config::default().plugins.enabled_queries();
+        let removed_runs = plugins
+            .iter()
+            .position(|(plugin, _)| plugin == "removed-runs")
+            .unwrap();
+        plugins.insert(
+            removed_runs,
+            (
+                "mine".to_owned(),
+                Queries::from([("rust".to_owned(), absolute)]),
+            ),
+        );
+        let assembled = assemble(&plugins).unwrap();
+        let names = names(&assembled["rust"]);
+        let position = |suffix: &str| {
+            names
+                .iter()
+                .position(|name| name.ends_with(suffix))
+                .unwrap()
+        };
+        assert!(
+            position("test-bodies/queries/rust.scm") < position("plugin/rust.scm"),
+            "{names:?}"
+        );
+        assert!(
+            position("plugin/rust.scm") < position("removed-runs/queries/rust.scm"),
+            "{names:?}"
+        );
+
+        let relative = [(
+            "mine".to_owned(),
+            Queries::from([("rust".to_owned(), "plugin/rust.scm".to_owned())]),
+        )];
+        let error = assemble(&relative)
+            .err()
+            .expect("a relative plugin query")
+            .to_string();
+        assert_eq!(
+            error,
+            "plugin mine: queries.rust: relative path plugin/rust.scm must be absolute or builtin:"
+        );
+    }
 }

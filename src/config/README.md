@@ -18,16 +18,16 @@ file each pattern came from (see `src/plugin/queries.rs` and
 [docs/config.md](../../docs/config.md#queries)):
 
 ```toml
-# plugins/mine/plugin.toml
+# plugins/deleted-bodies/plugin.toml
 [queries]
-rust = "queries/rust.scm"
+rust = "queries/rust.scm"                 # builtin:deleted-bodies/queries/rust.scm
 typescript = "queries/javascript.scm"
 ```
 
 ```scheme
 ; inherits: builtin:shared/queries/rust.scm
-((function_item) @fold
-  (#set! tag "context:scope"))
+((function_item body: (block "{" @fold.open "}" @fold.close) @fold)
+  (#set! tag "deleted-bodies:function"))
 ```
 
 The `context` plugin's files are fold queries like any other: they tag

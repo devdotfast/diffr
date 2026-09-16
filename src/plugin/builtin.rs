@@ -4,11 +4,22 @@
 //! plugin SDK. The code is compiled in and reached through the native
 //! registry ([`super::native`]); `plugin.toml` and the query files are
 //! embedded here, so `builtin:<plugin>/<path>` names `plugins/<plugin>/<path>`.
+//! `plugins/shared/` is not a plugin: it holds the query files every bundled
+//! plugin imports, as `builtin:shared/queries/<language>.scm`, and the
+//! docstrings the plugins that collapse function bodies import, as
+//! `builtin:shared/queries/<language>-docstrings.scm`.
 use super::config::Manifest;
 use std::sync::OnceLock;
 
 /// The bundled plugins, in their default order.
-pub(crate) const NAMES: [&str; 1] = ["context"];
+pub(crate) const NAMES: [&str; 6] = [
+    "context",
+    "hide-files",
+    "deleted-bodies",
+    "test-bodies",
+    "removed-runs",
+    "group",
+];
 
 macro_rules! embed {
     ($($path:literal),* $(,)?) => {
@@ -18,11 +29,36 @@ macro_rules! embed {
 
 /// Every embedded file, by its path under `plugins/`.
 const FILES: &[(&str, &str)] = embed![
+    "shared/queries/go.scm",
+    "shared/queries/go-docstrings.scm",
+    "shared/queries/javascript.scm",
+    "shared/queries/javascript-docstrings.scm",
+    "shared/queries/python.scm",
+    "shared/queries/python-docstrings.scm",
+    "shared/queries/rust.scm",
+    "shared/queries/rust-docstrings.scm",
     "context/plugin.toml",
     "context/queries/go.scm",
     "context/queries/javascript.scm",
     "context/queries/python.scm",
     "context/queries/rust.scm",
+    "hide-files/plugin.toml",
+    "deleted-bodies/plugin.toml",
+    "deleted-bodies/queries/go.scm",
+    "deleted-bodies/queries/javascript.scm",
+    "deleted-bodies/queries/python.scm",
+    "deleted-bodies/queries/rust.scm",
+    "test-bodies/plugin.toml",
+    "test-bodies/queries/go.scm",
+    "test-bodies/queries/javascript.scm",
+    "test-bodies/queries/python.scm",
+    "test-bodies/queries/rust.scm",
+    "removed-runs/plugin.toml",
+    "removed-runs/queries/go.scm",
+    "removed-runs/queries/javascript.scm",
+    "removed-runs/queries/python.scm",
+    "removed-runs/queries/rust.scm",
+    "group/plugin.toml",
 ];
 
 /// An embedded file by its normalized path under `plugins/`.

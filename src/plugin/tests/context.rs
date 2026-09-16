@@ -519,6 +519,7 @@ fn an_unrelated_tail_return_is_not_context() {
         !shows(0, "Ok(if matched"),
         "the unrelated return is not context"
     );
+    assert!(shows(3, "fn run("));
 }
 
 #[test]

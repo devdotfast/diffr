@@ -262,6 +262,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "diffr-plugin-deleted-bodies"
+version = "0.1.0"
+dependencies = [
+ "diffr-plugin-sdk",
+ "serde",
+]
+
+[[package]]
+name = "diffr-plugin-group"
+version = "0.1.0"
+dependencies = [
+ "diffr-plugin-sdk",
+ "serde",
+]
+
+[[package]]
+name = "diffr-plugin-hide-files"
+version = "0.1.0"
+dependencies = [
+ "diffr-plugin-sdk",
+ "serde",
+]
+
+[[package]]
+name = "diffr-plugin-removed-runs"
+version = "0.1.0"
+dependencies = [
+ "diffr-plugin-sdk",
+ "serde",
+]
+
+[[package]]
 name = "diffr-plugin-sdk"
 version = "0.1.0"
 dependencies = [
@@ -269,6 +301,14 @@ dependencies = [
  "serde",
  "serde_json",
  "wit-bindgen 0.60.0",
+]
+
+[[package]]
+name = "diffr-plugin-test-bodies"
+version = "0.1.0"
+dependencies = [
+ "diffr-plugin-sdk",
+ "serde",
 ]
 
 [[package]]
@@ -281,7 +321,12 @@ dependencies = [
  "cc",
  "clap",
  "diffr-plugin-context",
+ "diffr-plugin-deleted-bodies",
+ "diffr-plugin-group",
+ "diffr-plugin-hide-files",
+ "diffr-plugin-removed-runs",
  "diffr-plugin-sdk",
+ "diffr-plugin-test-bodies",
  "dirs",
  "encoding_rs",
  "git2",

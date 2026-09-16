@@ -146,6 +146,11 @@ jsonschema = { version = "0.56.0", default-features = false }
 # registry calls, which also builds as a WASM component.
 diffr-plugin-sdk = { path = "crates/diffr-plugin-sdk" }
 diffr-plugin-context = { path = "plugins/context" }
+diffr-plugin-deleted-bodies = { path = "plugins/deleted-bodies" }
+diffr-plugin-group = { path = "plugins/group" }
+diffr-plugin-hide-files = { path = "plugins/hide-files" }
+diffr-plugin-removed-runs = { path = "plugins/removed-runs" }
+diffr-plugin-test-bodies = { path = "plugins/test-bodies" }
 
 
 [target.'cfg(not(any(windows, target_os = "illumos", target_os = "freebsd")))'.dependencies]
@@ -169,11 +174,21 @@ version_check = "0.9.4"
 members = [
 	"crates/diffr-plugin-sdk",
 	"plugins/context",
+	"plugins/deleted-bodies",
+	"plugins/group",
+	"plugins/hide-files",
+	"plugins/removed-runs",
+	"plugins/test-bodies",
 ]
 default-members = [
 	".",
 	"crates/diffr-plugin-sdk",
 	"plugins/context",
+	"plugins/deleted-bodies",
+	"plugins/group",
+	"plugins/hide-files",
+	"plugins/removed-runs",
+	"plugins/test-bodies",
 ]
 
 [profile.release]

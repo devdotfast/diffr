@@ -205,13 +205,16 @@ mod tests {
     fn plugin_keys_are_written_under_their_quoted_names() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        set(&path, "plugins.context.lines", "30").unwrap();
+        set(&path, "plugins.deleted-bodies.min_lines", "30").unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         let config = Config::from_toml(&text).unwrap();
-        assert_eq!(config.plugins.entries["context"].options["lines"], 30);
-        assert!(set(&path, "plugins.context.typo", "1").is_err());
-        assert!(set(&path, "plugins.context.lines", "-1").is_err());
-        assert!(set(&path, "plugins.order", "[\"mine\"]").is_err());
+        assert_eq!(
+            config.plugins.entries["deleted-bodies"].options["min_lines"],
+            30
+        );
+        assert!(set(&path, "plugins.deleted-bodies.typo", "1").is_err());
+        assert!(set(&path, "plugins.deleted-bodies.min_lines", "-1").is_err());
+        assert!(set(&path, "plugins.order", "[\"group\"]").is_err());
         let error = |key: &str, value: &str| set(&path, key, value).unwrap_err().to_string();
         assert_eq!(
             error("plugins.context.enabled", "yes"),
@@ -235,8 +238,8 @@ mod tests {
         );
         let shown = show(&config);
         assert_eq!(
-            shown["plugins"]["context"],
-            serde_json::json!({"enabled": true, "lines": 30})
+            shown["plugins"]["deleted-bodies"],
+            serde_json::json!({"enabled": true, "min_lines": 30})
         );
     }
 

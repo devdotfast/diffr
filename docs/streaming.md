@@ -243,6 +243,18 @@ is at least three lines long collapses with a label such as
 `"142 unchanged lines"`; shorter stretches stay open because a row would save
 nothing. A file with no change collapses whole however short.
 
+
+**Groups** come from the `group` plugin: a run of two or more sibling
+regions that start collapsed, whichever plugin collapsed them, is wrapped in
+one new fold, with no tags. Between two collapsed regions of a run there may
+be open leaves spanning at most two lines in all, such as a blank line and the
+next function's header. The label counts the collapsed regions and the lines
+the group spans: `"3 collapsed regions · 42 lines"`. It starts collapsed;
+expanding it reveals each child's own row. The wrapped children are untouched.
+When the other side pairs a region of the run, the run is grouped only if the
+other side holds a run that matches it region for region, and then both are
+grouped with one fold state.
+
 Region edges cut a stretch. The part of it among one list of siblings
 collapses when it is at least three lines long or is the whole stretch, so a
 sliver at a fold edge stays open. A part inside one leaf is that leaf's lines,
@@ -331,7 +343,12 @@ every region hangs from:
   the two new folds take their own `id`s and share one `fold_state_id`.
 - **Link fold state**: every region in the listed regions' fold states, on
   both sides, takes the first region's `fold_state_id` and whether it starts
-  collapsed, so they open and close together.
+  collapsed, so they open and close together. Today the bundled link is a
+  docstring: a plugin that collapses a function body (`deleted-bodies`,
+  `test-bodies`) links the body's docstring, a fold tagged
+  `deleted-bodies:docstring` or `test-bodies:docstring`, to it. The docstring
+  then carries the body's `fold_state_id` and starts collapsed, with an empty
+  label. A docstring whose body no plugin collapses is not linked.
 - **Set collapsed** on a region: every region sharing its `fold_state_id`
   starts collapsed, or open. On the file, whether the file starts hidden: the
   record's `visibility`.
@@ -358,8 +375,12 @@ The bundled plugins, in their default order, each a folder under `plugins/`:
 | Plugin | What starts out differently |
 | --- | --- |
 | `context` | Unchanged lines far from any change and outside its enclosing headers collapse: `"142 unchanged lines"`. |
+| `hide-files` | Files with a listed tag (`generated`, `vendored`, `test`), and deleted files, are hidden: `"Generated file · hidden by default"`. |
+| `deleted-bodies` | A function body of at least 12 lines with nothing paired under it collapses: `"20 lines removed"`. Its docstring is linked to it. |
+| `test-bodies` | Test function bodies (`"test body"`) and Rust `#[cfg(test)]` modules (`"test module"`) collapse on both sides. A test body's docstring is linked to it. |
+| `removed-runs` | A one-sided leaf of at least 5 lines in removed (not rewritten) code keeps its first and last line open and collapses the rest: `"8 lines removed"`. |
+| `group` | Two or more adjacent collapsed regions are wrapped in one collapsed fold: `"3 collapsed regions · 42 lines"`. An open fold showing only collapsed regions and at most two open lines, such as a function's scope around its collapsed body and closing brace, counts as collapsed. |
 
-A binary diff has no regions, so only moves on the file can change how it
-starts out. Streaming is the only output mode that runs
-plugins.
+A binary diff has no regions, so only `hide-files` can change how it starts
+out. Streaming is the only output mode that runs plugins.
 

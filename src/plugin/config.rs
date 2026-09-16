@@ -510,7 +510,7 @@ mod tests {
             .iter()
             .filter(|(key, ..)| key.starts_with("plugins."))
             .collect();
-        assert!(plugins.len() >= 2, "{plugins:?}");
+        assert!(plugins.len() > 10, "{plugins:?}");
         for (key, title, group, kind) in &settings {
             assert!(
                 !title.is_empty() && !group.is_empty(),
@@ -529,27 +529,55 @@ mod tests {
                 .unwrap_or_else(|| panic!("no setting {key}"))
         };
         assert_eq!(
-            group("plugins.context.enabled"),
-            ("Collapse unchanged lines", "Context")
+            group("plugins.deleted-bodies.enabled"),
+            (
+                "Collapse deleted function bodies",
+                "Deleted function bodies"
+            )
         );
-        assert_eq!(group("plugins.context.lines"), ("Context lines", "Context"));
         assert!(schema["properties"].get("languages").is_none());
         let plugins = &schema["properties"]["plugins"]["properties"];
         assert_eq!(plugins["order"]["x-settings"], false);
         assert_eq!(plugins["order"]["type"], "array");
+        assert_eq!(
+            plugins["hide-files"]["properties"]["tags"]["x-settings"],
+            false
+        );
         let keys: Vec<&String> = plugins.as_object().unwrap().keys().collect();
-        assert_eq!(keys, ["order", "context"]);
+        assert_eq!(
+            keys,
+            [
+                "order",
+                "context",
+                "hide-files",
+                "deleted-bodies",
+                "test-bodies",
+                "removed-runs",
+                "group"
+            ]
+        );
     }
 
     #[test]
     fn order_names_every_entry_exactly_once() {
         let order = |names: &str| Config::from_toml(&format!("[plugins]\norder = [{names}]"));
-        assert!(order("'context'").is_ok());
-        let error = order("").err().unwrap().to_string();
-        assert!(error.contains("\"context\" is not listed"), "{error}");
-        let error = order("'context', 'mine'").err().unwrap().to_string();
+        assert!(order("'context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'group'").is_ok());
+        let error = order(
+            "'context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs'",
+        )
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(error.contains("\"group\" is not listed"), "{error}");
+        let error = order("'context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'group', 'mine'")
+            .err()
+            .unwrap()
+            .to_string();
         assert!(error.contains("no plugin entry named \"mine\""), "{error}");
-        let error = order("'context', 'context'").err().unwrap().to_string();
+        let error = order("'context', 'hide-files', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'group'")
+            .err()
+            .unwrap()
+            .to_string();
         assert!(error.contains("listed twice"), "{error}");
         let error = Config::from_toml("[plugins.mine]\nenabled = true")
             .err()
@@ -568,7 +596,7 @@ mod tests {
         std::fs::create_dir_all(folder.join("queries")).unwrap();
         std::fs::write(
             folder.join("plugin.toml"),
-            "name = 'mine'\ntitle = 'Mine'\n[options.depth]\ntype = 'integer'\ntitle = 'Depth'\ndefault = 2\n[queries]\nrust = 'queries/rust.scm'\npython = 'builtin:context/queries/python.scm'\n",
+            "name = 'mine'\ntitle = 'Mine'\n[options.depth]\ntype = 'integer'\ntitle = 'Depth'\ndefault = 2\n[queries]\nrust = 'queries/rust.scm'\npython = 'builtin:shared/queries/python.scm'\n",
         )
         .unwrap();
         std::fs::write(
@@ -576,7 +604,7 @@ mod tests {
             "((block) @fold (#set! tag \"mine:block\"))\n",
         )
         .unwrap();
-        let order = "order = ['context', 'mine']";
+        let order = "order = ['context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'group', 'mine']";
         let config = Config::from_toml_in(
             &format!("[plugins]\n{order}\n[plugins.mine]\npath = 'plugins/mine'\n"),
             dir.path(),
@@ -592,7 +620,7 @@ mod tests {
             mine["rust"],
             canonical.join("queries/rust.scm").display().to_string()
         );
-        assert_eq!(mine["python"], "builtin:context/queries/python.scm");
+        assert_eq!(mine["python"], "builtin:shared/queries/python.scm");
         config.compile().unwrap();
 
         let error = |toml: &str| {
@@ -610,8 +638,8 @@ mod tests {
                 && renamed.ends_with("the plugin is named \"mine\", not \"other\""),
             "{renamed}"
         );
-        let missing = error("[plugins.context]\npath = 'plugins/absent'\n");
-        assert!(missing.starts_with("plugins.context: "), "{missing}");
+        let missing = error("[plugins.group]\npath = 'plugins/absent'\n");
+        assert!(missing.starts_with("plugins.group: "), "{missing}");
         std::fs::write(
             folder.join("plugin.toml"),
             "name = 'mine'\ntitle = 'Mine'\n[options.path]\ntype = 'string'\ntitle = 'Path'\n",
@@ -625,22 +653,35 @@ mod tests {
 
     #[test]
     fn options_are_checked_against_the_plugin_toml_and_filled_with_its_defaults() {
-        let config = Config::from_toml("[plugins.context]\nlines = 5\n").unwrap();
-        let context = &config.plugins.entries["context"];
-        assert_eq!(context.enabled, Some(true));
-        assert_eq!(context.options["lines"], 5);
-        let default = Config::default();
-        assert_eq!(default.plugins.entries["context"].options["lines"], 3);
+        let config = Config::from_toml(
+            "[plugins.deleted-bodies]\nmin_lines = 30\n[plugins.hide-files]\nenabled = false\n",
+        )
+        .unwrap();
+        let deleted = &config.plugins.entries["deleted-bodies"];
+        assert_eq!(deleted.enabled, Some(true));
+        assert_eq!(deleted.options["min_lines"], 30);
+        let hide = &config.plugins.entries["hide-files"];
+        assert_eq!(hide.enabled, Some(false));
+        assert_eq!(hide.options["deleted"], true);
+        assert_eq!(
+            hide.options["tags"],
+            serde_json::json!(["generated", "vendored", "test"])
+        );
         let error = |toml: &str| Config::from_toml(toml).err().unwrap().to_string();
-        let typo = error("[plugins.context]\ntypo = 1\n");
+        let typo = error("[plugins.deleted-bodies]\ntypo = 1\n");
         assert!(
-            typo.starts_with("plugins.context: ") && typo.contains("typo"),
+            typo.starts_with("plugins.deleted-bodies: ") && typo.contains("typo"),
             "{typo}"
         );
-        let mistyped = error("[plugins.context]\nlines = 'many'\n");
+        let mistyped = error("[plugins.deleted-bodies]\nmin_lines = 'many'\n");
         assert!(
-            mistyped.starts_with("plugins.context: lines: "),
+            mistyped.starts_with("plugins.deleted-bodies: min_lines: "),
             "{mistyped}"
+        );
+        let negative = error("[plugins.removed-runs]\nmin_lines = -1\n");
+        assert!(
+            negative.starts_with("plugins.removed-runs: min_lines: "),
+            "{negative}"
         );
     }
 }

@@ -1,0 +1,25 @@
+name = "test-bodies"
+title = "Test bodies"
+description = "Collapse test bodies and test modules on both sides, so a diff reads as the code under test first."
+
+[enabled]
+title = "Collapse test bodies"
+description = "Collapse the bodies of test functions and test modules, header visible."
+
+[options.min_lines]
+type = "integer"
+minimum = 0
+title = "Shortest test body to collapse (lines)"
+description = "Test bodies shorter than this stay open: a one-line assertion is cheaper to read than a fold row."
+default = 3
+
+# Folds tagged `test-bodies:test`, `test-bodies:module` and, from the shared
+# docstrings query, `test-bodies:docstring`.
+[queries]
+rust = "queries/rust.scm"
+python = "queries/python.scm"
+go = "queries/go.scm"
+javascript = "queries/javascript.scm"
+javascriptjsx = "queries/javascript.scm"
+typescript = "queries/javascript.scm"
+typescripttsx = "queries/javascript.scm"

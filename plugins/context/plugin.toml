@@ -1,0 +1,26 @@
+name = "context"
+title = "Context"
+description = "Collapse unchanged stretches far from any change, keeping `lines` around every change and the headers of the syntax that encloses it."
+
+[enabled]
+title = "Collapse unchanged lines"
+description = "Collapse unchanged lines that are neither near a change nor the header of the function, type or block a change sits in."
+
+[options.lines]
+type = "integer"
+minimum = 0
+maximum = 4294967295
+title = "Context lines"
+description = "Unchanged lines kept visible on either side of a change. `-U` overrides it for one run."
+default = 3
+
+# Folds tagged `context:scope`: the scopes whose first and last line stay
+# visible around a change.
+[queries]
+rust = "queries/rust.scm"
+python = "queries/python.scm"
+go = "queries/go.scm"
+javascript = "queries/javascript.scm"
+javascriptjsx = "queries/javascript.scm"
+typescript = "queries/javascript.scm"
+typescripttsx = "queries/javascript.scm"

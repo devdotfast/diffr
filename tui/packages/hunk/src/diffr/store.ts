@@ -1,6 +1,9 @@
 /** Hold streamed files separately from presentation state and notify React in batches. */
-import { fileIdentity, type FileChange, type DiffEvent, type DiffFile } from "./wire";
+import { fileIdentity, filePath, type FileChange, type DiffEvent, type DiffFile } from "./wire";
+type StartEvent = Extract<DiffEvent, { type: "start" }>;
 export interface Snapshot {
+  /** The two ends of the comparison, from the start event. */
+  comparison: { lhs: StartEvent["lhs"]; rhs: StartEvent["rhs"] } | null;
   files: DiffFile[];
   inventory: FileChange[];
   failedFiles: Map<string, string>;
@@ -10,6 +13,7 @@ export interface Snapshot {
 }
 export class DiffStore {
   private value: Snapshot = {
+    comparison: null,
     files: [],
     inventory: [],
     failedFiles: new Map(),
@@ -27,22 +31,26 @@ export class DiffStore {
   getSnapshot = () => this.value;
   accept(event: DiffEvent) {
     if (event.type === "start")
-      this.value = { ...this.value, total: event.total, inventory: event.files };
-    if (event.type === "file")
-      this.value = { ...this.value, files: [...this.value.files, event],
-        inventory: this.value.inventory.some(f => fileIdentity(f) === fileIdentity(event.file))
-          ? this.value.inventory : [...this.value.inventory, event.file] };
-    if (event.type === "file_error")
+      this.value = { ...this.value, comparison: { lhs: event.lhs, rhs: event.rhs }, total: event.files.length, inventory: event.files };
+    if (event.type === "file") {
+      const identity = fileIdentity(event.file);
+      if (event.diff)
+        this.value = { ...this.value, files: [...this.value.files, { ...event, diff: event.diff }] };
+      else if (event.error)
+        this.value = {
+          ...this.value,
+          failedFiles: new Map(this.value.failedFiles).set(identity, event.error.message),
+          errors: [...this.value.errors, `${filePath(event.file)}: ${event.error.message}`],
+        };
+    }
+    if (event.type === "complete")
       this.value = {
         ...this.value,
-        failedFiles: new Map(this.value.failedFiles).set(fileIdentity(event.file), event.message),
-        errors: [
-          ...this.value.errors,
-          `${event.file.new_path ?? event.file.old_path}: ${event.message}`,
-        ],
+        complete: true,
+        errors: event.aborted
+          ? [...this.value.errors, `diffr stopped early: ${event.aborted.message}`]
+          : this.value.errors,
       };
-    if (event.type === "complete")
-      this.value = { ...this.value, complete: true };
     this.listeners.forEach((listener) => listener());
   }
   fail(error: unknown) {

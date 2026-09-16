@@ -2,7 +2,7 @@
 
 A paired fallback block grows nested branches and explanatory comments. Tabs count as one byte, not display-width columns. Preserve the receiver-method signature as extra context and the existing return statement outside the fold.
 
-[Original PR](https://github.com/cli/cli/pull/11038) · [Before](before.go) · [After](after.go) · [Git patch](change.patch) · [Generated review golden](review.snap) · [Expected annotations](expected.json) · [Provenance](provenance.json)
+[Original PR](https://github.com/cli/cli/pull/11038) · [Before](before.go) · [After](after.go) · [Git patch](change.patch) · [Expected annotations](expected.json) · [Provenance](provenance.json)
 
 Annotations are manually selected targets, not recorded matcher output. Coordinates below are zero-based UTF-8 byte positions with exclusive ends.
 
@@ -126,4 +126,4 @@ func (c *AuthConfig) ActiveToken(hostname string) (string, string) {
 
 Context policy: distant return values are no longer required. Preserve enclosing
 signatures and closing delimiters; return boundaries require a change inside the
-return expression. The updated case assertions and snapshot reflect this rule.
+return expression. The updated case assertions reflect this rule.

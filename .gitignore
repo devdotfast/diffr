@@ -4,9 +4,11 @@ perf.data*
 flamegraph.svg
 .idea
 
-sample_files/compare.result
-
 notes.md
 perf_baseline_*.txt
 __pycache__/
 .env
+
+# WASM plugin builds: scripts/build-wasm-plugins.sh
+plugin.wasm
+/crates/*/target

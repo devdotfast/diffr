@@ -2,7 +2,7 @@
 
 One match arm changes from a single expression to a braced block. Pair those regions despite different syntax shapes; leave adjacent match arms visible. The unchanged run signature is extra context. This pairing is a manual target, not a claim that Difftastic already identifies a match-arm node.
 
-[Original PR](https://github.com/BurntSushi/ripgrep/pull/3487) · [Before](before.rs) · [After](after.rs) · [Git patch](change.patch) · [Generated review golden](review.snap) · [Expected annotations](expected.json) · [Provenance](provenance.json)
+[Original PR](https://github.com/BurntSushi/ripgrep/pull/3487) · [Before](before.rs) · [After](after.rs) · [Git patch](change.patch) · [Expected annotations](expected.json) · [Provenance](provenance.json)
 
 Annotations are manually selected targets, not recorded matcher output. Coordinates below are zero-based UTF-8 byte positions with exclusive ends.
 
@@ -105,4 +105,4 @@ fn run(result: crate::flags::ParseResult<HiArgs>) -> anyhow::Result<ExitCode> {
 
 Context policy: distant return values are no longer required. Preserve enclosing
 signatures and closing delimiters; return boundaries require a change inside the
-return expression. The updated case assertions and snapshot reflect this rule.
+return expression. The updated case assertions reflect this rule.

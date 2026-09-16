@@ -36,14 +36,15 @@ compare their trees. A...B compares merge-base(A,B) to B; A..B compares A to B.
 **--quiet**, **--exit-code**
 : Exit 1 for changes. Quiet also suppresses output. Errors exit 2.
 
-**--format** text|json|ndjson|snapshot
-: Terminal rendering, domain JSON records, or fixture text.
+**--format** ndjson
+: Write the event stream described under STREAMING instead of opening the
+  terminal UI, which needs a terminal.
 
 **-U** N
 : Select ordinary context padding (default 3).
 
 **--config** FILE
-: Read explicit TOML configuration instead of repository diffr.toml.
+: Read this TOML file in place of the global configuration file (`~/.config/diffr/config.toml`); it must exist.
 
 **--help**
 : List the supported options. Unsupported Git flags are rejected.

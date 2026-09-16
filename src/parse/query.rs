@@ -1,12 +1,6 @@
-//! Source-coordinate helpers shared by the independent annotation queries.
+//! Source-coordinate helpers for the annotation queries.
 use crate::lines::{SourcePosition, SourceRange};
 use tree_sitter::Node;
-
-pub(super) fn last_line(range: &SourceRange) -> usize {
-    range.end.line.as_usize().saturating_sub(usize::from(
-        range.end.byte_column == 0 && range.end.line > range.start.line,
-    ))
-}
 
 pub(super) fn node_range(node: Node<'_>) -> SourceRange {
     let position = |point: tree_sitter::Point| SourcePosition {

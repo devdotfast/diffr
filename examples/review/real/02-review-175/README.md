@@ -2,7 +2,7 @@
 
 Diff parser fix with a multi-statement paired replacement and enclosing function context. The neutral placeholder describes both versions; changed code remains present underneath it. The return object and closing function brace are additional context outside the U3 patch.
 
-[Original PR](https://github.com/devdotfast/review/pull/175) · [Before](before.ts) · [After](after.ts) · [Git patch](change.patch) · [Generated review golden](review.snap) · [Expected annotations](expected.json) · [Provenance](provenance.json)
+[Original PR](https://github.com/devdotfast/review/pull/175) · [Before](before.ts) · [After](after.ts) · [Git patch](change.patch) · [Expected annotations](expected.json) · [Provenance](provenance.json)
 
 Annotations are manually selected targets, not recorded matcher output. Coordinates below are zero-based UTF-8 byte positions with exclusive ends.
 
@@ -161,4 +161,4 @@ function parseReviewDiffFile(section: string): ReviewDiffFile | null {
 
 Context policy: distant return values are no longer required. Preserve enclosing
 signatures and closing delimiters; return boundaries require a change inside the
-return expression. The updated case assertions and snapshot reflect this rule.
+return expression. The updated case assertions reflect this rule.

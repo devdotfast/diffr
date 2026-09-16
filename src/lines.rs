@@ -1,44 +1,6 @@
 //! Manipulate lines of text and groups of lines.
 
-use std::ops::Sub;
-
 use line_numbers::LineNumber;
-
-pub(crate) fn format_line_num(line_num: LineNumber) -> String {
-    format!("{} ", line_num.display())
-}
-
-pub(crate) fn format_line_num_padded(line_num: LineNumber, column_width: usize) -> String {
-    format!(
-        "{:width$} ",
-        line_num.as_usize() + 1,
-        width = column_width - 1
-    )
-}
-
-/// Return the length of `s` in bytes.
-///
-/// This is a trivial wrapper to make it clear when we want bytes not
-/// codepoints.
-pub(crate) fn byte_len(s: &str) -> usize {
-    s.len()
-}
-
-pub(crate) trait MaxLine {
-    fn max_line(&self) -> LineNumber;
-}
-
-impl<S: AsRef<str>> MaxLine for S {
-    fn max_line(&self) -> LineNumber {
-        (self
-            .as_ref()
-            .trim_end() // Remove extra trailing whitespaces.
-            .split('\n') // Split by `\n` to calculate lines.
-            .count() as u32)
-            .sub(1) // Sub 1 to make zero-indexed LineNumber
-            .into()
-    }
-}
 
 /// Split `s` on \n or \r\n. Always yields at least one item. Each line
 /// does not include the trailing newline.
@@ -61,13 +23,13 @@ pub(crate) fn is_all_whitespace(s: &str) -> bool {
 
 /// A nonempty source interval with an exclusive end. Coordinates must be
 /// ordered, in bounds, and on UTF-8 boundaries in the associated text source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct SourceRange {
     pub(crate) start: SourcePosition,
     pub(crate) end: SourcePosition,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct SourcePosition {
     pub(crate) line: LineNumber,
     /// Zero-based UTF-8 byte offset within the line, not a display column.
@@ -79,30 +41,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[test]
-    fn str_max_line() {
-        let line: String = "foo\nbar".into();
-        assert_eq!(line.max_line().0, 1);
-    }
-
-    #[test]
-    fn empty_str_max_line() {
-        let line: String = "".into();
-        assert_eq!(line.max_line().0, 0);
-    }
-
-    #[test]
-    fn str_max_line_trailing_newline() {
-        let line: String = "foo\nbar\n".into();
-        assert_eq!(line.max_line().0, 1);
-    }
-
-    #[test]
-    fn str_max_line_extra_trailing_newline() {
-        let line: String = "foo\nbar\n\n".into();
-        assert_eq!(line.max_line().0, 1);
-    }
 
     #[test]
     fn test_split_line_empty() {

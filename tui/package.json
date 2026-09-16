@@ -5,9 +5,7 @@
   "scripts": {
     "start": "bun run packages/hunk/src/main.tsx",
     "typecheck": "tsc --noEmit",
-    "test": "bun test packages",
-    "test:integration": "bun test test/pty",
-    "test:tty-smoke": "bun test test/pty"
+    "test": "bun test packages"
   },
   "dependencies": {
     "@opentui/core": "0.5.6",

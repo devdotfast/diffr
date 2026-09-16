@@ -2,24 +2,10 @@
 
 use std::fs;
 use std::io::ErrorKind::*;
-use std::io::Read;
-use std::path::{Path, PathBuf};
-
-use ignore::WalkBuilder;
+use std::path::Path;
 
 use crate::exit_codes::EXIT_BAD_ARGUMENTS;
-use crate::hash::DftHashSet;
 use crate::options::FileArgument;
-
-pub(crate) fn read_file_or_die(path: &FileArgument) -> Vec<u8> {
-    match read_file_arg(path) {
-        Ok(src) => src,
-        Err(e) => {
-            eprint_read_error(path, &e);
-            std::process::exit(EXIT_BAD_ARGUMENTS);
-        }
-    }
-}
 
 pub(crate) fn read_files_or_die(
     lhs_path: &FileArgument,
@@ -58,14 +44,6 @@ pub(crate) fn read_files_or_die(
 fn read_file_arg(file_arg: &FileArgument) -> std::io::Result<Vec<u8>> {
     match file_arg {
         FileArgument::NamedPath(path) => fs::read(path),
-        FileArgument::Stdin => {
-            let stdin = std::io::stdin();
-            let mut handle = stdin.lock();
-
-            let mut bytes = vec![];
-            handle.read_to_end(&mut bytes)?;
-            Ok(bytes)
-        }
         FileArgument::DevNull => {
             // Treat /dev/null as an empty file, even on platforms like
             // Windows where this path doesn't exist. Git uses /dev/null
@@ -271,95 +249,12 @@ pub(crate) fn guess_content(
     ProbableFileKind::Binary
 }
 
-/// All the files in `dir`, including subdirectories.
-fn relative_file_paths_in_dir(dir: &Path) -> Vec<PathBuf> {
-    // Walk all the files in `dir`, excluding those mentioned in .git.
-    let walker = WalkBuilder::new(dir)
-        // Include files whose name starts with a dot.
-        .hidden(false)
-        // Exclude the .git directory.
-        .filter_entry(|e| {
-            !(e.file_type().map(|ft| ft.is_dir()).unwrap_or(false) && e.file_name() == ".git")
-        })
-        .build();
-
-    walker
-        .filter_map(Result::ok)
-        .map(|entry| Path::new(entry.path()).to_owned())
-        .filter(|path| !path.is_dir())
-        .map(|path| path.strip_prefix(dir).unwrap().to_path_buf())
-        .collect()
-}
-
-/// Walk `lhs_dir` and `rhs_dir`, and return relative paths of files
-/// that occur in at least one directory.
-///
-/// Attempts to preserve the ordering of files in both directories.
-pub(crate) fn relative_paths_in_either(lhs_dir: &Path, rhs_dir: &Path) -> Vec<PathBuf> {
-    let lhs_paths = relative_file_paths_in_dir(lhs_dir);
-    let rhs_paths = relative_file_paths_in_dir(rhs_dir);
-
-    let mut seen = DftHashSet::default();
-    let mut paths: Vec<PathBuf> = vec![];
-
-    let mut i = 0;
-    let mut j = 0;
-
-    loop {
-        match (lhs_paths.get(i), rhs_paths.get(j)) {
-            (Some(lhs_path), Some(rhs_path)) if lhs_path == rhs_path => {
-                if !seen.contains(lhs_path) {
-                    // It should be impossible to get duplicates, but
-                    // be defensive.
-                    paths.push(lhs_path.clone());
-                    seen.insert(lhs_path);
-                }
-
-                i += 1;
-                j += 1;
-            }
-            (Some(lhs_path), Some(rhs_path)) => {
-                if seen.contains(lhs_path) {
-                    i += 1;
-                } else if seen.contains(rhs_path) {
-                    j += 1;
-                } else {
-                    paths.push(lhs_path.clone());
-                    paths.push(rhs_path.clone());
-
-                    seen.insert(lhs_path);
-                    seen.insert(rhs_path);
-
-                    i += 1;
-                    j += 1;
-                }
-            }
-            _ => break,
-        }
-    }
-
-    paths.extend(
-        lhs_paths[i..]
-            .iter()
-            .filter(|&path| !seen.contains(path))
-            .cloned(),
-    );
-    paths.extend(
-        rhs_paths[j..]
-            .iter()
-            .filter(|&path| !seen.contains(path))
-            .cloned(),
-    );
-
-    paths
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn guess_content(bytes: &[u8]) -> ProbableFileKind {
-        super::guess_content(bytes, &FileArgument::Stdin, &[])
+        super::guess_content(bytes, &FileArgument::DevNull, &[])
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 Production changes inside an iterator plus a new regression test. Paired use groups, an added test-body fold with its attribute/signature retained, and file-level context for both the iterator and the distant test module. One annotation model covers both regions.
 
-[Original PR](https://github.com/BurntSushi/ripgrep/pull/3496) · [Before](before.rs) · [After](after.rs) · [Git patch](change.patch) · [Generated review golden](review.snap) · [Expected annotations](expected.json) · [Provenance](provenance.json)
+[Original PR](https://github.com/BurntSushi/ripgrep/pull/3496) · [Before](before.rs) · [After](after.rs) · [Git patch](change.patch) · [Expected annotations](expected.json) · [Provenance](provenance.json)
 
 Annotations are manually selected targets, not recorded matcher output. Coordinates below are zero-based UTF-8 byte positions with exclusive ends.
 

@@ -2,7 +2,7 @@
 
 Changed paired imports plus a one-to-many statement replacement for IPv6 host/port parsing. Extra context preserves the class and full multiline method signature, leaving the long docstring and unrelated setup hidden.
 
-[Original PR](https://github.com/pallets/flask/pull/6096) · [Before](before.py) · [After](after.py) · [Git patch](change.patch) · [Generated review golden](review.snap) · [Expected annotations](expected.json) · [Provenance](provenance.json)
+[Original PR](https://github.com/pallets/flask/pull/6096) · [Before](before.py) · [After](after.py) · [Git patch](change.patch) · [Expected annotations](expected.json) · [Provenance](provenance.json)
 
 Annotations are manually selected targets, not recorded matcher output. Coordinates below are zero-based UTF-8 byte positions with exclusive ends.
 

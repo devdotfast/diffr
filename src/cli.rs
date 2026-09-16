@@ -1,8 +1,8 @@
-//! Git-style CLI input; rendering and NDJSON remain adapters over the same engine.
-use crate::config::Config;
+//! Git-style CLI input: the terminal UI, the NDJSON stream, and Git metadata.
+use crate::config::{self, Config};
 use crate::git::{Comparison, DiffSession, FileParams, Operand, Result};
-use crate::hook::Hook;
-use crate::options::{DiffOptions, DisplayMode, DisplayOptions};
+use crate::options::DiffOptions;
+use crate::plugin::Pipeline;
 use clap::{Arg, ArgAction, ArgGroup, ArgMatches, Command};
 use git2::{DiffStatsFormat, Repository};
 use std::{
@@ -34,7 +34,7 @@ pub(crate) fn run() -> Result<i32> {
         .version(env!("CARGO_PKG_VERSION"))
         .about("Structural diffs with Git-style comparison inputs")
         .arg(Arg::new("repo").long("repo").default_value("."))
-        .arg(Arg::new("config").long("config"))
+        .arg(Arg::new("config_file").long("config").value_name("PATH").help("Replace the global configuration file"))
         .arg(
             Arg::new("jobs")
                 .long("jobs")
@@ -43,7 +43,7 @@ pub(crate) fn run() -> Result<i32> {
                 .default_value("16")
                 .help("Concurrent file diffs for --format ndjson; results are emitted as each finishes"),
         )
-        .arg(Arg::new("order").long("order").value_delimiter(',').action(ArgAction::Append).help("File class priority from diffr-classify attributes"))
+        .arg(Arg::new("order").long("order").value_delimiter(',').action(ArgAction::Append).help("File tag priority: files carrying an earlier listed tag come first"))
         .arg(flag("cached").visible_alias("staged"))
         .arg(flag("merge-base"))
         .arg(flag("no-index"))
@@ -59,76 +59,63 @@ pub(crate) fn run() -> Result<i32> {
         .arg(flag("null").short('z'))
         .arg(flag("no-renames"))
         .arg(flag("find-renames").short('M').conflicts_with("no-renames"))
-        .arg(Arg::new("unified").short('U').long("unified").default_value("3").value_parser(clap::value_parser!(u32)))
-        .arg(Arg::new("format").long("format").value_parser(["text", "json", "ndjson", "snapshot"]).default_value("text"))
-        .arg(Arg::new("display").long("display").value_parser(["inline", "side-by-side", "side-by-side-show-both"]).default_value("side-by-side"))
-        .arg(Arg::new("color").long("color").num_args(0..=1).require_equals(true).default_missing_value("always").default_value("auto").value_parser(["auto", "always", "never"]))
-        .arg(flag("no-color"))
-        .arg(Arg::new("width").long("width").value_parser(clap::value_parser!(usize)))
+        .arg(Arg::new("unified").short('U').long("unified").value_parser(clap::value_parser!(u32)).help("Unchanged lines kept around each change; defaults to plugins.context.lines"))
+        .arg(Arg::new("format").long("format").value_parser(["ndjson"]).help("Write the event stream to stdout instead of opening the terminal UI"))
+        .arg(flag("syntax").help("Include every token's tree-sitter capture name in --format ndjson output"))
+        .arg(Arg::new("width").long("width").value_parser(clap::value_parser!(usize)).help("Columns for --stat; defaults to the terminal's width"))
         .arg(flag("ignore-comments"))
         .arg(Arg::new("byte-limit").long("byte-limit").value_parser(clap::value_parser!(usize)))
         .arg(Arg::new("graph-limit").long("graph-limit").value_parser(clap::value_parser!(usize)))
         .arg(Arg::new("parse-error-limit").long("parse-error-limit").value_parser(clap::value_parser!(usize)))
         .arg(Arg::new("items").num_args(0..).value_parser(clap::value_parser!(OsString)))
+        .subcommand(
+            Command::new("config")
+                .about("Show, edit, or open the settings screen for diffr's configuration")
+                .arg(Arg::new("query").help("Initial search in the settings screen"))
+                .subcommand(Command::new("schema").about("Print the configuration's JSON Schema"))
+                .subcommand(
+                    Command::new("show")
+                        .about("Print the resolved configuration")
+                        .arg(flag("json"))
+                        .arg(flag("reveal").help("Do not redact the API key")),
+                )
+                .subcommand(
+                    Command::new("set")
+                        .about("Write one key to the global configuration file")
+                        .arg(Arg::new("key").required(true))
+                        .arg(Arg::new("value").required(true)),
+                ),
+        )
         .after_help("Examples:\n  diffr\n  diffr --cached\n  diffr main...HEAD -- src/\n  diffr --no-index -- before.rs after.rs\n  diffr main HEAD --format ndjson\n\nUnsupported Git flags are rejected; this is not a complete git diff implementation.")
         .get_matches_from(argv);
-    if opens_tui(
-        args.value_source("format") == Some(clap::parser::ValueSource::CommandLine),
-        args.get_flag("quiet") || args.contains_id("metadata"),
-        io::stdin().is_terminal() && io::stdout().is_terminal(),
-    ) {
-        return launch_tui(&frontend_args);
+    if let Some(("config", sub)) = args.subcommand() {
+        return run_config(&args, sub);
     }
-    let streaming = args.get_one::<String>("format").unwrap() == "ndjson";
-    if streaming && (args.get_flag("quiet") || args.contains_id("metadata")) {
+    let streaming = args.contains_id("format");
+    let metadata_or_quiet = args.get_flag("quiet") || args.contains_id("metadata");
+    if opens_tui(streaming, metadata_or_quiet) {
+        if !(io::stdin().is_terminal() && io::stdout().is_terminal()) {
+            return Err("diffr shows diffs in its terminal UI, which needs a terminal; use --format ndjson for the event stream".into());
+        }
+        return launch_tui(&frontend_args, true);
+    }
+    if streaming && metadata_or_quiet {
         return Err("--format ndjson cannot be combined with --quiet or metadata output".into());
     }
+    let stream_options = crate::protocol::stream::Options {
+        syntax: args.get_flag("syntax"),
+    };
     let items: Vec<OsString> = args
         .get_many::<OsString>("items")
         .into_iter()
         .flatten()
         .cloned()
         .collect();
-    let display = DisplayOptions {
-        num_context_lines: *args.get_one::<u32>("unified").unwrap(),
-        terminal_width: args
-            .get_one::<usize>("width")
-            .copied()
-            .unwrap_or_else(crate::options::detect_terminal_width),
-        use_color: !args.get_flag("no-color")
-            && crate::options::should_use_color(
-                match args.get_one::<String>("color").unwrap().as_str() {
-                    "always" => crate::options::ColorOutput::Always,
-                    "never" => crate::options::ColorOutput::Never,
-                    _ => crate::options::ColorOutput::Auto,
-                },
-            ),
-        display_mode: match args.get_one::<String>("display").unwrap().as_str() {
-            "inline" => DisplayMode::Inline,
-            "side-by-side-show-both" => DisplayMode::SideBySideShowBoth,
-            _ => DisplayMode::SideBySide,
-        },
-        ..DisplayOptions::default()
-    };
-    let mut diff_options = DiffOptions {
-        ignore_comments: args.get_flag("ignore-comments"),
-        ..DiffOptions::default()
-    };
-    if let Some(limit) = args.get_one::<usize>("byte-limit") {
-        diff_options.byte_limit = *limit;
-    }
-    if let Some(limit) = args.get_one::<usize>("graph-limit") {
-        diff_options.graph_limit = *limit;
-    }
-    if let Some(limit) = args.get_one::<usize>("parse-error-limit") {
-        diff_options.parse_error_limit = *limit;
-    }
     if args.get_flag("no-index") {
         return no_index(
             &args,
             items.into_iter().chain(explicit_paths).collect(),
-            &display,
-            &diff_options,
+            stream_options,
         );
     }
     if args.get_flag("null") && !args.get_flag("name-only") && !args.get_flag("name-status") {
@@ -155,56 +142,52 @@ pub(crate) fn run() -> Result<i32> {
             .cloned()
             .collect(),
     };
-    let has_changes = if args.get_flag("quiet") || args.contains_id("metadata") {
+    if metadata_or_quiet {
         let diff = comparison.resolve(&repo)?.diff(&repo, &files)?;
         let changed = diff.deltas().len() > 0;
         if !args.get_flag("quiet") {
-            print_metadata(&diff, &args, display.terminal_width)?;
+            let width = args
+                .get_one::<usize>("width")
+                .copied()
+                .unwrap_or_else(crate::options::detect_terminal_width);
+            print_metadata(&diff, &args, width)?;
         }
-        changed
-    } else {
-        let params = Arc::new(
-            Config::load(workspace, args.get_one::<String>("config").map(Path::new))?.compile()?,
-        );
-        let hook = fold_hook(&params, workspace)?;
-        let mut session = DiffSession::open(workspace, comparison, params, &files)?;
-        session.context_lines = display.num_context_lines;
-        session.diff_options = diff_options;
-        let changed = session.remaining() > 0;
-        if streaming {
-            let jobs = *args.get_one::<usize>("jobs").unwrap();
-            if jobs == 0 {
-                return Err("--jobs must be at least 1".into());
-            }
-            let failed = crate::stream::write(session, jobs, hook, &mut io::stdout().lock())?;
-            return Ok(if failed {
-                2
-            } else {
-                i32::from(changed && args.get_flag("exit-code"))
-            });
-        }
-        for (file, result) in session {
-            let result = result.map_err(|error| format!("{}: {error}", file.path()))?;
-            render(&result, &args, &display)?;
-        }
-        changed
-    };
-    Ok(i32::from(
-        has_changes && (args.get_flag("exit-code") || args.get_flag("quiet")),
-    ))
-}
-
-fn render(
-    diff: &crate::summary::DiffResult,
-    args: &ArgMatches,
-    display: &DisplayOptions,
-) -> Result<()> {
-    match args.get_one::<String>("format").unwrap().as_str() {
-        "json" => println!("{}", diff.domain_json()),
-        "snapshot" => print!("{}", diff.snapshot()),
-        _ => crate::print_diff_result(display, diff),
+        return Ok(i32::from(
+            changed && (args.get_flag("exit-code") || args.get_flag("quiet")),
+        ));
     }
-    Ok(())
+    let mut config = load_config(&args)?;
+    apply_unified(&args, &mut config);
+    let params = Arc::new(config.compile()?);
+    let diff_options = diff_options(&args, &params);
+    // The whole chain: `plugins.<name>` and why the plugin cannot be made.
+    let pipeline =
+        Pipeline::from_config(&params.plugins, workspace).map_err(|error| format!("{error:#}"))?;
+    let mut session = DiffSession::open(
+        workspace,
+        comparison,
+        Arc::clone(&params),
+        &files,
+        &pipeline,
+    )?;
+    session.diff_options = diff_options;
+    let changed = session.remaining() > 0;
+    let jobs = *args.get_one::<usize>("jobs").unwrap();
+    if jobs == 0 {
+        return Err("--jobs must be at least 1".into());
+    }
+    let ended = crate::protocol::stream::write(
+        session,
+        jobs,
+        Arc::new(pipeline),
+        stream_options,
+        &mut io::stdout().lock(),
+    )?;
+    Ok(if ended.failed || ended.aborted {
+        2
+    } else {
+        i32::from(changed && args.get_flag("exit-code"))
+    })
 }
 
 fn select(
@@ -408,8 +391,7 @@ fn print_metadata(diff: &git2::Diff<'_>, args: &ArgMatches, width: usize) -> Res
 fn no_index(
     args: &ArgMatches,
     paths: Vec<OsString>,
-    display: &DisplayOptions,
-    options: &DiffOptions,
+    stream_options: crate::protocol::stream::Options,
 ) -> Result<i32> {
     if paths.len() != 2 {
         return Err("--no-index requires two file paths".into());
@@ -437,60 +419,134 @@ fn no_index(
     if args.get_flag("quiet") {
         return Ok(i32::from(changed));
     }
-    let config = Config::load(
-        Path::new(args.get_one::<String>("repo").unwrap()),
-        args.get_one::<String>("config").map(Path::new),
-    )?
-    .compile()?;
+    let mut config = load_config(args)?;
+    apply_unified(args, &mut config);
+    let config = config.compile()?;
+    let options = &diff_options(args, &config);
     let lhs = crate::options::FileArgument::from_path_argument(&paths[0]);
     let rhs = crate::options::FileArgument::from_path_argument(&paths[1]);
     let compute = || {
         crate::diff_file(
             &config,
             &paths[1].to_string_lossy(),
-            None,
             &lhs,
             &rhs,
-            lhs.permissions().as_ref(),
-            rhs.permissions().as_ref(),
-            display,
             options,
             false,
             &[],
             &[],
         )
     };
-    if args.get_one::<String>("format").map(String::as_str) == Some("ndjson") {
-        let hook = fold_hook(&config, Path::new(args.get_one::<String>("repo").unwrap()))?;
-        crate::stream::write_file(
-            &paths[0].to_string_lossy(),
-            &paths[1].to_string_lossy(),
-            compute,
-            hook.as_deref(),
-            &mut io::stdout().lock(),
-        )?;
-        Ok(i32::from(changed && args.get_flag("exit-code")))
+    let pipeline = Pipeline::from_config(&config.plugins, &std::env::current_dir()?)
+        .map_err(|error| format!("{error:#}"))?;
+    let ended = crate::protocol::stream::write_file(
+        &paths[0].to_string_lossy(),
+        &paths[1].to_string_lossy(),
+        (before.len() as u64, after.len() as u64),
+        compute,
+        &config,
+        &pipeline,
+        stream_options,
+        &mut io::stdout().lock(),
+    )?;
+    Ok(if ended.failed || ended.aborted {
+        2
     } else {
-        render(&compute(), args, display)?;
-        Ok(i32::from(changed))
+        i32::from(changed && args.get_flag("exit-code"))
+    })
+}
+
+/// The engine limits: the configured `[diff]` table, then the command-line
+/// flags.
+fn diff_options(args: &ArgMatches, params: &config::Params) -> DiffOptions {
+    let mut options = params.diff.options(args.get_flag("ignore-comments"));
+    if let Some(limit) = args.get_one::<usize>("byte-limit") {
+        options.byte_limit = *limit;
     }
+    if let Some(limit) = args.get_one::<usize>("graph-limit") {
+        options.graph_limit = *limit;
+    }
+    if let Some(limit) = args.get_one::<usize>("parse-error-limit") {
+        options.parse_error_limit = *limit;
+    }
+    options
 }
 
-/// Streaming output summarizes large novel folds through the configured hook.
-fn fold_hook(params: &crate::config::Params, workspace: &Path) -> Result<Option<Arc<Hook>>> {
-    params
-        .hook
-        .as_ref()
-        .map(|config| Hook::spawn(config, workspace).map(Arc::new))
-        .transpose()
+/// `-U` overrides the context plugin's `lines` for this run.
+fn apply_unified(args: &ArgMatches, config: &mut Config) {
+    let Some(unified) = args.get_one::<u32>("unified") else {
+        return;
+    };
+    let lines = config
+        .plugins
+        .entries
+        .get_mut("context")
+        .expect("the context plugin always has an entry")
+        .options
+        .get_mut("lines")
+        .expect("plugins.context.lines has a default");
+    *lines = serde_json::Value::from(*unified);
 }
 
-/// Explicit machine/text modes and redirected output must never enter the alternate screen.
-fn opens_tui(explicit_format: bool, metadata_or_quiet: bool, terminal: bool) -> bool {
-    terminal && !explicit_format && !metadata_or_quiet
+/// The global file, or the `--config` file in its place.
+fn load_config(args: &ArgMatches) -> Result<Config> {
+    Ok(Config::load(
+        args.get_one::<String>("config_file").map(Path::new),
+    )?)
 }
 
-fn launch_tui(args: &[OsString]) -> Result<i32> {
+/// `diffr config`: the settings screen, or one of `schema`, `show`, `set`.
+fn run_config(args: &ArgMatches, sub: &ArgMatches) -> Result<i32> {
+    let mut stdout = io::stdout().lock();
+    match sub.subcommand() {
+        Some(("schema", _)) => {
+            serde_json::to_writer_pretty(&mut stdout, &Config::schema())?;
+            stdout.write_all(b"\n")?;
+        }
+        Some(("show", show)) => {
+            let config = load_config(args)?;
+            let reveal = show.get_flag("reveal");
+            if show.get_flag("json") {
+                serde_json::to_writer_pretty(&mut stdout, &config::store::show(&config, reveal))?;
+                stdout.write_all(b"\n")?;
+            } else {
+                stdout.write_all(
+                    toml::to_string_pretty(&config::store::redacted(&config, reveal))?.as_bytes(),
+                )?;
+            }
+        }
+        Some(("set", set)) => {
+            let path = match args.get_one::<String>("config_file") {
+                Some(path) => PathBuf::from(path),
+                None => config::global_path()?,
+            };
+            config::store::set(
+                &path,
+                set.get_one::<String>("key").unwrap(),
+                set.get_one::<String>("value").unwrap(),
+            )?;
+        }
+        Some((other, _)) => return Err(format!("unknown config command {other}").into()),
+        None => {
+            let mut frontend = vec![OsString::from("--settings")];
+            if let Some(query) = sub.get_one::<String>("query") {
+                frontend.push(query.into());
+            }
+            return launch_tui(&frontend, false);
+        }
+    }
+    Ok(0)
+}
+
+/// Without `--format`, a comparison opens the terminal UI; metadata and
+/// `--quiet` print, or exit, without it.
+fn opens_tui(explicit_format: bool, metadata_or_quiet: bool) -> bool {
+    !explicit_format && !metadata_or_quiet
+}
+
+/// `comparison` passes the arguments after `--` as the comparison to open;
+/// otherwise they are frontend flags such as `--settings`.
+fn launch_tui(args: &[OsString], comparison: bool) -> Result<i32> {
     let entry = std::env::var_os("DIFFR_TUI_ENTRY")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -498,15 +554,29 @@ fn launch_tui(args: &[OsString]) -> Result<i32> {
         });
     if !entry.is_file() {
         return Err(
-            "Terminal frontend is unavailable; install the tui dependencies or use --format text"
+            "Terminal frontend is unavailable; install the tui dependencies or use --format ndjson"
                 .into(),
         );
     }
     let bun = std::env::var_os("DIFFR_BUN").unwrap_or_else(|| "bun".into());
-    let status = std::process::Command::new(bun)
-        .arg("run").arg(entry).arg("--diffr").arg(std::env::current_exe()?)
-        .arg("--").args(args).status()
-        .map_err(|error| format!("Could not launch terminal frontend: {error}. Install Bun and run bun install in tui/, or use --format text."))?;
+    let mut command = std::process::Command::new(bun);
+    command.arg("run").arg(entry);
+    if comparison {
+        command
+            .arg("--diffr")
+            .arg(std::env::current_exe()?)
+            .arg("--")
+            .args(args);
+    } else {
+        // `bun run main.tsx --settings --diffr <exe> [query]`
+        command
+            .arg(&args[0])
+            .arg("--diffr")
+            .arg(std::env::current_exe()?)
+            .args(&args[1..]);
+    }
+    let status = command.status()
+        .map_err(|error| format!("Could not launch terminal frontend: {error}. Install Bun and run bun install in tui/, or use --format ndjson."))?;
     Ok(status.code().unwrap_or(2))
 }
 
@@ -514,10 +584,9 @@ fn launch_tui(args: &[OsString]) -> Result<i32> {
 mod tui_launch_tests {
     use super::opens_tui;
     #[test]
-    fn only_implicit_interactive_output_opens_the_viewer() {
-        assert!(opens_tui(false, false, true));
-        assert!(!opens_tui(true, false, true));
-        assert!(!opens_tui(false, true, true));
-        assert!(!opens_tui(false, false, false));
+    fn only_a_comparison_without_format_opens_the_viewer() {
+        assert!(opens_tui(false, false));
+        assert!(!opens_tui(true, false));
+        assert!(!opens_tui(false, true));
     }
 }

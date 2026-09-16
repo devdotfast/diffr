@@ -1,0 +1,20 @@
+name = "hide-files"
+title = "Hidden files"
+description = "Hide whole files by their tags or status. A hidden file's record carries `visibility`, and frontends show it behind the reason."
+
+[enabled]
+title = "Hide files by tag"
+description = "Hide files carrying any of `tags`, and deleted files when `deleted` is set."
+
+[options.tags]
+type = "array"
+items = { type = "string" }
+title = "Tags that hide a file"
+description = "File tags that hide a file, such as `generated`, `vendored` or `test`. The first listed tag a file carries names the reason."
+default = ["generated", "vendored", "test"]
+
+[options.deleted]
+type = "boolean"
+title = "Hide deleted files"
+description = "Hide files that were deleted outright, whatever their tags."
+default = true

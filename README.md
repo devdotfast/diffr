@@ -12,7 +12,8 @@ diffr main HEAD --format ndjson
 ```
 
 See the [CLI reference](docs/cli.md), [streaming API](docs/streaming.md)
-including fold hooks, and [fixture viewer](examples/review/viewer/README.md).
+including [configuration](docs/config.md) and [plugins](docs/streaming.md#plugins),
+and [writing plugins](docs/plugins.md).
 The executable is `diffr`; the Cargo package remains `difftastic`.
 The upstream installation commands below install upstream Difftastic, not this fork.
 

@@ -2,7 +2,7 @@
 
 A genuinely new file: head-only multiline imports and a supplied replacement for the export function body. Keep the multiline signature visible. No extra context is emitted because the whole file is added.
 
-[Original PR](https://github.com/devdotfast/review/pull/160) · [Before](before.ts) · [After](after.ts) · [Git patch](change.patch) · [Generated review golden](review.snap) · [Expected annotations](expected.json) · [Provenance](provenance.json)
+[Original PR](https://github.com/devdotfast/review/pull/160) · [Before](before.ts) · [After](after.ts) · [Git patch](change.patch) · [Expected annotations](expected.json) · [Provenance](provenance.json)
 
 Annotations are manually selected targets, not recorded matcher output. Coordinates below are zero-based UTF-8 byte positions with exclusive ends.
 

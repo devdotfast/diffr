@@ -802,8 +802,8 @@ mod tests {
         let params = Params::default();
         let config = params.language(guess_language::Language::EmacsLisp);
 
-        let lhs = parse(&arena, "A B", config, false);
-        let rhs = parse(&arena, "A B X\n A B", config, false);
+        let lhs = parse(&arena, "A B", config, false).unwrap();
+        let rhs = parse(&arena, "A B X\n A B", config, false).unwrap();
         init_all_info(&lhs, &rhs);
 
         let mut change_map = ChangeMap::default();
@@ -828,8 +828,8 @@ mod tests {
         let params = Params::default();
         let config = params.language(guess_language::Language::EmacsLisp);
 
-        let lhs = parse(&arena, "(A B) X \n (A B)", config, false);
-        let rhs = parse(&arena, "((novel) A B)", config, false);
+        let lhs = parse(&arena, "(A B) X \n (A B)", config, false).unwrap();
+        let rhs = parse(&arena, "((novel) A B)", config, false).unwrap();
         init_all_info(&lhs, &rhs);
 
         let lhs_first_list_children = match lhs[0] {

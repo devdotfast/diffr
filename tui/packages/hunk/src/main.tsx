@@ -6,16 +6,40 @@ import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { readDiffStream } from "./diffr/stream";
 import { DiffStore } from "./diffr/store";
-import { cliClient } from "./diffr/config";
+import { cliClient, flattenSchema, type Setting } from "./diffr/config";
 import { loadBundledTheme, loadThemeFile, themeConfig, themesFromConfig, type ThemeSet } from "./diffr/theme";
 import { App } from "./ui/App";
 import { Settings } from "./ui/Settings";
 const args = process.argv.slice(2),
   store = new DiffStore();
+/**
+ * An error thrown outside the render loop's own handling would otherwise leave the terminal in
+ * the alternate screen with raw input on, which reads as a frozen window. Put the terminal back
+ * and print what happened.
+ */
+function restoreOnCrash(renderer: { destroy: () => void }) {
+  const fatal = (error: unknown) => {
+    renderer.destroy();
+    console.error(error instanceof Error ? (error.stack ?? error.message) : String(error));
+    process.exit(2);
+  };
+  process.on("uncaughtException", fatal);
+  process.on("unhandledRejection", fatal);
+}
 // `diffr config` opens the settings screen: bun run main.tsx --settings --diffr /path/to/diffr [query]
 if (args[0] === "--settings") {
   if (args[1] !== "--diffr" || !args[2]) {
     console.error("Usage: bun run start --settings --diffr /path/to/diffr [initial query]");
+    process.exit(2);
+  }
+  // Reading the config can fail: a key the binary no longer knows, a malformed file. Read it
+  // before the alternate screen exists, so the error reaches the terminal the user is looking at.
+  const client = cliClient(args[2]);
+  let settings: Setting[];
+  try {
+    settings = flattenSchema(client.schema(), client.show());
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
     process.exit(2);
   }
   const settingsRenderer = await createCliRenderer({
@@ -29,8 +53,9 @@ if (args[0] === "--settings") {
   };
   process.once("SIGTERM", quitSettings);
   process.once("SIGINT", quitSettings);
+  restoreOnCrash(settingsRenderer);
   createRoot(settingsRenderer).render(
-    <Settings client={cliClient(args[2])} onQuit={quitSettings} initialQuery={args.slice(3).join(" ")} />,
+    <Settings client={client} initial={settings} onQuit={quitSettings} initialQuery={args.slice(3).join(" ")} />,
   );
   await new Promise(() => {});
 }
@@ -98,6 +123,7 @@ function quit() {
 }
 process.once("SIGTERM", quit);
 process.once("SIGINT", quit);
+restoreOnCrash(renderer);
 const root = createRoot(renderer);
 root.render(<App store={store} onQuit={quit} themes={themes!} />);
 let stderr = "";

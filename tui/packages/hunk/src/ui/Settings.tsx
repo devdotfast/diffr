@@ -4,7 +4,6 @@ import { TextAttributes } from "@opentui/core";
 import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/react";
 import {
   filterSettings,
-  flattenSchema,
   formatValue,
   isDefault,
   parseValue,
@@ -68,12 +67,22 @@ interface ScreenState {
 
 type Line = { kind: "gap"; group: string } | { kind: "group"; group: string } | { kind: "setting"; setting: Setting; index: number };
 
-export function Settings({ client, onQuit, initialQuery = "" }: { client: ConfigClient; onQuit: () => void; initialQuery?: string }) {
+export function Settings({
+  client,
+  initial,
+  onQuit,
+  initialQuery = "",
+}: {
+  client: ConfigClient;
+  initial: Setting[];
+  onQuit: () => void;
+  initialQuery?: string;
+}) {
   const { width, height } = useTerminalDimensions();
   // Keys can arrive in one burst before React re-renders (a fast typist, a paste followed by
   // enter), so the handlers read and write this ref and only then ask for a render.
   const state = useRef<ScreenState>({
-    settings: flattenSchema(client.schema(), client.show()),
+    settings: initial,
     query: initialQuery,
     cursor: 0,
     prompt: null,

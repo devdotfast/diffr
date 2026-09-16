@@ -28,7 +28,10 @@ test("rows lead with titles under group headings; toggles change in place and ty
     },
   };
   let quit = false;
-  const t = await testRender(<Settings client={client} onQuit={() => { quit = true; }} />, { width: 100, height: 24 });
+  const t = await testRender(
+    <Settings client={client} initial={flattenSchema(schemaFixture, valuesFixture)} onQuit={() => { quit = true; }} />,
+    { width: 100, height: 24 },
+  );
   const press = async (key: string) => {
     await act(async () => { t.mockInput.pressKey(key); });
     await act(async () => { await t.renderOnce(); });

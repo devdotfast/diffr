@@ -880,6 +880,128 @@ mod tests {
     }
 
     #[test]
+    fn a_parse_error_fallback_numbers_its_folds() {
+        // Both sides hold a stray `)`, so the parse-error limit of zero sends
+        // the file to a line diff; the folds still come from the parse.
+        let lhs = format!("{RUST_LHS})\n");
+        let rhs = format!("{RUST_RHS})\n");
+        let diff = project_with(
+            "a.rs",
+            &lhs,
+            &rhs,
+            DiffOptions {
+                parse_error_limit: 0,
+                ..DiffOptions::default()
+            },
+        );
+        let Diff::Text { stats, .. } = &diff else {
+            panic!("text diff");
+        };
+        assert_eq!(stats.fallback.as_ref().unwrap().code, "parse_error");
+        let (lhs, rhs) = sources(&diff);
+        let (lhs, rhs) = (lhs.unwrap(), rhs.unwrap());
+        let (lhs_folds, rhs_folds) = (fold_ids(lhs), fold_ids(rhs));
+        let lhs_ids: BTreeSet<u32> = lhs_folds.values().copied().collect();
+        let rhs_ids: BTreeSet<u32> = rhs_folds.values().copied().collect();
+        assert_eq!(
+            lhs_ids.len(),
+            lhs_folds.len(),
+            "lhs folds have distinct ids"
+        );
+        assert_eq!(
+            rhs_ids.len(),
+            rhs_folds.len(),
+            "rhs folds have distinct ids"
+        );
+        let (lhs_states, rhs_states) = (fold_states(lhs), fold_states(rhs));
+        // Nothing matched the nodes these folds belong to, so no fold pairs.
+        let lhs_state_ids: BTreeSet<u32> = lhs_states.values().copied().collect();
+        assert!(
+            !rhs_states
+                .values()
+                .any(|state| lhs_state_ids.contains(state)),
+            "a fallback's folds are unpaired"
+        );
+    }
+
+    #[test]
+    fn folds_pair_only_where_the_matcher_paired_their_nodes() {
+        for options in [
+            DiffOptions::default(),
+            DiffOptions {
+                graph_limit: 1,
+                ..DiffOptions::default()
+            },
+        ] {
+            let structural = options.graph_limit != 1;
+            let diff = project_with("a.rs", RUST_LHS, RUST_RHS, options);
+            let Diff::Text { stats, .. } = &diff else {
+                panic!("text diff");
+            };
+            assert_eq!(stats.fallback.is_none(), structural);
+            let (lhs, rhs) = sources(&diff);
+            let (lhs, rhs) = (lhs.unwrap(), rhs.unwrap());
+            assert_tiles(lhs);
+            assert_tiles(rhs);
+            let (lhs_folds, rhs_folds) = (fold_states(lhs), fold_states(rhs));
+            assert_eq!(lhs_folds.len(), 2);
+            assert_eq!(rhs_folds.len(), 3);
+            let shared: BTreeSet<u32> = lhs_folds
+                .values()
+                .filter(|state| rhs_folds.values().any(|other| other == *state))
+                .copied()
+                .collect();
+            if structural {
+                // `f` changed its signature and stays paired through the
+                // matcher; `keep` is untouched. `added` is rhs-only.
+                assert_eq!(
+                    lhs_folds[&1], rhs_folds[&1],
+                    "f pairs across a changed header"
+                );
+                assert_eq!(lhs_folds[&7], rhs_folds[&7], "keep pairs");
+                assert_eq!(shared.len(), 2);
+            } else {
+                // The matcher never ran, so every fold is on its own.
+                assert!(shared.is_empty(), "a fallback's folds are unpaired");
+            }
+            assert!(
+                !lhs_folds.values().any(|id| *id == rhs_folds[&13]),
+                "added is rhs-only"
+            );
+        }
+    }
+
+    #[test]
+    fn the_fallback_keeps_folds() {
+        let diff = project_with(
+            "a.rs",
+            RUST_LHS,
+            RUST_RHS,
+            DiffOptions {
+                graph_limit: 1,
+                ..DiffOptions::default()
+            },
+        );
+        let Diff::Text { stats, .. } = &diff else {
+            panic!("text diff");
+        };
+        assert_eq!(stats.fallback.as_ref().unwrap().code, "too_complex");
+        let (_, rhs) = sources(&diff);
+        let rhs = rhs.unwrap();
+        let bodies: Vec<_> = all(&rhs.regions)
+            .into_iter()
+            .filter(|r| r.tags.iter().any(|tag| tag == "body"))
+            .map(|r| r.range.start.line)
+            .collect();
+        // Nothing is collapsed, so the untouched `keep` is a fold like the
+        // changed `f` and the new `added`.
+        assert_eq!(bodies, vec![1, 7, 13]);
+        assert!(leaves(&rhs.regions)
+            .iter()
+            .all(|leaf| !leaf.visibility.collapsed && leaf.tags.is_empty()));
+    }
+
+    #[test]
     fn leaves_tile_both_sides_and_paired_leaves_share_ids() {
         let lhs = "import os\n\ndef f():\n    x = 1\n    return x\n";
         let rhs =

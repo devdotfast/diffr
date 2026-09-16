@@ -275,6 +275,17 @@ pub(crate) fn split_lines(spans: impl IntoIterator<Item = (usize, usize)>) -> BT
         .collect()
 }
 
+/// Every fold in one parsed side, each unpaired: the parse's folds survive
+/// when the matcher does not run, with nothing to pair them with.
+pub(crate) fn unmatched(nodes: &[&Syntax<'_>], folds: &mut Vec<Fold>) {
+    for node in nodes {
+        folds.extend(project(node, None));
+        if let Syntax::List { children, .. } = node {
+            unmatched(children, folds);
+        }
+    }
+}
+
 /// The node the matcher paired `node` with, when the pairing is mutual.
 ///
 /// Every matcher step records a pair on both nodes, but the nested slider

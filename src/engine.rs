@@ -268,6 +268,14 @@ pub(crate) fn diff_file_content(
                             }
 
                             if exceeded_graph_limit {
+                                // The parse still stands, so its folds do,
+                                // each unpaired: nothing matched the nodes
+                                // they belong to.
+                                folds::unmatched(&lhs, &mut lhs_folds);
+                                folds::unmatched(&rhs, &mut rhs_folds);
+                                annotations = display::syntax_context::SyntaxAnnotations::collect(
+                                    (&lhs, &rhs),
+                                );
                                 let (lhs_positions, rhs_positions) =
                                     line_parser::change_positions(lhs_src, rhs_src);
                                 (
@@ -356,6 +364,39 @@ pub(crate) fn diff_file_content(
                                     rhs_src,
                                 ));
                             }
+
+                            // The trees parsed, only with too many errors to
+                            // match on. Folds and context still come from them.
+                            let conflict = |side| {
+                                move |conflict| QueryConflict {
+                                    path: display_path.to_owned(),
+                                    side,
+                                    conflict,
+                                }
+                            };
+                            let (lhs, _) = tsp::to_syntax(
+                                &lhs_tree,
+                                lhs_src,
+                                &arena,
+                                lang_config,
+                                diff_options.ignore_comments,
+                            )
+                            .map_err(conflict(Side::Left))?;
+                            let (rhs, _) = tsp::to_syntax(
+                                &rhs_tree,
+                                rhs_src,
+                                &arena,
+                                lang_config,
+                                diff_options.ignore_comments,
+                            )
+                            .map_err(conflict(Side::Right))?;
+                            // Folds are identified by syntax id, which only
+                            // exists once both sides are numbered.
+                            syntax::init_all_info(&lhs, &rhs);
+                            folds::unmatched(&lhs, &mut lhs_folds);
+                            folds::unmatched(&rhs, &mut rhs_folds);
+                            annotations =
+                                display::syntax_context::SyntaxAnnotations::collect((&lhs, &rhs));
 
                             let (lhs_positions, rhs_positions) =
                                 line_parser::change_positions(lhs_src, rhs_src);

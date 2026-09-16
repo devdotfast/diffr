@@ -234,6 +234,7 @@ pub struct SourcePos {
 /// Line counts for one file. `fallback` is present exactly when the AST
 /// match did not run and the alignment is a line diff, carrying why:
 /// `too_complex`, `too_large`, `unsupported_language`, `parse_error`.
+/// Folds are still present on a fallback whenever the language parsed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Stats {
     /// Lines with any byte change.

@@ -39,7 +39,7 @@
 //! largest leaf `alignment_id`; each is handed out in the order the moves
 //! need them, lhs before rhs.
 use crate::tree::{walk, walk_mut, Node, Pairing, Region, Source};
-use crate::types::{Move, Position, Range, Visibility, ROOT};
+use crate::types::{Cut, Move, Position, Range, Visibility, ROOT};
 use anyhow::{bail, ensure};
 use std::collections::BTreeSet;
 
@@ -64,17 +64,14 @@ impl Applier {
         file: &mut Visibility,
     ) -> anyhow::Result<()> {
         match next {
-            Move::Cut { region, at } => cut(sides, region, at, &mut self.fresh),
-            Move::JoinFolds { regions } => join(sides, &regions, &mut self.fresh),
-            Move::LinkFoldState { regions } => link(sides, &regions),
-            Move::SetCollapsed {
-                region: ROOT,
-                collapsed,
-            } => {
+            Move::Cut(Cut { region, at }) => cut(sides, region, at, &mut self.fresh),
+            Move::JoinFolds(regions) => join(sides, &regions, &mut self.fresh),
+            Move::LinkFoldState(regions) => link(sides, &regions),
+            Move::SetCollapsed((ROOT, collapsed)) => {
                 file.collapsed = collapsed;
                 Ok(())
             }
-            Move::SetCollapsed { region, collapsed } => {
+            Move::SetCollapsed((region, collapsed)) => {
                 let state = region_of(sides, region)?.fold_state_id;
                 for tree in trees(sides) {
                     walk_mut(tree, &mut |region| {
@@ -85,21 +82,18 @@ impl Applier {
                 }
                 Ok(())
             }
-            Move::SetLabel {
-                region: ROOT,
-                label,
-            } => {
+            Move::SetLabel((ROOT, label)) => {
                 file.label = label.unwrap_or_default();
                 Ok(())
             }
-            Move::SetLabel { region, label } => {
+            Move::SetLabel((region, label)) => {
                 region_mut(sides, region)?.visibility.label = label.unwrap_or_default();
                 Ok(())
             }
-            Move::SetTags { region: ROOT, .. } => {
+            Move::SetTags((ROOT, _)) => {
                 bail!("the file's tags are its manifest entry's; only a region's tags can be set")
             }
-            Move::SetTags { region, tags } => {
+            Move::SetTags((region, tags)) => {
                 region_mut(sides, region)?.tags = tags;
                 Ok(())
             }
@@ -564,11 +558,11 @@ mod tests {
                 ],
             );
             let moves = vec![
-                Move::Cut {
+                Move::Cut(Cut {
                     region: target,
                     at: 2,
-                },
-                Move::Cut { region: 5, at: 2 },
+                }),
+                Move::Cut(Cut { region: 5, at: 2 }),
             ];
             run(moves, &mut sides).unwrap();
             let (lhs, rhs) = sides_of(&sides);
@@ -609,7 +603,7 @@ mod tests {
             vec![leaf(1, 0, 0, 1, &[]), leaf(2, 1, 1, 6, &[])],
             vec![in_state(leaf(3, 0, 0, 1, &[]), 1)],
         );
-        run(vec![Move::Cut { region: 2, at: 1 }], &mut sides).unwrap();
+        run(vec![Move::Cut(Cut { region: 2, at: 1 })], &mut sides).unwrap();
         let (lhs, rhs) = sides_of(&sides);
         assert_eq!(
             shape(&lhs.regions),
@@ -633,17 +627,9 @@ mod tests {
             vec![in_state(fold(4, false, vec![leaf(5, 2, 0, 4, &[])]), 2)],
         );
         let moves = vec![
-            Move::LinkFoldState {
-                regions: vec![2, 1],
-            },
-            Move::SetCollapsed {
-                region: 4,
-                collapsed: true,
-            },
-            Move::SetLabel {
-                region: 2,
-                label: Some("summary".to_owned()),
-            },
+            Move::LinkFoldState(vec![2, 1]),
+            Move::SetCollapsed((4, true)),
+            Move::SetLabel((2, Some("summary".to_owned()))),
         ];
         run(moves, &mut sides).unwrap();
         let (lhs, rhs) = sides_of(&sides);
@@ -660,16 +646,7 @@ mod tests {
             (4, None, 2, 0, 4, true, String::new())
         );
         run(
-            vec![
-                Move::SetCollapsed {
-                    region: 1,
-                    collapsed: false,
-                },
-                Move::SetLabel {
-                    region: 2,
-                    label: None,
-                },
-            ],
+            vec![Move::SetCollapsed((1, false)), Move::SetLabel((2, None))],
             &mut sides,
         )
         .unwrap();
@@ -698,26 +675,14 @@ mod tests {
             )
         };
         let mut sides = tree();
-        run(
-            vec![Move::LinkFoldState {
-                regions: vec![7, 5],
-            }],
-            &mut sides,
-        )
-        .unwrap();
+        run(vec![Move::LinkFoldState(vec![7, 5])], &mut sides).unwrap();
         let (lhs, rhs) = sides_of(&sides);
         assert_eq!(lhs.regions[0].fold_state_id, 7, "the pair stays together");
         assert_eq!(rhs.regions[1].fold_state_id, 7);
         assert_eq!(rhs.regions[0].fold_state_id, 3);
 
         let mut sides = tree();
-        run(
-            vec![Move::LinkFoldState {
-                regions: vec![8, 1],
-            }],
-            &mut sides,
-        )
-        .unwrap();
+        run(vec![Move::LinkFoldState(vec![8, 1])], &mut sides).unwrap();
         let (lhs, rhs) = sides_of(&sides);
         for region in [&lhs.regions[0], &lhs.regions[1], &rhs.regions[1]] {
             assert_eq!(
@@ -744,9 +709,7 @@ mod tests {
                 in_state(fold(6, true, vec![leaf(13, 5, 5, 8, &[])]), 3),
             ],
         );
-        let moves = vec![Move::JoinFolds {
-            regions: vec![1, 2, 3, 5, 7, 6],
-        }];
+        let moves = vec![Move::JoinFolds(vec![1, 2, 3, 5, 7, 6])];
         run(moves, &mut sides).unwrap();
         let (lhs, rhs) = sides_of(&sides);
         assert_eq!(lhs.regions.len(), 1);
@@ -772,9 +735,7 @@ mod tests {
             ],
             vec![in_state(leaf(7, 0, 0, 1, &[]), 1)],
         );
-        let moves = vec![Move::JoinFolds {
-            regions: vec![2, 4, 5],
-        }];
+        let moves = vec![Move::JoinFolds(vec![2, 4, 5])];
         run(moves, &mut sides).unwrap();
         let (lhs, rhs) = sides_of(&sides);
         assert_eq!(lhs.regions.len(), 2);
@@ -801,45 +762,22 @@ mod tests {
             )
         };
         let error = |next: Move| run(vec![next], &mut tree()).unwrap_err().to_string();
-        assert!(error(Move::SetCollapsed {
-            region: 9,
-            collapsed: true
-        })
-        .contains("no region 9"));
-        assert!(error(Move::Cut { region: 3, at: 3 }).contains("not inside region 3"));
-        assert!(error(Move::Cut { region: 3, at: 0 }).contains("not inside region 3"));
-        assert!(error(Move::Cut { region: 2, at: 1 }).contains("is a fold"));
-        assert!(error(Move::Cut {
+        assert!(error(Move::SetCollapsed((9, true))).contains("no region 9"));
+        assert!(error(Move::Cut(Cut { region: 3, at: 3 })).contains("not inside region 3"));
+        assert!(error(Move::Cut(Cut { region: 3, at: 0 })).contains("not inside region 3"));
+        assert!(error(Move::Cut(Cut { region: 2, at: 1 })).contains("is a fold"));
+        assert!(error(Move::Cut(Cut {
             region: ROOT,
             at: 1
-        })
+        }))
         .contains("the file cannot be cut"));
-        assert!(error(Move::JoinFolds {
-            regions: vec![1, 4]
-        })
-        .contains("not consecutive"));
-        assert!(error(Move::JoinFolds {
-            regions: vec![1, 2, 99]
-        })
-        .contains("no region 99"));
-        assert!(error(Move::JoinFolds {
-            regions: vec![ROOT, 1]
-        })
-        .contains("cannot include the file"));
-        assert!(error(Move::JoinFolds {
-            regions: vec![1, 2, 5]
-        })
-        .contains("holds only one"));
-        assert!(error(Move::LinkFoldState { regions: vec![1] }).contains("at least two"));
-        assert!(error(Move::LinkFoldState {
-            regions: vec![1, 1]
-        })
-        .contains("twice"));
-        assert!(error(Move::SetTags {
-            region: ROOT,
-            tags: vec![]
-        })
-        .contains("manifest"));
+        assert!(error(Move::JoinFolds(vec![1, 4])).contains("not consecutive"));
+        assert!(error(Move::JoinFolds(vec![1, 2, 99])).contains("no region 99"));
+        assert!(error(Move::JoinFolds(vec![ROOT, 1])).contains("cannot include the file"));
+        assert!(error(Move::JoinFolds(vec![1, 2, 5])).contains("holds only one"));
+        assert!(error(Move::LinkFoldState(vec![1])).contains("at least two"));
+        assert!(error(Move::LinkFoldState(vec![1, 1])).contains("twice"));
+        assert!(error(Move::SetTags((ROOT, vec![]))).contains("manifest"));
     }
 
     #[test]
@@ -850,22 +788,10 @@ mod tests {
         );
         let visibility = run(
             vec![
-                Move::SetLabel {
-                    region: ROOT,
-                    label: Some("first".to_owned()),
-                },
-                Move::SetCollapsed {
-                    region: ROOT,
-                    collapsed: true,
-                },
-                Move::SetLabel {
-                    region: ROOT,
-                    label: Some("Generated file".to_owned()),
-                },
-                Move::SetTags {
-                    region: 2,
-                    tags: vec!["mine:tag".to_owned()],
-                },
+                Move::SetLabel((ROOT, Some("first".to_owned()))),
+                Move::SetCollapsed((ROOT, true)),
+                Move::SetLabel((ROOT, Some("Generated file".to_owned()))),
+                Move::SetTags((2, vec!["mine:tag".to_owned()])),
             ],
             &mut sides,
         )

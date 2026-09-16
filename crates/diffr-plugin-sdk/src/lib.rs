@@ -3,7 +3,10 @@
 //! every plugin whether diffr compiles it in or runs it as a WASM component.
 //!
 //! - [`types`] holds the contract's records: the file entry, each side's
-//!   flat preorder region list with parent ids and text, and the moves.
+//!   flat preorder region list with parent ids and text, and the moves. They
+//!   are generated from `wit/plugin.wit` itself, so there is one definition
+//!   of each, and a plugin hands diffr the same records natively and as a
+//!   component.
 //! - [`Plugin`] is the one trait every plugin implements: `new`, which makes
 //!   it from its options, then `classify` and `mutate`, taking and returning
 //!   exactly those records.
@@ -65,7 +68,10 @@ pub trait Plugin: Sized {
     ) -> anyhow::Result<Vec<Move>>;
 }
 
-#[cfg(target_arch = "wasm32")]
+/// The contract generated from `wit/plugin.wit`. Its records are plain Rust
+/// and compile for every target, so [`types`] re-exports them and a plugin
+/// works with the generated records wherever it runs; only the `export!`
+/// macro this generates is wasm-specific, and [`export!`] calls it there.
 #[doc(hidden)]
 pub mod bindings {
     wit_bindgen::generate!({
@@ -73,6 +79,7 @@ pub mod bindings {
         world: "plugin",
         pub_export_macro: true,
         default_bindings_module: "diffr_plugin_sdk::bindings",
+        additional_derives: [PartialEq, Eq],
     });
 }
 

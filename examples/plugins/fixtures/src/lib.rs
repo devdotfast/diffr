@@ -5,7 +5,7 @@
 //! but the first line of its first leaf, naming the piece its cut creates by
 //! predicting the id.
 use diffr_plugin_sdk::apply::Fresh;
-use diffr_plugin_sdk::types::Source;
+use diffr_plugin_sdk::types::{Cut, Source};
 use diffr_plugin_sdk::{
     anyhow, export, host, line_count, tree, FileEntry, FileStatus, Move, Node, Pairing, Plugin,
     Side, ROOT,
@@ -62,14 +62,8 @@ impl Plugin for Fixtures {
         let subject = subject.trim();
         host::log(&format!("{}: last changed in {subject:?}", file.path));
         let mut moves = vec![
-            Move::SetCollapsed {
-                region: ROOT,
-                collapsed: true,
-            },
-            Move::SetLabel {
-                region: ROOT,
-                label: Some(format!("Fixture · {subject}")),
-            },
+            Move::SetCollapsed((ROOT, true)),
+            Move::SetLabel((ROOT, Some(format!("Fixture · {subject}")))),
         ];
         // The first top-level leaf of two or more lines, on the before side
         // when there is one. A cut hands out its piece ids lhs first, so the
@@ -86,18 +80,15 @@ impl Plugin for Fixtures {
         if let Some(leaf) = leaf {
             let piece = Fresh::of(&sides).id();
             moves.extend([
-                Move::Cut {
+                Move::Cut(Cut {
                     region: leaf.id,
                     at: 1,
-                },
-                Move::SetCollapsed {
-                    region: piece,
-                    collapsed: true,
-                },
-                Move::SetLabel {
-                    region: piece,
-                    label: Some(format!("{} fixture lines", line_count(leaf) - 1)),
-                },
+                }),
+                Move::SetCollapsed((piece, true)),
+                Move::SetLabel((
+                    piece,
+                    Some(format!("{} fixture lines", line_count(leaf) - 1)),
+                )),
             ]);
         }
         Ok(moves)

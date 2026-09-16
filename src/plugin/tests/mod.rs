@@ -334,10 +334,7 @@ impl Plugin for Bad {
         _: Option<&types::Source>,
         _: Option<&types::Source>,
     ) -> anyhow::Result<Vec<Move>> {
-        Ok(vec![Move::SetCollapsed {
-            region: 99_999,
-            collapsed: true,
-        }])
+        Ok(vec![Move::SetCollapsed((99_999, true))])
     }
 }
 

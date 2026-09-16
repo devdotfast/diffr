@@ -45,14 +45,8 @@ impl Plugin for HideFiles {
             }
         };
         Ok(vec![
-            Move::SetCollapsed {
-                region: ROOT,
-                collapsed: true,
-            },
-            Move::SetLabel {
-                region: ROOT,
-                label: Some(format!("{what} file · hidden by default")),
-            },
+            Move::SetCollapsed((ROOT, true)),
+            Move::SetLabel((ROOT, Some(format!("{what} file · hidden by default")))),
         ])
     }
 }

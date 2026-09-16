@@ -187,7 +187,7 @@ fn matched_runs_are_grouped_on_both_sides_with_one_fold_state() {
     let joins: Vec<Move> = moves(&bundled("group", json!({})), &file, &wire(sides.clone()))
         .unwrap()
         .into_iter()
-        .filter(|next| matches!(next, Move::JoinFolds { .. }))
+        .filter(|next| matches!(next, Move::JoinFolds(_)))
         .collect();
     assert_eq!(joins.len(), 1, "one join lists both runs: {joins:?}");
     run_trees("group", json!({}), &file, &mut sides);

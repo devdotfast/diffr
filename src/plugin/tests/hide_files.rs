@@ -14,14 +14,8 @@ fn reasons(options: serde_json::Value, status: FileStatus, tags: &[&str]) -> Vec
 
 fn hide(reason: &str) -> Vec<Move> {
     vec![
-        Move::SetCollapsed {
-            region: types::ROOT,
-            collapsed: true,
-        },
-        Move::SetLabel {
-            region: types::ROOT,
-            label: Some(reason.to_owned()),
-        },
+        Move::SetCollapsed((types::ROOT, true)),
+        Move::SetLabel((types::ROOT, Some(reason.to_owned()))),
     ]
 }
 

@@ -8,7 +8,7 @@
 //! a leaf, and grouping siblings under a labelled fold.
 use crate::apply::{find, trees_ref, Applier};
 use crate::tree::{siblings_of, walk, Node, Pairing, Region, Source};
-use crate::types::{Move, Visibility};
+use crate::types::{Cut, Move, Visibility};
 use anyhow::{anyhow, ensure};
 
 pub struct Draft {
@@ -89,21 +89,12 @@ impl Draft {
                 cleared.push(region.id);
             }
         });
-        self.push(Move::SetCollapsed {
-            region: id,
-            collapsed: true,
-        })?;
+        self.push(Move::SetCollapsed((id, true)))?;
         for region in named {
-            self.push(Move::SetLabel {
-                region,
-                label: Some(label.clone()),
-            })?;
+            self.push(Move::SetLabel((region, Some(label.clone()))))?;
         }
         for region in cleared {
-            self.push(Move::SetLabel {
-                region,
-                label: None,
-            })?;
+            self.push(Move::SetLabel((region, None)))?;
         }
         Ok(())
     }
@@ -127,23 +118,15 @@ impl Draft {
                 cleared.push(region.id);
             }
         });
-        self.push(Move::LinkFoldState {
-            regions: ids.to_vec(),
-        })?;
+        self.push(Move::LinkFoldState(ids.to_vec()))?;
         if !collapsed {
             return Ok(());
         }
         if !first_collapsed {
-            self.push(Move::SetCollapsed {
-                region: ids[0],
-                collapsed: true,
-            })?;
+            self.push(Move::SetCollapsed((ids[0], true)))?;
         }
         for region in cleared {
-            self.push(Move::SetLabel {
-                region,
-                label: None,
-            })?;
+            self.push(Move::SetLabel((region, None)))?;
         }
         Ok(())
     }
@@ -165,17 +148,17 @@ impl Draft {
         );
         let mut piece = id;
         if start > 0 {
-            self.push(Move::Cut {
+            self.push(Move::Cut(Cut {
                 region: id,
                 at: start,
-            })?;
+            }))?;
             piece = self.next_sibling(id)?;
         }
         if end < len {
-            self.push(Move::Cut {
+            self.push(Move::Cut(Cut {
                 region: piece,
                 at: end - start,
-            })?;
+            }))?;
         }
         Ok(piece)
     }
@@ -195,9 +178,7 @@ impl Draft {
     /// Wrap `ids`, consecutive siblings on each side that holds them, in a
     /// new fold on each such side, starting collapsed behind `label`.
     pub fn group(&mut self, ids: Vec<u32>, label: String) -> anyhow::Result<()> {
-        self.push(Move::JoinFolds {
-            regions: ids.clone(),
-        })?;
+        self.push(Move::JoinFolds(ids.clone()))?;
         let mut folds = Vec::new();
         for tree in trees_ref(&self.sides) {
             let mut parent = None;
@@ -211,15 +192,9 @@ impl Draft {
             folds.extend(parent);
         }
         let first = *folds.first().expect("a join adds a fold on some side");
-        self.push(Move::SetCollapsed {
-            region: first,
-            collapsed: true,
-        })?;
+        self.push(Move::SetCollapsed((first, true)))?;
         for region in folds {
-            self.push(Move::SetLabel {
-                region,
-                label: Some(label.clone()),
-            })?;
+            self.push(Move::SetLabel((region, Some(label.clone()))))?;
         }
         Ok(())
     }

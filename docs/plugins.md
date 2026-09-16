@@ -193,7 +193,9 @@ A component gets full access; diffr does not sandbox it:
 `crates/diffr-plugin-sdk` is the contract in Rust, and every bundled plugin is
 written with it:
 
-- `types`: the contract's records, as plain Rust.
+- `types`: the contract's records, generated from `wit/plugin.wit` itself by
+  `wit_bindgen::generate!`, so there is one definition of each. A plugin
+  works with the same records natively and as a component.
 - `Plugin`: the one trait, mirroring the `plugin` resource. A plugin is a
   struct with an `Options` type (deserialized from the options JSON), and
   implements `new` (make the plugin from its options; where it can fail),
@@ -202,10 +204,10 @@ written with it:
 - `export!(MyPlugin)`: built for `wasm32`, exports the plugin as the
   component's `plugin` resource: its `new` deserializes the options string
   into `Options` and calls `Plugin::new`, and its `classify` and `mutate`
-  call the instance, converting between the records and the generated guest
-  bindings. Built for anything else, it expands to nothing, and diffr's
-  native registry deserializes the options and calls the trait itself. The
-  same source builds both ways.
+  call the instance with the records it was given, since the guest bindings'
+  records are the contract's. Built for anything else, it expands to nothing,
+  and diffr's native registry deserializes the options and calls the trait
+  itself. The same source builds both ways.
 - `host::{read_head, git, log}`: the host functions, the same call natively
   and in a component.
 - `tree::sides(lhs, rhs)` rebuilds the records as region trees
@@ -252,7 +254,7 @@ impl Plugin for HideAll {
         _: Option<&Source>,
         _: Option<&Source>,
     ) -> anyhow::Result<Vec<Move>> {
-        Ok(vec![Move::SetCollapsed { region: ROOT, collapsed: true }])
+        Ok(vec![Move::SetCollapsed((ROOT, true))])
     }
 }
 

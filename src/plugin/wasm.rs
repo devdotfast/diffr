@@ -282,13 +282,15 @@ fn source(side: &contract::Source) -> types::Source {
 
 fn lift(next: types::Move) -> contract::Move {
     match next {
-        types::Move::Cut(types::Cut { region, at }) => contract::Move::Cut { region, at },
-        types::Move::JoinFolds(regions) => contract::Move::JoinFolds { regions },
-        types::Move::LinkFoldState(regions) => contract::Move::LinkFoldState { regions },
-        types::Move::SetCollapsed((region, collapsed)) => {
-            contract::Move::SetCollapsed { region, collapsed }
+        types::Move::Cut(types::Cut { region, at }) => {
+            contract::Move::Cut(contract::Cut { region, at })
         }
-        types::Move::SetLabel((region, label)) => contract::Move::SetLabel { region, label },
-        types::Move::SetTags((region, tags)) => contract::Move::SetTags { region, tags },
+        types::Move::JoinFolds(regions) => contract::Move::JoinFolds(regions),
+        types::Move::LinkFoldState(regions) => contract::Move::LinkFoldState(regions),
+        types::Move::SetCollapsed((region, collapsed)) => {
+            contract::Move::SetCollapsed((region, collapsed))
+        }
+        types::Move::SetLabel((region, label)) => contract::Move::SetLabel((region, label)),
+        types::Move::SetTags((region, tags)) => contract::Move::SetTags((region, tags)),
     }
 }

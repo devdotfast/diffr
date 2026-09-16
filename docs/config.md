@@ -53,7 +53,7 @@ name = "default-dark"      # a bundled terminal theme
 path = "/path/to/theme.toml"  # or a Helix-style theme file
 
 [plugins]                  # see "Plugins" below
-order = ["context", "hide-files", "deleted-bodies", "test-bodies", "removed-runs", "group"]
+order = ["context", "hide-files", "deleted-bodies", "test-bodies", "removed-runs", "summarize", "group"]
 
 [plugins.hide-files]
 enabled = true
@@ -71,6 +71,18 @@ min_lines = 3
 [plugins.removed-runs]                      # the middle of long removed stretches
 enabled = true
 min_lines = 5
+
+[plugins.summarize]                         # pseudocode for large new function bodies
+enabled = false            # off by default: it needs an API key
+provider = "gemini"
+model = "gemini-3.8-flash"
+min_lines = 20
+api_key = "…"              # or GEMINI_API_KEY / GOOGLE_API_KEY
+endpoint = "https://…"     # optional base URL override
+request_timeout_ms = 60000
+max_concurrency = 16
+retries = 3
+system_prompt = """…"""    # the model's system instruction; defaults to diffr's own
 
 [plugins.group]                             # adjacent collapsed regions under one row
 enabled = true
@@ -95,7 +107,7 @@ produce on the wire.
 
 ```toml
 [plugins]
-order = ["context", "hide-files", "deleted-bodies", "test-bodies", "removed-runs", "group"]
+order = ["context", "hide-files", "deleted-bodies", "test-bodies", "removed-runs", "summarize", "group"]
 
 [plugins.context]                           # unchanged lines far from any change collapse
 enabled = true
@@ -118,6 +130,18 @@ min_lines = 3
 enabled = true
 min_lines = 5
 
+[plugins.summarize]                         # pseudocode for large new function bodies
+enabled = false            # off by default: it needs an API key
+provider = "gemini"
+model = "gemini-3.8-flash"
+min_lines = 20
+api_key = "…"              # or GEMINI_API_KEY / GOOGLE_API_KEY
+endpoint = "https://…"     # optional base URL override
+request_timeout_ms = 60000
+max_concurrency = 16
+retries = 3
+system_prompt = """…"""    # the model's system instruction; defaults to diffr's own
+
 [plugins.group]                             # adjacent collapsed regions under one row
 enabled = true
 ```
@@ -133,6 +157,9 @@ as `plugins.deleted-bodies: min_lines: "many" is not of type "integer"`.
 
 Every plugin that is on is made (its `new` runs) when diffr starts, before
 any output, and one that cannot be made stops diffr with an error naming it.
+The summarizer cannot be made without an API key, which is why it ships off:
+turn it on with `enabled = true` once `api_key`, `GEMINI_API_KEY` or
+`GOOGLE_API_KEY` holds a key.
 
 An entry that names no bundled plugin is an error.
 
@@ -183,7 +210,8 @@ settings schema in the order `plugin.toml` declares them.
 
 Tree-sitter queries decide which folds exist and what they are, as tags;
 plugins decide how they are shown. Each plugin that reads syntax
-(`context`, `deleted-bodies`, `test-bodies`, `removed-runs`)
+(`context`, `deleted-bodies`, `test-bodies`, `removed-runs`,
+`summarize`)
 lists one query file per language
 key (`rust`, `python`, `go`, `javascript`, `javascriptjsx`, `typescript`,
 `typescripttsx`, or any other lowercase language name) under `[queries]` in

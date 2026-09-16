@@ -12,12 +12,13 @@ use super::config::Manifest;
 use std::sync::OnceLock;
 
 /// The bundled plugins, in their default order.
-pub(crate) const NAMES: [&str; 6] = [
+pub(crate) const NAMES: [&str; 7] = [
     "context",
     "hide-files",
     "deleted-bodies",
     "test-bodies",
     "removed-runs",
+    "summarize",
     "group",
 ];
 
@@ -58,6 +59,11 @@ const FILES: &[(&str, &str)] = embed![
     "removed-runs/queries/javascript.scm",
     "removed-runs/queries/python.scm",
     "removed-runs/queries/rust.scm",
+    "summarize/plugin.toml",
+    "summarize/queries/go.scm",
+    "summarize/queries/javascript.scm",
+    "summarize/queries/python.scm",
+    "summarize/queries/rust.scm",
     "group/plugin.toml",
 ];
 

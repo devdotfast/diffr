@@ -6,6 +6,7 @@ mod deleted_bodies;
 mod group;
 mod hide_files;
 mod removed_runs;
+mod summarize;
 mod test_bodies;
 
 use super::*;
@@ -306,7 +307,8 @@ fn the_default_pipeline_makes_every_plugin_that_is_on() {
             "test-bodies",
             "removed-runs",
             "group"
-        ]
+        ],
+        "the summarizer is off until turned on"
     );
 }
 
@@ -445,6 +447,23 @@ fn a_move_that_cannot_be_carried_out_fails_naming_the_plugin() {
     let error = bad.run(&file, &mut sides).unwrap_err();
     assert!(error.downcast_ref::<MutationFailed>().is_some());
     assert_eq!(format!("{error:#}"), "mutation bad: no region 99999");
+}
+
+#[test]
+fn a_plugin_that_cannot_be_made_is_a_setup_error() {
+    let config = Config::from_toml("[plugins.summarize]\nenabled = true\napi_key = ''\n").unwrap();
+    // Only meaningful when the environment carries no key.
+    if std::env::var_os("GEMINI_API_KEY").is_some() || std::env::var_os("GOOGLE_API_KEY").is_some()
+    {
+        return;
+    }
+    let error = Pipeline::from_config(&config.plugins, Path::new("."))
+        .err()
+        .expect("a summarizer without a key cannot be made");
+    assert_eq!(
+        format!("{error:#}"),
+        "plugins.summarize: no API key: set plugins.summarize.api_key, or GEMINI_API_KEY or GOOGLE_API_KEY in the environment, or turn the summarizer off with plugins.summarize.enabled = false"
+    );
 }
 
 #[test]

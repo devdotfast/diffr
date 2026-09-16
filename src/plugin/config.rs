@@ -535,6 +535,11 @@ mod tests {
                 "Deleted function bodies"
             )
         );
+        assert_eq!(group("plugins.summarize.model"), ("Model", "Summaries"));
+        assert_eq!(
+            group("plugins.summarize.provider"),
+            ("Provider", "Summaries")
+        );
         assert!(schema["properties"].get("languages").is_none());
         let plugins = &schema["properties"]["plugins"]["properties"];
         assert_eq!(plugins["order"]["x-settings"], false);
@@ -543,6 +548,12 @@ mod tests {
             plugins["hide-files"]["properties"]["tags"]["x-settings"],
             false
         );
+        let summarize = &plugins["summarize"]["properties"];
+        assert_eq!(summarize["system_prompt"]["x-settings"], false);
+        assert!(summarize["system_prompt"]["default"]
+            .as_str()
+            .unwrap()
+            .starts_with("For each listed fold, rewrite that function body"));
         let keys: Vec<&String> = plugins.as_object().unwrap().keys().collect();
         assert_eq!(
             keys,
@@ -553,6 +564,7 @@ mod tests {
                 "deleted-bodies",
                 "test-bodies",
                 "removed-runs",
+                "summarize",
                 "group"
             ]
         );
@@ -561,20 +573,20 @@ mod tests {
     #[test]
     fn order_names_every_entry_exactly_once() {
         let order = |names: &str| Config::from_toml(&format!("[plugins]\norder = [{names}]"));
-        assert!(order("'context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'group'").is_ok());
+        assert!(order("'context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'group', 'summarize'").is_ok());
         let error = order(
-            "'context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs'",
+            "'context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'summarize'",
         )
         .err()
         .unwrap()
         .to_string();
         assert!(error.contains("\"group\" is not listed"), "{error}");
-        let error = order("'context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'group', 'mine'")
+        let error = order("'context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'summarize', 'group', 'mine'")
             .err()
             .unwrap()
             .to_string();
         assert!(error.contains("no plugin entry named \"mine\""), "{error}");
-        let error = order("'context', 'hide-files', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'group'")
+        let error = order("'context', 'hide-files', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'summarize', 'group'")
             .err()
             .unwrap()
             .to_string();
@@ -604,7 +616,7 @@ mod tests {
             "((block) @fold (#set! tag \"mine:block\"))\n",
         )
         .unwrap();
-        let order = "order = ['context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'group', 'mine']";
+        let order = "order = ['context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'summarize', 'group', 'mine']";
         let config = Config::from_toml_in(
             &format!("[plugins]\n{order}\n[plugins.mine]\npath = 'plugins/mine'\n"),
             dir.path(),
@@ -667,6 +679,14 @@ mod tests {
             hide.options["tags"],
             serde_json::json!(["generated", "vendored", "test"])
         );
+        let summarize = &config.plugins.entries["summarize"];
+        assert_eq!(
+            summarize.enabled,
+            Some(false),
+            "the summarizer needs a key, so it is off unless turned on"
+        );
+        assert!(summarize.options.get("api_key").is_none());
+        assert_eq!(summarize.options["request_timeout_ms"], 60_000);
         let error = |toml: &str| Config::from_toml(toml).err().unwrap().to_string();
         let typo = error("[plugins.deleted-bodies]\ntypo = 1\n");
         assert!(
@@ -678,10 +698,12 @@ mod tests {
             mistyped.starts_with("plugins.deleted-bodies: min_lines: "),
             "{mistyped}"
         );
-        let negative = error("[plugins.removed-runs]\nmin_lines = -1\n");
+        let zero = error("[plugins.summarize]\nmax_concurrency = 0\n");
         assert!(
-            negative.starts_with("plugins.removed-runs: min_lines: "),
-            "{negative}"
+            zero.starts_with("plugins.summarize: max_concurrency: "),
+            "{zero}"
         );
+        assert!(error("[plugins.summarize]\nprovider = 'openai'\n")
+            .starts_with("plugins.summarize: provider: "));
     }
 }

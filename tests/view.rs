@@ -3,6 +3,7 @@
 use git2::{IndexAddOption, Repository, Signature, Time};
 use serde_json::Value;
 use std::fs;
+use std::path::PathBuf;
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
@@ -23,6 +24,18 @@ impl Fixture {
         let path = self.dir.path().join("repo").join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, text).unwrap();
+    }
+
+    fn remove(&self, path: &str) {
+        fs::remove_file(self.dir.path().join("repo").join(path)).unwrap();
+    }
+
+    /// A file next to the global configuration file.
+    fn config_file(&self, path: &str, text: &str) -> PathBuf {
+        let path = self.dir.path().join("config/diffr").join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, text).unwrap();
+        path
     }
 
     fn commit(&self) -> String {
@@ -161,4 +174,27 @@ fn the_default_view_hides_links_and_collapses() {
         .expect("the docstring");
     assert_eq!(docstring["fold_state_id"], body["fold_state_id"]);
     assert_eq!(docstring["visibility"]["collapsed"], true);
+}
+
+#[test]
+fn a_failing_plugin_aborts_the_run() {
+    let fixture = Fixture::new();
+    fixture.config_file(
+        "config.toml",
+        "[plugins.summarize]\nenabled = true\napi_key = 'k'\nendpoint = 'http://127.0.0.1:1'\nretries = 0\nmin_lines = 1\n",
+    );
+    fixture.write("keep.txt", "keep\n");
+    let base = fixture.commit();
+    fixture.write("new.py", "def f():\n    a()\n    b()\n");
+    fixture.remove("keep.txt");
+    let head = fixture.commit();
+    let output = fixture.run(&base, &head);
+    assert_eq!(output.status.code(), Some(2));
+    let records = records(&output);
+    let aborted = &records.last().unwrap()["aborted"];
+    assert_eq!(aborted["code"], "mutation_failed", "{aborted}");
+    assert!(aborted["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("mutation summarize: summarizer: "));
 }

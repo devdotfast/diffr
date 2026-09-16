@@ -78,7 +78,8 @@ pub(crate) fn run() -> Result<i32> {
                 .subcommand(
                     Command::new("show")
                         .about("Print the resolved configuration")
-                        .arg(flag("json")),
+                        .arg(flag("json"))
+                        .arg(flag("reveal").help("Do not redact the API key")),
                 )
                 .subcommand(
                     Command::new("set")
@@ -542,11 +543,14 @@ fn run_config(args: &ArgMatches, sub: &ArgMatches) -> Result<i32> {
         }
         Some(("show", show)) => {
             let config = load_config(args)?;
+            let reveal = show.get_flag("reveal");
             if show.get_flag("json") {
-                serde_json::to_writer_pretty(&mut stdout, &config::store::show(&config))?;
+                serde_json::to_writer_pretty(&mut stdout, &config::store::show(&config, reveal))?;
                 stdout.write_all(b"\n")?;
             } else {
-                stdout.write_all(toml::to_string_pretty(&config)?.as_bytes())?;
+                stdout.write_all(
+                    toml::to_string_pretty(&config::store::redacted(&config, reveal))?.as_bytes(),
+                )?;
             }
         }
         Some(("set", set)) => {

@@ -460,12 +460,13 @@ fn with_queries(queries: &[(&str, &str)]) -> Params {
     try_with_queries(queries).expect("the test queries compile")
 }
 
-/// Params with the folds of every bundled plugin's queries but `context`'s:
-/// the bodies, collections and docstrings the engine's tests are written
-/// against, without the scopes `context` lays over them.
+/// Params with the folds of every bundled plugin's queries but `context`'s,
+/// the summarizer's included: the bodies, collections and docstrings the
+/// engine's tests are written against, without the scopes `context` lays
+/// over them.
 #[cfg(test)]
 pub(crate) fn body_params() -> Params {
-    Config::from_toml("[plugins.context]\nenabled = false\n")
+    Config::from_toml("[plugins.context]\nenabled = false\n[plugins.summarize]\nenabled = true\n")
         .expect("a valid configuration")
         .compile()
         .expect("the bundled queries compile")
@@ -588,15 +589,15 @@ mod tag_tests {
 
     #[test]
     fn a_node_captured_with_two_ranges_is_a_query_conflict_naming_both_files() {
-        let whole = "((block) @fold (#set! tag \"context:whole\"))";
+        let whole = "((block) @fold (#set! tag \"removed-runs:whole\"))";
         let interior =
-            "((block \"{\" @fold.open \"}\" @fold.close) @fold (#set! tag \"removed-runs:inside\"))";
+            "((block \"{\" @fold.open \"}\" @fold.close) @fold (#set! tag \"summarize:inside\"))";
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("queries/rust")).unwrap();
-        let context_file = dir.path().join("queries/rust/context.scm");
-        let removed = dir.path().join("queries/rust/removed-runs.scm");
-        std::fs::write(&context_file, whole).unwrap();
-        std::fs::write(&removed, interior).unwrap();
+        let removed_runs = dir.path().join("queries/rust/removed-runs.scm");
+        let summarize = dir.path().join("queries/rust/summarize.scm");
+        std::fs::write(&removed_runs, whole).unwrap();
+        std::fs::write(&summarize, interior).unwrap();
         let queries = |plugin: &str, path: &std::path::Path| {
             (
                 plugin.to_owned(),
@@ -605,12 +606,12 @@ mod tag_tests {
         };
         for order in [
             [
-                queries("context", &context_file),
-                queries("removed-runs", &removed),
+                queries("removed-runs", &removed_runs),
+                queries("summarize", &summarize),
             ],
             [
-                queries("removed-runs", &removed),
-                queries("context", &context_file),
+                queries("summarize", &summarize),
+                queries("removed-runs", &removed_runs),
             ],
         ] {
             let params = Config::default().compile_queries(order.to_vec()).unwrap();
@@ -624,9 +625,9 @@ mod tag_tests {
             let message = conflict.to_string();
             assert!(message.starts_with("src/lib.rs:1: "), "{message}");
             assert!(
-                message.contains("queries/rust/context.scm and ")
+                message.contains("queries/rust/removed-runs.scm and ")
                     && message.contains(
-                        "queries/rust/removed-runs.scm capture the same block with different fold ranges"
+                        "queries/rust/summarize.scm capture the same block with different fold ranges"
                     ),
                 "{message}"
             );
@@ -651,6 +652,8 @@ mod tag_tests {
         let tags = [
             "deleted-bodies:function",
             "removed-runs:function",
+            "summarize:function",
+            "summarize:test",
             "test-bodies:test",
         ];
         assert_eq!(result.lhs_folds[0].tags, tags);

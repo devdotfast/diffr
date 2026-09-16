@@ -150,6 +150,7 @@ diffr-plugin-deleted-bodies = { path = "plugins/deleted-bodies" }
 diffr-plugin-group = { path = "plugins/group" }
 diffr-plugin-hide-files = { path = "plugins/hide-files" }
 diffr-plugin-removed-runs = { path = "plugins/removed-runs" }
+diffr-plugin-summarize = { path = "plugins/summarize" }
 diffr-plugin-test-bodies = { path = "plugins/test-bodies" }
 
 
@@ -178,6 +179,7 @@ members = [
 	"plugins/group",
 	"plugins/hide-files",
 	"plugins/removed-runs",
+	"plugins/summarize",
 	"plugins/test-bodies",
 ]
 default-members = [
@@ -188,6 +190,7 @@ default-members = [
 	"plugins/group",
 	"plugins/hide-files",
 	"plugins/removed-runs",
+	"plugins/summarize",
 	"plugins/test-bodies",
 ]
 

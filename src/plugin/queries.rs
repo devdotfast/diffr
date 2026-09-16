@@ -249,13 +249,13 @@ mod tests {
     #[test]
     fn disabled_plugins_contribute_no_queries() {
         let config = Config::from_toml(
-            "[plugins.deleted-bodies]\nenabled = false\n[plugins.test-bodies]\nenabled = false\n",
+            "[plugins.deleted-bodies]\nenabled = false\n[plugins.summarize]\nenabled = false\n",
         )
         .unwrap();
         let assembled = assemble(&config.plugins.enabled_queries()).unwrap();
         let names = names(&assembled["rust"]);
         assert!(!names.iter().any(|name| name.contains("deleted-bodies")));
-        assert!(!names.iter().any(|name| name.contains("test-bodies")));
+        assert!(!names.iter().any(|name| name.contains("summarize")));
     }
 
     #[test]
@@ -265,7 +265,7 @@ mod tests {
         let mine = write(
             dir.path(),
             "queries/rust/mine.scm",
-            "; inherits: ../shared.scm, builtin:shared/queries/rust.scm\n((function_item body: (block) @fold) (#set! tag \"removed-runs:function\"))\n",
+            "; inherits: ../shared.scm, builtin:shared/queries/rust.scm\n((function_item body: (block) @fold) (#set! tag \"summarize:function\"))\n",
         );
         let plugins = [
             (
@@ -276,7 +276,7 @@ mod tests {
                 )]),
             ),
             (
-                "removed-runs".to_owned(),
+                "summarize".to_owned(),
                 Queries::from([("rust".to_owned(), mine)]),
             ),
         ];
@@ -313,27 +313,27 @@ mod tests {
         write(dir.path(), "b.scm", "; inherits: a.scm\n");
         let queries = |path: &str| {
             [(
-                "removed-runs".to_owned(),
+                "summarize".to_owned(),
                 Queries::from([("rust".to_owned(), path.to_owned())]),
             )]
         };
         let error = assemble(&queries(&a)).err().expect("a cycle").to_string();
         assert!(error.contains("cycle"), "{error}");
         assert!(
-            error.starts_with("plugin removed-runs: queries.rust: "),
+            error.starts_with("plugin summarize: queries.rust: "),
             "{error}"
         );
         let absent = dir.path().join("absent.scm").display().to_string();
         assert!(assemble(&queries(&absent)).is_err());
-        let error = assemble(&queries("builtin:removed-runs/queries/absent.scm"))
+        let error = assemble(&queries("builtin:summarize/queries/absent.scm"))
             .err()
             .expect("unknown builtin")
             .to_string();
         assert!(
-            error.contains("no bundled file builtin:removed-runs/queries/absent.scm"),
+            error.contains("no bundled file builtin:summarize/queries/absent.scm"),
             "{error}"
         );
-        let error = assemble(&queries("builtin:removed-runs/../../outside.scm"))
+        let error = assemble(&queries("builtin:summarize/../../outside.scm"))
             .err()
             .expect("a path out of the bundled plugins")
             .to_string();

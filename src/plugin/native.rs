@@ -29,6 +29,7 @@ pub(crate) const REGISTRY: &[(&str, Constructor)] = &[
         "removed-runs",
         native::<diffr_plugin_removed_runs::RemovedRuns>,
     ),
+    ("summarize", native::<diffr_plugin_summarize::Summarize>),
     ("group", native::<diffr_plugin_group::Group>),
 ];
 

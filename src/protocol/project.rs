@@ -1068,7 +1068,11 @@ mod tests {
             .all(|leaf| !lhs_leaves.contains_key(&alignment(leaf))));
         assert_eq!(
             new_fold.tags,
-            vec!["deleted-bodies:function", "removed-runs:function"]
+            vec![
+                "deleted-bodies:function",
+                "removed-runs:function",
+                "summarize:function"
+            ]
         );
         // A label is a plugin's to give; the projection leaves it empty.
         assert_eq!(new_fold.visibility.label, "");

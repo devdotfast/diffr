@@ -108,15 +108,18 @@ One shape everywhere: `{"code": "<snake_case>", "message": "<prose>"}`.
   syntax node with different fold ranges; the message names the line and both
   files), or `internal` for a failure diffr did not classify.
 - On `complete`, `aborted` reports a run-level failure in a plugin:
-  `mutation_failed` when a plugin fails or asks for a move that cannot be
-  carried out. The message names the plugin. diffr
+  `mutation_failed` when a plugin's `mutate` returns an error (the
+  summarizer's model call failing after its retries, say) or when a plugin
+  asks for a move that cannot be carried out. The message names the
+  plugin. diffr
   stops pulling files, lets the ones in flight finish, and exits 2. Every
   `file` record already written stays valid; the file that failed has no
   record.
 - Setup failures (bad revision, unreadable config, a query file that does not
   compile, a malformed `diffr-tags` attribute, a plugin option that does not
-  match its schema, a plugin that cannot be made, or a `classify` that fails
-  or returns a malformed tag) write to stderr
+  match its schema, a plugin that cannot be made, such as a summarizer
+  without an API key, or a `classify` that fails or returns a malformed tag)
+  write to stderr
   and exit 2 before any record.
 
 Exit status is 0 on success, 1 with `--exit-code` when there are changes, 2 when
@@ -345,8 +348,9 @@ every region hangs from:
   both sides, takes the first region's `fold_state_id` and whether it starts
   collapsed, so they open and close together. Today the bundled link is a
   docstring: a plugin that collapses a function body (`deleted-bodies`,
-  `test-bodies`) links the body's docstring, a fold tagged
-  `deleted-bodies:docstring` or `test-bodies:docstring`, to it. The docstring
+  `test-bodies`, `summarize`) links the body's docstring, a fold tagged
+  `deleted-bodies:docstring`, `test-bodies:docstring` or (when the summarizer
+  is on) `summarize:docstring`, to it. The docstring
   then carries the body's `fold_state_id` and starts collapsed, with an empty
   label. A docstring whose body no plugin collapses is not linked.
 - **Set collapsed** on a region: every region sharing its `fold_state_id`
@@ -379,6 +383,7 @@ The bundled plugins, in their default order, each a folder under `plugins/`:
 | `deleted-bodies` | A function body of at least 12 lines with nothing paired under it collapses: `"20 lines removed"`. Its docstring is linked to it. |
 | `test-bodies` | Test function bodies (`"test body"`) and Rust `#[cfg(test)]` modules (`"test module"`) collapse on both sides. A test body's docstring is linked to it. |
 | `removed-runs` | A one-sided leaf of at least 5 lines in removed (not rewritten) code keeps its first and last line open and collapses the rest: `"8 lines removed"`. |
+| `summarize` | Off by default. A new function body of at least 20 lines collapses behind pseudocode from the configured model. The body is chosen as new before its docstring is linked to it; the pseudocode may quote the docstring. On without an API key, diffr stops before the stream starts. |
 | `group` | Two or more adjacent collapsed regions are wrapped in one collapsed fold: `"3 collapsed regions · 42 lines"`. An open fold showing only collapsed regions and at most two open lines, such as a function's scope around its collapsed body and closing brace, counts as collapsed. |
 
 A binary diff has no regions, so only `hide-files` can change how it starts

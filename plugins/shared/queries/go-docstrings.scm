@@ -16,4 +16,5 @@
   ]
   (#match? @_body "\n")
   (#set! tag "deleted-bodies:docstring")
+  (#set! tag "summarize:docstring")
   (#set! tag "test-bodies:docstring"))

@@ -1,0 +1,84 @@
+name = "summarize"
+title = "Summaries"
+description = "Pseudocode summaries for large new function bodies."
+
+# Off by default: the summarizer needs an API key, and diffr stops at
+# startup when a plugin that is on cannot be made.
+[enabled]
+title = "Summarize new functions"
+description = "Summarize large new function bodies as pseudocode. Needs an API key: `api_key`, or `GEMINI_API_KEY` or `GOOGLE_API_KEY` in the environment."
+default = false
+
+[options.provider]
+enum = ["gemini"]
+title = "Provider"
+description = "Which model API to call."
+default = "gemini"
+
+[options.model]
+type = "string"
+title = "Model"
+description = "The model name sent to the provider."
+default = "gemini-3.8-flash"
+
+[options.min_lines]
+type = "integer"
+minimum = 0
+title = "Shortest body to summarize (lines)"
+description = "New function bodies shorter than this are shown as code, not summarized: pseudocode only pays off once the body is long."
+default = 20
+
+[options.api_key]
+type = "string"
+title = "API key"
+description = "The provider's API key. `GEMINI_API_KEY` or `GOOGLE_API_KEY` in the environment is used when this is unset."
+
+[options.endpoint]
+type = "string"
+title = "Endpoint URL"
+description = "Override the provider's base URL, for proxies and tests."
+
+[options.request_timeout_ms]
+type = "integer"
+minimum = 1
+title = "Request timeout (ms)"
+description = "Per-request limit in milliseconds."
+default = 60000
+
+[options.max_concurrency]
+type = "integer"
+minimum = 1
+title = "Parallel requests"
+description = "Requests in flight at once across files."
+default = 16
+
+[options.retries]
+type = "integer"
+minimum = 0
+title = "Retries"
+description = "Retries after a timeout, rate limit, or server error before the run is aborted."
+default = 3
+
+[options.system_prompt]
+type = "string"
+title = "System prompt"
+description = "The system instruction sent with every request. Each request's own message, the file's numbered lines and the folds to summarize, is built by diffr."
+"x-settings" = false
+default = """\
+For each listed fold, rewrite that function body as short python-flavored \
+pseudocode. Keep the names. No prose, no comments, no code fences. Use as few lines as \
+possible: about one pseudocode line per five source lines, and never more than a third \
+of the body's lines. When a fold lists a doc, also set "summary" to one sentence copied \
+verbatim from that doc; otherwise leave it empty. Answer with a JSON array of \
+{"id", "summary", "pseudocode"} objects, one per fold."""
+
+# Folds tagged `summarize:function`, `summarize:test` and, from the shared
+# docstrings query, `summarize:docstring`.
+[queries]
+rust = "queries/rust.scm"
+python = "queries/python.scm"
+go = "queries/go.scm"
+javascript = "queries/javascript.scm"
+javascriptjsx = "queries/javascript.scm"
+typescript = "queries/javascript.scm"
+typescripttsx = "queries/javascript.scm"

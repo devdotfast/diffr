@@ -102,6 +102,8 @@ mod folds {
             [
                 "deleted-bodies:function",
                 "removed-runs:function",
+                "summarize:function",
+                "summarize:test",
                 "test-bodies:test"
             ]
         );

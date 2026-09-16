@@ -1,12 +1,32 @@
 //! `diffr config`: read the schema and resolved values, and write one key to
 //! the global file.
 use super::{directory_of, Config, ConfigError};
-use serde_json::Value;
+use crate::plugin::config::PATH;
+use serde_json::{json, Value};
 use std::path::Path;
 
 /// The resolved configuration as JSON, with the same nesting as the TOML.
-pub(crate) fn show(config: &Config) -> serde_json::Value {
-    serde_json::to_value(config).expect("config serializes")
+/// The summarizer's API key is redacted unless `reveal` is set.
+pub(crate) fn show(config: &Config, reveal: bool) -> serde_json::Value {
+    serde_json::to_value(redacted(config, reveal)).expect("config serializes")
+}
+
+/// The configuration to print: the summarizer's API key replaced by
+/// `<redacted>` unless `reveal` is set.
+pub(crate) fn redacted(config: &Config, reveal: bool) -> Config {
+    let mut shown = config.clone();
+    let key = shown
+        .plugins
+        .entries
+        .get_mut("summarize")
+        .expect("the summarize plugin always has an entry")
+        .options
+        .get_mut("api_key");
+    if let Some(key) = key.filter(|key| !reveal && key.as_str().is_some_and(|key| !key.is_empty()))
+    {
+        *key = serde_json::Value::String("<redacted>".to_owned());
+    }
+    shown
 }
 
 /// Write `key = value` into the global file, keeping everything else in it
@@ -18,17 +38,18 @@ pub(crate) fn set(path: &Path, key: &str, value: &str) -> Result<(), ConfigError
     if key.is_empty() || key.split('.').any(str::is_empty) {
         return Err(ConfigError(format!("invalid key {key:?}")));
     }
-    let typed = typed_value(key, &setting_schema(key)?, value)?;
     let existing = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(error) => return Err(ConfigError(format!("{}: {error}", path.display()))),
     };
+    let directory = directory_of(path);
+    let typed = typed_value(key, &setting_schema(key, &existing, directory)?, value)?;
     let mut document: toml_edit::DocumentMut = existing
         .parse()
         .map_err(|error| ConfigError(format!("{}: {error}", path.display())))?;
     assign(&mut document, key, &typed)?;
-    Config::from_toml_in(&document.to_string(), directory_of(path))?;
+    Config::from_toml_in(&document.to_string(), directory)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|error| ConfigError(format!("{}: {error}", parent.display())))?;
@@ -38,9 +59,30 @@ pub(crate) fn set(path: &Path, key: &str, value: &str) -> Result<(), ConfigError
 }
 
 /// The JSON Schema of the setting at the dotted `key`, as `diffr config
-/// schema` describes it.
-fn setting_schema(key: &str) -> Result<Value, ConfigError> {
+/// schema` describes it. A plugin entry's keys come from the entry's own
+/// `plugin.toml`, which for an entry with `path` is in the folder the file `existing`
+/// (in `directory`) points it at; `path` is diffr's, and a string.
+fn setting_schema(key: &str, existing: &str, directory: &Path) -> Result<Value, ConfigError> {
     let unknown = || ConfigError(format!("{key}: unknown key"));
+    if let ["plugins", name, field] = key.split('.').collect::<Vec<_>>().as_slice() {
+        if *name != "order" {
+            if *field == PATH {
+                return Ok(json!({"type": "string"}));
+            }
+            let config = Config::from_toml_in(existing, directory)?;
+            let manifest = &config
+                .plugins
+                .entries
+                .get(*name)
+                .ok_or_else(unknown)?
+                .folder()
+                .manifest;
+            return manifest.settings_schema()["properties"]
+                .get(*field)
+                .cloned()
+                .ok_or_else(unknown);
+        }
+    }
     let root = Config::schema();
     let resolve = |node: &Value| -> Value {
         match node.get("$ref").and_then(Value::as_str) {
@@ -206,6 +248,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         set(&path, "plugins.deleted-bodies.min_lines", "30").unwrap();
+        set(&path, "plugins.summarize.api_key", "secret").unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         let config = Config::from_toml(&text).unwrap();
         assert_eq!(
@@ -227,6 +270,10 @@ mod tests {
             "plugins.context.lines: expected an integer, got \"many\""
         );
         assert_eq!(
+            error("plugins.summarize.provider", "openai"),
+            "plugins.summarize.provider: expected one of \"gemini\", got \"openai\""
+        );
+        assert_eq!(
             error("plugins.mine.enabled", "true"),
             "plugins.mine.enabled: unknown key"
         );
@@ -236,11 +283,58 @@ mod tests {
             Config::from_toml(&text).unwrap().plugins.entries["context"].enabled,
             Some(false)
         );
-        let shown = show(&config);
+        let shown = show(&config, false);
+        assert_eq!(shown["plugins"]["summarize"]["api_key"], "<redacted>");
+        assert_eq!(
+            show(&config, true)["plugins"]["summarize"]["api_key"],
+            "secret"
+        );
         assert_eq!(
             shown["plugins"]["deleted-bodies"],
             serde_json::json!({"enabled": true, "min_lines": 30})
         );
+        assert!(shown["plugins"]["summarize"]["system_prompt"]
+            .as_str()
+            .unwrap()
+            .starts_with("For each listed fold"));
+        let text = toml::to_string_pretty(&redacted(&config, false)).unwrap();
+        assert!(text.contains("[plugins.summarize]"), "{text}");
+        assert!(text.contains("system_prompt = "), "{text}");
+    }
+
+    #[test]
+    fn a_wasm_plugin_option_takes_the_type_its_folder_declares() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("plugins/mine");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("plugin.toml"),
+            "name = 'mine'\ntitle = 'Mine'\n[options.depth]\ntype = 'integer'\ntitle = 'Depth'\ndefault = 2\n",
+        )
+        .unwrap();
+        let path = dir.path().join("config.toml");
+        let order = "order = ['context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'summarize', 'group', 'mine']";
+        std::fs::write(
+            &path,
+            format!("[plugins]\n{order}\n[plugins.mine]\npath = 'plugins/mine'\n"),
+        )
+        .unwrap();
+        set(&path, "plugins.mine.depth", "3").unwrap();
+        set(&path, "plugins.mine.enabled", "false").unwrap();
+        set(&path, "plugins.mine.path", "plugins/mine").unwrap();
+        let error = |key: &str, value: &str| set(&path, key, value).unwrap_err().to_string();
+        assert_eq!(
+            error("plugins.mine.depth", "deep"),
+            "plugins.mine.depth: expected an integer, got \"deep\""
+        );
+        assert_eq!(
+            error("plugins.mine.typo", "1"),
+            "plugins.mine.typo: unknown key"
+        );
+        let text = std::fs::read_to_string(&path).unwrap();
+        let config = Config::from_toml_in(&text, dir.path()).unwrap();
+        assert_eq!(config.plugins.entries["mine"].options["depth"], 3);
+        assert_eq!(config.plugins.entries["mine"].enabled, Some(false));
     }
 
     #[test]

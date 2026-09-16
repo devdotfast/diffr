@@ -292,3 +292,34 @@ fn git_unmerged_files() {
     let predicate_fn = predicate::str::contains("Unmerged path");
     cmd.assert().stdout(predicate_fn);
 }
+
+#[test]
+fn a_plugin_that_cannot_be_made_stops_diffr_before_any_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("diffr");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(
+        config.join("config.toml"),
+        "[plugins.summarize]\nenabled = true\n",
+    )
+    .unwrap();
+    let mut cmd = Command::new(assert_cmd::cargo_bin!("diffr"));
+
+    cmd.args([
+        "--no-index",
+        "sample_files/simple_1.js",
+        "sample_files/simple_2.js",
+        "--format",
+        "ndjson",
+    ])
+    .env("XDG_CONFIG_HOME", dir.path())
+    .env_remove("GEMINI_API_KEY")
+    .env_remove("GOOGLE_API_KEY");
+    cmd.assert()
+        .failure()
+        .code(2)
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains(
+            "plugins.summarize: no API key: set plugins.summarize.api_key",
+        ));
+}

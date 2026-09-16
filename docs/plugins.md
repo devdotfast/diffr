@@ -161,19 +161,20 @@ code a plugin predicts ids with.
 
 ## Host imports
 
-Besides WASI, which only a component gets, diffr gives every plugin
-`diffr:plugin/host`:
+Besides WASI, which only a component gets, diffr gives every plugin one
+import, `diffr:plugin/host`:
 
 - `git(args) -> result<string, string>`: runs `git` with these arguments in
   the repository's working directory (the current directory for
   `--no-index`), returning stdout on success and stderr otherwise.
-- `log(message)`: writes `diffr plugin <name>: <message>` to stderr.
 
 A host failure (git cannot be started, or its output is not UTF-8) is the
 call's error, natively and in a component alike.
 
-A plugin reads files itself: a component has the working directory preopened,
-and reads any side of a file the working tree does not have with `git show`.
+A plugin does everything else itself. It reads files: a component has the
+working directory preopened, and reads any side of a file the working tree
+does not have with `git show`. And it prints what it wants to say to stderr,
+rather than calling diffr to say it.
 
 ### Access
 
@@ -182,8 +183,10 @@ A component gets full access; diffr does not sandbox it:
 - WASI with the working directory preopened read-write as `.`.
 - The environment inherited.
 - The network open, with name lookup.
-- Its stderr inherited; its stdout goes to diffr's stderr, because diffr's
-  stdout is the stream.
+- Its stdout and stderr captured, and written to diffr's stderr a line at a
+  time, each line prefixed with `[<plugin name>] `. Neither may reach diffr's
+  stdout, which is the stream. A native plugin writes to diffr's stderr
+  directly, and is not prefixed.
 
 ## Writing a plugin in Rust
 
@@ -205,8 +208,7 @@ written with it:
   records are the contract's. Built for anything else, it expands to nothing,
   and diffr's native registry deserializes the options and calls the trait
   itself. The same source builds both ways.
-- `host::{git, log}`: the host functions, the same call natively
-  and in a component.
+- `host::git`: the host function, the same call natively and in a component.
 - `tree::sides(lhs, rhs)` rebuilds the records as region trees
   (`Pairing<Source>`, each `Region` holding its children), and the helpers
   the bundled plugins read trees with: `walk`, `OtherSide`, `one_sided`,

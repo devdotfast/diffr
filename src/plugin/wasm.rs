@@ -12,18 +12,25 @@
 //! for field into the generated bindings.
 //!
 //! A plugin runs with full access: WASI with the working directory preopened
-//! read-write as `.`, the environment inherited, and the network open. Its
-//! stdout goes to diffr's stderr, since diffr's stdout is the stream.
+//! read-write as `.`, the environment inherited, and the network open. What
+//! it writes to stdout or stderr diffr writes to its own stderr, a line at a
+//! time and with the plugin's name in front: diffr's stdout is the stream,
+//! and a plugin has no logging call of its own, it just prints.
 use super::host::Host;
 use super::Runner;
 use anyhow::Context as _;
+use bytes::Bytes;
 use diffr_plugin_sdk::types as contract;
+use std::io::Write as _;
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 use wasmtime::component::{Component, HasSelf, Linker, ResourceAny, ResourceTable};
 use wasmtime::{Cache, CacheConfig, Config, Engine, Store};
-use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::p2::{
+    IoView, OutputStream, Pollable, StdoutStream, StreamError, StreamResult, WasiCtx,
+    WasiCtxBuilder, WasiView,
+};
 use wasmtime_wasi::{DirPerms, FilePerms};
 
 mod bindings {
@@ -77,10 +84,89 @@ impl host::Host for State {
             .git(&args)
             .unwrap_or_else(|error| Err(format!("{error:#}"))))
     }
+}
 
-    fn log(&mut self, message: String) -> wasmtime::Result<()> {
-        self.host.log(&message);
+/// One of a guest's output streams, stdout or stderr, and what it has
+/// written since its last newline.
+struct Pending {
+    name: Arc<str>,
+    line: Vec<u8>,
+}
+
+impl Pending {
+    /// Write one line to diffr's stderr with the plugin's name in front.
+    fn write_line(&self, line: &[u8]) -> std::io::Result<()> {
+        let line = String::from_utf8_lossy(line);
+        writeln!(std::io::stderr().lock(), "[{}] {line}", self.name)
+    }
+}
+
+/// Whatever a guest wrote without ending the line still reaches diffr's
+/// stderr, when the store the streams belong to is dropped.
+impl Drop for Pending {
+    fn drop(&mut self) {
+        if !self.line.is_empty() {
+            let line = std::mem::take(&mut self.line);
+            let _ = self.write_line(&line);
+        }
+    }
+}
+
+/// A guest's stdout or stderr, written to diffr's stderr a line at a time,
+/// each line prefixed with `[<plugin name>] `. Every stream WASI makes of it
+/// shares the one unfinished line, so a write that does not end a line waits
+/// for the rest of it.
+#[derive(Clone)]
+struct Prefixed(Arc<Mutex<Pending>>);
+
+impl Prefixed {
+    fn new(name: Arc<str>) -> Self {
+        Self(Arc::new(Mutex::new(Pending {
+            name,
+            line: Vec::new(),
+        })))
+    }
+}
+
+impl StdoutStream for Prefixed {
+    fn stream(&self) -> Box<dyn OutputStream> {
+        Box::new(self.clone())
+    }
+
+    fn isatty(&self) -> bool {
+        false
+    }
+}
+
+#[wasmtime_wasi::async_trait]
+impl Pollable for Prefixed {
+    async fn ready(&mut self) {}
+}
+
+impl OutputStream for Prefixed {
+    fn write(&mut self, bytes: Bytes) -> StreamResult<()> {
+        let mut pending = self
+            .0
+            .lock()
+            .expect("no write panics while it holds a guest's output");
+        pending.line.extend_from_slice(&bytes);
+        while let Some(end) = pending.line.iter().position(|byte| *byte == b'\n') {
+            let line: Vec<u8> = pending.line.drain(..=end).take(end).collect();
+            pending
+                .write_line(&line)
+                .map_err(|error| StreamError::LastOperationFailed(error.into()))?;
+        }
         Ok(())
+    }
+
+    fn flush(&mut self) -> StreamResult<()> {
+        std::io::stderr()
+            .flush()
+            .map_err(|error| StreamError::LastOperationFailed(error.into()))
+    }
+
+    fn check_write(&mut self) -> StreamResult<usize> {
+        Ok(1024 * 1024)
     }
 }
 
@@ -121,8 +207,8 @@ impl WasmPlugin {
         let started = Instant::now();
         let mut wasi = WasiCtxBuilder::new();
         wasi.inherit_env()
-            .stdout(wasmtime_wasi::p2::stderr())
-            .inherit_stderr()
+            .stdout(Prefixed::new(Arc::clone(&host.name)))
+            .stderr(Prefixed::new(Arc::clone(&host.name)))
             .inherit_network()
             .allow_ip_name_lookup(true)
             .preopened_dir(&*host.workdir, ".", DirPerms::all(), FilePerms::all())

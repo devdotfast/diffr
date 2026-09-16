@@ -1,18 +1,16 @@
-//! What diffr gives every plugin: `git` and `log`, the `host` interface of
-//! `wit/plugin.wit`. A plugin calls these functions the same way wherever it
-//! runs. In a component they call the imports. Natively, diffr runs each call
-//! of a plugin inside [`scope`], with its own implementation of [`Host`], and
-//! the functions call that.
+//! What diffr gives every plugin: `git`, the `host` interface of
+//! `wit/plugin.wit`. A plugin calls it the same way wherever it runs. In a
+//! component it calls the import. Natively, diffr runs each call of a plugin
+//! inside [`scope`], with its own implementation of [`Host`], and the
+//! function calls that.
+//!
+//! Everything else a plugin needs it does itself: it reads files, and writes
+//! to stderr, which diffr captures and writes to its own.
 
 /// Run `git` with `args` in the repository's working directory: its stdout
 /// when it exits successfully, its stderr otherwise.
 pub fn git(args: &[String]) -> Result<String, String> {
     imp::git(args)
-}
-
-/// Write a line to diffr's stderr, prefixed with the plugin's name.
-pub fn log(message: &str) {
-    imp::log(message)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -22,10 +20,6 @@ mod imp {
     pub(super) fn git(args: &[String]) -> Result<String, String> {
         host::git(args)
     }
-
-    pub(super) fn log(message: &str) {
-        host::log(message)
-    }
 }
 
 /// diffr's implementation of the host functions for one call of a native
@@ -33,11 +27,10 @@ mod imp {
 #[cfg(not(target_arch = "wasm32"))]
 pub trait Host {
     fn git(&self, args: &[String]) -> Result<String, String>;
-    fn log(&self, message: &str);
 }
 
 /// Run `call`, one call of a native plugin, with `host` behind the host
-/// functions on this thread.
+/// function on this thread.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn scope<R>(host: std::rc::Rc<dyn Host>, call: impl FnOnce() -> R) -> R {
     imp::scope(host, call)
@@ -72,15 +65,11 @@ mod imp {
             current
                 .borrow()
                 .clone()
-                .expect("a host function is called only while diffr runs a plugin")
+                .expect("the host function is called only while diffr runs a plugin")
         })
     }
 
     pub(super) fn git(args: &[String]) -> Result<String, String> {
         current().git(args)
-    }
-
-    pub(super) fn log(message: &str) {
-        current().log(message)
     }
 }

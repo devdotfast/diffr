@@ -751,6 +751,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "bumpalo",
+ "bytes",
  "cc",
  "clap",
  "diffr-plugin-context",

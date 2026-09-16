@@ -10,7 +10,7 @@
 //! - [`Plugin`] is the one trait every plugin implements: `new`, which makes
 //!   it from its options, then `classify` and `mutate`, taking and returning
 //!   exactly those records.
-//! - [`host`] holds what diffr gives every plugin: `git` and `log`.
+//! - [`host`] holds what diffr gives every plugin: `git`.
 //! - [`export!`] makes a plugin the `plugin` resource a component exports
 //!   when the crate is built for `wasm32-wasip2`, and expands to nothing
 //!   otherwise, where diffr's native registry calls the trait directly. The same source

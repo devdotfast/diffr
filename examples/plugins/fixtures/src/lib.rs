@@ -72,7 +72,7 @@ impl Plugin for Fixtures {
         let args = ["log", "-1", "--format=%s", "--", &file.path].map(str::to_owned);
         let subject = host::git(&args).map_err(|stderr| anyhow::anyhow!("git log: {stderr}"))?;
         let subject = subject.trim();
-        host::log(&format!("{}: last changed in {subject:?}", file.path));
+        eprintln!("{}: last changed in {subject:?}", file.path);
         let mut moves = vec![
             Move::SetCollapsed((ROOT, true)),
             Move::SetLabel((ROOT, Some(format!("Fixture · {subject}")))),

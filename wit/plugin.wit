@@ -162,16 +162,14 @@ interface types {
 
 /// What diffr gives every plugin. A component also gets WASI, with full
 /// access: the repository's working directory is preopened read-write as
-/// `.`, the environment is inherited, and the network is open. Its stdout
-/// goes to diffr's stderr, since diffr's stdout is the stream.
+/// `.`, the environment is inherited, and the network is open. What it
+/// writes to stdout or stderr reaches diffr's stderr, a line at a time and
+/// with the plugin's name in front, since diffr's stdout is the stream.
 interface host {
     /// Run `git` with these arguments in the repository's working
     /// directory: its stdout when it exits successfully, its stderr
     /// otherwise.
     git: func(args: list<string>) -> result<string, string>;
-
-    /// Write a line to diffr's stderr, prefixed with the plugin's name.
-    log: func(message: string);
 }
 
 /// What every plugin exports: the plugin itself, as a resource.

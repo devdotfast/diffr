@@ -367,9 +367,7 @@ fn the_fixtures_example_classifies_reads_files_runs_git_and_moves_regions() {
     assert!(plain.get("visibility").is_none(), "{plain}");
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        stderr.contains(
-            "diffr plugin fixtures: fixtures/data.txt: last changed in \"Update fixtures\""
-        ),
+        stderr.contains("[fixtures] fixtures/data.txt: last changed in \"Update fixtures\""),
         "{stderr}"
     );
 }

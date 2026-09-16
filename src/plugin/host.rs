@@ -1,7 +1,7 @@
-//! diffr's side of the host functions every plugin calls: `git` and `log`.
-//! A component reaches them through its imports ([`super::wasm`]); a native
-//! plugin through the SDK's host functions, which call [`Host`] itself
-//! ([`super::native`]). Both run this code.
+//! diffr's side of the host function every plugin calls: `git`. A component
+//! reaches it through its import ([`super::wasm`]); a native plugin through
+//! the SDK's host function, which calls [`Host`] itself ([`super::native`]).
+//! Both run this code.
 use anyhow::Context as _;
 use diffr_plugin_sdk::host::Host as SdkHost;
 use std::path::Path;
@@ -34,10 +34,6 @@ impl Host {
             false => Err(text(output.stderr)?),
         })
     }
-
-    pub(crate) fn log(&self, message: &str) {
-        eprintln!("diffr plugin {}: {message}", self.name);
-    }
 }
 
 impl SdkHost for Host {
@@ -46,9 +42,5 @@ impl SdkHost for Host {
     /// exactly as it does in a component.
     fn git(&self, args: &[String]) -> Result<String, String> {
         Host::git(self, args).unwrap_or_else(|error| Err(format!("{error:#}")))
-    }
-
-    fn log(&self, message: &str) {
-        Host::log(self, message)
     }
 }

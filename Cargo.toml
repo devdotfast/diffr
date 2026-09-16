@@ -141,6 +141,8 @@ jsonschema = { version = "0.56.0", default-features = false }
 # rust-version (1.85) matches ours.
 wasmtime = { version = "34.0.2", default-features = false, features = ["runtime", "cranelift", "component-model", "cache", "parallel-compilation", "std"] }
 wasmtime-wasi = { version = "34.0.2", default-features = false }
+# The byte buffer a guest's output stream is handed, wasmtime-wasi's own.
+bytes = "1.12"
 # The plugin contract, and the bundled plugins: each a crate the native
 # registry calls, which also builds as a WASM component.
 diffr-plugin-sdk = { path = "crates/diffr-plugin-sdk" }

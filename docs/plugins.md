@@ -292,7 +292,9 @@ next run.
   bundled plugins, which build as components too. Pointing their entries at
   the bundled folders once the script has built them runs the components in
   place of the native code, and produces the same stream (`tests/wasm.rs`
-  checks it):
+  checks it, with `cargo test --features wasm-plugin-tests --test wasm`: the
+  tests build every plugin for `wasm32-wasip2`, so they are behind a feature
+  and run where that target is installed):
 
   ```toml
   [plugins.deleted-bodies]

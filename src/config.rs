@@ -622,7 +622,8 @@ mod tag_tests {
                 &params,
             )
             .expect_err("a conflict");
-            let message = conflict.to_string();
+            // The message names real paths, which Windows writes with `\`.
+            let message = conflict.to_string().replace('\\', "/");
             assert!(message.starts_with("src/lib.rs:1: "), "{message}");
             assert!(
                 message.contains("queries/rust/removed-runs.scm and ")

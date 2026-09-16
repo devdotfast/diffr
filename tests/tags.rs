@@ -1,8 +1,11 @@
 //! File tags on the stream manifest, from bundled rules and git attributes.
+mod support;
+
 use git2::{IndexAddOption, Repository, Signature, Time};
 use serde_json::Value;
 use std::fs;
-use std::process::{Command, Output};
+use std::process::Output;
+use support::diffr_command;
 use tempfile::TempDir;
 
 /// A repository with a working tree, plus a home directory holding git's
@@ -62,7 +65,7 @@ impl Fixture {
 
     fn run(&self, base: &str, head: &str) -> Output {
         let home = self.dir.path().join("home");
-        Command::new(assert_cmd::cargo_bin!("diffr"))
+        diffr_command()
             .arg("--repo")
             .arg(self.dir.path().join("repo"))
             .args([base, head, "--format", "ndjson"])

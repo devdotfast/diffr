@@ -214,4 +214,12 @@ assets = [
 	[ "CHANGELOG.md", "usr/share/doc/difftastic/", "644" ],
 ]
 
+# The component tests build every plugin for wasm32-wasip2, so they run only
+# where that target is installed: `cargo test --features wasm-plugin-tests`,
+# and the Linux job in CI.
+[[test]]
+name = "wasm"
+required-features = ["wasm-plugin-tests"]
+
 [features]
+wasm-plugin-tests = []

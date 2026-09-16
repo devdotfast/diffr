@@ -50,6 +50,20 @@ jobs:
       shell: bash
       run: $BUILD_CMD test --target ${{ matrix.job.target }}
 
+  test_wasm_plugins:
+    name: Test WASM component plugins
+    runs-on: ubuntu-22.04
+    steps:
+      # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          # The tests build every bundled plugin as a component.
+          targets: wasm32-wasip2
+      # Component loading is host behaviour, so it is tested once, natively,
+      # rather than on every target the matrix above cross-compiles for.
+      - run: cargo test --features wasm-plugin-tests --test wasm
+
   test_mime_db:
     name: Test with MIME database
     runs-on: ubuntu-22.04

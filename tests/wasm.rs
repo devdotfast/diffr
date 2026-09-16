@@ -1,12 +1,15 @@
 //! WASM component plugins: the bundled plugins built as components shape
 //! files exactly as the same source compiled into diffr does, and the
 //! fixtures example classifies, reads a file, runs git and moves regions.
+mod support;
+
 use git2::{IndexAddOption, Repository, Signature, Time};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::Once;
+use support::diffr_command;
 use tempfile::TempDir;
 
 /// Build every guest plugin into its folder's `plugin.wasm`, once per test
@@ -96,7 +99,7 @@ impl Fixture {
 
     fn run(&self, config: &Path, base: &str, head: &str) -> Output {
         let home = self.dir.path().join("home");
-        Command::new(assert_cmd::cargo_bin!("diffr"))
+        diffr_command()
             .arg("--repo")
             .arg(self.dir.path().join("repo"))
             .arg("--config")

@@ -1,10 +1,13 @@
 //! The plugins on the stream: hidden files, collapsed and linked regions, and
 //! a run cut short by a failing plugin.
+mod support;
+
 use git2::{IndexAddOption, Repository, Signature, Time};
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::Output;
+use support::diffr_command;
 use tempfile::TempDir;
 
 struct Fixture {
@@ -74,7 +77,7 @@ impl Fixture {
     }
 
     fn diffr(&self, args: &[&str]) -> Output {
-        Command::new(assert_cmd::cargo_bin!("diffr"))
+        diffr_command()
             .arg("--repo")
             .arg(self.dir.path().join("repo"))
             .args(args)

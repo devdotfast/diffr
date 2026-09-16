@@ -201,8 +201,13 @@ mod tests {
         path.display().to_string()
     }
 
-    fn names(sources: &[QuerySource]) -> Vec<&str> {
-        sources.iter().map(|source| source.name.as_str()).collect()
+    /// The sources' names, with separators written the one way these tests
+    /// spell them: a name built from a real path uses `\` on Windows.
+    fn names(sources: &[QuerySource]) -> Vec<String> {
+        sources
+            .iter()
+            .map(|source| source.name.replace('\\', "/"))
+            .collect()
     }
 
     #[test]

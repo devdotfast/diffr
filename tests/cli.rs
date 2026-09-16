@@ -1,7 +1,7 @@
 mod support;
 
 use std::process::Command;
-use support::diffr_command as get_base_command;
+use support::get_base_command;
 
 use assert_cmd::prelude::*;
 use predicates::prelude::*;

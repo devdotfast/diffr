@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Output;
-use support::diffr_command;
+use support::get_base_command;
 use tempfile::TempDir;
 
 struct Fixture {
@@ -77,7 +77,7 @@ impl Fixture {
     }
 
     fn diffr(&self, args: &[&str]) -> Output {
-        diffr_command()
+        get_base_command()
             .arg("--repo")
             .arg(self.dir.path().join("repo"))
             .args(args)

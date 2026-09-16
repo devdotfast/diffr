@@ -5,7 +5,7 @@ use git2::{IndexAddOption, Repository, Signature, Time};
 use serde_json::Value;
 use std::fs;
 use std::process::Output;
-use support::diffr_command;
+use support::get_base_command;
 use tempfile::TempDir;
 
 /// A repository with a working tree, plus a home directory holding git's
@@ -65,7 +65,7 @@ impl Fixture {
 
     fn run(&self, base: &str, head: &str) -> Output {
         let home = self.dir.path().join("home");
-        diffr_command()
+        get_base_command()
             .arg("--repo")
             .arg(self.dir.path().join("repo"))
             .args([base, head, "--format", "ndjson"])

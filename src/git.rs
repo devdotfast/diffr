@@ -3,11 +3,13 @@ use crate::config::Params;
 use crate::pairing::Pairing;
 use crate::protocol;
 use crate::summary::DiffResult;
+use crate::tags::{self, Attributes, Prefix, PREFIX_BYTES};
 use anyhow::Context as _;
-use git2::{AttrCheckFlags, AttrValue, Delta, Diff, DiffFindOptions, DiffOptions, Oid, Repository};
+use git2::{Delta, Diff, DiffFindOptions, DiffOptions, Oid, Repository};
 use serde::Deserialize;
 use std::{
     fmt,
+    io::Read as _,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -132,7 +134,8 @@ pub(crate) struct FileChange {
     pub(crate) old_path: Option<String>,
     pub(crate) new_path: Option<String>,
     pub(crate) status: FileStatus,
-    pub(crate) class: Option<String>,
+    /// Sorted and deduplicated; see [`crate::tags`].
+    pub(crate) tags: Vec<String>,
     /// Git's delta sides.
     pub(crate) sides: Pairing<protocol::FileRef>,
 }
@@ -173,7 +176,9 @@ impl FileChange {
             old_path,
             new_path,
             status,
-            class: None,
+            // Paths outside a repository have no attributes, and Linguist's
+            // rules are written for repository-relative paths.
+            tags: Vec::new(),
             sides,
         }
     }
@@ -190,6 +195,7 @@ impl FileChange {
                 // Both sides exist; the file record carries the unmerged error.
                 FileStatus::Conflicted => protocol::FileStatus::Modified,
             },
+            tags: self.tags.clone(),
         }
     }
 }
@@ -296,6 +302,41 @@ impl Source {
         })
     }
 
+    /// The start of the source for the content rules, or `None` when they
+    /// cannot apply: not a regular file, binary, or not UTF-8. Loading the
+    /// whole source reports those.
+    fn prefix(&self, repo: &Repository) -> anyhow::Result<Option<(Vec<u8>, bool)>> {
+        let (bytes, complete) = match self {
+            Self::Absent => return Ok(None),
+            Self::Blob { mode, .. } | Self::WorkingFile { mode, .. }
+                if !matches!(mode, git2::FileMode::Blob | git2::FileMode::BlobExecutable) =>
+            {
+                return Ok(None);
+            }
+            Self::Blob { id, .. } => {
+                let blob = repo.find_blob(*id).context(FileError::ReadFailed)?;
+                let content = blob.content();
+                let end = content.len().min(PREFIX_BYTES);
+                (content[..end].to_vec(), content.len() <= PREFIX_BYTES)
+            }
+            Self::WorkingFile { path, .. } => {
+                let mut bytes = Vec::with_capacity(PREFIX_BYTES + 1);
+                std::fs::File::open(path)
+                    .context(FileError::ReadFailed)?
+                    .take(PREFIX_BYTES as u64 + 1)
+                    .read_to_end(&mut bytes)
+                    .context(FileError::ReadFailed)?;
+                let complete = bytes.len() <= PREFIX_BYTES;
+                bytes.truncate(PREFIX_BYTES);
+                (bytes, complete)
+            }
+        };
+        if bytes.contains(&0) {
+            return Ok(None);
+        }
+        Ok(Some((bytes, complete)))
+    }
+
     fn read(&self, repo: &Repository) -> anyhow::Result<String> {
         let mode = match self {
             Self::Absent => return Ok(String::new()),
@@ -324,6 +365,23 @@ struct PendingFile {
     file: FileChange,
     before: Source,
     after: Source,
+    /// Reading the start of the file for its tags failed; loading reports it
+    /// as this file's error.
+    prefix_error: Option<anyhow::Error>,
+}
+
+/// Whether Linguist's content rules call these bytes generated. A prefix cut
+/// inside a UTF-8 sequence drops the partial character; bytes that are not
+/// UTF-8 otherwise are not text, and no content rule applies.
+fn generated_by_content(path: &str, bytes: &[u8], complete: bool) -> bool {
+    let text = match std::str::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(error) if !complete && error.error_len().is_none() => {
+            std::str::from_utf8(&bytes[..error.valid_up_to()]).expect("valid up to here")
+        }
+        Err(_) => return false,
+    };
+    tags::generated_by_content(path, &Prefix { text, complete })
 }
 
 pub(crate) struct DiffSession {
@@ -407,37 +465,58 @@ impl DiffSession {
                     old_path,
                     new_path,
                     status,
-                    class: None,
+                    tags: Vec::new(),
                     sides,
                 };
-                file.class = match AttrValue::from_string(repo.get_attr(
-                    Path::new(file.path()),
-                    "diffr-classify",
-                    AttrCheckFlags::FILE_THEN_INDEX,
-                )?) {
-                    AttrValue::String(value) => Some(value.to_owned()),
-                    _ => None,
-                };
+                let before = Source::from_delta(
+                    delta.old_file(),
+                    &comparison.before,
+                    repo.workdir(),
+                    file.old_path.is_none(),
+                )?;
+                let after = Source::from_delta(
+                    delta.new_file(),
+                    &comparison.after,
+                    repo.workdir(),
+                    file.new_path.is_none(),
+                )?;
+                let path = file.path();
+                let attributes = Attributes::lookup(&repo, path)?;
+                let mut bundled = tags::from_path(path);
+                let mut prefix_error = None;
+                // Content is read only when it could change the answer.
+                if attributes.generated.is_none()
+                    && !bundled.contains(tags::GENERATED)
+                    && tags::needs_content(path)
+                {
+                    let side = match &file.new_path {
+                        Some(_) => &after,
+                        None => &before,
+                    };
+                    match side.prefix(&repo) {
+                        Ok(Some((bytes, complete))) => {
+                            if generated_by_content(path, &bytes, complete) {
+                                bundled.insert(tags::GENERATED);
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => prefix_error = Some(error),
+                    }
+                }
+                file.tags = attributes.resolve(bundled);
                 pending.push(PendingFile {
-                    before: Source::from_delta(
-                        delta.old_file(),
-                        &comparison.before,
-                        repo.workdir(),
-                        file.old_path.is_none(),
-                    )?,
-                    after: Source::from_delta(
-                        delta.new_file(),
-                        &comparison.after,
-                        repo.workdir(),
-                        file.new_path.is_none(),
-                    )?,
+                    before,
+                    after,
+                    prefix_error,
                     file,
                 });
             }
+            // A file ranks by the earliest `--order` tag it carries.
             let rank = |file: &FileChange| {
-                file.class
-                    .as_ref()
-                    .and_then(|class| files.order.iter().position(|item| item == class))
+                files
+                    .order
+                    .iter()
+                    .position(|tag| file.tags.contains(tag))
                     .unwrap_or(files.order.len())
             };
             pending.sort_by(|a, b| {
@@ -478,13 +557,17 @@ impl LoadedFile {
         &self,
         display: &crate::options::DisplayOptions,
     ) -> anyhow::Result<DiffResult> {
+        let options = crate::options::DiffOptions {
+            generated: self.file.tags.iter().any(|tag| tag == tags::GENERATED),
+            ..self.diff_options.clone()
+        };
         Ok(DiffResult::from_sources_with_options(
             self.file.path(),
             &self.before,
             &self.after,
             &self.params,
             display,
-            &self.diff_options,
+            &options,
         )?)
     }
 }
@@ -492,8 +575,12 @@ impl LoadedFile {
 impl DiffSession {
     /// Read the next file's sources without diffing them.
     pub(crate) fn load(&mut self) -> Option<(FileChange, anyhow::Result<LoadedFile>)> {
-        let pending = self.files.next()?;
+        let mut pending = self.files.next()?;
+        let prefix_error = pending.prefix_error.take();
         let result = (|| {
+            if let Some(error) = prefix_error {
+                return Err(error);
+            }
             if matches!(pending.file.status, FileStatus::Conflicted) {
                 return Err(FileError::Unmerged.into());
             }

@@ -61,6 +61,7 @@ mod pairing;
 mod parse;
 pub(crate) mod protocol;
 mod summary;
+mod tags;
 mod version;
 mod words;
 

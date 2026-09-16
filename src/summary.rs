@@ -17,8 +17,8 @@ pub(crate) enum FileContent {
 pub(crate) enum FileFormat {
     SupportedLanguage(guess_language::Language),
     PlainText,
-    /// A file in a supported language diffed by line: `cause` says which
-    /// limit it hit, and `reason` says so in prose, with the numbers.
+    /// A file in a supported language diffed by line: `cause` says why, and
+    /// `reason` says so in prose, with the numbers.
     TextFallback {
         cause: FallbackCause,
         reason: String,
@@ -35,6 +35,8 @@ pub(crate) enum FallbackCause {
     GraphLimit,
     /// A side has more parse errors than the parse error limit.
     ParseErrorLimit,
+    /// The file is tagged `generated`, and so is never parsed.
+    Generated,
 }
 
 impl Display for FileFormat {

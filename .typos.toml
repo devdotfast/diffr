@@ -1,6 +1,7 @@
 [files]
 extend-exclude = [
   "vendored_parsers/", "sample_files/",
+  "src/tags/linguist/",
   "homepage/home_static/demo.cast", "homepage/home_static/*.min.js",
   "homepage/home_img",
   "demo_files/",

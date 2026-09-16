@@ -71,6 +71,8 @@ pub(crate) struct DiffOptions {
     pub(crate) check_only: bool,
     pub(crate) ignore_comments: bool,
     pub(crate) strip_cr: bool,
+    /// The file is tagged `generated`: diff it by line without parsing.
+    pub(crate) generated: bool,
 }
 
 impl Default for DiffOptions {
@@ -82,6 +84,7 @@ impl Default for DiffOptions {
             check_only: false,
             ignore_comments: false,
             strip_cr: false,
+            generated: false,
         }
     }
 }
@@ -874,6 +877,7 @@ pub(crate) fn parse_args() -> Mode {
         check_only,
         ignore_comments,
         strip_cr,
+        generated: false,
     };
 
     let args = matches

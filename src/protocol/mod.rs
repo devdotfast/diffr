@@ -91,6 +91,11 @@ pub struct FileChange {
     /// `LeftOnly` is a deletion, `RightOnly` an addition.
     pub file: Pairing<FileRef>,
     pub status: FileStatus,
+    /// What the file is, such as `generated`, `vendored`, `docs` or `test`,
+    /// from bundled Linguist rules and git attributes. Sorted and
+    /// deduplicated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 /// libgit2's delta status.
@@ -233,7 +238,8 @@ pub struct SourcePos {
 
 /// Line counts for one file. `fallback` is present exactly when the AST
 /// match did not run and the alignment is a line diff, carrying why:
-/// `too_complex`, `too_large`, `unsupported_language`, `parse_error`.
+/// `too_complex`, `too_large`, `unsupported_language`, `parse_error`,
+/// `generated`.
 /// Folds are still present on a fallback whenever the language parsed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Stats {
@@ -388,6 +394,7 @@ mod tests {
                         },
                     },
                     status: FileStatus::Added,
+                    tags: vec!["generated".to_owned()],
                 }],
             },
             example_file(),
@@ -454,5 +461,18 @@ mod tests {
         ] {
             assert!(!line.contains(absent), "{absent} appeared in {line}");
         }
+        let untagged = FileChange {
+            file: Pairing::RightOnly {
+                rhs: FileRef {
+                    path: "a.rs".to_owned(),
+                    oid: "0e1f2a".to_owned(),
+                    mode: "100644".to_owned(),
+                },
+            },
+            status: FileStatus::Added,
+            tags: Vec::new(),
+        };
+        let line = serde_json::to_string(&untagged).unwrap();
+        assert!(!line.contains("tags"), "{line}");
     }
 }

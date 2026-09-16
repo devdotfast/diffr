@@ -50,6 +50,10 @@ impl fmt::Display for QueryConflict {
 
 impl std::error::Error for QueryConflict {}
 
+/// The fallback reason for a file tagged `generated`, which is always diffed
+/// by line.
+pub(crate) const GENERATED_FALLBACK: &str = "generated file, diffed by line";
+
 impl DiffResult {
     #[cfg(test)]
     pub(crate) fn from_sources(path: &str, lhs: &str, rhs: &str) -> Self {
@@ -186,6 +190,23 @@ pub(crate) fn diff_file_content(
     let mut lhs_folds = Vec::new();
     let mut rhs_folds = Vec::new();
     let (file_format, lhs_positions, rhs_positions) = match lang_config {
+        _ if diff_options.generated => {
+            let file_format = FileFormat::TextFallback {
+                cause: FallbackCause::Generated,
+                reason: GENERATED_FALLBACK.to_owned(),
+            };
+            if diff_options.check_only {
+                return Ok(check_only_text(
+                    &file_format,
+                    display_path,
+                    extra_info,
+                    lhs_src,
+                    rhs_src,
+                ));
+            }
+            let (lhs_positions, rhs_positions) = line_parser::change_positions(lhs_src, rhs_src);
+            (file_format, lhs_positions, rhs_positions)
+        }
         None => {
             let file_format = FileFormat::PlainText;
             if diff_options.check_only {

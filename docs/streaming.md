@@ -2,7 +2,7 @@
 
 ```sh
 diffr main HEAD --format ndjson
-diffr --cached --format ndjson --order source,test -- src/
+diffr --cached --format ndjson --order test,docs -- src/
 diffr --no-index --format ndjson -- before.rs after.rs
 ```
 
@@ -22,19 +22,15 @@ applies command-line flags, and compiles the result once; see
 retain defaults; query strings replace whole values, and empty queries disable
 that feature.
 
-File classes come from the current workspace's Git attributes:
+File tags come from bundled GitHub Linguist rules and diffr's test path rules,
+then git attributes (`linguist-generated`, `linguist-vendored`,
+`linguist-documentation`, `diffr-tags`); [config.md](config.md#file-tags) has
+the precedence. Renames are tagged by new path; deletions by old path.
 
-```gitattributes
-*          diffr-classify=source
-tests/**   diffr-classify=test
-docs/**    diffr-classify=docs
-**/*.lock  diffr-classify=generated
-```
-
-`--order source,test,docs` prioritizes those classes. It can also be repeated.
-Unlisted and unclassified files follow, with path order breaking ties. Without
-`--order`, use path order. Renames classify by new path; deletions by old path.
-Only string attributes assign classes. Normal Git attribute precedence applies.
+`--order test,docs` puts files carrying those tags first, ranked by the
+earliest listed tag a file carries. It can also be repeated. Files with none of
+the listed tags follow, with path order breaking ties. Without `--order`, use
+path order.
 
 Paths after `--` accept libgit2 directory prefixes and wildcard patterns, not Git
 magic pathspecs. Only changed files are selected. An unmatched path yields an empty
@@ -78,12 +74,15 @@ as results are computed, not as an atomic snapshot.
 ```jsonc
 {"file": {"lhs": {"path": "src/a.rs", "oid": "3b18…", "mode": "100644"},
           "rhs": {"path": "src/a.rs", "oid": "9be2…", "mode": "100644"}},
- "status": "modified"}            // added | deleted | modified | renamed | copied | type_changed
+ "status": "modified",            // added | deleted | modified | renamed | copied | type_changed
+ "tags": ["generated", "vendored"]} // sorted; absent when none
 ```
 
 `file` is git's delta: a deleted file has `lhs` only, an added file `rhs` only. The
 path pair is the file's identity; each `file` record repeats it verbatim so the
-record can be matched back to the manifest. Working-tree sides carry git's
+record can be matched back to the manifest. Tags are known before `start`:
+reading the start of a file for the header checks happens during discovery,
+and if that read fails the file's record carries a `read_failed` error. Working-tree sides carry git's
 all-zero oid. A `--no-index` comparison has empty `oid` and `mode`.
 
 Results arrive in completion order, not manifest order, since files are diffed
@@ -101,7 +100,8 @@ One shape everywhere: `{"code": "<snake_case>", "message": "<prose>"}`.
   one syntax node with different fold ranges; the message names the line and
   both patterns), or `internal` for a failure diffr did not classify.
 - Setup failures (bad revision, unreadable config, a query that does not
-  compile) write to stderr and exit 2 before any record.
+  compile, a malformed `diffr-tags` attribute) write to stderr
+  and exit 2 before any record.
 
 Exit status is 0 on success, 1 with `--exit-code` when there are changes, 2 when
 any file failed.
@@ -124,13 +124,14 @@ deleted file has `lhs` only.
 `stats.textual` counts lines with any byte change.
 
 `stats.fallback` is present when the AST match did not run: `unsupported_language`,
-`too_large`, `too_complex`, `parse_error`. Its `message` is the engine's own
-account of why, such as the size a file reached and the limit it exceeded. A
-fallback diff is aligned by a line diff and its `changed` spans are word-level,
-but the parse still stands: folds are present whenever the language parsed
-(`too_complex`, `parse_error`). A line diff has no matcher, so its folds pair
-with nothing. Only `unsupported_language` and `too_large` produce leaves
-alone.
+`too_large`, `too_complex`, `parse_error`, or `generated` for a file tagged
+`generated`, which is always diffed by line without parsing. Its `message` is
+the engine's own account of why, such as the size a file reached and the limit
+it exceeded. A fallback diff is aligned by a line diff and its `changed` spans
+are word-level, but the parse still stands: folds are present whenever the
+language parsed (`too_complex`, `parse_error`). A line diff has no matcher, so
+its folds pair with nothing. Only `unsupported_language`, `too_large` and
+`generated` produce leaves alone.
 
 ### Regions
 

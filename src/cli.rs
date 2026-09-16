@@ -42,7 +42,7 @@ pub(crate) fn run() -> Result<i32> {
                 .default_value("16")
                 .help("Concurrent file diffs for --format ndjson; results are emitted as each finishes"),
         )
-        .arg(Arg::new("order").long("order").value_delimiter(',').action(ArgAction::Append).help("File class priority from diffr-classify attributes"))
+        .arg(Arg::new("order").long("order").value_delimiter(',').action(ArgAction::Append).help("File tag priority: files carrying an earlier listed tag come first"))
         .arg(flag("cached").visible_alias("staged"))
         .arg(flag("merge-base"))
         .arg(flag("no-index"))

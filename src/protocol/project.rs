@@ -114,6 +114,7 @@ fn stats(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> Stats {
 /// is the engine's own prose, with the numbers.
 fn fallback_code(cause: FallbackCause) -> &'static str {
     match cause {
+        FallbackCause::Generated => "generated",
         FallbackCause::ByteLimit => "too_large",
         FallbackCause::GraphLimit => "too_complex",
         FallbackCause::ParseErrorLimit => "parse_error",

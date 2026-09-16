@@ -1,0 +1,9 @@
+name = "fixtures"
+title = "Fixtures"
+description = "Tag test fixtures (files under a fixtures/ directory, or starting with a `// fixture` line) and hide them behind the subject of the last commit that touched them."
+
+[options.fail]
+type = "boolean"
+title = "Fail on every file"
+description = "Return an error from mutate, to see a plugin abort the run."
+default = false

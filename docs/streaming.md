@@ -14,6 +14,8 @@ comparison or `--no-index`; it rejects `--quiet` and metadata output flags.
 The Rust types behind this document are `src/protocol/mod.rs`; the projection
 from the internal diff is `src/protocol/project.rs`, the plugin host that
 shapes it is `src/plugin/`, and the bundled plugins are under `plugins/`.
+WASM component plugins, and the three points where a plugin shapes a file,
+are described in [plugins.md](plugins.md).
 
 ## Configuration and ordering
 
@@ -109,17 +111,17 @@ One shape everywhere: `{"code": "<snake_case>", "message": "<prose>"}`.
   files), or `internal` for a failure diffr did not classify.
 - On `complete`, `aborted` reports a run-level failure in a plugin:
   `mutation_failed` when a plugin's `mutate` returns an error (the
-  summarizer's model call failing after its retries, say) or when a plugin
-  asks for a move that cannot be carried out. The message names the
+  summarizer's model call failing after its retries, say) or traps, or when a
+  plugin asks for a move that cannot be carried out. The message names the
   plugin. diffr
   stops pulling files, lets the ones in flight finish, and exits 2. Every
   `file` record already written stays valid; the file that failed has no
   record.
 - Setup failures (bad revision, unreadable config, a query file that does not
   compile, a malformed `diffr-tags` attribute, a plugin option that does not
-  match its schema, a plugin that cannot be made, such as a summarizer
-  without an API key, or a `classify` that fails or returns a malformed tag)
-  write to stderr
+  match its schema, a plugin that cannot be made, such as a WASM plugin that
+  does not compile or link or a summarizer without an API key, or a
+  `classify` that fails or returns a malformed tag) write to stderr
   and exit 2 before any record.
 
 Exit status is 0 on success, 1 with `--exit-code` when there are changes, 2 when
@@ -157,8 +159,9 @@ the engine's own account of why, such as the size a file reached and the limit
 it exceeded. A fallback diff is aligned by a line diff and its `changed` spans
 are word-level, but the parse still stands: folds are present whenever the
 language parsed (`too_complex`, `parse_error`). A line diff has no matcher, so
-its folds pair with nothing. Only `unsupported_language`, `too_large` and
-`generated` produce leaves alone.
+its folds pair with nothing; what is new inside them is still the leaves'
+answer. Only `unsupported_language`, `too_large` and `generated` produce
+leaves alone.
 
 ### Regions
 
@@ -167,18 +170,24 @@ identities that never stand in for one another. `id` names the region: it is
 unique within the file, across both sides, and it is what plugins address.
 `fold_state_id` says what the region opens and closes with: regions sharing it
 open and close together, on the same side or across sides. Paired leaves and
-matched folds share it across sides, and a plugin that links regions gives
-several regions one
+matched folds share it across sides, and a plugin that links regions (a
+docstring with its function body, say) gives several regions one
 `fold_state_id` while each keeps its own `id`. Only a leaf has an
 `alignment_id`, and it is row alignment: the same value on the other side marks
 the leaf whose rows line up with this one, line for line. Consumers key the row
 zip by leaf `alignment_id`, collapse state by `fold_state_id`, and anything
 about the region itself by `id`.
+Today the bundled link is a docstring: a plugin that collapses a function body
+(`deleted-bodies`, `test-bodies`, `summarize`) links the body's docstring, a
+fold tagged `deleted-bodies:docstring`, `test-bodies:docstring` and (when the
+summarizer is on) `summarize:docstring`, to it. The docstring then carries the body's
+`fold_state_id` and starts collapsed, with an empty label. A docstring whose
+body no plugin collapses is not linked.
 
 ```jsonc
 {"id": 7, "fold_state_id": 7, "kind": "fold",
  "start": {"line": 18, "column": 0}, "end": {"line": 53, "column": 0},
- "tags": ["context:scope"],
+ "tags": ["deleted-bodies:function", "removed-runs:function"],
  "visibility": {"collapsed": false, "label": ""},
  "children": [
    {"id": 8, "fold_state_id": 8, "kind": "leaf", "alignment_id": 5, "start": {"line": 18, "column": 0}, "end": {"line": 30, "column": 0}},
@@ -223,12 +232,13 @@ spans a single line is not a region: it hides nothing.
 
 `tags` name what a region is. A leaf carries none. A fold carries
 the tags the fold queries set on it, each written `<plugin>:<name>` after the
-plugin whose query set it (`context:scope`); a fold only some query made
-exist without meaning carries none. Tags describe syntax, and are the only
-syntax a plugin sees; how a region starts out is `visibility`,
+plugin whose query set it (`deleted-bodies:function`, `test-bodies:test`,
+`context:scope`); a fold only some query made exist without meaning
+carries none. Tags describe syntax, and are the only syntax a plugin sees;
+how a region starts out is `visibility`,
 and frontends need no knowledge of tags to render it. `visibility` is
-`collapsed` and the `label` to show while collapsed: the count for a
-collapsed stretch of unchanged lines, say.
+`collapsed` and the `label` to show while collapsed: a line count, a
+pseudocode summary, or the count for a collapsed stretch of unchanged lines.
 A label is the plugin's that collapsed the fold, so a fold no plugin
 collapsed has none, and the empty label shows the source. Absent means open.
 
@@ -246,18 +256,6 @@ is at least three lines long collapses with a label such as
 `"142 unchanged lines"`; shorter stretches stay open because a row would save
 nothing. A file with no change collapses whole however short.
 
-
-**Groups** come from the `group` plugin: a run of two or more sibling
-regions that start collapsed, whichever plugin collapsed them, is wrapped in
-one new fold, with no tags. Between two collapsed regions of a run there may
-be open leaves spanning at most two lines in all, such as a blank line and the
-next function's header. The label counts the collapsed regions and the lines
-the group spans: `"3 collapsed regions · 42 lines"`. It starts collapsed;
-expanding it reveals each child's own row. The wrapped children are untouched.
-When the other side pairs a region of the run, the run is grouped only if the
-other side holds a run that matches it region for region, and then both are
-grouped with one fold state.
-
 Region edges cut a stretch. The part of it among one list of siblings
 collapses when it is at least three lines long or is the whole stretch, so a
 sliver at a fold edge stays open. A part inside one leaf is that leaf's lines,
@@ -271,6 +269,17 @@ folds sharing a fold state), and then on both sides, the two group folds
 sharing a fold state;
 otherwise the regions collapse one by one. A stretch that crosses the end of a fold collapses on
 each side of that edge.
+
+**Groups** come from the `group` plugin: a run of two or more sibling
+regions that start collapsed, whichever plugin collapsed them, is wrapped in
+one new fold, with no tags. Between two collapsed regions of a run there may
+be open leaves spanning at most two lines in all, such as a blank line and the
+next function's header. The label counts the collapsed regions and the lines
+the group spans: `"3 collapsed regions · 42 lines"`. It starts collapsed;
+expanding it reveals each child's own row. The wrapped children are untouched.
+When the other side pairs a region of the run, the run is grouped only if the
+other side holds a run that matches it region for region, and then both are
+grouped with one fold state.
 
 Ids are per file. The projection numbers the regions as it builds them, in lhs
 preorder then rhs preorder, from two counters: `id` starts at 1 and
@@ -307,7 +316,7 @@ Each file goes through one pipeline before its record is written:
 
 1. Git lists the file and its tags ([config.md](config.md#file-tags)), and
    each enabled plugin's `classify` adds tags of its own, before the
-   `start` header is written.
+   `start` header is written ([plugins.md](plugins.md#the-plugin-points)).
 2. The diff runs. Its fold query for the file's language is assembled from
    the query files of every enabled plugin ([config.md](config.md#queries)).
 3. The projection builds the region trees above and pairs them. Nothing
@@ -346,13 +355,7 @@ every region hangs from:
   the two new folds take their own `id`s and share one `fold_state_id`.
 - **Link fold state**: every region in the listed regions' fold states, on
   both sides, takes the first region's `fold_state_id` and whether it starts
-  collapsed, so they open and close together. Today the bundled link is a
-  docstring: a plugin that collapses a function body (`deleted-bodies`,
-  `test-bodies`, `summarize`) links the body's docstring, a fold tagged
-  `deleted-bodies:docstring`, `test-bodies:docstring` or (when the summarizer
-  is on) `summarize:docstring`, to it. The docstring
-  then carries the body's `fold_state_id` and starts collapsed, with an empty
-  label. A docstring whose body no plugin collapses is not linked.
+  collapsed, so they open and close together.
 - **Set collapsed** on a region: every region sharing its `fold_state_id`
   starts collapsed, or open. On the file, whether the file starts hidden: the
   record's `visibility`.
@@ -383,9 +386,9 @@ The bundled plugins, in their default order, each a folder under `plugins/`:
 | `deleted-bodies` | A function body of at least 12 lines with nothing paired under it collapses: `"20 lines removed"`. Its docstring is linked to it. |
 | `test-bodies` | Test function bodies (`"test body"`) and Rust `#[cfg(test)]` modules (`"test module"`) collapse on both sides. A test body's docstring is linked to it. |
 | `removed-runs` | A one-sided leaf of at least 5 lines in removed (not rewritten) code keeps its first and last line open and collapses the rest: `"8 lines removed"`. |
-| `summarize` | Off by default. A new function body of at least 20 lines collapses behind pseudocode from the configured model. The body is chosen as new before its docstring is linked to it; the pseudocode may quote the docstring. On without an API key, diffr stops before the stream starts. |
+| `summarize` | Off by default. A new function body of at least 20 lines collapses behind plain pseudocode from the configured model. The body is chosen as new before its docstring is linked to it; the pseudocode may quote the docstring. On without an API key, diffr stops before the stream starts. |
 | `group` | Two or more adjacent collapsed regions are wrapped in one collapsed fold: `"3 collapsed regions · 42 lines"`. An open fold showing only collapsed regions and at most two open lines, such as a function's scope around its collapsed body and closing brace, counts as collapsed. |
 
 A binary diff has no regions, so only `hide-files` can change how it starts
-out. Streaming is the only output mode that runs plugins.
+out.
 

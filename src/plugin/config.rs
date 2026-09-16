@@ -36,8 +36,9 @@ pub(crate) const PATH: &str = "path";
 /// use them.
 pub(crate) const RESERVED: [&str; 2] = [ENABLED, PATH];
 
-/// A plugin folder's description.
+/// A plugin folder's description, and its component when it has one.
 pub(crate) const MANIFEST_FILE: &str = "plugin.toml";
+pub(crate) const COMPONENT_FILE: &str = "plugin.wasm";
 
 /// A plugin's `plugin.toml`.
 #[derive(Clone, Debug, Deserialize)]
@@ -272,6 +273,15 @@ impl Folder {
             location: Location::Bundled,
             manifest: manifest.clone(),
         })
+    }
+
+    /// The folder's component, `plugin.wasm`, when it has one. An embedded
+    /// folder has none.
+    pub(crate) fn component(&self) -> Option<PathBuf> {
+        match &self.location {
+            Location::Bundled => None,
+            Location::Disk(dir) => Some(dir.join(COMPONENT_FILE)).filter(|path| path.is_file()),
+        }
     }
 
     /// The folder's query files per language key, each path resolved against

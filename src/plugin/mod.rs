@@ -33,6 +33,7 @@ pub(crate) mod config;
 pub(crate) mod host;
 pub(crate) mod native;
 pub(crate) mod queries;
+pub(crate) mod wasm;
 
 #[cfg(test)]
 mod tests;
@@ -41,7 +42,7 @@ use crate::constants::Side;
 use crate::pairing::Pairing;
 use crate::protocol::{self, FileChange, FileStatus, SourcePos, SourceRange};
 use anyhow::{anyhow, Context as _};
-use config::PluginsConfig;
+use config::{PluginsConfig, COMPONENT_FILE};
 use diffr_plugin_sdk::{apply, tree, types};
 use host::Host;
 use serde_json::Value;
@@ -126,11 +127,29 @@ impl Pipeline {
             plugins: Vec::new(),
             workdir: workdir.into(),
         };
+        let mut engine = None;
         for (name, entry) in config.enabled() {
+            let folder = entry.folder();
             let options = Value::Object(entry.options.clone());
-            let create = native::lookup(name)
-                .ok_or_else(|| anyhow!("plugins.{name}: diffr has no plugin of that name"))?;
-            pipeline.push(name, options, &create)?;
+            match folder.component() {
+                Some(path) => {
+                    let engine = match &engine {
+                        Some(engine) => engine,
+                        None => engine.insert(wasm::engine()?),
+                    };
+                    pipeline.push(name, options, &|host, options| {
+                        wasm::WasmPlugin::load(engine, &path)?.create(host, options)
+                    })?
+                }
+                None => {
+                    let create = native::lookup(name).ok_or_else(|| {
+                        anyhow!(
+                            "plugins.{name}: the plugin folder has no {COMPONENT_FILE}, and diffr has no native plugin of that name"
+                        )
+                    })?;
+                    pipeline.push(name, options, &create)?
+                }
+            }
         }
         Ok(pipeline)
     }

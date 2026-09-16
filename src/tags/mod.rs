@@ -217,8 +217,7 @@ pub(crate) fn is_tag(tag: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
-/// `a,b`: each tag is lowercase ASCII letters, digits, `-` and `_`, starting
-/// with a letter or digit.
+/// `a,b`: each one a tag.
 fn parse_tags(value: &str) -> Result<Vec<String>, String> {
     value
         .split(',')

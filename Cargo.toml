@@ -142,6 +142,10 @@ dirs = "5"
 toml_edit = "0.25.15"
 serde_yaml_ng = "0.10.0"
 jsonschema = { version = "0.56.0", default-features = false }
+# WASM component plugins. Wasmtime 34 is the newest release whose
+# rust-version (1.85) matches ours.
+wasmtime = { version = "34.0.2", default-features = false, features = ["runtime", "cranelift", "component-model", "cache", "parallel-compilation", "std"] }
+wasmtime-wasi = { version = "34.0.2", default-features = false }
 # The plugin contract, and the bundled plugins: each a crate the native
 # registry calls, which also builds as a WASM component.
 diffr-plugin-sdk = { path = "crates/diffr-plugin-sdk" }
@@ -180,6 +184,7 @@ members = [
 	"plugins/hide-files",
 	"plugins/removed-runs",
 	"plugins/summarize",
+	"examples/plugins/fixtures",
 	"plugins/test-bodies",
 ]
 default-members = [
@@ -191,6 +196,7 @@ default-members = [
 	"plugins/hide-files",
 	"plugins/removed-runs",
 	"plugins/summarize",
+	"examples/plugins/fixtures",
 	"plugins/test-bodies",
 ]
 

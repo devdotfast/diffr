@@ -52,8 +52,8 @@ pub(crate) struct Manifest {
     #[serde(default)]
     pub(crate) description: String,
     /// How settings screens show the `enabled` switch, and whether the
-    /// plugin is on by default. Without it the switch is titled "Run
-    /// <title>" and the plugin is on.
+    /// plugin is on by default. Without it the switch is titled
+    /// `Run <title>` and the plugin is on.
     #[serde(default)]
     pub(crate) enabled: Option<Switch>,
     /// Each option's JSON Schema, in the order settings screens list them.

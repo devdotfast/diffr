@@ -3,15 +3,15 @@
 //! A line stays visible when it is within `lines` of a changed line on its
 //! side, when it is paired with such a line, or when it opens or closes a
 //! scope that holds a change on its side. Scopes are the constructs this
-//! plugin's queries tag `context:scope` (see [`scope_rows`]), each covering
+//! plugin's queries tag `context:scope` (see `scope_rows`), each covering
 //! its signature line through the line that closes it; a file the
 //! diff did not parse has none. Every other stretch of unchanged
-//! paired lines that is at least [`MIN_GAP`] lines long collapses, labelled
+//! paired lines that is at least `MIN_GAP` lines long collapses, labelled
 //! with its line count; a file with no change collapses whole, however
 //! short.
 //!
 //! A stretch is cut at region edges. The part in one list of siblings
-//! collapses when it is at least [`MIN_GAP`] lines long or is the whole
+//! collapses when it is at least `MIN_GAP` lines long or is the whole
 //! stretch; a shorter sliver stays open. When a part spans several
 //! siblings, each collapses and a group wraps them in one row on each side,
 //! provided the two sides' siblings match one for one: leaves sharing an

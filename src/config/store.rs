@@ -1,6 +1,6 @@
 //! `diffr config`: read the schema and resolved values, and write one key to
 //! the global file.
-use super::{Config, ConfigError, LanguageConfig};
+use super::{directory_of, Config, ConfigError};
 use serde_json::Value;
 use std::path::Path;
 
@@ -28,7 +28,7 @@ pub(crate) fn set(path: &Path, key: &str, value: &str) -> Result<(), ConfigError
         .parse()
         .map_err(|error| ConfigError(format!("{}: {error}", path.display())))?;
     assign(&mut document, key, &typed)?;
-    Config::from_toml(&document.to_string())?;
+    Config::from_toml_in(&document.to_string(), directory_of(path))?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|error| ConfigError(format!("{}: {error}", parent.display())))?;
@@ -37,20 +37,11 @@ pub(crate) fn set(path: &Path, key: &str, value: &str) -> Result<(), ConfigError
         .map_err(|error| ConfigError(format!("{}: {error}", path.display())))
 }
 
-/// The JSON Schema of the setting at the dotted `key`. `languages` is left
-/// out of `diffr config schema`, so its keys are looked up in
-/// [`LanguageConfig`]'s own schema.
+/// The JSON Schema of the setting at the dotted `key`, as `diffr config
+/// schema` describes it.
 fn setting_schema(key: &str) -> Result<Value, ConfigError> {
     let unknown = || ConfigError(format!("{key}: unknown key"));
-    let segments: Vec<&str> = key.split('.').collect();
-    let (root, path) = match segments.as_slice() {
-        ["languages", _language, field] => (
-            serde_json::to_value(schemars::schema_for!(LanguageConfig)).expect("schema serializes"),
-            vec![*field],
-        ),
-        ["languages", ..] => return Err(unknown()),
-        _ => (Config::schema(), segments),
-    };
+    let root = Config::schema();
     let resolve = |node: &Value| -> Value {
         match node.get("$ref").and_then(Value::as_str) {
             Some(reference) => {
@@ -61,7 +52,7 @@ fn setting_schema(key: &str) -> Result<Value, ConfigError> {
         }
     };
     let mut node = root.clone();
-    for segment in path {
+    for segment in key.split('.') {
         node = resolve(
             resolve(&node)
                 .get("properties")
@@ -201,7 +192,6 @@ mod tests {
         // `theme.name` is a string, so digits are its text.
         set(&path, "theme.name", "1234").unwrap();
         set(&path, "theme.path", "themes/mine.toml").unwrap();
-        set(&path, "languages.rust.folds", "").unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("graph_limit = 20"), "{text}");
         assert!(text.contains("name = \"1234\""), "{text}");
@@ -209,7 +199,45 @@ mod tests {
         let config = Config::from_toml(&text).unwrap();
         assert_eq!(config.diff.graph_limit, 20);
         assert_eq!(config.theme.name, "1234");
-        assert_eq!(config.languages["rust"].folds.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn plugin_keys_are_written_under_their_quoted_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        set(&path, "plugins.context.lines", "30").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let config = Config::from_toml(&text).unwrap();
+        assert_eq!(config.plugins.entries["context"].options["lines"], 30);
+        assert!(set(&path, "plugins.context.typo", "1").is_err());
+        assert!(set(&path, "plugins.context.lines", "-1").is_err());
+        assert!(set(&path, "plugins.order", "[\"mine\"]").is_err());
+        let error = |key: &str, value: &str| set(&path, key, value).unwrap_err().to_string();
+        assert_eq!(
+            error("plugins.context.enabled", "yes"),
+            "plugins.context.enabled: expected true or false, got \"yes\""
+        );
+        assert!(error("plugins.order", "context")
+            .starts_with("plugins.order: expected a TOML array such as [\"a\", \"b\"]"));
+        assert_eq!(
+            error("plugins.context.lines", "many"),
+            "plugins.context.lines: expected an integer, got \"many\""
+        );
+        assert_eq!(
+            error("plugins.mine.enabled", "true"),
+            "plugins.mine.enabled: unknown key"
+        );
+        set(&path, "plugins.context.enabled", "false").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            Config::from_toml(&text).unwrap().plugins.entries["context"].enabled,
+            Some(false)
+        );
+        let shown = show(&config);
+        assert_eq!(
+            shown["plugins"]["context"],
+            serde_json::json!({"enabled": true, "lines": 30})
+        );
     }
 
     #[test]
@@ -229,7 +257,6 @@ mod tests {
         );
         assert!(error("diff.graph_limit", "-1").starts_with("diff.graph_limit: "));
         assert_eq!(error("diff", "1"), "diff is a table; set one of its keys");
-        assert_eq!(error("languages.rust", "1"), "languages.rust: unknown key");
         assert_eq!(error("", "1"), "invalid key \"\"");
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),

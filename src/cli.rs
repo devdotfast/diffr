@@ -2,6 +2,7 @@
 use crate::config::{self, Config};
 use crate::git::{Comparison, DiffSession, FileParams, Operand, Result};
 use crate::options::{DiffOptions, DisplayMode, DisplayOptions};
+use crate::plugin::Pipeline;
 use clap::{Arg, ArgAction, ArgGroup, ArgMatches, Command};
 use git2::{DiffStatsFormat, Repository};
 use std::{
@@ -58,7 +59,7 @@ pub(crate) fn run() -> Result<i32> {
         .arg(flag("null").short('z'))
         .arg(flag("no-renames"))
         .arg(flag("find-renames").short('M').conflicts_with("no-renames"))
-        .arg(Arg::new("unified").short('U').long("unified").default_value("3").value_parser(clap::value_parser!(u32)))
+        .arg(Arg::new("unified").short('U').long("unified").value_parser(clap::value_parser!(u32)).help("Unchanged lines kept around each change; defaults to plugins.context.lines"))
         .arg(Arg::new("format").long("format").value_parser(["text", "ndjson"]).default_value("text"))
         .arg(Arg::new("display").long("display").value_parser(["inline", "side-by-side", "side-by-side-show-both"]).default_value("side-by-side"))
         .arg(Arg::new("color").long("color").num_args(0..=1).require_equals(true).default_missing_value("always").default_value("auto").value_parser(["auto", "always", "never"]))
@@ -109,7 +110,8 @@ pub(crate) fn run() -> Result<i32> {
         .cloned()
         .collect();
     let display = DisplayOptions {
-        num_context_lines: *args.get_one::<u32>("unified").unwrap(),
+        // Set once the configuration is read: `-U`, or the context plugin's lines.
+        num_context_lines: 0,
         terminal_width: args
             .get_one::<usize>("width")
             .copied()
@@ -168,9 +170,21 @@ pub(crate) fn run() -> Result<i32> {
         }
         changed
     } else {
-        let params = Arc::new(load_config(&args)?.compile()?);
+        let mut config = load_config(&args)?;
+        let display = DisplayOptions {
+            num_context_lines: context_lines(&args, &mut config),
+            ..display
+        };
+        let params = Arc::new(config.compile()?);
         let diff_options = diff_options(&args, &params);
-        let mut session = DiffSession::open(workspace, comparison, params, &files)?;
+        let pipeline = if streaming {
+            // The whole chain: `plugins.<name>` and why the plugin cannot be made.
+            Pipeline::from_config(&params.plugins, workspace).map_err(|error| format!("{error:#}"))?
+        } else {
+            Pipeline::default()
+        };
+        let mut session =
+            DiffSession::open(workspace, comparison, Arc::clone(&params), &files, &pipeline)?;
         session.diff_options = diff_options;
         let changed = session.remaining() > 0;
         if streaming {
@@ -178,8 +192,13 @@ pub(crate) fn run() -> Result<i32> {
             if jobs == 0 {
                 return Err("--jobs must be at least 1".into());
             }
-            let failed = crate::protocol::stream::write(session, jobs, &mut io::stdout().lock())?;
-            return Ok(if failed {
+            let ended = crate::protocol::stream::write(
+                session,
+                jobs,
+                Arc::new(pipeline),
+                &mut io::stdout().lock(),
+            )?;
+            return Ok(if ended.failed || ended.aborted {
                 2
             } else {
                 i32::from(changed && args.get_flag("exit-code"))
@@ -423,7 +442,12 @@ fn no_index(args: &ArgMatches, paths: Vec<OsString>, display: &DisplayOptions) -
     if args.get_flag("quiet") {
         return Ok(i32::from(changed));
     }
-    let config = load_config(args)?.compile()?;
+    let mut config = load_config(args)?;
+    let display = &DisplayOptions {
+        num_context_lines: context_lines(args, &mut config),
+        ..display.clone()
+    };
+    let config = config.compile()?;
     let options = &diff_options(args, &config);
     let lhs = crate::options::FileArgument::from_path_argument(&paths[0]);
     let rhs = crate::options::FileArgument::from_path_argument(&paths[1]);
@@ -444,20 +468,23 @@ fn no_index(args: &ArgMatches, paths: Vec<OsString>, display: &DisplayOptions) -
         )
     };
     if args.get_one::<String>("format").map(String::as_str) == Some("ndjson") {
-        let failed = crate::protocol::stream::write_file(
+        let pipeline = Pipeline::from_config(&config.plugins, &std::env::current_dir()?)
+            .map_err(|error| format!("{error:#}"))?;
+        let ended = crate::protocol::stream::write_file(
             &paths[0].to_string_lossy(),
             &paths[1].to_string_lossy(),
             (before.len() as u64, after.len() as u64),
             compute,
+            &pipeline,
             &mut io::stdout().lock(),
         )?;
-        Ok(if failed {
+        Ok(if ended.failed || ended.aborted {
             2
         } else {
             i32::from(changed && args.get_flag("exit-code"))
         })
     } else {
-        crate::print_diff_result(display, &crate::diff_or_die(compute(), display.use_color));
+        crate::print_diff_result(display, &compute()?);
         Ok(i32::from(changed))
     }
 }
@@ -476,6 +503,26 @@ fn diff_options(args: &ArgMatches, params: &config::Params) -> DiffOptions {
         options.parse_error_limit = *limit;
     }
     options
+}
+
+/// Unchanged lines kept around each change: `-U`, which also overrides the
+/// context plugin's `lines` for this run, or that setting.
+fn context_lines(args: &ArgMatches, config: &mut Config) -> u32 {
+    let lines = config
+        .plugins
+        .entries
+        .get_mut("context")
+        .expect("the context plugin always has an entry")
+        .options
+        .get_mut("lines")
+        .expect("plugins.context.lines has a default");
+    if let Some(unified) = args.get_one::<u32>("unified") {
+        *lines = serde_json::Value::from(*unified);
+    }
+    lines
+        .as_u64()
+        .and_then(|lines| u32::try_from(lines).ok())
+        .expect("plugins.context.lines is validated as an integer in u32's range")
 }
 
 /// The global file, or the `--config` file in its place.

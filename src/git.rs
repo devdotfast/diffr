@@ -1,6 +1,8 @@
 //! Git comparison selection and lazy source loading used by the CLI and its stdout stream.
 use crate::config::Params;
+use crate::constants::Side;
 use crate::pairing::Pairing;
+use crate::plugin::{Head, Pipeline};
 use crate::protocol;
 use crate::summary::DiffResult;
 use crate::tags::{self, Attributes, Prefix, PREFIX_BYTES};
@@ -11,7 +13,7 @@ use std::{
     fmt,
     io::Read as _,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 pub(crate) type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -272,6 +274,7 @@ impl Default for FileParams {
 }
 
 /// Blob IDs pin revision/index content without retaining every file's source text.
+#[derive(Clone)]
 enum Source {
     Absent,
     Blob { id: Oid, mode: git2::FileMode },
@@ -306,35 +309,42 @@ impl Source {
     /// cannot apply: not a regular file, binary, or not UTF-8. Loading the
     /// whole source reports those.
     fn prefix(&self, repo: &Repository) -> anyhow::Result<Option<(Vec<u8>, bool)>> {
-        let (bytes, complete) = match self {
-            Self::Absent => return Ok(None),
-            Self::Blob { mode, .. } | Self::WorkingFile { mode, .. }
-                if !matches!(mode, git2::FileMode::Blob | git2::FileMode::BlobExecutable) =>
-            {
-                return Ok(None);
-            }
-            Self::Blob { id, .. } => {
-                let blob = repo.find_blob(*id).context(FileError::ReadFailed)?;
-                let content = blob.content();
-                let end = content.len().min(PREFIX_BYTES);
-                (content[..end].to_vec(), content.len() <= PREFIX_BYTES)
-            }
-            Self::WorkingFile { path, .. } => {
-                let mut bytes = Vec::with_capacity(PREFIX_BYTES + 1);
-                std::fs::File::open(path)
-                    .context(FileError::ReadFailed)?
-                    .take(PREFIX_BYTES as u64 + 1)
-                    .read_to_end(&mut bytes)
-                    .context(FileError::ReadFailed)?;
-                let complete = bytes.len() <= PREFIX_BYTES;
-                bytes.truncate(PREFIX_BYTES);
-                (bytes, complete)
-            }
+        let Some(mut bytes) = self.head(repo, PREFIX_BYTES + 1)? else {
+            return Ok(None);
         };
+        let complete = bytes.len() <= PREFIX_BYTES;
+        bytes.truncate(PREFIX_BYTES);
         if bytes.contains(&0) {
             return Ok(None);
         }
         Ok(Some((bytes, complete)))
+    }
+
+    /// Up to `max` bytes from the start of the source, or `None` when it is
+    /// absent or not a regular file.
+    fn head(&self, repo: &Repository, max: usize) -> anyhow::Result<Option<Vec<u8>>> {
+        match self {
+            Self::Absent => Ok(None),
+            Self::Blob { mode, .. } | Self::WorkingFile { mode, .. }
+                if !matches!(mode, git2::FileMode::Blob | git2::FileMode::BlobExecutable) =>
+            {
+                Ok(None)
+            }
+            Self::Blob { id, .. } => {
+                let blob = repo.find_blob(*id).context(FileError::ReadFailed)?;
+                let content = blob.content();
+                Ok(Some(content[..content.len().min(max)].to_vec()))
+            }
+            Self::WorkingFile { path, .. } => {
+                let mut bytes = Vec::with_capacity(max.min(PREFIX_BYTES + 1));
+                std::fs::File::open(path)
+                    .context(FileError::ReadFailed)?
+                    .take(max as u64)
+                    .read_to_end(&mut bytes)
+                    .context(FileError::ReadFailed)?;
+                Ok(Some(bytes))
+            }
+        }
     }
 
     fn read(&self, repo: &Repository) -> anyhow::Result<String> {
@@ -405,13 +415,20 @@ impl DiffSession {
         self.files.len()
     }
 
+    /// List the comparison's files and their tags: the bundled rules, git
+    /// attributes, then each plugin's `classify` in `pipeline`, whose
+    /// failure fails the session.
     pub(crate) fn open(
         workspace: &Path,
         comparison: Comparison,
         params: Arc<Params>,
         files: &FileParams,
+        pipeline: &Pipeline,
     ) -> Result<Self> {
         let repo = Repository::open(workspace)?;
+        // A plugin's store owns what it reads sources with, so classifying
+        // plugins share a handle of their own.
+        let shared = Arc::new(Mutex::new(Repository::open(workspace)?));
         let comparison = comparison.resolve(&repo)?;
         let pending = {
             let diff = comparison.diff(&repo, files)?;
@@ -504,6 +521,10 @@ impl DiffSession {
                     }
                 }
                 file.tags = attributes.resolve(bundled);
+                let head = head_of(&shared, &before, &after);
+                file.tags = pipeline
+                    .classify(&file.manifest_entry(), &head)
+                    .map_err(|error| format!("{error:#}"))?;
                 pending.push(PendingFile {
                     before,
                     after,
@@ -534,6 +555,21 @@ impl DiffSession {
             diff_options: crate::options::DiffOptions::default(),
         })
     }
+}
+
+/// What a classifying plugin reads of a file: the start of either side.
+fn head_of(repo: &Arc<Mutex<Repository>>, before: &Source, after: &Source) -> Head {
+    let (repo, before, after) = (Arc::clone(repo), before.clone(), after.clone());
+    Arc::new(move |side, max| {
+        let repo = repo
+            .lock()
+            .expect("no reader panics holding the repository");
+        match side {
+            Side::Left => &before,
+            Side::Right => &after,
+        }
+        .head(&repo, max)
+    })
 }
 
 /// Sources read on the session thread; diffing needs no repository access.

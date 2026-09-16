@@ -4,14 +4,28 @@
 //! key it omits keeps its serde default, and an unknown key or mistyped
 //! value is an error naming the key's dotted path. Flags and attributes are
 //! applied by their callers. Every field carries a doc comment, which becomes
-//! its description in `diffr config schema`, and every setting a `title` and
-//! an `x-group` that settings screens show in place of the dotted key.
+//! its description in `diffr config schema`, and every scalar setting a
+//! `title` and an `x-group` that settings screens show in place of the
+//! dotted key. Lists are in the schema marked `"x-settings": false`: a
+//! settings screen edits scalars and leaves those to the file and `diffr
+//! config set`. The `plugins` part of the schema comes from each plugin's
+//! `plugin.toml`, with lists and multi-line values marked the same way.
+//!
+//! `[plugins]` configures the plugins that shape regions after diffing (see
+//! [`crate::plugin`]). Compiling assembles, per language, one query from the
+//! query files of every enabled plugin (see [`crate::plugin::queries`]): its
+//! `@fold` captures decide which folds exist, and its tags what they are.
+//! Every tag a query sets must be written `<plugin>:<name>`.
 pub(crate) mod query;
 pub(crate) mod store;
 use crate::hash::DftHashMap;
 use crate::options::DiffOptions;
 use crate::parse::{guess_language::Language, tree_sitter_parser};
-use query::AnnotationQuery;
+use crate::plugin::config::PluginsConfig;
+#[cfg(test)]
+use crate::plugin::config::Queries;
+use crate::plugin::queries;
+use query::{AnnotationQuery, QuerySource};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -22,11 +36,11 @@ use strum::IntoEnumIterator;
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Config {
-    /// Tree-sitter fold and context queries per language, keyed by the
-    /// lowercase language name. Omitted queries keep the bundled ones; an
-    /// empty string disables that feature.
+    /// The plugins that decide what starts collapsed, hidden, linked or
+    /// grouped, and the fold queries they own. Its schema comes from each
+    /// plugin's `plugin.toml`; see [`PluginsConfig::schema`].
     #[schemars(skip)]
-    pub(crate) languages: BTreeMap<String, LanguageConfig>,
+    pub(crate) plugins: PluginsConfig,
     /// Colors for the terminal frontend.
     pub(crate) theme: ThemeConfig,
     /// Limits on the structural comparison itself.
@@ -96,16 +110,8 @@ impl Default for ThemeConfig {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
-pub(crate) struct LanguageConfig {
-    /// None keeps the bundled query; an empty string disables this feature.
-    pub(crate) folds: Option<String>,
-    pub(crate) context: Option<String>,
-}
-
 #[derive(Debug)]
-pub(crate) struct ConfigError(String);
+pub(crate) struct ConfigError(pub(crate) String);
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
@@ -115,13 +121,14 @@ impl std::error::Error for ConfigError {}
 
 pub(crate) struct Params {
     languages: DftHashMap<Language, OnceLock<Arc<LanguageParams>>>,
+    pub(crate) plugins: PluginsConfig,
     pub(crate) diff: DiffConfig,
 }
 
 pub(crate) struct LanguageParams {
     pub(crate) parser: &'static tree_sitter_parser::TreeSitterConfig,
-    pub(crate) folds: AnnotationQuery,
-    pub(crate) context: AnnotationQuery,
+    /// The fold and context queries of every enabled plugin, concatenated.
+    pub(crate) query: AnnotationQuery,
     sub_languages: OnceLock<
         Vec<(
             &'static tree_sitter_parser::TreeSitterSubLanguage,
@@ -153,6 +160,11 @@ pub(crate) fn global_path() -> Result<PathBuf, ConfigError> {
     Ok(dir.join("diffr").join("config.toml"))
 }
 
+/// The directory a configuration file's relative paths resolve against.
+pub(crate) fn directory_of(file: &Path) -> &Path {
+    file.parent().unwrap_or(Path::new(""))
+}
+
 impl Config {
     /// Read the global file, or `explicit` in its place. A missing global
     /// file is the defaults; an explicit file must exist.
@@ -168,68 +180,156 @@ impl Config {
             }
             Err(error) => return Err(ConfigError(format!("{}: {error}", path.display()))),
         };
-        Self::from_toml(&source)
+        Self::from_toml_in(&source, directory_of(&path))
             .map_err(|error| ConfigError(format!("{}: {error}", path.display())))
     }
 
-    /// Parse one file's text. Errors lead with the dotted path of the key
-    /// they concern, such as `diff.typo`.
+    /// Parse text that is not a file's: a plugin folder's `path` is relative
+    /// to the current directory.
+    #[cfg(test)]
     pub(crate) fn from_toml(source: &str) -> Result<Self, ConfigError> {
-        serde_path_to_error::deserialize(toml::Deserializer::new(source)).map_err(|error| {
-            let path = error.path().to_string();
-            let message = error.inner().to_string();
-            ConfigError(match path.as_str() {
-                "." => message,
-                _ => format!("{path}: {message}"),
-            })
-        })
+        Self::from_toml_in(source, Path::new(""))
+    }
+
+    /// Parse the text of a file in `directory`. Errors lead with the dotted
+    /// path of the key they concern, such as `diff.typo`.
+    pub(crate) fn from_toml_in(source: &str, directory: &Path) -> Result<Self, ConfigError> {
+        let mut config: Self = serde_path_to_error::deserialize(toml::Deserializer::new(source))
+            .map_err(|error| {
+                let path = error.path().to_string();
+                let message = error.inner().to_string();
+                ConfigError(match path.as_str() {
+                    "." => message,
+                    _ => format!("{path}: {message}"),
+                })
+            })?;
+        config.plugins.resolve(directory)?;
+        Ok(config)
     }
 
     /// The JSON Schema of the configuration, with a description and default
-    /// on every setting.
+    /// on every setting. `plugins` comes first, built from each bundled
+    /// plugin's `plugin.toml`.
     pub(crate) fn schema() -> serde_json::Value {
-        serde_json::to_value(schemars::schema_for!(Config)).expect("schema serializes")
+        let mut schema =
+            serde_json::to_value(schemars::schema_for!(Config)).expect("schema serializes");
+        let rest = std::mem::take(
+            schema["properties"]
+                .as_object_mut()
+                .expect("the schema has properties"),
+        );
+        let properties = schema["properties"]
+            .as_object_mut()
+            .expect("the schema has properties");
+        properties.insert("plugins".to_owned(), PluginsConfig::schema());
+        properties.extend(rest);
+        schema
     }
 
+    /// Compile with the query files of every enabled plugin, after the
+    /// bundled fold rules no plugin owns yet.
     pub(crate) fn compile(self) -> Result<Params, ConfigError> {
-        let defaults = Self::from_toml(include_str!("config/defaults.toml"))?;
-        let mut resolved = defaults.languages;
-        for (name, overrides) in self.languages {
-            let target = resolved.entry(name).or_default();
-            if overrides.folds.is_some() {
-                target.folds = overrides.folds;
-            }
-            if overrides.context.is_some() {
-                target.context = overrides.context;
-            }
+        let queries = self.plugins.enabled_queries();
+        let mut assembled = queries::assemble(&queries)?;
+        for (name, bundled) in bundled_folds() {
+            assembled.entry(name).or_default().insert(0, bundled);
         }
+        self.compile_assembled(assembled)
+    }
+
+    /// Compile with `queries`, the enabled plugins' query files in
+    /// `plugins.order`.
+    #[cfg(test)]
+    pub(crate) fn compile_queries(
+        self,
+        queries: Vec<(String, Queries)>,
+    ) -> Result<Params, ConfigError> {
+        let assembled = queries::assemble(&queries)?;
+        self.compile_assembled(assembled)
+    }
+
+    fn compile_assembled(
+        self,
+        assembled: BTreeMap<String, Vec<QuerySource>>,
+    ) -> Result<Params, ConfigError> {
         let mut languages: DftHashMap<_, _> = Language::iter()
             .map(|language| (language, OnceLock::new()))
             .collect();
-        for (name, config) in resolved {
+        for (name, sources) in assembled {
             let language = Language::iter()
                 .find(|language| format!("{language:?}").to_lowercase() == name)
                 .ok_or_else(|| ConfigError(format!("unknown language: {name}")))?;
             let parser = tree_sitter_parser::from_language(language);
-            let compile = |feature, source: Option<String>| {
-                AnnotationQuery::compile(&parser.language, source.as_deref().unwrap_or_default())
-                    .map_err(|error| ConfigError(format!("languages.{name}.{feature}: {error}")))
-            };
+            let query = AnnotationQuery::compile(&parser.language, &sources)?;
+            check_tags(&query, &self.plugins.order)?;
             languages.insert(
                 language,
                 OnceLock::from(Arc::new(LanguageParams {
                     parser,
-                    folds: compile("folds", config.folds)?,
-                    context: compile("context", config.context)?,
+                    query,
                     sub_languages: OnceLock::new(),
                 })),
             );
         }
         Ok(Params {
             languages,
+            plugins: self.plugins,
             diff: self.diff,
         })
     }
+}
+
+/// The name of the bundled fold queries: config/defaults.toml.
+const BUNDLED_FOLDS: &str = "config/defaults.toml";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BundledFolds {
+    languages: BTreeMap<String, BundledLanguage>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BundledLanguage {
+    folds: String,
+}
+
+/// Each language's bundled fold query. No bundled plugin owns fold queries
+/// yet, so they stay in config/defaults.toml and come before the plugins'
+/// query files.
+fn bundled_folds() -> impl Iterator<Item = (String, QuerySource)> {
+    let bundled: BundledFolds = toml::from_str(include_str!("config/defaults.toml"))
+        .expect("the bundled fold queries parse");
+    bundled.languages.into_iter().map(|(name, language)| {
+        let source = QuerySource {
+            name: format!("{BUNDLED_FOLDS}: languages.{name}.folds"),
+            text: language.folds,
+        };
+        (name, source)
+    })
+}
+
+/// Every tag a fold query sets is `<plugin>:<name>`, naming a plugin in
+/// `plugins.order`: a plugin reads only the tags its own queries set. The
+/// bundled fold queries' tags predate plugins and carry no prefix.
+fn check_tags(query: &AnnotationQuery, order: &[String]) -> Result<(), ConfigError> {
+    for pattern in &query.patterns {
+        if query.sources[pattern.source].starts_with(BUNDLED_FOLDS) {
+            continue;
+        }
+        for tag in &pattern.tags {
+            let owned = tag.split_once(':').is_some_and(|(plugin, name)| {
+                !name.is_empty() && order.iter().any(|own| own == plugin)
+            });
+            if !owned {
+                return Err(ConfigError(format!(
+                    "{}: tag {tag:?} must be written <plugin>:<name> with a plugin from plugins.order",
+                    query.sources[pattern.source]
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 impl Params {
@@ -240,9 +340,7 @@ impl Params {
             let parser = tree_sitter_parser::from_language(language);
             Arc::new(LanguageParams {
                 parser,
-                folds: AnnotationQuery::compile(&parser.language, "").expect("empty fold query"),
-                context: AnnotationQuery::compile(&parser.language, "")
-                    .expect("empty context query"),
+                query: AnnotationQuery::compile(&parser.language, &[]).expect("an empty query"),
                 sub_languages: OnceLock::new(),
             })
         });
@@ -293,22 +391,6 @@ mod tests {
     }
 
     #[test]
-    fn configuration_is_independent_and_omission_keeps_other_defaults() {
-        let custom = Config::from_toml("[languages.rust]\nfolds = ''")
-            .unwrap()
-            .compile()
-            .unwrap();
-        let defaults = Params::default();
-        let source = "fn f() { work(); }";
-        let custom_result = DiffResult::from_sources_with_params("a.rs", "", source, &custom);
-        let default_result = DiffResult::from_sources_with_params("a.rs", "", source, &defaults);
-        assert!(custom_result.rhs_folds.is_empty());
-        assert!(!default_result.rhs_folds.is_empty());
-        let python = DiffResult::from_sources_with_params("a.py", "", "import os\n", &custom);
-        assert!(!python.rhs_folds.is_empty());
-    }
-
-    #[test]
     fn language_without_annotation_rules_keeps_structural_diffing() {
         let params = Params::default();
         let result = DiffResult::from_sources_with_params(
@@ -328,18 +410,20 @@ mod tests {
 
     #[test]
     fn shared_grammars_keep_language_configuration_independent() {
-        let params = Config::from_toml(
-            r#"
-            [languages.javascript]
-            folds = '''((statement_block) @fold (#set! tag "plain-js"))'''
-            [languages.javascriptjsx]
-            folds = '''((statement_block) @fold (#set! tag "jsx"))'''
-        "#,
-        )
-        .unwrap()
-        .compile()
-        .unwrap();
-        for (path, tag) in [("file.js", "plain-js"), ("file.jsx", "jsx")] {
+        let params = with_queries(&[
+            (
+                "javascript",
+                r#"((statement_block) @fold (#set! tag "context:plain-js"))"#,
+            ),
+            (
+                "javascriptjsx",
+                r#"((statement_block) @fold (#set! tag "context:jsx"))"#,
+            ),
+        ]);
+        for (path, tag) in [
+            ("file.js", "context:plain-js"),
+            ("file.jsx", "context:jsx"),
+        ] {
             let result = DiffResult::from_sources_with_params(
                 path,
                 "",
@@ -353,12 +437,10 @@ mod tests {
 
     #[test]
     fn embedded_languages_use_the_configured_queries() {
-        let params = Config::from_toml(
-            "[languages.javascript]\nfolds = '((statement_block) @fold (#set! tag embedded))'",
-        )
-        .unwrap()
-        .compile()
-        .unwrap();
+        let params = with_queries(&[(
+            "javascript",
+            r#"((statement_block) @fold (#set! tag "context:embedded"))"#,
+        )]);
         let result = DiffResult::from_sources_with_params(
             "page.html",
             "",
@@ -366,23 +448,76 @@ mod tests {
             &params,
         );
         assert_eq!(result.rhs_folds.len(), 1);
-        assert_eq!(result.rhs_folds[0].tags, ["embedded"]);
+        assert_eq!(result.rhs_folds[0].tags, ["context:embedded"]);
     }
 
     #[test]
     fn rejects_unknown_settings_languages_and_invalid_queries() {
         assert!(Config::from_toml("typo = true").is_err());
-        for input in [
-            "[languages.unknown]",
-            "[languages.rust]\nfolds = '(not_a_rust_node) @fold.body'",
-            "[languages.rust]\nfolds = '(block) @typo'",
+        assert!(Config::from_toml("[languages.rust]\ncontext = '(block) @context'").is_err());
+        let error = Config::default()
+            .compile_queries(vec![(
+                "context".to_owned(),
+                Queries::from([(
+                    "klingon".to_owned(),
+                    "builtin:context/queries/rust.scm".to_owned(),
+                )]),
+            )])
+            .err()
+            .expect("an unknown language")
+            .to_string();
+        assert!(error.contains("unknown language: klingon"), "{error}");
+        for (query, message) in [
+            ("(not_a_rust_node) @fold", "NodeType error"),
+            ("(block) @typo", "unsupported capture @typo"),
+            (
+                r#"((block) @fold (#set! tag "body"))"#,
+                "must be written <plugin>:<name>",
+            ),
+            (
+                r#"((block) @fold (#set! tag "nobody:body"))"#,
+                "must be written <plugin>:<name>",
+            ),
         ] {
-            assert!(
-                Config::from_toml(input).unwrap().compile().is_err(),
-                "{input}"
-            );
+            let error = try_with_queries(&[("rust", query)])
+                .err()
+                .expect(query)
+                .to_string();
+            assert!(error.contains("context.scm"), "{error}");
+            assert!(error.contains(message), "{error}");
         }
     }
+}
+
+/// Params whose only fold query per listed language is the given text,
+/// written to a file the context plugin owns; no other plugin
+/// contributes queries.
+#[cfg(test)]
+pub(crate) fn try_with_queries(queries: &[(&str, &str)]) -> Result<Params, ConfigError> {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let mut files = Queries::new();
+    for (language, query) in queries {
+        let path = dir.path().join(format!("{language}-context.scm"));
+        std::fs::write(&path, query).expect("a query file");
+        files.insert((*language).to_owned(), path.display().to_string());
+    }
+    Config::default().compile_queries(vec![("context".to_owned(), files)])
+}
+
+#[cfg(test)]
+fn with_queries(queries: &[(&str, &str)]) -> Params {
+    try_with_queries(queries).expect("the test queries compile")
+}
+
+/// Params with the bundled fold rules alone: the bodies and collections the
+/// engine's tests are written against, without the scopes `context` lays
+/// over them.
+#[cfg(test)]
+pub(crate) fn body_params() -> Params {
+    Config::from_toml("[plugins.context]\nenabled = false\n")
+        .expect("a valid configuration")
+        .compile()
+        .expect("the bundled queries compile")
 }
 
 #[cfg(test)]
@@ -390,25 +525,16 @@ mod query_tests {
     use super::*;
     use crate::summary::DiffResult;
 
-    fn configured(folds: &str, context: &str) -> Params {
-        Config::from_toml(&format!(
-            "[languages.rust]\nfolds = '''{folds}'''\ncontext = '''{context}'''"
-        ))
-        .unwrap()
-        .compile()
-        .unwrap()
-    }
-
     #[test]
     fn arbitrary_tags_and_delimiter_captures_reach_the_domain() {
-        let params = configured(
-            r#"((block "{" @fold.open "}" @fold.close) @fold (#set! tag "user.validation"))"#,
-            "",
-        );
+        let params = with_queries(&[(
+            "rust",
+            r#"((block "{" @fold.open "}" @fold.close) @fold (#set! tag "context:user.validation"))"#,
+        )]);
         let source = "fn f() { println!(\"☕\"); }";
         let diff = DiffResult::from_sources_with_params("a.rs", "", source, &params);
         let fold = &diff.rhs_folds[0];
-        assert_eq!(fold.tags, ["user.validation"]);
+        assert_eq!(fold.tags, ["context:user.validation"]);
         assert_eq!(
             &source[fold.range.start.byte_column..fold.range.end.byte_column],
             " println!(\"☕\"); "
@@ -424,13 +550,11 @@ mod query_tests {
             "((block) @fold (#set! typo value))",
             "((block) @fold (#set! tag))",
         ] {
-            let config =
-                Config::from_toml(&format!("[languages.rust]\nfolds = '''{query}'''")).unwrap();
-            let error = match config.compile() {
+            let error = match try_with_queries(&[("rust", query)]) {
                 Ok(_) => panic!("accepted {query}"),
-                Err(error) => error,
+                Err(error) => error.to_string(),
             };
-            assert!(error.to_string().contains("languages.rust.folds:"));
+            assert!(error.contains("rust-context.scm: "), "{error}");
         }
     }
 
@@ -458,7 +582,7 @@ mod query_tests {
 
     #[test]
     fn unicode_string_fold_uses_the_complete_node_range() {
-        let params = configured("(string_literal) @fold", "");
+        let params = with_queries(&[("rust", "(string_literal) @fold")]);
         let source = "fn f() { let x = \"☕\"; }";
         let diff = DiffResult::from_sources_with_params("a.rs", "", source, &params);
         assert_eq!(diff.rhs_folds.len(), 1);
@@ -467,25 +591,6 @@ mod query_tests {
             &source[range.start.byte_column..range.end.byte_column],
             "\"☕\""
         );
-    }
-
-    #[test]
-    fn neovim_header_end_and_final_have_distinct_endpoints() {
-        use crate::parse::{context, guess_language::Language, tree_sitter_parser as parser};
-        let src = "fn f(\n    x: i32,\n) {\n    work(x);\n}\n";
-        let grammar = parser::from_language(Language::Rust);
-        let tree = parser::to_tree(src, grammar);
-        for (query, last_header) in [
-            ("(function_item body: (block) @context.end) @context", 2),
-            ("(function_item body: (block) @context.final) @context", 4),
-            ("(function_item) @context", 0),
-        ] {
-            let params = configured("", query);
-            let contexts =
-                context::classify(&tree, src, Some(&params.language(Language::Rust).context));
-            let context = contexts.values().next().unwrap().first().unwrap();
-            assert_eq!(context.header, 0..=last_header);
-        }
     }
 }
 
@@ -497,29 +602,27 @@ mod tag_tests {
 
     #[test]
     fn repeated_rules_accumulate_sorted_tags_without_duplicate_folds() {
-        let query = r#"
-            ((block) @fold (#set! tag "user.check"))
-            ((block) @fold (#set! tag "body"))
-            ((block) @fold (#set! tag "user.check"))
-        "#;
-        let params = Config::from_toml(&format!("[languages.rust]\nfolds = '''{query}'''"))
-            .unwrap()
-            .compile()
-            .unwrap();
+        let params = with_queries(&[(
+            "rust",
+            r#"
+            ((block) @fold (#set! tag "context:user.check"))
+            ((block) @fold (#set! tag "context:body"))
+            ((block) @fold (#set! tag "context:user.check"))
+        "#,
+        )]);
         let result =
             DiffResult::from_sources_with_params("a.rs", "", "fn f() { work(); }", &params);
         assert_eq!(result.rhs_folds.len(), 1);
-        assert_eq!(result.rhs_folds[0].tags, ["body", "user.check"]);
+        assert_eq!(
+            result.rhs_folds[0].tags,
+            ["context:body", "context:user.check"]
+        );
     }
 
     #[test]
     fn an_opening_capture_alone_folds_to_the_end_of_the_fold_node() {
-        let query =
-            r#"((function_definition ":" @fold.open body: (block) @fold) (#set! tag "body"))"#;
-        let params = Config::from_toml(&format!("[languages.python]\nfolds = '''{query}'''"))
-            .unwrap()
-            .compile()
-            .unwrap();
+        let query = r#"((function_definition ":" @fold.open body: (block) @fold) (#set! tag "context:body"))"#;
+        let params = with_queries(&[("python", query)]);
         let rhs = "def f(a):\n    x = a\n    return x\n";
         let result = DiffResult::from_sources_with_params("a.py", "", rhs, &params);
         assert_eq!(result.rhs_folds.len(), 1);
@@ -533,17 +636,33 @@ mod tag_tests {
     }
 
     #[test]
-    fn a_node_captured_with_two_ranges_is_a_query_conflict_naming_both_patterns() {
-        let whole = "((block) @fold (#set! tag \"whole\"))";
-        let interior = "((block \"{\" @fold.open \"}\" @fold.close) @fold (#set! tag \"inside\"))";
-        for query in [
-            format!("{whole}\n{interior}"),
-            format!("{interior}\n{whole}"),
+    fn a_node_captured_with_two_ranges_is_a_query_conflict_naming_both_files() {
+        let whole = "((block) @fold (#set! tag \"context:whole\"))";
+        let interior =
+            "((block \"{\" @fold.open \"}\" @fold.close) @fold (#set! tag \"context:inside\"))";
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("queries/rust")).unwrap();
+        let whole_file = dir.path().join("queries/rust/whole.scm");
+        let interior_file = dir.path().join("queries/rust/interior.scm");
+        std::fs::write(&whole_file, whole).unwrap();
+        std::fs::write(&interior_file, interior).unwrap();
+        let queries = |plugin: &str, path: &std::path::Path| {
+            (
+                plugin.to_owned(),
+                Queries::from([("rust".to_owned(), path.display().to_string())]),
+            )
+        };
+        for order in [
+            [
+                queries("context", &whole_file),
+                queries("context", &interior_file),
+            ],
+            [
+                queries("context", &interior_file),
+                queries("context", &whole_file),
+            ],
         ] {
-            let params = Config::from_toml(&format!("[languages.rust]\nfolds = '''{query}'''"))
-                .unwrap()
-                .compile()
-                .unwrap();
+            let params = Config::default().compile_queries(order.to_vec()).unwrap();
             let conflict = DiffResult::try_from_sources_with_params(
                 "src/lib.rs",
                 "",
@@ -551,10 +670,14 @@ mod tag_tests {
                 &params,
             )
             .expect_err("a conflict");
-            assert_eq!(
-                conflict.to_string(),
-                "src/lib.rs:1: fold query patterns 0 and 1 capture the same block \
-                 with different fold ranges"
+            let message = conflict.to_string();
+            assert!(message.starts_with("src/lib.rs:1: "), "{message}");
+            assert!(
+                message.contains("queries/rust/interior.scm and ")
+                    && message.contains(
+                        "queries/rust/whole.scm capture the same block with different fold ranges"
+                    ),
+                "{message}"
             );
             // Other files diff as usual.
             assert!(
@@ -564,8 +687,8 @@ mod tag_tests {
     }
 
     #[test]
-    fn test_bodies_keep_both_tags_and_remain_paired() {
-        let params = Params::default();
+    fn test_bodies_keep_every_owner_tag_and_remain_paired() {
+        let params = body_params();
         let result = DiffResult::from_sources_with_params(
             "a.rs",
             "#[test]\nfn example() { old(); }",

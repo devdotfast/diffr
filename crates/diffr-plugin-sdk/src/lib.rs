@@ -1,0 +1,102 @@
+//! The diffr plugin contract in Rust. `wit/plugin.wit` in the diffr
+//! repository is the contract; this crate is its one Rust form, shared by
+//! every plugin whether diffr compiles it in or runs it as a WASM component.
+//!
+//! - [`types`] holds the contract's records: the file entry, each side's
+//!   flat preorder region list with parent ids and text, and the moves.
+//! - [`Plugin`] is the one trait every plugin implements: `new`, which makes
+//!   it from its options, then `classify` and `mutate`, taking and returning
+//!   exactly those records.
+//! - [`host`] holds what diffr gives every plugin: `read_head`, `git` and
+//!   `log`.
+//! - [`export!`] makes a plugin the `plugin` resource a component exports
+//!   when the crate is built for `wasm32-wasip2`, and expands to nothing
+//!   otherwise, where diffr's native registry calls the trait directly. The same source
+//!   builds both ways.
+//!
+//! Plugins reason about regions with the same code:
+//!
+//! - [`tree`] rebuilds a side's list as a tree ([`tree::sides`]) and holds
+//!   the helpers for reading trees ([`walk`], [`OtherSide`], [`one_sided`],
+//!   and the rest).
+//! - [`apply`] carries moves out. diffr carries every plugin's moves out with
+//!   it, so [`Draft`], which carries a plugin's moves out on a copy as it
+//!   makes them, and [`apply::Fresh`], which predicts fresh ids, give a
+//!   plugin exactly the ids diffr will.
+pub mod apply;
+pub mod draft;
+pub mod host;
+pub mod tree;
+pub mod types;
+
+pub use anyhow;
+pub use draft::Draft;
+use serde::de::DeserializeOwned;
+pub use tree::{
+    before_and_after_ids, has_tag, is_fold, line_count, one_sided, path_to,
+    siblings_of, sides_with_other_ids, walk, walk_mut, Node, OtherSide, Pairing, Region, Source,
+};
+pub use types::{FileEntry, FileStatus, Move, Position, Range, Side, Span, Visibility, ROOT};
+
+/// A diffr plugin: the `plugin` resource of `wit/plugin.wit`. diffr makes one
+/// with [`Plugin::new`] when it builds its pipeline, before any file, and
+/// calls that one instance for every file of the run.
+pub trait Plugin: Sized {
+    /// The plugin's options, deserialized from its entry in
+    /// `[plugins.<name>]`: a JSON object, validated against the options
+    /// schema in `plugin.toml` and filled with its defaults.
+    type Options: DeserializeOwned;
+
+    /// Make the plugin from its options. An error, like options that do not
+    /// deserialize, is a setup error naming the plugin.
+    fn new(options: Self::Options) -> anyhow::Result<Self>;
+
+    /// Tags to add to the file's manifest entry before it is diffed. A
+    /// plugin that does not classify returns none.
+    fn classify(&self, file: &FileEntry) -> anyhow::Result<Vec<String>>;
+
+    /// The moves that shape how the diffed file starts out. `lhs` and `rhs`
+    /// are the sides the file has.
+    fn mutate(
+        &self,
+        file: &FileEntry,
+        lhs: Option<&types::Source>,
+        rhs: Option<&types::Source>,
+    ) -> anyhow::Result<Vec<Move>>;
+}
+
+#[cfg(target_arch = "wasm32")]
+#[doc(hidden)]
+pub mod bindings {
+    wit_bindgen::generate!({
+        path: "../../wit",
+        world: "plugin",
+        pub_export_macro: true,
+        default_bindings_module: "diffr_plugin_sdk::bindings",
+    });
+}
+
+#[cfg(target_arch = "wasm32")]
+#[doc(hidden)]
+pub mod guest;
+
+/// Export a [`Plugin`] as the component's `plugin` resource when the crate
+/// is built for `wasm32`: the resource's `new` deserializes the options
+/// string into [`Plugin::Options`] and calls [`Plugin::new`], and its
+/// `classify` and `mutate` call the instance. Built for anything else it
+/// expands to nothing: diffr calls the trait itself.
+#[macro_export]
+macro_rules! export {
+    ($plugin:ty) => {
+        #[cfg(target_arch = "wasm32")]
+        const _: () = {
+            struct DiffrPluginExport;
+
+            impl $crate::bindings::exports::diffr::plugin::guest::Guest for DiffrPluginExport {
+                type Plugin = $crate::guest::Instance<$plugin>;
+            }
+
+    $crate::bindings::export!(DiffrPluginExport with_types_in $crate::bindings);
+        };
+    };
+}

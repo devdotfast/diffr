@@ -206,20 +206,24 @@ fn linguist_flag(value: AttrValue<'_>) -> Option<bool> {
     }
 }
 
+/// A tag is lowercase ASCII letters, digits, `-` and `_`, starting with a
+/// letter or digit.
+pub(crate) fn is_tag(tag: &str) -> bool {
+    tag.chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
+        && tag
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
+
 /// `a,b`: each tag is lowercase ASCII letters, digits, `-` and `_`, starting
 /// with a letter or digit.
 fn parse_tags(value: &str) -> Result<Vec<String>, String> {
     value
         .split(',')
         .map(|tag| {
-            let valid = tag
-                .chars()
-                .next()
-                .is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
-                && tag
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
-            if valid {
+            if is_tag(tag) {
                 Ok(tag.to_owned())
             } else {
                 Err(format!(

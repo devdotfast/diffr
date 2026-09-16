@@ -79,8 +79,6 @@ pub(crate) struct SyntaxInfo<'a> {
     /// The fold this node owns, if a query gave it one. A node has at most
     /// one, so two folds align exactly when the matcher paired their nodes.
     pub(crate) fold: RefCell<Option<FoldMetadata>>,
-    /// Multiple enclosing contexts can survive on one flattened node.
-    pub(crate) context: RefCell<Vec<super::context::ContextMetadata>>,
     /// The previous node with the same parent as this one.
     previous_sibling: Cell<Option<&'a Syntax<'a>>>,
     /// The next node with the same parent as this one.
@@ -111,7 +109,6 @@ impl<'a> SyntaxInfo<'a> {
     pub(crate) fn new() -> Self {
         Self {
             fold: RefCell::new(None),
-            context: RefCell::new(Vec::new()),
             previous_sibling: Cell::new(None),
             next_sibling: Cell::new(None),
             prev: Cell::new(None),

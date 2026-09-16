@@ -4,12 +4,6 @@ use crate::pairing::Pairing;
 use crate::parse::syntax::MatchedPos;
 use std::collections::BTreeSet;
 
-#[derive(Default)]
-pub(crate) struct LineSelection {
-    pub(crate) lhs: BTreeSet<usize>,
-    pub(crate) rhs: BTreeSet<usize>,
-}
-
 pub(crate) type Row = (Option<usize>, Option<usize>);
 
 pub(crate) fn novel_lines(positions: &[MatchedPos]) -> BTreeSet<usize> {

@@ -1,4 +1,6 @@
 //! Shared source-to-domain diff computation, independent of CLI and transport.
+#[cfg(test)]
+use crate::config::body_params;
 use crate::config::Params;
 use crate::constants::Side;
 use crate::diff::changes::ChangeMap;
@@ -20,6 +22,10 @@ use humansize::{format_size, FormatSizeOptions, BINARY};
 use std::{env, fmt, path::Path};
 use typed_arena::Arena;
 
+/// The fallback reason for a file tagged `generated`, which is always diffed
+/// by line.
+pub(crate) const GENERATED_FALLBACK: &str = "generated file, diffed by line";
+
 /// A file whose fold query captured one syntax node with two different
 /// ranges. The file is not diffed; the stream reports it as a
 /// `query_conflict` error.
@@ -33,10 +39,10 @@ pub(crate) struct QueryConflict {
 
 impl fmt::Display for QueryConflict {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (first, second) = self.conflict.patterns;
+        let (first, second) = &self.conflict.sources;
         write!(
             f,
-            "{}:{}{}: fold query patterns {first} and {second} capture the same {} with different fold ranges",
+            "{}:{}{}: {first} and {second} capture the same {} with different fold ranges",
             self.path,
             self.conflict.line + 1,
             match self.side {
@@ -50,14 +56,10 @@ impl fmt::Display for QueryConflict {
 
 impl std::error::Error for QueryConflict {}
 
-/// The fallback reason for a file tagged `generated`, which is always diffed
-/// by line.
-pub(crate) const GENERATED_FALLBACK: &str = "generated file, diffed by line";
-
 impl DiffResult {
     #[cfg(test)]
     pub(crate) fn from_sources(path: &str, lhs: &str, rhs: &str) -> Self {
-        Self::from_sources_with_params(path, lhs, rhs, &Params::default())
+        Self::from_sources_with_params(path, lhs, rhs, &body_params())
     }
 
     /// A diff with the given parameters, for tests whose queries cannot
@@ -154,7 +156,6 @@ pub(crate) fn diff_file_content(
     diff_options: &DiffOptions,
     overrides: &[(LanguageOverride, Vec<glob::Pattern>)],
 ) -> Result<DiffResult, QueryConflict> {
-    let mut annotations = display::syntax_context::SyntaxAnnotations::default();
     let guess_src = match rhs_path {
         FileArgument::DevNull => &lhs_src,
         _ => &rhs_src,
@@ -256,7 +257,7 @@ pub(crate) fn diff_file_content(
                                     hunks: vec![],
                                     lhs_folds: vec![],
                                     rhs_folds: vec![],
-                                    has_byte_changes,
+                                                                has_byte_changes,
                                     has_syntactic_changes,
                                 });
                             }
@@ -294,9 +295,6 @@ pub(crate) fn diff_file_content(
                                 // they belong to.
                                 folds::unmatched(&lhs, &mut lhs_folds);
                                 folds::unmatched(&rhs, &mut rhs_folds);
-                                annotations = display::syntax_context::SyntaxAnnotations::collect(
-                                    (&lhs, &rhs),
-                                );
                                 let (lhs_positions, rhs_positions) =
                                     line_parser::change_positions(lhs_src, rhs_src);
                                 (
@@ -328,10 +326,6 @@ pub(crate) fn diff_file_content(
                                         tsp::comment_positions(&rhs_tree, rhs_src, lang_config);
                                     rhs_positions.extend(rhs_comments);
                                 }
-
-                                annotations = display::syntax_context::SyntaxAnnotations::collect(
-                                    (&lhs, &rhs),
-                                );
 
                                 (
                                     FileFormat::SupportedLanguage(language),
@@ -420,8 +414,6 @@ pub(crate) fn diff_file_content(
                             syntax::init_all_info(&lhs, &rhs);
                             folds::unmatched(&lhs, &mut lhs_folds);
                             folds::unmatched(&rhs, &mut rhs_folds);
-                            annotations =
-                                display::syntax_context::SyntaxAnnotations::collect((&lhs, &rhs));
 
                             let (lhs_positions, rhs_positions) =
                                 line_parser::change_positions(lhs_src, rhs_src);
@@ -486,7 +478,6 @@ pub(crate) fn diff_file_content(
         &hunks,
         (lhs_src, rhs_src),
         (&lhs_positions, &rhs_positions),
-        &annotations,
         display_options.num_context_lines as usize,
     );
 

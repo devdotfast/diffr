@@ -25,7 +25,8 @@
 //! `fold_state_id`. Leaves are split wherever a
 //! fold starts or ends so that every fold's children tile its line span
 //! exactly, and a split on one side of a paired leaf is mirrored on the
-//! other so paired leaves stay equal in length. Nothing starts collapsed.
+//! other so paired leaves stay equal in length. Nothing starts collapsed:
+//! which unchanged lines to hide is the `context` plugin's.
 use super::{
     BinaryRef, Diff, FileRef, LineCounts, Node, Problem, Region, Source, SourcePos, SourceRange,
     Span, Stats, Visibility, ROOT,
@@ -107,7 +108,13 @@ fn stats(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> Stats {
         }),
         FileFormat::Binary => unreachable!("binary files never reach text stats"),
     };
-    Stats { textual, fallback }
+    Stats {
+        textual,
+        // Before any plugin runs nothing starts collapsed; the stream
+        // recounts after plugins.
+        visible: textual,
+        fallback,
+    }
 }
 
 /// The wire code for why a file was diffed by line. The message beside it
@@ -538,7 +545,7 @@ fn positions_by_line(positions: &[MatchedPos]) -> BTreeMap<usize, Vec<&MatchedPo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Params;
+    use crate::config::body_params;
     use crate::options::{DiffOptions, DisplayOptions};
 
     fn refs(lhs: bool, rhs: bool) -> Pairing<FileRef> {
@@ -568,7 +575,7 @@ mod tests {
             path,
             lhs,
             rhs,
-            &Params::default(),
+            &body_params(),
             &DisplayOptions::default(),
             &options,
         )
@@ -656,15 +663,9 @@ mod tests {
     }
 
     impl SourceRange {
-        /// The lines this range touches, half-open. A range ending at
-        /// column zero does not touch its end line.
         fn lines_spanned(&self) -> (u32, u32) {
-            let end = if self.end.column == 0 {
-                self.end.line
-            } else {
-                self.end.line + 1
-            };
-            (self.start.line, end)
+            let range = self.lines();
+            (range.start, range.end)
         }
     }
 
@@ -725,7 +726,7 @@ mod tests {
             "a.rs",
             RUST_LHS,
             RUST_RHS,
-            &Params::default(),
+            &body_params(),
             &DisplayOptions::default(),
             &DiffOptions::default(),
         )
@@ -994,8 +995,8 @@ mod tests {
             .filter(|r| r.tags.iter().any(|tag| tag == "body"))
             .map(|r| r.range.start.line)
             .collect();
-        // Nothing is collapsed, so the untouched `keep` is a fold like the
-        // changed `f` and the new `added`.
+        // Nothing is collapsed before the plugins run, so the untouched `keep`
+        // is a fold like the changed `f` and the new `added`.
         assert_eq!(bodies, vec![1, 7, 13]);
         assert!(leaves(&rhs.regions)
             .iter()
@@ -1066,7 +1067,8 @@ mod tests {
             .into_iter()
             .all(|leaf| !lhs_leaves.contains_key(&alignment(leaf))));
         assert_eq!(new_fold.tags, vec!["body"]);
-        assert_eq!(new_fold.visibility.label, "Body");
+        // A label is a plugin's to give; the projection leaves it empty.
+        assert_eq!(new_fold.visibility.label, "");
     }
 
     #[test]

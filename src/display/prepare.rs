@@ -1,7 +1,6 @@
 //! Complete the selected rows before publishing a DiffResult.
 use super::hunks::Hunk;
 use super::line_layout;
-use super::syntax_context::SyntaxAnnotations;
 use crate::parse::syntax::MatchedPos;
 use line_numbers::LineNumber;
 use std::collections::{BTreeMap, BTreeSet};
@@ -10,7 +9,6 @@ pub(crate) fn prepare(
     hunks: &[Hunk],
     sources: (&str, &str),
     positions: (&[MatchedPos], &[MatchedPos]),
-    annotations: &SyntaxAnnotations,
     padding: usize,
 ) -> Vec<Hunk> {
     let rows = line_layout::aligned_rows(sources, positions);
@@ -39,20 +37,6 @@ pub(crate) fn prepare(
         let mut selected = BTreeSet::new();
         for index in seeds {
             selected.extend(index.saturating_sub(padding)..(index + padding + 1).min(rows.len()));
-        }
-        let context = annotations.context_for_changes(&hunk.novel_lhs, &hunk.novel_rhs);
-        let context_indexes = context
-            .lhs
-            .iter()
-            .filter_map(|line| lhs_index.get(line))
-            .chain(context.rhs.iter().filter_map(|line| rhs_index.get(line)));
-        for &index in context_indexes {
-            let (Some(lhs), Some(rhs)) = rows[index] else {
-                continue;
-            };
-            if !lhs_novel.contains(&lhs) && !rhs_novel.contains(&rhs) {
-                selected.insert(index);
-            }
         }
         selections.push(selected);
     }

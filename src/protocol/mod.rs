@@ -39,14 +39,24 @@ pub enum Event {
         files: Vec<FileChange>,
     },
     /// One result. `file` is byte-identical to the manifest entry it
-    /// answers; the path pair is the identity.
+    /// answers; the path pair is the identity. `visibility` is how the
+    /// file starts out, set by the plugins after diffing: a hidden
+    /// file is collapsed behind its reason.
     File {
         file: Pairing<FileRef>,
+        #[serde(default, skip_serializing_if = "Visibility::is_unset")]
+        visibility: Visibility,
         #[serde(flatten)]
         outcome: Outcome,
     },
-    /// The footer.
-    Complete { succeeded: u32, failed: u32 },
+    /// The footer. `aborted` is present when a run-level failure stopped
+    /// the comparison early; every file already emitted stays valid.
+    Complete {
+        succeeded: u32,
+        failed: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        aborted: Option<Problem>,
+    },
 }
 
 /// Exactly one of `diff` or `error` appears on a `file` record.
@@ -119,8 +129,8 @@ pub struct FileRef {
     pub mode: String,
 }
 
-/// How a region starts out. `label` is shown while collapsed: the fold's
-/// placeholder.
+/// How a file or region starts out. `label` is shown while collapsed: a
+/// reason for a file, a placeholder for a region.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Visibility {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -168,26 +178,28 @@ pub struct BinaryRef {
 }
 
 /// The `id` that names the file itself rather than a region. No region
-/// carries it: region ids start above it.
+/// carries it: region ids start above it. A plugin addresses the file's own
+/// `visibility` through it, as the root every region hangs from.
 pub const ROOT: u32 = 0;
 
 /// A range on one side, carrying identities that must never be conflated.
 /// `id` names the region. `fold_state_id` says what the region *opens and
 /// closes with*: regions sharing it open and close together, on the same
 /// side or across sides. Paired leaves and matched folds have the same
-/// value on both sides. A
+/// value on both sides; a plugin's link gives it to several regions. A
 /// leaf's `alignment_id` (see `Node::Leaf`) is row alignment; folds have
 /// none. Consumers key the row zip by leaf `alignment_id`, collapse state by
 /// `fold_state_id`, and anything about the region itself by `id`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Region {
     /// Names this region, unique within the file (across both sides), and
-    /// never [`ROOT`].
+    /// never [`ROOT`]. Plugin moves address it.
     pub id: u32,
     pub fold_state_id: u32,
     #[serde(flatten)]
     pub range: SourceRange,
-    /// On folds, the tags the fold queries set (`body`, `test`).
+    /// On folds, the tags the fold queries set, written `<plugin>:<name>`
+    /// (`deleted-bodies:function`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
     /// Whether the region starts collapsed, and the label shown while it is.
@@ -230,6 +242,19 @@ pub struct SourceRange {
     pub end: SourcePos,
 }
 
+impl SourceRange {
+    /// The lines this range touches, half-open. A range ending at column
+    /// zero does not touch its end line.
+    pub fn lines(&self) -> std::ops::Range<u32> {
+        let end = if self.end.column == 0 {
+            self.end.line
+        } else {
+            self.end.line + 1
+        };
+        self.start.line..end
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourcePos {
     pub line: u32,
@@ -245,6 +270,11 @@ pub struct SourcePos {
 pub struct Stats {
     /// Lines with any byte change.
     pub textual: LineCounts,
+    /// Changed lines still on screen under the default visibility: a
+    /// changed line inside a region that starts collapsed, or under one,
+    /// is not counted. Computed after the plugins run, so
+    /// configuration changes it.
+    pub visible: LineCounts,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fallback: Option<Problem>,
 }
@@ -300,7 +330,7 @@ mod tests {
                     start: pos(0, 0),
                     end: pos(3, 0),
                 },
-                tags: vec!["body".to_owned()],
+                tags: vec!["deleted-bodies:function".to_owned()],
                 visibility: Visibility::default(),
                 node: Node::Fold {
                     children: vec![
@@ -316,6 +346,7 @@ mod tests {
                 lhs: file_ref("3b18e5"),
                 rhs: file_ref("9be2c1"),
             },
+            visibility: Visibility::default(),
             outcome: Outcome::Diff {
                 diff: Diff::Text {
                     sides: Pairing::Both {
@@ -335,6 +366,10 @@ mod tests {
                             added: 1,
                             removed: 1,
                         },
+                        visible: LineCounts {
+                            added: 1,
+                            removed: 1,
+                        },
                         fallback: None,
                     },
                 },
@@ -350,7 +385,7 @@ mod tests {
                 middle["changed"] = json!(spans);
             }
             json!({
-                "id": first, "fold_state_id": 1, "kind": "fold", "tags": ["body"],
+                "id": first, "fold_state_id": 1, "kind": "fold", "tags": ["deleted-bodies:function"],
                 "start": {"line": 0, "column": 0}, "end": {"line": 3, "column": 0},
                 "children": [
                     {"id": first + 1, "fold_state_id": 2, "kind": "leaf", "alignment_id": 0, "start": {"line": 0, "column": 0}, "end": {"line": 1, "column": 0}},
@@ -370,7 +405,7 @@ mod tests {
                 "lhs": {"text": "fn f() {\n    1\n}\n", "regions": [region(1, json!([]))]},
                 "rhs": {"text": "fn f() {\n    1 + 2\n}\n",
                         "regions": [region(5, json!([{"line": 1, "start_column": 5, "end_column": 9}]))]},
-                "stats": {"textual": {"added": 1, "removed": 1}},
+                "stats": {"textual": {"added": 1, "removed": 1}, "visible": {"added": 1, "removed": 1}},
             },
         });
         assert_eq!(serde_json::to_value(example_file()).unwrap(), expected);
@@ -406,6 +441,10 @@ mod tests {
                         mode: "100644".to_owned(),
                     },
                 },
+                visibility: Visibility {
+                    collapsed: true,
+                    label: "Deleted file · hidden by default".to_owned(),
+                },
                 outcome: Outcome::Diff {
                     diff: Diff::Binary {
                         sides: Pairing::LeftOnly {
@@ -427,6 +466,7 @@ mod tests {
                         mode: "100644".to_owned(),
                     },
                 },
+                visibility: Visibility::default(),
                 outcome: Outcome::Error {
                     error: Problem {
                         code: "not_utf8".to_owned(),
@@ -437,6 +477,10 @@ mod tests {
             Event::Complete {
                 succeeded: 2,
                 failed: 1,
+                aborted: Some(Problem {
+                    code: "mutation_failed".to_owned(),
+                    message: "mutation context: no region 99999".to_owned(),
+                }),
             },
         ];
         for event in events {

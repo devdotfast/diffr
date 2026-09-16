@@ -1462,8 +1462,7 @@ fn tree_highlights(
     }
 
     Ok(HighlightedNodeIds {
-        fold_kinds: folds::classify(tree, src, Some(&config.folds))?,
-        contexts: super::context::classify(tree, src, Some(&config.context)),
+        fold_kinds: folds::classify(tree, src, Some(&config.query))?,
         comment_ids,
         keyword_ids,
         string_ids,
@@ -1727,7 +1726,6 @@ fn find_delim_positions(
 #[derive(Debug)]
 pub(crate) struct HighlightedNodeIds {
     fold_kinds: DftHashMap<usize, FoldMetadata>,
-    contexts: DftHashMap<usize, Vec<super::context::ContextMetadata>>,
     keyword_ids: DftHashSet<usize>,
     comment_ids: DftHashSet<usize>,
     string_ids: DftHashSet<usize>,
@@ -1849,13 +1847,6 @@ fn syntax_from_cursor<'a>(
         } else {
             atom_from_cursor(arena, src, nl_pos, cursor, highlights, ignore_comments)
         }?;
-    if let Some(contexts) = highlights.contexts.get(&node.id()) {
-        syntax
-            .info()
-            .context
-            .borrow_mut()
-            .extend(contexts.iter().cloned());
-    }
     Some(syntax)
 }
 

@@ -28,16 +28,6 @@ folds = '''
   (#match? @_attribute "test")
   (#set! tag "test"))
 '''
-context = '''
-[
-  (function_item body: (block "{" @context.final "}" @context.last))
-  (impl_item body: (declaration_list "{" @context.final "}" @context.last))
-  (mod_item body: (declaration_list "{" @context.final "}" @context.last))
-  (struct_item body: (field_declaration_list "{" @context.final "}" @context.last))
-] @context
-[(for_expression) (loop_expression) (match_expression) (return_expression)] @context @context.last
-(function_item body: (block (_expression) @context @context.last .))
-'''
 
 [languages.python]
 folds = '''
@@ -77,10 +67,6 @@ folds = '''
 (function_definition name: (identifier) @_name ":" @fold.open body: (block) @fold
   (#match? @_name "^test_") (#set! tag "test"))
 '''
-context = '''
-[(function_definition ":" @context.final) (class_definition ":" @context.final)] @context
-[(for_statement) (return_statement)] @context @context.last
-'''
 
 [languages.go]
 folds = '''
@@ -102,13 +88,6 @@ folds = '''
   (#set! tag "string"))
 (function_declaration name: (identifier) @_name body: (block "{" @fold.open "}" @fold.close) @fold
   (#match? @_name "^Test") (#set! tag "test"))
-'''
-context = '''
-[
-  (function_declaration body: (block "{" @context.final "}" @context.last))
-  (method_declaration body: (block "{" @context.final "}" @context.last))
-] @context
-[(for_statement) (expression_switch_statement) (return_statement)] @context @context.last
 '''
 
 [languages.javascript]
@@ -134,17 +113,6 @@ folds = '''
 ] @fold
   (#set! tag "string"))
 '''
-context = '''
-[
-  (function_declaration body: (statement_block "{" @context.final "}" @context.last))
-  (generator_function_declaration body: (statement_block "{" @context.final "}" @context.last))
-  (method_definition body: (statement_block "{" @context.final "}" @context.last))
-  (arrow_function body: (statement_block "{" @context.final "}" @context.last))
-  (class_declaration body: (class_body "{" @context.final "}" @context.last))
-] @context
-[(for_statement) (switch_statement) (return_statement)] @context @context.last
-(arrow_function body: (_) @context.end) @context
-'''
 
 [languages.javascriptjsx]
 folds = '''
@@ -168,17 +136,6 @@ folds = '''
   (template_string)
 ] @fold
   (#set! tag "string"))
-'''
-context = '''
-[
-  (function_declaration body: (statement_block "{" @context.final "}" @context.last))
-  (generator_function_declaration body: (statement_block "{" @context.final "}" @context.last))
-  (method_definition body: (statement_block "{" @context.final "}" @context.last))
-  (arrow_function body: (statement_block "{" @context.final "}" @context.last))
-  (class_declaration body: (class_body "{" @context.final "}" @context.last))
-] @context
-[(for_statement) (switch_statement) (return_statement)] @context @context.last
-(arrow_function body: (_) @context.end) @context
 '''
 
 [languages.typescript]
@@ -204,17 +161,6 @@ folds = '''
 ] @fold
   (#set! tag "string"))
 '''
-context = '''
-[
-  (function_declaration body: (statement_block "{" @context.final "}" @context.last))
-  (generator_function_declaration body: (statement_block "{" @context.final "}" @context.last))
-  (method_definition body: (statement_block "{" @context.final "}" @context.last))
-  (arrow_function body: (statement_block "{" @context.final "}" @context.last))
-  (class_declaration body: (class_body "{" @context.final "}" @context.last))
-] @context
-[(for_statement) (switch_statement) (return_statement)] @context @context.last
-(arrow_function body: (_) @context.end) @context
-'''
 
 [languages.typescripttsx]
 folds = '''
@@ -238,16 +184,5 @@ folds = '''
   (template_string)
 ] @fold
   (#set! tag "string"))
-'''
-context = '''
-[
-  (function_declaration body: (statement_block "{" @context.final "}" @context.last))
-  (generator_function_declaration body: (statement_block "{" @context.final "}" @context.last))
-  (method_definition body: (statement_block "{" @context.final "}" @context.last))
-  (arrow_function body: (statement_block "{" @context.final "}" @context.last))
-  (class_declaration body: (class_body "{" @context.final "}" @context.last))
-] @context
-[(for_statement) (switch_statement) (return_statement)] @context @context.last
-(arrow_function body: (_) @context.end) @context
 '''
 

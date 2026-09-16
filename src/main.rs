@@ -59,6 +59,7 @@ mod lines;
 mod options;
 mod pairing;
 mod parse;
+mod plugin;
 pub(crate) mod protocol;
 mod summary;
 mod tags;
@@ -679,10 +680,10 @@ fn conflict_or_die<T>(result: Result<T, Conflict>) -> T {
         Ok(value) => value,
         Err(conflict) => {
             eprintln!(
-                "line {}: fold query patterns {} and {} capture the same {} with different fold ranges",
+                "line {}: {} and {} capture the same {} with different fold ranges",
                 conflict.line + 1,
-                conflict.patterns.0,
-                conflict.patterns.1,
+                conflict.sources.0,
+                conflict.sources.1,
                 conflict.kind
             );
             std::process::exit(EXIT_BAD_ARGUMENTS);

@@ -27,7 +27,9 @@ pub(crate) struct Fold {
     /// wire, where the projection numbers regions itself.
     pub(crate) syntax_id: SyntaxId,
     pub(crate) match_kind: FoldMatch,
-    /// Text shown in place of the source.
+    /// Text shown in place of the source. Always empty here: only a plugin
+    /// that collapses a fold gives it a label, and a fold no plugin
+    /// collapsed has none.
     pub(crate) placeholder: String,
 }
 
@@ -50,13 +52,16 @@ pub(crate) struct Conflict {
     pub(crate) line: usize,
     /// The node's tree-sitter kind, such as `function_item`.
     pub(crate) kind: String,
-    /// The two patterns, by index in the language's fold query, sorted. The
-    /// query is one text here, so an index is all a pattern can be named by.
-    pub(crate) patterns: (usize, usize),
+    /// The two query sources, sorted.
+    pub(crate) sources: (String, String),
 }
 
 /// Interpret configurable fold captures in their own query traversal.
 ///
+/// Every `@fold` capture in one match forms one fold attached to the first
+/// captured node: a single node's range, the text between `@fold.open` and
+/// `@fold.close`, the text from `@fold.open` to the end of the node, or the
+/// hull of a quantified run such as `(comment)+ @fold`.
 /// Captures of the same node merge their tags when their ranges agree; when
 /// they disagree the result is a [`Conflict`].
 pub(crate) fn classify(
@@ -73,61 +78,86 @@ pub(crate) fn classify(
     let mut matches = cursor.matches(query, tree.root_node(), src.as_bytes());
     while let Some(matched) = matches.next() {
         let pattern = &compiled.patterns[matched.pattern_index];
-        for fold in matched
-            .captures
-            .iter()
-            .filter(|capture| query.capture_names()[capture.index as usize] == "fold")
-        {
-            let capture = |name| {
-                matched
-                    .captures
-                    .iter()
-                    .rev()
-                    .find(|capture| query.capture_names()[capture.index as usize] == name)
-            };
-            let region = match (capture("fold.open"), capture("fold.close")) {
-                (Some(open), Some(close))
-                    if open.node.start_byte() >= fold.node.start_byte()
-                        && close.node.end_byte() <= fold.node.end_byte()
-                        && open.node.end_byte() <= close.node.start_byte() =>
-                {
-                    SourceRange {
-                        start: node_range(open.node).end,
-                        end: node_range(close.node).start,
-                    }
-                }
-                // No closing delimiter: the fold runs to the end of its
-                // node, from an opening token that may precede the node,
-                // such as the `:` ahead of a Python block.
-                (Some(open), None) if open.node.end_byte() <= fold.node.end_byte() => SourceRange {
+        let named = |name: &'static str| {
+            matched
+                .captures
+                .iter()
+                .filter(move |capture| query.capture_names()[capture.index as usize] == name)
+        };
+        let folds: Vec<_> = named("fold").collect();
+        let Some(first) = folds.iter().min_by_key(|capture| capture.node.start_byte()) else {
+            continue;
+        };
+        let region = match (named("fold.open").last(), named("fold.close").last()) {
+            (Some(open), Some(close))
+                if folds.len() == 1
+                    && open.node.start_byte() >= first.node.start_byte()
+                    && close.node.end_byte() <= first.node.end_byte()
+                    && open.node.end_byte() <= close.node.start_byte() =>
+            {
+                SourceRange {
                     start: node_range(open.node).end,
-                    end: node_range(fold.node).end,
-                },
-                (None, None) => node_range(fold.node),
-                _ => continue,
-            };
-            if region.start == region.end {
-                continue;
+                    end: node_range(close.node).start,
+                }
             }
-            let (metadata, first_pattern) = kinds.entry(fold.node.id()).or_insert((
-                FoldMetadata {
-                    tags: Vec::new(),
-                    range_override: Some(region),
-                },
-                matched.pattern_index,
-            ));
-            if metadata.range_override != Some(region) {
-                let mut patterns = [*first_pattern, matched.pattern_index];
-                patterns.sort();
-                return Err(Conflict {
-                    line: fold.node.start_position().row,
-                    kind: fold.node.kind().to_owned(),
-                    patterns: (patterns[0], patterns[1]),
-                });
+            // No closing delimiter: the fold runs to the end of its node,
+            // from an opening token that may precede the node, such as the
+            // `:` ahead of a Python block.
+            (Some(open), None)
+                if folds.len() == 1 && open.node.end_byte() <= first.node.end_byte() =>
+            {
+                SourceRange {
+                    start: node_range(open.node).end,
+                    end: node_range(first.node).end,
+                }
             }
-            metadata.tags.extend(pattern.tags.iter().cloned());
-            metadata.tags.sort();
-            metadata.tags.dedup();
+            (None, None) => {
+                let last = folds
+                    .iter()
+                    .max_by_key(|capture| capture.node.end_byte())
+                    .expect("a fold capture");
+                SourceRange {
+                    start: node_range(first.node).start,
+                    end: node_range(last.node).end,
+                }
+            }
+            _ => continue,
+        };
+        if region.start == region.end {
+            continue;
+        }
+        match kinds.entry(first.node.id()) {
+            Entry::Vacant(entry) => {
+                let mut tags = pattern.tags.clone();
+                tags.sort();
+                tags.dedup();
+                entry.insert((
+                    FoldMetadata {
+                        tags,
+                        range_override: Some(region),
+                    },
+                    pattern.source,
+                ));
+            }
+            Entry::Occupied(mut entry) => {
+                let (metadata, source) = entry.get_mut();
+                if metadata.range_override != Some(region) {
+                    let mut sources = [
+                        compiled.sources[*source].clone(),
+                        compiled.sources[pattern.source].clone(),
+                    ];
+                    sources.sort();
+                    let [first_source, second_source] = sources;
+                    return Err(Conflict {
+                        line: first.node.start_position().row,
+                        kind: first.node.kind().to_owned(),
+                        sources: (first_source, second_source),
+                    });
+                }
+                metadata.tags.extend(pattern.tags.iter().cloned());
+                metadata.tags.sort();
+                metadata.tags.dedup();
+            }
         }
     }
     Ok(kinds
@@ -342,17 +372,9 @@ pub(crate) fn project(node: &Syntax<'_>, partner: Option<&Syntax<'_>>) -> Option
             },
             None => FoldMatch::Novel,
         },
-        placeholder: metadata
-            .tags
-            .first()
-            .map(|tag| {
-                let mut chars = tag.chars();
-                chars
-                    .next()
-                    .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
-                    .unwrap_or_default()
-            })
-            .unwrap_or_else(|| "…".into()),
+        // A label is a plugin's to give: the parse knows what a fold covers,
+        // not what to say in its place.
+        placeholder: String::new(),
     })
 }
 

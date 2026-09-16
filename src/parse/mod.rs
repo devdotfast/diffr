@@ -1,4 +1,3 @@
-pub(crate) mod context;
 #[cfg(test)]
 mod fold_tests;
 pub(crate) mod folds;

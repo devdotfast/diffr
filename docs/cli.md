@@ -30,7 +30,8 @@ files, implies change exit status, and does not yet support metadata options.
 Structural output uses the existing terminal renderer. `--format ndjson` emits
 the event stream described in [streaming.md](streaming.md), diffing `--jobs N`
 files at once (default 16) and emitting each as it finishes.
-`-U N` selects ordinary context padding. Matching limits, `--ignore-comments`,
+`-U N` sets the unchanged lines kept around each change, overriding
+`plugins.context.lines` (default 3). Matching limits, `--ignore-comments`,
 color, width and inline/split display remain configurable; see `--help`.
 
 Configuration comes from the global file, command-line flags and git

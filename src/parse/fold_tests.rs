@@ -83,9 +83,8 @@ mod folds {
         assert!(result
             .rhs_folds
             .iter()
-            .any(|fold| fold.placeholder == "String"
-                && added(fold, &result.lhs_folds)
-                    .is_some_and(|r| text(src, r) == "\"\"\"first\nsecond\"\"\"")));
+            .any(|fold| added(fold, &result.lhs_folds)
+                .is_some_and(|r| text(src, r) == "\"\"\"first\nsecond\"\"\"")));
     }
 
     #[test]
@@ -156,7 +155,7 @@ mod folds {
         assert!(diff
             .lhs_folds
             .iter()
-            .any(|f| matches!(f.placeholder.as_str(), "Import" | "Imports")));
+            .any(|f| text(&lhs, &f.range) == "import os"));
     }
 
     #[test]
@@ -248,6 +247,37 @@ mod folds {
     }
 
     #[test]
+    fn two_queries_folding_the_same_lines_make_one_fold() {
+        // A function whose body is one `match`: the block the shared query
+        // folds and the `match` the context query folds cover the same
+        // lines, so they are one fold. It is the `match`'s, the innermost
+        // node whose extent that region is, and it carries both tags.
+        let src =
+            "fn f(x: u32) -> u32 {\n    match x {\n        1 => 2,\n        _ => 3,\n    }\n}\n";
+        let params = crate::config::Config::from_toml("")
+            .expect("a valid configuration")
+            .compile()
+            .expect("the bundled queries compile");
+        let review = DiffResult::from_sources_with_params("a.rs", "", src, &params);
+        let lines: Vec<&str> = src.split_terminator('\n').collect();
+        let same_lines: Vec<&Fold> = review
+            .rhs_folds
+            .iter()
+            .filter(|fold| crate::parse::folds::line_span(fold, &lines) == (1, 5))
+            .collect();
+        assert_eq!(same_lines.len(), 1, "{same_lines:#?}");
+        assert_eq!(
+            text(src, &same_lines[0].range),
+            "match x {\n        1 => 2,\n        _ => 3,\n    }"
+        );
+        assert!(
+            same_lines[0].tags.iter().any(|tag| tag == "context:scope"),
+            "{:?}",
+            same_lines[0].tags
+        );
+    }
+
+    #[test]
     fn inline_collections_have_exact_paired_byte_ranges() {
         let lhs = "const x = [\"☕\", oldValue];\n";
         let rhs = "const x = [\"☕\", newValue];\n";
@@ -320,7 +350,10 @@ mod results {
     fn identical_files_keep_alignment_for_showing_hidden_source() {
         let source = "fn unchanged() {\n    work();\n}\n";
         let diff = DiffResult::from_sources("a.rs", source, source);
-        let rows = aligned_rows((source, source), (&diff.lhs_positions, &diff.rhs_positions));
+        let rows = aligned_rows(
+            (source, source),
+            (&diff.lhs_positions, &diff.rhs_positions),
+        );
         assert_eq!(
             rows,
             [(Some(0), Some(0)), (Some(1), Some(1)), (Some(2), Some(2))]

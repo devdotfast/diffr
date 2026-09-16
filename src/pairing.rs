@@ -26,6 +26,22 @@ impl<T> Pairing<T> {
             Self::RightOnly { rhs } => Pairing::RightOnly { rhs: f(rhs) },
         }
     }
+
+    /// The before side, when there is one.
+    pub(crate) fn lhs(&self) -> Option<&T> {
+        match self {
+            Self::Both { lhs, .. } | Self::LeftOnly { lhs } => Some(lhs),
+            Self::RightOnly { .. } => None,
+        }
+    }
+
+    /// The after side, or the before side when there is no after side.
+    pub(crate) fn rhs_or_lhs(&self) -> &T {
+        match self {
+            Self::Both { rhs, .. } | Self::RightOnly { rhs } => rhs,
+            Self::LeftOnly { lhs } => lhs,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]

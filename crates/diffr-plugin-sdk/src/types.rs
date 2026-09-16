@@ -7,7 +7,7 @@
 //! the file rather than a region, and the impls below.
 pub use crate::bindings::diffr::plugin::types::{
     Cut, FileEntry, FileRef, FileSides, FileStatus, Kind, Leaf, Move, Position, Range, Region,
-    Side, Source, Span, Visibility,
+    Side, Source, SourceSides, Span, Visibility,
 };
 
 use crate::tree::Pairing;

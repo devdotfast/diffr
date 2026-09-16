@@ -21,10 +21,9 @@
 //! grouped in one join, and the two groups open and close together. A
 //! run whose regions are paired across sides some other way stays as it
 //! is.
-use diffr_plugin_sdk::types::Source;
 use diffr_plugin_sdk::{
-    anyhow, export, is_fold, line_count, sides_with_other_ids, tree, Draft, FileEntry, Move, Node,
-    Plugin, Region,
+    anyhow, export, is_fold, line_count, sides_with_other_ids, Draft, FileEntry, Move, Node,
+    Pairing, Plugin, Region, Source,
 };
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -57,19 +56,13 @@ impl Plugin for Group {
         Ok(Vec::new())
     }
 
-    fn mutate(
-        &self,
-        _file: &FileEntry,
-        lhs: Option<&Source>,
-        rhs: Option<&Source>,
-    ) -> anyhow::Result<Vec<Move>> {
-        let sides = tree::sides(lhs, rhs)?;
-        let per_side: Vec<_> = sides_with_other_ids(&sides)
+    fn mutate(&self, _file: &FileEntry, sides: &Pairing<Source>) -> anyhow::Result<Vec<Move>> {
+        let per_side: Vec<_> = sides_with_other_ids(sides)
             .into_iter()
             .map(|(source, other_ids)| (runs(&source.regions), other_ids))
             .collect();
         let mut groups: BTreeSet<BTreeSet<u32>> = BTreeSet::new();
-        let mut draft = Draft::new(&sides);
+        let mut draft = Draft::new(sides);
         for (side, (runs, other_ids)) in per_side.iter().enumerate() {
             // A one-sided file has no other side, and so no other runs.
             let other_runs: &[Run<'_>] = match per_side.get(1 - side) {

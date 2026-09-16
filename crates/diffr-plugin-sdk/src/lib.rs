@@ -18,8 +18,9 @@
 //!
 //! Plugins reason about regions with the same code:
 //!
-//! - [`tree`] rebuilds a side's list as a tree ([`tree::sides`]) and holds
-//!   the helpers for reading trees ([`walk`], [`OtherSide`], [`one_sided`],
+//! - [`tree`] rebuilds a side's list as a tree ([`tree::sides`], which the
+//!   SDK calls on the way in so a plugin is handed [`Pairing`] of [`Source`]
+//!   rather than the flat records) and holds the helpers for reading trees ([`walk`], [`OtherSide`], [`one_sided`],
 //!   [`docstring_of`], and the rest).
 //! - [`apply`] carries moves out. diffr carries every plugin's moves out with
 //!   it, so [`Draft`], which carries a plugin's moves out on a copy as it
@@ -59,14 +60,9 @@ pub trait Plugin: Sized {
     /// plugin that does not classify returns none.
     fn classify(&self, file: &FileEntry) -> anyhow::Result<Vec<String>>;
 
-    /// The moves that shape how the diffed file starts out. `lhs` and `rhs`
-    /// are the sides the file has.
-    fn mutate(
-        &self,
-        file: &FileEntry,
-        lhs: Option<&types::Source>,
-        rhs: Option<&types::Source>,
-    ) -> anyhow::Result<Vec<Move>>;
+    /// The moves that shape how the diffed file starts out. `sides` are the
+    /// sides the file has, already rebuilt as trees.
+    fn mutate(&self, file: &FileEntry, sides: &Pairing<Source>) -> anyhow::Result<Vec<Move>>;
 }
 
 /// The contract generated from `wit/plugin.wit`. Its records are plain Rust

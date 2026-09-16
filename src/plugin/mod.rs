@@ -61,8 +61,7 @@ pub(crate) trait Runner: Send + Sync {
         &self,
         host: Host,
         file: &types::FileEntry,
-        lhs: Option<&types::Source>,
-        rhs: Option<&types::Source>,
+        sides: &types::SourceSides,
     ) -> anyhow::Result<Vec<types::Move>>;
 }
 
@@ -202,11 +201,10 @@ impl Pipeline {
         let mut visibility = types::Visibility::default();
         for plugin in &self.plugins {
             let started = Instant::now();
-            let lhs = trees.lhs().map(tree::Source::to_record);
-            let rhs = trees.rhs().map(tree::Source::to_record);
+            let records = source_sides(&trees);
             let moves = plugin
                 .runner
-                .mutate(self.host(&plugin.name), &entry, lhs.as_ref(), rhs.as_ref())
+                .mutate(self.host(&plugin.name), &entry, &records)
                 .with_context(|| MutationFailed(plugin.name.to_string()))?;
             log::debug!(
                 "plugin {}: mutate {} took {:?}",
@@ -265,6 +263,17 @@ pub(crate) fn file_entry(file: &FileChange) -> types::FileEntry {
             FileStatus::TypeChanged => types::FileStatus::TypeChanged,
         },
         tags: file.tags.clone(),
+    }
+}
+
+/// The trees a plugin is given, as the contract's records.
+fn source_sides(trees: &tree::Pairing<tree::Source>) -> types::SourceSides {
+    match trees {
+        tree::Pairing::Both { lhs, rhs } => {
+            types::SourceSides::Both((lhs.to_record(), rhs.to_record()))
+        }
+        tree::Pairing::LeftOnly { lhs } => types::SourceSides::LeftOnly(lhs.to_record()),
+        tree::Pairing::RightOnly { rhs } => types::SourceSides::RightOnly(rhs.to_record()),
     }
 }
 

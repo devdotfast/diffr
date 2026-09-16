@@ -5,8 +5,8 @@
 use super::host::Host;
 use super::Runner;
 use anyhow::anyhow;
-use diffr_plugin_sdk::types::{FileEntry, Move, Source};
-use diffr_plugin_sdk::Plugin;
+use diffr_plugin_sdk::types::{FileEntry, Move, SourceSides};
+use diffr_plugin_sdk::{tree, Plugin};
 use std::rc::Rc;
 
 /// Makes a native plugin's instance from its options string.
@@ -71,9 +71,11 @@ impl<P: Plugin + Send + Sync> Runner for Native<P> {
         &self,
         host: Host,
         file: &FileEntry,
-        lhs: Option<&Source>,
-        rhs: Option<&Source>,
+        sides: &SourceSides,
     ) -> anyhow::Result<Vec<Move>> {
-        call(host, || self.0.mutate(file, lhs, rhs))
+        call(host, || {
+            let sides = tree::sides(sides)?;
+            self.0.mutate(file, &sides)
+        })
     }
 }

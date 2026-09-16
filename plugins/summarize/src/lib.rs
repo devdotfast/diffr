@@ -7,10 +7,9 @@
 //! and at most `max_concurrency` requests are in flight at once across
 //! files.
 use diffr_plugin_sdk::anyhow::{self, anyhow, Context as _};
-use diffr_plugin_sdk::types::Source as SourceRecord;
 use diffr_plugin_sdk::{
-    docstring_of, export, has_tag, is_fold, line_count, one_sided, tree, walk, Draft, FileEntry,
-    Move, Node, OtherSide, Pairing, Plugin, Region, Source,
+    docstring_of, export, has_tag, is_fold, line_count, one_sided, walk, Draft, FileEntry, Move,
+    Node, OtherSide, Pairing, Plugin, Region, Source,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -395,14 +394,8 @@ impl Plugin for Summarize {
         Ok(Vec::new())
     }
 
-    fn mutate(
-        &self,
-        file: &FileEntry,
-        lhs: Option<&SourceRecord>,
-        rhs: Option<&SourceRecord>,
-    ) -> anyhow::Result<Vec<Move>> {
-        let sides = tree::sides(lhs, rhs)?;
-        let selected = select(&sides, self.options.min_lines);
+    fn mutate(&self, file: &FileEntry, sides: &Pairing<Source>) -> anyhow::Result<Vec<Move>> {
+        let selected = select(sides, self.options.min_lines);
         let (Pairing::Both { rhs, .. } | Pairing::RightOnly { rhs }) = &sides else {
             return Ok(Vec::new());
         };
@@ -433,7 +426,7 @@ impl Plugin for Summarize {
         });
         // Collapse every summarized body first, then link each to its
         // docstring: a summary and its docstring are one thing.
-        let mut draft = Draft::new(&sides);
+        let mut draft = Draft::new(sides);
         let mut links = Vec::new();
         for (id, summary) in texts {
             let text = match &summary.quote {

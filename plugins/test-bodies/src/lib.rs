@@ -1,8 +1,7 @@
 //! Collapse test bodies and test modules.
-use diffr_plugin_sdk::types::Source;
 use diffr_plugin_sdk::{
-    anyhow, docstring_of, export, has_tag, is_fold, line_count, tree, walk, Draft, FileEntry, Move,
-    Plugin,
+    anyhow, docstring_of, export, has_tag, is_fold, line_count, walk, Draft, FileEntry, Move,
+    Pairing, Plugin, Source,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -40,14 +39,8 @@ impl Plugin for TestBodies {
         Ok(Vec::new())
     }
 
-    fn mutate(
-        &self,
-        _file: &FileEntry,
-        lhs: Option<&Source>,
-        rhs: Option<&Source>,
-    ) -> anyhow::Result<Vec<Move>> {
+    fn mutate(&self, _file: &FileEntry, sides: &Pairing<Source>) -> anyhow::Result<Vec<Move>> {
         let options = &self.options;
-        let sides = tree::sides(lhs, rhs)?;
         // Every fold has its own id, so each side's fold is its own target
         // and takes its own label. A test body's docstring, when it has one,
         // is linked after it collapses.
@@ -66,7 +59,7 @@ impl Plugin for TestBodies {
                 }
             });
         }
-        let mut draft = Draft::new(&sides);
+        let mut draft = Draft::new(sides);
         for (id, (label, docstring)) in labels {
             draft.collapse(id, label.to_owned())?;
             if let Some(docstring) = docstring {

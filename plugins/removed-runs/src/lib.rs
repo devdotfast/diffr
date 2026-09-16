@@ -1,8 +1,7 @@
 //! Collapse the middle of long removed stretches.
-use diffr_plugin_sdk::types::Source;
 use diffr_plugin_sdk::{
-    anyhow, before_and_after_ids, export, has_tag, line_count, one_sided, tree, Draft, FileEntry,
-    Move, Node, OtherSide, Plugin, Region,
+    anyhow, before_and_after_ids, export, has_tag, line_count, one_sided, Draft, FileEntry, Move,
+    Node, OtherSide, Pairing, Plugin, Region, Source,
 };
 use serde::Deserialize;
 
@@ -38,15 +37,9 @@ impl Plugin for RemovedRuns {
         Ok(Vec::new())
     }
 
-    fn mutate(
-        &self,
-        _file: &FileEntry,
-        lhs: Option<&Source>,
-        rhs: Option<&Source>,
-    ) -> anyhow::Result<Vec<Move>> {
+    fn mutate(&self, _file: &FileEntry, sides: &Pairing<Source>) -> anyhow::Result<Vec<Move>> {
         let options = &self.options;
-        let sides = tree::sides(lhs, rhs)?;
-        let Some((lhs, rhs)) = before_and_after_ids(&sides) else {
+        let Some((lhs, rhs)) = before_and_after_ids(sides) else {
             return Ok(Vec::new());
         };
         // A leaf needs a first, a middle, and a last line.
@@ -60,7 +53,7 @@ impl Plugin for RemovedRuns {
             Gates::default(),
             &mut leaves,
         );
-        let mut draft = Draft::new(&sides);
+        let mut draft = Draft::new(sides);
         for (id, len) in leaves {
             let middle = draft.cut_lines(id, 1, len - 1)?;
             draft.collapse(middle, format!("{} lines removed", len - 2))?;

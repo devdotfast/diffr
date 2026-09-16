@@ -187,17 +187,10 @@ pub(crate) fn moves(
     let [plugin] = &pipeline.plugins[..] else {
         panic!("one plugin");
     };
-    let sides = trees(sides);
-    let (lhs, rhs) = (
-        sides.lhs().map(tree::Source::to_record),
-        sides.rhs().map(tree::Source::to_record),
-    );
-    plugin.runner.mutate(
-        pipeline.host(&plugin.name),
-        &file_entry(file),
-        lhs.as_ref(),
-        rhs.as_ref(),
-    )
+    let records = super::source_sides(&trees(sides));
+    plugin
+        .runner
+        .mutate(pipeline.host(&plugin.name), &file_entry(file), &records)
 }
 
 /// For each `deleted-bodies:function` body on the after side, the first line
@@ -328,12 +321,7 @@ impl Plugin for Bad {
         Ok(Vec::new())
     }
 
-    fn mutate(
-        &self,
-        _: &FileEntry,
-        _: Option<&types::Source>,
-        _: Option<&types::Source>,
-    ) -> anyhow::Result<Vec<Move>> {
+    fn mutate(&self, _: &FileEntry, _: &tree::Pairing<tree::Source>) -> anyhow::Result<Vec<Move>> {
         Ok(vec![Move::SetCollapsed((99_999, true))])
     }
 }
@@ -355,12 +343,7 @@ impl Plugin for TagsAZ {
         Ok(vec!["a".to_owned(), "z".to_owned()])
     }
 
-    fn mutate(
-        &self,
-        _: &FileEntry,
-        _: Option<&types::Source>,
-        _: Option<&types::Source>,
-    ) -> anyhow::Result<Vec<Move>> {
+    fn mutate(&self, _: &FileEntry, _: &tree::Pairing<tree::Source>) -> anyhow::Result<Vec<Move>> {
         Ok(Vec::new())
     }
 }
@@ -377,12 +360,7 @@ impl Plugin for TagsB {
         Ok(vec!["b".to_owned()])
     }
 
-    fn mutate(
-        &self,
-        _: &FileEntry,
-        _: Option<&types::Source>,
-        _: Option<&types::Source>,
-    ) -> anyhow::Result<Vec<Move>> {
+    fn mutate(&self, _: &FileEntry, _: &tree::Pairing<tree::Source>) -> anyhow::Result<Vec<Move>> {
         Ok(Vec::new())
     }
 }
@@ -398,12 +376,7 @@ impl Plugin for NotATag {
         Ok(vec!["Not A Tag".to_owned()])
     }
 
-    fn mutate(
-        &self,
-        _: &FileEntry,
-        _: Option<&types::Source>,
-        _: Option<&types::Source>,
-    ) -> anyhow::Result<Vec<Move>> {
+    fn mutate(&self, _: &FileEntry, _: &tree::Pairing<tree::Source>) -> anyhow::Result<Vec<Move>> {
         Ok(Vec::new())
     }
 }

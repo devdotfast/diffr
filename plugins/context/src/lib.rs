@@ -20,10 +20,9 @@
 //! stretch there, so no fold is hidden on one side while it holds changed
 //! lines on the other, such as a matched function that moved elsewhere.
 //! Both folds of a matched pair are labelled with their line count.
-use diffr_plugin_sdk::types::Source as SourceRecord;
 use diffr_plugin_sdk::{
-    anyhow, export, has_tag, is_fold, tree, walk, Draft, FileEntry, Move, Node, Pairing, Plugin,
-    Region, Source,
+    anyhow, export, has_tag, is_fold, walk, Draft, FileEntry, Move, Node, Pairing, Plugin, Region,
+    Source,
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -216,14 +215,8 @@ impl Plugin for Context {
         Ok(Vec::new())
     }
 
-    fn mutate(
-        &self,
-        _file: &FileEntry,
-        lhs: Option<&SourceRecord>,
-        rhs: Option<&SourceRecord>,
-    ) -> anyhow::Result<Vec<Move>> {
+    fn mutate(&self, _file: &FileEntry, sides: &Pairing<Source>) -> anyhow::Result<Vec<Move>> {
         let options = &self.options;
-        let sides = tree::sides(lhs, rhs)?;
         let Pairing::Both { lhs, rhs } = &sides else {
             // A one-sided file is all changed lines.
             return Ok(Vec::new());
@@ -322,7 +315,7 @@ impl Plugin for Context {
             .collect();
         // Stretches are shaped in reverse document order, so a cut leaf's id
         // still names the piece that starts where the leaf did.
-        let mut draft = Draft::new(&sides);
+        let mut draft = Draft::new(sides);
         for ((lhs_start, lhs_end), (rhs_start, rhs_end)) in stretches.into_iter().rev() {
             let total = lhs_end - lhs_start;
             if total < MIN_GAP && changed {

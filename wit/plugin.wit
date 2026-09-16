@@ -128,6 +128,13 @@ interface types {
         regions: list<region>,
     }
 
+    /// The sides a diffed file has, the same sides as its entry's `file`.
+    variant source-sides {
+        both(tuple<source, source>),
+        left-only(source),
+        right-only(source),
+    }
+
     record cut {
         /// A leaf's id.
         region: u32,
@@ -191,7 +198,7 @@ interface host {
 
 /// What every plugin exports: the plugin itself, as a resource.
 interface guest {
-    use types.{file-entry, source, move};
+    use types.{file-entry, source-sides, move};
 
     resource plugin {
         /// Make the plugin from `options`, the plugin's entry in
@@ -209,10 +216,10 @@ interface guest {
         /// before the stream starts.
         classify: func(file: file-entry) -> result<list<string>, string>;
 
-        /// The moves that shape how the diffed file starts out. `lhs` and
-        /// `rhs` are the sides the file has. An error aborts the run with
-        /// `mutation_failed`.
-        mutate: func(file: file-entry, lhs: option<source>, rhs: option<source>) -> result<list<move>, string>;
+        /// The moves that shape how the diffed file starts out. `sides` are
+        /// the sides the file has, the same sides as its entry's `file`. An
+        /// error aborts the run with `mutation_failed`.
+        mutate: func(file: file-entry, sides: source-sides) -> result<list<move>, string>;
     }
 }
 

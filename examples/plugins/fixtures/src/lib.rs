@@ -6,9 +6,9 @@
 //! touched it, and collapses all but the first line of its first leaf, naming
 //! the piece its cut creates by predicting the id.
 use diffr_plugin_sdk::apply::Fresh;
-use diffr_plugin_sdk::types::{Cut, Source};
+use diffr_plugin_sdk::types::Cut;
 use diffr_plugin_sdk::{
-    anyhow, export, host, line_count, tree, FileEntry, Move, Node, Pairing, Plugin, ROOT,
+    anyhow, export, host, line_count, FileEntry, Move, Node, Pairing, Plugin, Source, ROOT,
 };
 use serde::Deserialize;
 
@@ -59,12 +59,7 @@ impl Plugin for Fixtures {
         })
     }
 
-    fn mutate(
-        &self,
-        file: &FileEntry,
-        lhs: Option<&Source>,
-        rhs: Option<&Source>,
-    ) -> anyhow::Result<Vec<Move>> {
+    fn mutate(&self, file: &FileEntry, sides: &Pairing<Source>) -> anyhow::Result<Vec<Move>> {
         anyhow::ensure!(!self.options.fail, "asked to fail on {}", file.path());
         if !file.tags.iter().any(|tag| tag == TAG) {
             return Ok(Vec::new());
@@ -79,7 +74,6 @@ impl Plugin for Fixtures {
         // The first top-level leaf of two or more lines, on the before side
         // when there is one. A cut hands out its piece ids lhs first, so the
         // piece on this leaf's side takes the first fresh id either way.
-        let sides = tree::sides(lhs, rhs)?;
         let side = match &sides {
             Pairing::Both { lhs, .. } | Pairing::LeftOnly { lhs } => lhs,
             Pairing::RightOnly { rhs } => rhs,
@@ -89,7 +83,7 @@ impl Plugin for Fixtures {
             .iter()
             .find(|region| matches!(region.node, Node::Leaf { .. }) && line_count(region) >= 2);
         if let Some(leaf) = leaf {
-            let piece = Fresh::of(&sides).id();
+            let piece = Fresh::of(sides).id();
             moves.extend([
                 Move::Cut(Cut {
                     region: leaf.id,

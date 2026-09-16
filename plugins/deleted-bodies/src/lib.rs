@@ -1,8 +1,7 @@
 //! Collapse function bodies that were deleted.
-use diffr_plugin_sdk::types::Source;
 use diffr_plugin_sdk::{
     anyhow, before_and_after_ids, docstring_of, export, has_tag, is_fold, line_count, one_sided,
-    tree, walk, Draft, FileEntry, Move, Plugin,
+    walk, Draft, FileEntry, Move, Pairing, Plugin, Source,
 };
 use serde::Deserialize;
 
@@ -35,15 +34,9 @@ impl Plugin for DeletedBodies {
         Ok(Vec::new())
     }
 
-    fn mutate(
-        &self,
-        _file: &FileEntry,
-        lhs: Option<&Source>,
-        rhs: Option<&Source>,
-    ) -> anyhow::Result<Vec<Move>> {
+    fn mutate(&self, _file: &FileEntry, sides: &Pairing<Source>) -> anyhow::Result<Vec<Move>> {
         let options = &self.options;
-        let sides = tree::sides(lhs, rhs)?;
-        let Some((lhs, rhs)) = before_and_after_ids(&sides) else {
+        let Some((lhs, rhs)) = before_and_after_ids(sides) else {
             return Ok(Vec::new());
         };
         // Each deleted body: its id, line count and docstring.
@@ -58,7 +51,7 @@ impl Plugin for DeletedBodies {
                 bodies.push((region.id, count, docstring_of(lhs, region, PLUGIN)));
             }
         });
-        let mut draft = Draft::new(&sides);
+        let mut draft = Draft::new(sides);
         for (id, count, docstring) in bodies {
             draft.collapse(id, format!("{count} lines removed"))?;
             if let Some(docstring) = docstring {

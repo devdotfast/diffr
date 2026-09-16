@@ -178,22 +178,21 @@ impl Source {
     }
 }
 
-/// The sides `mutate` receives, as trees. diffr passes at least one side.
-pub fn sides(
-    lhs: Option<&types::Source>,
-    rhs: Option<&types::Source>,
-) -> anyhow::Result<Pairing<Source>> {
-    Ok(
-        match (
-            lhs.map(Source::from_record).transpose()?,
-            rhs.map(Source::from_record).transpose()?,
-        ) {
-            (Some(lhs), Some(rhs)) => Pairing::Both { lhs, rhs },
-            (Some(lhs), None) => Pairing::LeftOnly { lhs },
-            (None, Some(rhs)) => Pairing::RightOnly { rhs },
-            (None, None) => anyhow::bail!("diffr passed a file with no sides"),
+/// The contract's sides as the trees the SDK works on. diffr calls this once
+/// on the way in, so a plugin is handed the pairing rather than the record.
+pub fn sides(sides: &types::SourceSides) -> anyhow::Result<Pairing<Source>> {
+    Ok(match sides {
+        types::SourceSides::Both((lhs, rhs)) => Pairing::Both {
+            lhs: Source::from_record(lhs)?,
+            rhs: Source::from_record(rhs)?,
         },
-    )
+        types::SourceSides::LeftOnly(lhs) => Pairing::LeftOnly {
+            lhs: Source::from_record(lhs)?,
+        },
+        types::SourceSides::RightOnly(rhs) => Pairing::RightOnly {
+            rhs: Source::from_record(rhs)?,
+        },
+    })
 }
 
 // ── region helpers ────────────────────────────────────────────────────────

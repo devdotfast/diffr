@@ -277,10 +277,9 @@ impl Runner for WasmInstance {
         &self,
         host: Host,
         file: &contract::FileEntry,
-        lhs: Option<&contract::Source>,
-        rhs: Option<&contract::Source>,
+        sides: &contract::SourceSides,
     ) -> anyhow::Result<Vec<contract::Move>> {
-        let (lhs, rhs) = (lhs.map(source), rhs.map(source));
+        let sides = source_sides(sides);
         let instance = &mut *self.enter(host);
         let started = Instant::now();
         let moves = instance
@@ -291,8 +290,7 @@ impl Runner for WasmInstance {
                 &mut instance.store,
                 instance.plugin,
                 &file_entry(file),
-                lhs.as_ref(),
-                rhs.as_ref(),
+                &sides,
             )?
             .map_err(anyhow::Error::msg)?;
         log::debug!("called in {:?}", started.elapsed());
@@ -323,6 +321,16 @@ fn file_entry(file: &contract::FileEntry) -> types::FileEntry {
             contract::FileStatus::TypeChanged => types::FileStatus::TypeChanged,
         },
         tags: file.tags.clone(),
+    }
+}
+
+fn source_sides(sides: &contract::SourceSides) -> types::SourceSides {
+    match sides {
+        contract::SourceSides::Both((lhs, rhs)) => {
+            types::SourceSides::Both((source(lhs), source(rhs)))
+        }
+        contract::SourceSides::LeftOnly(lhs) => types::SourceSides::LeftOnly(source(lhs)),
+        contract::SourceSides::RightOnly(rhs) => types::SourceSides::RightOnly(source(rhs)),
     }
 }
 

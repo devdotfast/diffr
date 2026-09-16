@@ -101,7 +101,7 @@ optional exports; a plugin that does not classify returns an empty list):
 resource plugin {
     new: static func(options: string) -> result<plugin, string>;
     classify: func(file: file-entry) -> result<list<string>, string>;
-    mutate: func(file: file-entry, lhs: option<source>, rhs: option<source>) -> result<list<move>, string>;
+    mutate: func(file: file-entry, sides: source-sides) -> result<list<move>, string>;
 }
 ```
 
@@ -118,6 +118,9 @@ cannot fail.
   sides alone do not: a path that changed is `renamed`, an object kind that
   changed `type-changed`. The SDK's `FileEntry::side()` is the side a file is
   named by and `path()` its path.
+- `source-sides`: the sides the diffed file has, shaped like `file-sides`.
+  The SDK rebuilds them as trees on the way in, so a plugin's `mutate` is
+  handed a `Pairing<Source>` rather than the flat records.
 - `source`: one side's `text` and its `regions`, the tree flattened in
   preorder: each `region` carries its `parent` (a fold's `id`, or `0` for a
   top-level region), `id`, `fold-state-id`, `range`, `tags`, `visibility`, and
@@ -214,9 +217,10 @@ written with it:
   and diffr's native registry deserializes the options and calls the trait
   itself. The same source builds both ways.
 - `host::git`: the host function, the same call natively and in a component.
-- `tree::sides(lhs, rhs)` rebuilds the records as region trees
-  (`Pairing<Source>`, each `Region` holding its children), and the helpers
-  the bundled plugins read trees with: `walk`, `OtherSide`, `one_sided`,
+- `tree::sides` rebuilds the contract's sides as region trees
+  (`Pairing<Source>`, each `Region` holding its children). The SDK calls it
+  itself, so `mutate` receives the trees; the module also holds the helpers
+  the bundled plugins read them with: `walk`, `OtherSide`, `one_sided`,
   `docstring_of`, `before_and_after_ids`, and the rest.
 - `Draft` carries moves out on a copy of the trees as the plugin makes them,
   with diffr's applier, so `draft.cut_lines`, `draft.collapse`, `draft.link`
@@ -231,8 +235,7 @@ serde = { version = "1.0", features = ["derive"] }
 ```
 
 ```rust
-use diffr_plugin_sdk::types::Source;
-use diffr_plugin_sdk::{anyhow, export, FileEntry, Move, Plugin, ROOT};
+use diffr_plugin_sdk::{anyhow, export, FileEntry, Move, Pairing, Plugin, Source, ROOT};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -252,12 +255,7 @@ impl Plugin for HideAll {
         Ok(Vec::new())
     }
 
-    fn mutate(
-        &self,
-        _: &FileEntry,
-        _: Option<&Source>,
-        _: Option<&Source>,
-    ) -> anyhow::Result<Vec<Move>> {
+    fn mutate(&self, _: &FileEntry, _: &Pairing<Source>) -> anyhow::Result<Vec<Move>> {
         Ok(vec![Move::SetCollapsed((ROOT, true))])
     }
 }
@@ -283,9 +281,9 @@ next run.
 ## Examples
 
 - `examples/plugins/fixtures`: `classify` tags a file `fixture` when it is
-  under a `fixtures/` directory or its working-tree file starts with a
-  `// fixture` line (read from the filesystem, so a deleted file is
-  classified by its path alone); `mutate` hides a fixture behind the subject of the last
+  under a `fixtures/` directory or its first line is `// fixture` (read from
+  the blob the file entry names, with `git cat-file`, so a deleted file is
+  read as readily as a new one); `mutate` hides a fixture behind the subject of the last
   commit that touched it (from `git log -1 --format=%s -- <path>`), and
   collapses all but the first line of its first leaf, naming the cut's piece
   by predicting its id. Its `fail` option makes `mutate` return an error.

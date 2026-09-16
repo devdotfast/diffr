@@ -1,6 +1,7 @@
 //! Hide whole files by their tags or status.
-use diffr_plugin_sdk::types::Source;
-use diffr_plugin_sdk::{anyhow, export, FileEntry, FileStatus, Move, Plugin, ROOT};
+use diffr_plugin_sdk::{
+    anyhow, export, FileEntry, FileStatus, Move, Pairing, Plugin, Source, ROOT,
+};
 use serde::Deserialize;
 
 /// A deleted file, when `deleted` is set, or a file carrying one of `tags`
@@ -29,12 +30,7 @@ impl Plugin for HideFiles {
         Ok(Vec::new())
     }
 
-    fn mutate(
-        &self,
-        file: &FileEntry,
-        _lhs: Option<&Source>,
-        _rhs: Option<&Source>,
-    ) -> anyhow::Result<Vec<Move>> {
+    fn mutate(&self, file: &FileEntry, _sides: &Pairing<Source>) -> anyhow::Result<Vec<Move>> {
         let options = &self.options;
         let what = if options.deleted && file.status == FileStatus::Deleted {
             "Deleted".to_owned()

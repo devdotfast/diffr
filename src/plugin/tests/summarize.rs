@@ -344,9 +344,9 @@ fn the_system_prompt_is_the_configured_one() {
     ))
     .unwrap();
     assert_eq!(system, default.system_prompt.as_str());
-    assert!(default
-        .system_prompt
-        .starts_with("For each listed fold, rewrite that function body as short python-flavored pseudocode. Keep the names."));
+    assert!(default.system_prompt.starts_with(
+        "For each listed fold, rewrite that function body as short pseudocode. Keep the names."
+    ));
     assert!(!default.system_prompt.contains('\n'));
 }
 

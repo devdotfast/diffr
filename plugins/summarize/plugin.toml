@@ -65,7 +65,7 @@ title = "System prompt"
 description = "The system instruction sent with every request. Each request's own message, the file's numbered lines and the folds to summarize, is built by diffr."
 "x-settings" = false
 default = """\
-For each listed fold, rewrite that function body as short python-flavored \
+For each listed fold, rewrite that function body as short \
 pseudocode. Keep the names. No prose, no comments, no code fences. Use as few lines as \
 possible: about one pseudocode line per five source lines, and never more than a third \
 of the body's lines. When a fold lists a doc, also set "summary" to one sentence copied \

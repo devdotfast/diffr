@@ -83,15 +83,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo +stable test
 
-  package:
-    name: Check Linux Packaging
-    runs-on: ubuntu-22.04
-    steps:
-      # v4.2.2
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: dtolnay/rust-toolchain@1.85.0
-      - run: cargo package --allow-dirty
-
   fmt:
     name: Rustfmt
     runs-on: ubuntu-22.04

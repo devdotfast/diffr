@@ -41,6 +41,7 @@ impl TreeSitterParser {
 }
 
 fn main() {
+    native_plugins();
     let parsers = vec![
         TreeSitterParser {
             name: "tree-sitter-janet-simple",
@@ -106,4 +107,42 @@ fn commit_info() {
     let _commit_hash = next();
     println!("cargo:rustc-env=DFT_COMMIT_SHORT_HASH={}", next());
     println!("cargo:rustc-env=DFT_COMMIT_DATE={}", next())
+}
+
+/// Collect native registrations from plugin package metadata.
+fn native_plugins() {
+    let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    println!("cargo:rerun-if-changed=Cargo.toml");
+    let manifest: toml::Value = std::fs::read_to_string(root.join("Cargo.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let mut code = String::from("const PLUGINS: &[&sdk::Registration] = &[\n");
+    for (dependency, spec) in manifest["dependencies"].as_table().unwrap() {
+        let Some(path) = spec.get("path").and_then(toml::Value::as_str) else {
+            continue;
+        };
+        let file = root.join(path).join("Cargo.toml");
+        println!("cargo:rerun-if-changed={}", file.display());
+        let package: toml::Value = std::fs::read_to_string(file).unwrap().parse().unwrap();
+        let native = package
+            .get("package")
+            .and_then(|p| p.get("metadata"))
+            .and_then(|p| p.get("diffr"))
+            .and_then(|p| p.get("native"))
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false);
+        if native {
+            code.push_str(&format!(
+                "    &{}::DIFFR_PLUGIN,\n",
+                dependency.replace('-', "_")
+            ));
+        }
+    }
+    code.push_str("];\n");
+    std::fs::write(
+        PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("native_plugins.rs"),
+        code,
+    )
+    .unwrap();
 }

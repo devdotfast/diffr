@@ -10,15 +10,8 @@ use diffr_plugin_sdk::types::{FileEntry, Move, SourceSides};
 use diffr_plugin_sdk::Plugin;
 use std::rc::Rc;
 
-const PLUGINS: &[&sdk::Registration] = &[
-    &diffr_plugin_context::DIFFR_PLUGIN,
-    &diffr_plugin_deleted_bodies::DIFFR_PLUGIN,
-    &diffr_plugin_group::DIFFR_PLUGIN,
-    &diffr_plugin_hide_files::DIFFR_PLUGIN,
-    &diffr_plugin_removed_runs::DIFFR_PLUGIN,
-    &diffr_plugin_summarize::DIFFR_PLUGIN,
-    &diffr_plugin_test_bodies::DIFFR_PLUGIN,
-];
+// Generated registrations, discovered from native package metadata.
+include!(concat!(env!("OUT_DIR"), "/native_plugins.rs"));
 
 #[cfg(test)]
 pub(crate) type Constructor = fn(Host, &str) -> anyhow::Result<Box<dyn Runner>>;

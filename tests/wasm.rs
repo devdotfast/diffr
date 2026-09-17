@@ -17,8 +17,19 @@ use tempfile::TempDir;
 fn build_plugins() {
     static BUILD: Once = Once::new();
     BUILD.call_once(|| {
-        let output = Command::new("sh")
-            .arg(root().join("scripts/build-wasm-plugins.sh"))
+        if std::env::var_os("DIFFR_PLUGINS_BUILT").is_some() {
+            return;
+        }
+        let output = Command::new(env!("CARGO"))
+            .current_dir(root())
+            .args([
+                "run",
+                "--locked",
+                "--package",
+                "xtask",
+                "--",
+                "build-plugins",
+            ])
             .output()
             .unwrap();
         assert!(

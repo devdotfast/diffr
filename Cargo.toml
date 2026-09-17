@@ -166,6 +166,7 @@ pretty_assertions = "1.3.0"
 tempfile = "3.27.0"
 
 [build-dependencies]
+toml = "0.8"
 # TODO: enable parallel mode, see discussion in
 # https://github.com/rust-lang/cc-rs/pull/849
 cc = "1.2.48"
@@ -174,6 +175,7 @@ version_check = "0.9.4"
 
 [workspace]
 members = [
+    "xtask",
 	"crates/diffr-plugin-sdk",
 	"plugins/context",
 	"plugins/deleted-bodies",
@@ -196,6 +198,10 @@ default-members = [
 	"plugins/test-bodies",
 	"examples/plugins/fixtures",
 ]
+
+# Test-only exception: the summarizer's HTTP client is native-only today.
+[workspace.metadata.diffr]
+wasm-test-exclude = ["diffr-plugin-summarize"]
 
 [profile.release]
 lto = "thin"

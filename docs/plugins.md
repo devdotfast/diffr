@@ -218,7 +218,7 @@ written with it:
   into `Options` and calls `Plugin::new`, and its `classify` and `mutate`
   call the instance with the records it was given, since the guest bindings'
   records are the contract's. Built for a native target, it exposes the name and
-  constructor as `DIFFR_PLUGIN` for diffr's native registry.
+  constructor as `DIFFR_PLUGIN`, collected into diffr's registry at build time.
   The native registry deserializes the options and calls the trait
   itself. The same source builds both ways.
 - `host::git`: the host function, the same call natively and in a component.
@@ -277,7 +277,7 @@ cargo rustc --release --target wasm32-wasip2 --crate-type cdylib
 cp target/wasm32-wasip2/release/hide_all.wasm plugin.wasm
 ```
 
-`scripts/build-wasm-plugins.sh` builds every plugin crate in this repository
+`cargo xtask build-plugins` builds every plugin crate in this repository
 that runs as a component into its folder's `plugin.wasm` (the outputs are not
 committed). diffr compiles each component once per run, with wasmtime's
 compilation cache on disk, so an unchanged component is not recompiled on the
@@ -314,3 +314,10 @@ Native plugin crates register their name and constructor through the same
 registrations; configuration still controls instantiation and execution order.
 Native crates must be dependencies linked into the host. External WASM plugins
 need no native registration and do not require rebuilding diffr.
+
+Repository tooling discovers plugin crates through `cargo metadata` and
+`[package.metadata.diffr]` in each crate's Cargo.toml. `native = true` links a
+bundled implementation into diffr; otherwise the plugin uses WASM. This does
+not add a WASM requirement to `cargo install`. `cargo xtask test-plugins`
+builds WASM variants and runs parity tests. The workspace's
+`wasm-test-exclude` list records test-only exceptions such as the summarizer.

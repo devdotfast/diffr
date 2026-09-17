@@ -10,14 +10,21 @@ From the repository root:
 ```sh
 (cd tui && bun install)
 cargo build --bin diffr
-./target/debug/diffr main HEAD
-./target/debug/diffr --no-index -- before.ts after.ts
+DIFFR_TUI_ENTRY="$PWD/tui/packages/hunk/src/main.tsx" ./target/debug/diffr main HEAD
+DIFFR_TUI_ENTRY="$PWD/tui/packages/hunk/src/main.tsx" ./target/debug/diffr --no-index -- before.ts after.ts
 ```
 
 Omitting `--format` opens the viewer, which needs terminal stdin and stdout.
-`--format ndjson` and metadata/quiet modes bypass the frontend. `DIFFR_BUN` can
-specify a Bun executable; `DIFFR_TUI_ENTRY` can specify a frontend entry file. The default entry is in the checkout used to build
-Rust. A standalone distribution/installer is deferred.
+`--format ndjson` and metadata/quiet modes bypass the frontend.
+By default Rust launches `diffr-tui` beside its own executable, then on `PATH`.
+`cargo xtask install` installs both executables; `cargo xtask install-tui` installs
+only the frontend. Both accept `--root <directory>` and need Bun at build time,
+but the installed executables need neither Bun nor the checkout.
+
+For source development, `DIFFR_TUI_ENTRY` explicitly selects a frontend entry file
+and `DIFFR_BUN` optionally selects the Bun executable. This override takes
+precedence over an installed frontend. Built-in theme text is embedded in the
+compiled frontend; custom theme paths continue to be read at runtime.
 
 Saved streams use the same reader:
 
@@ -187,7 +194,7 @@ changes, with a source-row anchor used to retain scroll position where possible.
 ## Deliberately deferred
 
 Copying the hidden lines of a collapsed fold, character-level source selection, drag autoscroll, full Hunk theme
-catalog, distribution packaging, and shared web presentation code. The first pass has
+catalog, release archive packaging, and shared web presentation code. The first pass has
 no broker, agent sessions, annotations, extensions, VCS adapters, or alternate Pierre path.
 
 The source paths still contain `packages/hunk` to make the import/refactor diff easy to
@@ -195,6 +202,16 @@ review. `TUI_UPSTREAM.md` in the repository root records the upstream revision; 
 retains Hunk's MIT notice. The parent Rust project keeps its existing license.
 
 ## Verify
+
+Check the installed package on Unix, including interactive settings and a diff
+with an empty `PATH` (no Bun), copied executables, and isolated configuration:
+
+```sh
+cargo xtask install --root /tmp/diffr-install-check
+python3 xtask/tests/smoke_install.py /tmp/diffr-install-check
+cargo test -p xtask --locked
+```
+
 
 ```sh
 cargo build --bin diffr

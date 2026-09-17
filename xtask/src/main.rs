@@ -1,4 +1,4 @@
-//! Repository-only plugin builds. Normal diffr installation remains plain Cargo.
+//! Repository build and installation tasks.
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -6,6 +6,94 @@ use std::process::Command;
 
 fn cargo() -> Command {
     Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+}
+
+fn run(command: &mut Command, description: &str) -> Result<()> {
+    let status = command.status().with_context(|| description.to_owned())?;
+    anyhow::ensure!(status.success(), "{description} failed ({status})");
+    Ok(())
+}
+
+fn install(root: &Path, with_cli: bool) -> Result<()> {
+    let mut args = std::env::args_os().skip(2);
+    let destination = match args.next() {
+        Some(flag) if flag == "--root" => {
+            PathBuf::from(args.next().context("--root needs a directory")?)
+        }
+        Some(_) => bail!("usage: cargo xtask install[-tui] [--root <directory>]"),
+        None => std::env::var_os("CARGO_INSTALL_ROOT")
+            .or_else(|| std::env::var_os("CARGO_HOME"))
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                    .map(|home| PathBuf::from(home).join(".cargo"))
+            })
+            .context("Cannot determine install directory; pass --root <directory>")?,
+    };
+    anyhow::ensure!(args.next().is_none(), "unexpected install argument");
+    let destination = std::path::absolute(destination)?;
+    let bun = std::env::var_os("DIFFR_BUN").unwrap_or_else(|| "bun".into());
+    let version = Command::new(&bun).arg("--version").output()
+        .context("Bun was not found or could not be run. Install Bun (https://bun.sh) and put it on PATH, or set DIFFR_BUN to its executable. Bun is only needed during installation.")?;
+    anyhow::ensure!(
+        version.status.success(),
+        "Bun --version failed; check your Bun installation"
+    );
+    run(
+        Command::new(&bun)
+            .current_dir(root.join("tui"))
+            .args(["install", "--frozen-lockfile"]),
+        "Installing TUI dependencies",
+    )?;
+    let artifact = root
+        .join("target/tui")
+        .join(format!("diffr-tui{}", std::env::consts::EXE_SUFFIX));
+    std::fs::create_dir_all(artifact.parent().unwrap())?;
+    run(
+        Command::new(&bun)
+            .current_dir(root.join("tui"))
+            .args([
+                "build",
+                "--compile",
+                "--define",
+                if cfg!(target_env = "musl") {
+                    "process.env.OPENTUI_LIBC=\"musl\""
+                } else {
+                    "process.env.OPENTUI_LIBC=\"glibc\""
+                },
+                "packages/hunk/src/main.tsx",
+                "--outfile",
+            ])
+            .arg(&artifact),
+        "Compiling diffr-tui",
+    )?;
+    if with_cli {
+        run(
+            cargo()
+                .current_dir(root)
+                .args(["install", "--path", ".", "--locked", "--root"])
+                .arg(&destination),
+            "Installing diffr",
+        )?;
+    }
+    let bin = destination.join("bin");
+    std::fs::create_dir_all(&bin)?;
+    let installed = bin.join(artifact.file_name().unwrap());
+    // Copy then rename so a failed copy cannot truncate the installed executable.
+    let staged = bin.join(format!(
+        ".diffr-tui-{}{}",
+        std::process::id(),
+        std::env::consts::EXE_SUFFIX
+    ));
+    std::fs::copy(&artifact, &staged)?;
+    std::fs::rename(&staged, &installed)
+        .with_context(|| format!("installing {}", installed.display()))?;
+    eprintln!(
+        "Installed {}. Ensure {} is on PATH. Bun is not needed at runtime.",
+        installed.display(),
+        bin.display()
+    );
+    Ok(())
 }
 
 fn build_plugins(root: &Path) -> Result<()> {
@@ -98,6 +186,8 @@ fn main() -> Result<()> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let task = std::env::args().nth(1).unwrap_or_default();
     match task.as_str() {
+        "install" => install(root, true),
+        "install-tui" => install(root, false),
         "build-plugins" => build_plugins(root),
         "test-plugins" => {
             build_plugins(root)?;
@@ -116,7 +206,7 @@ fn main() -> Result<()> {
             anyhow::ensure!(status.success(), "plugin tests failed");
             Ok(())
         }
-        _ => bail!("usage: cargo xtask <build-plugins|test-plugins>"),
+        _ => bail!("usage: cargo xtask <install|install-tui|build-plugins|test-plugins>"),
     }
 }
 

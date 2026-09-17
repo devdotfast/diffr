@@ -1,6 +1,9 @@
 /** Load Helix themes (TOML keyed by tree-sitter capture names) into the painter's palette. */
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import onedark from "../../../../themes/onedark.toml" with { type: "text" };
+import onelight from "../../../../themes/onelight.toml" with { type: "text" };
+import gruvbox from "../../../../themes/gruvbox.toml" with { type: "text" };
+import solarized_light from "../../../../themes/solarized_light.toml" with { type: "text" };
 export interface Style {
   fg?: string;
   bg?: string;
@@ -146,11 +149,11 @@ export const bundledThemes: Record<string, string> = {
   gruvbox: "gruvbox",
   solarized_light: "solarized_light",
 };
-const themesDir = resolve(import.meta.dir, "../../../../themes");
+const themeSources: Record<string, string> = { onedark, onelight, gruvbox, solarized_light };
 export function loadBundledTheme(name: string): Palette {
   const file = bundledThemes[name];
   if (!file) throw new Error(`Unknown theme ${name}; bundled themes: ${Object.keys(bundledThemes).join(", ")}`);
-  return paletteFromHelix(parseHelixTheme(readFileSync(resolve(themesDir, `${file}.toml`), "utf8"), name));
+  return paletteFromHelix(parseHelixTheme(themeSources[file], name));
 }
 export function loadThemeFile(path: string): Palette {
   return paletteFromHelix(parseHelixTheme(readFileSync(path, "utf8"), path));

@@ -3,8 +3,10 @@
 ## Installation
 
 ```sh
-cargo install --path . --locked
+cargo xtask install
 ```
+
+Run this from the checkout with Rust and [Bun](https://bun.sh) on `PATH`.
 
 ## Configuration
 

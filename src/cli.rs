@@ -542,20 +542,20 @@ fn opens_tui(explicit_format: bool, metadata_or_quiet: bool) -> bool {
 /// `comparison` passes the arguments after `--` as the comparison to open;
 /// otherwise they are frontend flags such as `--settings`.
 fn launch_tui(args: &[OsString], comparison: bool) -> Result<i32> {
-    let entry = std::env::var_os("DIFFR_TUI_ENTRY")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tui/packages/hunk/src/main.tsx")
-        });
-    if !entry.is_file() {
-        return Err(
-            "Terminal frontend is unavailable; install the tui dependencies or use --format ndjson"
-                .into(),
-        );
-    }
-    let bun = std::env::var_os("DIFFR_BUN").unwrap_or_else(|| "bun".into());
-    let mut command = std::process::Command::new(bun);
-    command.arg("run").arg(entry);
+    let mut command = if let Some(entry) = std::env::var_os("DIFFR_TUI_ENTRY") {
+        let bun = std::env::var_os("DIFFR_BUN").unwrap_or_else(|| "bun".into());
+        let mut command = std::process::Command::new(bun);
+        command.arg("run").arg(entry);
+        command
+    } else {
+        let sibling = std::env::current_exe()?
+            .with_file_name(format!("diffr-tui{}", std::env::consts::EXE_SUFFIX));
+        std::process::Command::new(if sibling.is_file() {
+            sibling
+        } else {
+            PathBuf::from("diffr-tui")
+        })
+    };
     if comparison {
         command
             .arg("--diffr")
@@ -571,7 +571,7 @@ fn launch_tui(args: &[OsString], comparison: bool) -> Result<i32> {
             .args(&args[1..]);
     }
     let status = command.status()
-        .map_err(|error| format!("Could not launch terminal frontend: {error}. Install Bun and run bun install in tui/, or use --format ndjson."))?;
+        .map_err(|error| format!("Could not launch terminal frontend: {error}. Run cargo xtask install-tui from the checkout to install the frontend, or use --format ndjson. For source development, set DIFFR_TUI_ENTRY and ensure Bun is available."))?;
     Ok(status.code().unwrap_or(2))
 }
 

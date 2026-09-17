@@ -45,15 +45,17 @@ When you run `diffr ${commit_range_exp}`, the following happens:
 
 ### Plugin API
 
-Plugins shape how diffr presents a changed file: their tree-sitter queries
-define and tag folds, and their Rust or WASM code groups, collapses, and
-labels those regions. For example, a plugin can fold a function's comments
-and body together, or show a pseudocode summary as its collapsed label.
-Bundled plugins run natively; external plugins run as WASM components using
-the same contract.
+`diffr` has a powerful, wasm-based plugin API which customizes how it presents changed files.
+
+For example, the following are all implemented as plugins:
+
+- Context Folding: showing relevant context, like a function signature + closing brace (if applicable)
+- Algorithm Summarization: using an LLM to summarize long algorithms into pseudocode
+- Comment collapsing: collapsing long LLM comments + function bodies & expanding both at once
+- Collapsing tests by default
 
 The [Rust SDK's `Plugin` trait](crates/diffr-plugin-sdk/src/lib.rs) exposes
-four methods (default implementation omitted here):
+four important methods:
 
 ```rust
 // rust bindings of underlying WASM plugin API

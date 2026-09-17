@@ -3,9 +3,7 @@
 //!
 //! It needs an API key: `new` fails without one, naming how to set it or
 //! turn the plugin off, which is why the bundled configuration ships it off.
-//! The plugin holds its HTTP client and the runtime every request runs on,
-//! and at most `max_concurrency` requests are in flight at once across
-//! files.
+//! Requests use WASI HTTP. The host calls one file at a time per instance.
 use diffr_plugin_sdk::anyhow::{self, anyhow, Context as _};
 use diffr_plugin_sdk::{
     docstring_of, export, has_tag, is_fold, line_count, one_sided, walk, Draft, FileEntry, Move,
@@ -15,11 +13,6 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::time::Duration;
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::runtime::Runtime;
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::sync::Semaphore;
-#[cfg(target_arch = "wasm32")]
 mod http;
 
 /// The plugin's name, and the tags its queries set: a function body, and a
@@ -40,6 +33,7 @@ pub struct Options {
     pub api_key: Option<String>,
     pub endpoint: Option<String>,
     pub request_timeout_ms: u64,
+    /// Accepted for compatibility with existing configs; WASM calls are serial.
     pub max_concurrency: usize,
     pub retries: u32,
     /// The system instruction sent with every request.
@@ -54,18 +48,11 @@ pub enum Provider {
 
 const DEFAULT_ENDPOINT: &str = "https://generativelanguage.googleapis.com";
 
-/// The summarizer: its options, its API key and endpoint, its HTTP client,
-/// the runtime its requests run on, and the requests in flight across files.
+/// The summarizer's options, API key and endpoint.
 pub struct Summarize {
     options: Options,
     api_key: String,
     endpoint: String,
-    #[cfg(not(target_arch = "wasm32"))]
-    client: reqwest::Client,
-    #[cfg(not(target_arch = "wasm32"))]
-    runtime: Runtime,
-    #[cfg(not(target_arch = "wasm32"))]
-    limit: Semaphore,
 }
 
 /// One fold to summarize: its region id, 1-based inclusive line range, and
@@ -163,58 +150,6 @@ impl Summarize {
         });
         let url = self.url();
         let failed = |message: String| anyhow!("{}: {message}", self.options.model);
-        #[cfg(not(target_arch = "wasm32"))]
-        let text = self.runtime.block_on(async {
-            let _permit = self
-                .limit
-                .acquire()
-                .await
-                .expect("semaphore is never closed");
-            let mut attempt = 0;
-            loop {
-                let response = self
-                    .client
-                    .post(&url)
-                    .header("x-goog-api-key", &self.api_key)
-                    .json(&body)
-                    .send()
-                    .await;
-                let retry = match response {
-                    Ok(response) if response.status().is_success() => {
-                        return response
-                            .json::<serde_json::Value>()
-                            .await
-                            .map_err(|error| failed(error.to_string()));
-                    }
-                    Ok(response)
-                        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
-                            || response.status().is_server_error() =>
-                    {
-                        format!("HTTP {}", response.status())
-                    }
-                    Ok(response) => {
-                        let status = response.status();
-                        let detail = response.text().await.unwrap_or_default();
-                        return Err(failed(format!(
-                            "HTTP {status} {}",
-                            detail.chars().take(200).collect::<String>()
-                        )));
-                    }
-                    Err(error)
-                        if error.is_timeout() || error.is_connect() || error.is_request() =>
-                    {
-                        error.to_string()
-                    }
-                    Err(error) => return Err(failed(error.to_string())),
-                };
-                if attempt >= self.options.retries {
-                    return Err(failed(format!("{retry} after {} attempts", attempt + 1)));
-                }
-                attempt += 1;
-                tokio::time::sleep(Duration::from_millis(250 * (1 << attempt.min(6)))).await;
-            }
-        })?;
-        #[cfg(target_arch = "wasm32")]
         let text: serde_json::Value = {
             let mut attempt = 0;
             loop {
@@ -278,22 +213,11 @@ impl Summarize {
     }
 }
 
-/// New function bodies on the after side of at least `min_lines` lines:
-/// function folds with no line inside them paired with the before side (see
-/// `one_sided`), so a body that only moved, or a file diffed by line whose
-/// bodies still align, is not new. Only the outermost qualifying body is
-/// taken, never one nested inside it; test bodies and folds that already
-/// start collapsed are skipped. Each is its id, its 1-based inclusive line
-/// range, and its docstring's id. Selection runs before this plugin links
-/// any docstring, so a docstring matched across sides never makes the new
-/// body under it look paired.
-pub fn select(sides: &Pairing<Source>, min_lines: usize) -> Vec<(u32, u32, u32, Option<u32>)> {
-    select_with_tests(sides, min_lines, None)
-}
-
-/// Include right-side tests regardless of newness or initial collapsed state.
-/// Descend through suites/modules so each test gets its own summary.
-pub fn select_with_tests(
+/// Select new right-side function bodies and, when a threshold is supplied,
+/// right-side tests regardless of newness or initial collapsed state. Descend
+/// through suites/modules so each test gets its own summary. Only the outermost
+/// eligible body is selected; docstrings are linked after selection.
+pub fn select(
     sides: &Pairing<Source>,
     min_lines: usize,
     test_min_lines: Option<usize>,
@@ -433,28 +357,12 @@ impl Plugin for Summarize {
 
     fn new(options: Options) -> anyhow::Result<Self> {
         let api_key = resolve_key(&options)?;
-        #[cfg(not(target_arch = "wasm32"))]
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_millis(options.request_timeout_ms))
-            .build()?;
-        #[cfg(not(target_arch = "wasm32"))]
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .thread_name("diffr-summarizer")
-            .enable_all()
-            .build()?;
         Ok(Self {
             api_key,
             endpoint: options
                 .endpoint
                 .clone()
                 .unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned()),
-            #[cfg(not(target_arch = "wasm32"))]
-            client,
-            #[cfg(not(target_arch = "wasm32"))]
-            runtime,
-            #[cfg(not(target_arch = "wasm32"))]
-            limit: Semaphore::new(options.max_concurrency),
             options,
         })
     }
@@ -504,7 +412,7 @@ impl Plugin for Summarize {
     }
 
     fn mutate(&self, file: &FileEntry, sides: &Pairing<Source>) -> anyhow::Result<Vec<Move>> {
-        let selected = select_with_tests(
+        let selected = select(
             sides,
             self.options.min_lines,
             self.options.tests.then_some(self.options.test_min_lines),

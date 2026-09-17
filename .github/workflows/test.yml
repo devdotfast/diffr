@@ -62,7 +62,7 @@ jobs:
           targets: wasm32-wasip2
       # Component loading is host behaviour, so it is tested once, natively,
       # rather than on every target the matrix above cross-compiles for.
-      - run: cargo test --features wasm-plugin-tests --test wasm
+      - run: cargo xtask test-plugins
 
   test_mime_db:
     name: Test with MIME database

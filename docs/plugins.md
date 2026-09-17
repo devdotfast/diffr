@@ -270,8 +270,11 @@ cp target/wasm32-wasip2/release/hide_all.wasm plugin.wasm
 ```
 
 `cargo xtask build-plugins` builds every plugin crate in this repository
-that runs as a component into its folder's `plugin.wasm` (the outputs are not
-committed). diffr compiles each component once per run, with wasmtime's
+that runs as a component into its folder's `plugin.wasm`. The bundled
+summarizer's component is committed because normal builds embed it without
+requiring a WASM toolchain; rebuild and commit it whenever its source, manifest,
+queries or SDK changes. Other plugin build outputs are not committed.
+diffr compiles each component once per run, with wasmtime's
 compilation cache on disk, so an unchanged component is not recompiled on the
 next run.
 
@@ -298,10 +301,11 @@ next run.
   path = "/path/to/diffr/plugins/deleted-bodies"
   ```
 
-- `plugins/summarize`: a network-backed component example. Its WASM transport
+- `plugins/summarize`: a network-backed component example that runs as WASM
+  even when bundled. Its transport
   uses `wasi:http/outgoing-handler` for HTTP/HTTPS, including request headers,
-  streaming bodies and timeouts; its native transport uses reqwest. Build it
-  with `cargo xtask build-plugins`, then load it without rebuilding diffr:
+  streaming bodies and timeouts. Build it with `cargo xtask build-plugins`,
+  then load it without rebuilding diffr:
 
   ```toml
   [plugins]
@@ -315,9 +319,9 @@ next run.
 
   `plugins/summarize/src/http.rs` is a complete outgoing-request example for
   plugin authors. The host provides TLS; components do not need to embed a
-  TLS implementation. WASM instances process files serially; `max_concurrency`
-  controls only native requests. WASI timeouts apply to connection, first-byte
-  and between-byte waits; the native client applies a whole-request timeout.
+  TLS implementation. WASM instances process files serially; the legacy
+  `max_concurrency` option is accepted but has no effect. Timeouts apply to
+  connection, first-byte and between-byte waits.
   `cargo test --features wasm-plugin-tests --bin diffr external_component_summarizes_over_http`
   checks the external component against a local model endpoint, including retries.
 

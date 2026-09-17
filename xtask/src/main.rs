@@ -198,6 +198,8 @@ fn main() -> Result<()> {
                     "--locked",
                     "--features",
                     "wasm-plugin-tests",
+                    "--bin",
+                    "diffr",
                     "--test",
                     "wasm",
                 ])

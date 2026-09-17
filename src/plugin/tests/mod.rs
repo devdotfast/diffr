@@ -150,7 +150,16 @@ pub(crate) fn bundled(name: &str, overrides: serde_json::Value) -> Pipeline {
             name,
             serde_json::Value::Object(options),
             &|host, options| {
-                native::registered(native::lookup(name)?.expect("native code"), host, options)
+                if let Some(bytes) = builtin::component(name) {
+                    let engine = super::wasm::engine()?;
+                    super::wasm::WasmPlugin::load(
+                        &engine,
+                        &super::config::ComponentSource::Bundled(bytes),
+                    )?
+                    .create(host, options)
+                } else {
+                    native::registered(native::lookup(name)?.expect("native code"), host, options)
+                }
             },
         )
         .unwrap();

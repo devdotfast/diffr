@@ -339,3 +339,18 @@ dependencies, rather than maintaining a second file list. A dependency marked
 `native = true` contributes its registration; otherwise its prebuilt
 `plugin.wasm` is embedded alongside its manifest. The default configuration
 chooses which bundled plugins run; discovering an asset does not enable it.
+
+### Test summaries and folding order
+
+Enable `summarize` to get pseudocode for new functions and right-side test
+bodies. `tests = false` disables test summaries independently; `test_min_lines`
+(default 20) controls their size threshold. Modified and unchanged tests in a
+diffed file qualify too; deleted tests do not. A summary must fit in half the
+body's nonblank lines or the ordinary test fold remains.
+
+The default order runs `summarize` before `test-bodies`, then `group`.
+`test-bodies` preserves existing labels and still collapses modules and bodies.
+Opening a module or aggregate fold reveals each test's pseudocode; opening an
+individual body reveals its source. JS/TS `describe` suites remain containers,
+with summaries on their individual `it`/`test` callbacks. An explicit custom
+`plugins.order` is respected; update it to this order to match the defaults.

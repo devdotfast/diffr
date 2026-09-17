@@ -438,3 +438,82 @@ fn external_component_summarizes_over_http() {
     assert_eq!(fold_label(&trees(&sides)), "call a, b, c");
     assert_eq!(server.join().unwrap().len(), 2);
 }
+
+#[test]
+fn tests_are_selected_when_added_modified_unchanged_or_already_collapsed() {
+    use diffr_plugin_summarize::select_with_tests;
+    for (path, before, after) in [
+        (
+            "a.py",
+            "def test_it():\n    setup()\n    act()\n    check()\n",
+            "def test_it():\n    setup()\n    act()\n    check_new()\n",
+        ),
+        (
+            "a.rs",
+            "#[test]\nfn it_works() {\n    setup();\n    act();\n    check();\n}\n",
+            "#[test]\nfn it_works() {\n    setup();\n    act();\n    check_new();\n}\n",
+        ),
+        (
+            "a.go",
+            "package a\nfunc TestIt(t *testing.T) {\n    setup()\n    act()\n    check()\n}\n",
+            "package a\nfunc TestIt(t *testing.T) {\n    setup()\n    act()\n    checkNew()\n}\n",
+        ),
+        (
+            "a.ts",
+            "test('it', () => {\n    setup();\n    act();\n    check();\n});\n",
+            "test('it', () => {\n    setup();\n    act();\n    checkNew();\n});\n",
+        ),
+    ] {
+        for old in ["", before, after] {
+            // Entirely identical files bypass parsing. Keep a change outside
+            // the test to exercise an unchanged body in a diffed file.
+            let comment = if path.ends_with(".py") { "#" } else { "//" };
+            let after = format!("{after}\n{comment} changed elsewhere\n");
+            let (file, mut sides) = project(path, old, &after);
+            assert_eq!(
+                select_with_tests(&trees(&sides), 3, Some(3)).len(),
+                1,
+                "{path}: {old}"
+            );
+            assert!(select_with_tests(&trees(&sides), 3, None).is_empty());
+            assert!(select_with_tests(&trees(&sides), 3, Some(30)).is_empty());
+            run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
+            assert_eq!(select_with_tests(&trees(&sides), 3, Some(3)).len(), 1);
+        }
+    }
+}
+
+#[test]
+fn suites_select_individual_tests_and_preserve_nested_summary_folds() {
+    use diffr_plugin_summarize::select_with_tests;
+    for (path, after, outer_tag) in [
+        ("a.rs", "#[cfg(test)]\nmod tests {\n    #[test]\n    fn one() {\n        setup();\n        act();\n        check();\n    }\n    #[test]\n    fn two() {\n        setup();\n        act();\n        check();\n    }\n}\n", "test-bodies:module"),
+        ("a.ts", "describe('suite', () => {\n    it('one', () => {\n        setup();\n        act();\n        check();\n    });\n    test('two', () => {\n        setup();\n        act();\n        check();\n    });\n});\n", "test-bodies:test"),
+    ] {
+        let (file, mut sides) = project(path, "", after);
+        let selected = select_with_tests(&trees(&sides), 3, Some(3));
+        assert_eq!(selected.len(), 2, "{path}: {selected:?}");
+        let (endpoint, server) = serve(vec![(200, gemini_answer(&[(selected[0].0, "setup; act; check one"), (selected[1].0, "setup; act; check two")]))]);
+        summarizer_with(json!({"api_key": "test", "endpoint": endpoint, "test_min_lines": 3})).run(&file, &mut sides).unwrap();
+        run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
+        server.join().unwrap();
+        run("group", json!({}), &file, &mut sides);
+        let sides = trees(&sides);
+        let mut found = 0;
+        let mut outer_state = None;
+        walk(&rhs(&sides).regions, &mut |region| {
+            if has_tag(region, outer_tag) && !selected.iter().any(|s| s.0 == region.id) {
+                assert!(region.visibility.collapsed);
+                outer_state = Some(region.fold_state_id);
+            }
+            if selected.iter().any(|s| s.0 == region.id) {
+                assert!(region.visibility.collapsed);
+                assert!(region.visibility.label.starts_with("setup; act; check"));
+                assert_ne!(Some(region.fold_state_id), outer_state);
+                found += 1;
+            }
+        });
+        assert!(outer_state.is_some());
+        assert_eq!(found, 2);
+    }
+}

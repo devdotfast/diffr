@@ -84,18 +84,33 @@ impl Plugin for TestBodies {
         // Every fold has its own id, so each side's fold is its own target
         // and takes its own label. A test body's docstring, when it has one,
         // is linked after it collapses.
-        let mut labels: BTreeMap<u32, (&str, Option<u32>)> = BTreeMap::new();
+        let mut labels: BTreeMap<u32, (String, Option<u32>)> = BTreeMap::new();
         for source in sides.sides() {
             walk(&source.regions, &mut |region| {
                 if !is_fold(region) || line_count(region) < options.min_lines {
                     return;
                 }
                 if has_tag(region, MODULE) {
-                    labels.insert(region.id, ("test module", None));
+                    labels.insert(
+                        region.id,
+                        (
+                            if region.visibility.label.is_empty() {
+                                "test module".to_owned()
+                            } else {
+                                region.visibility.label.clone()
+                            },
+                            None,
+                        ),
+                    );
                 } else if has_tag(region, TEST) {
-                    labels
-                        .entry(region.id)
-                        .or_insert(("test body", docstring_of(source, region, PLUGIN)));
+                    labels.entry(region.id).or_insert((
+                        if region.visibility.label.is_empty() {
+                            "test body".to_owned()
+                        } else {
+                            region.visibility.label.clone()
+                        },
+                        docstring_of(source, region, PLUGIN),
+                    ));
                 }
             });
         }

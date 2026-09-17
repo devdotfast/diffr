@@ -70,7 +70,7 @@ name = "default-dark"      # a bundled terminal theme
 path = "/path/to/theme.toml"  # or a Helix-style theme file
 
 [plugins]                  # see "Plugins" below
-order = ["bundled.context", "bundled.hide-files", "bundled.deleted-bodies", "bundled.test-bodies", "bundled.removed-runs", "bundled.summarize", "bundled.group"]
+order = ["bundled.context", "bundled.hide-files", "bundled.deleted-bodies", "bundled.summarize", "bundled.test-bodies", "bundled.removed-runs", "bundled.group"]
 ```
 
 When a file exceeds a `[diff]` limit it falls back to a line diff: the file's
@@ -92,7 +92,7 @@ produce on the wire.
 
 ```toml
 [plugins]
-order = ["bundled.context", "bundled.hide-files", "bundled.deleted-bodies", "bundled.test-bodies", "bundled.removed-runs", "bundled.summarize", "bundled.group"]
+order = ["bundled.context", "bundled.hide-files", "bundled.deleted-bodies", "bundled.summarize", "bundled.test-bodies", "bundled.removed-runs", "bundled.group"]
 
 [plugins.bundled.context]                           # unchanged lines far from any change collapse
 enabled = true
@@ -115,11 +115,13 @@ min_lines = 3
 enabled = true
 min_lines = 5
 
-[plugins.bundled.summarize]                         # pseudocode for large new function bodies
+[plugins.bundled.summarize]                         # pseudocode for large new function bodies and right-side tests
 enabled = false            # off by default: it needs an API key
 provider = "gemini"
 model = "gemini-3.8-flash"
 min_lines = 20
+tests = true              # include right-side tests even when not newly added
+test_min_lines = 20
 api_key = "…"              # or GEMINI_API_KEY / GOOGLE_API_KEY
 endpoint = "https://…"     # optional base URL override
 request_timeout_ms = 60000
@@ -156,7 +158,7 @@ key.
 
 ```toml
 [plugins]
-order = ["bundled.context", "bundled.hide-files", "bundled.deleted-bodies", "bundled.test-bodies", "bundled.removed-runs", "bundled.summarize", "bundled.group", "external.fixtures"]
+order = ["bundled.context", "bundled.hide-files", "bundled.deleted-bodies", "bundled.summarize", "bundled.test-bodies", "bundled.removed-runs", "bundled.group", "external.fixtures"]
 
 [plugins.external.fixtures]
 path = "plugins/fixtures"

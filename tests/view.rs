@@ -226,3 +226,55 @@ fn syntax_spans_come_only_with_the_flag() {
         "{syntax:?}"
     );
 }
+
+#[test]
+fn git_binary_files_stream_as_diff_records_with_side_sizes() {
+    let fixture = Fixture::new();
+    fixture.write("keep.txt", "unchanged\n");
+    let empty = fixture.commit();
+    fixture.write("plugin.wasm", "\0asm\x01\0\0\0");
+    let added = fixture.commit();
+    fixture.write("plugin.wasm", "\0asm\x01\0\0\0extra");
+    let modified = fixture.commit();
+    fixture.remove("plugin.wasm");
+    let deleted = fixture.commit();
+    for (base, head, expected) in [
+        (
+            &empty,
+            &added,
+            serde_json::json!({"type": "binary", "rhs": {"size": 8}}),
+        ),
+        (
+            &added,
+            &modified,
+            serde_json::json!({"type": "binary", "lhs": {"size": 8}, "rhs": {"size": 13}}),
+        ),
+        (
+            &modified,
+            &deleted,
+            serde_json::json!({"type": "binary", "lhs": {"size": 13}}),
+        ),
+    ] {
+        let output = fixture.run(base, head);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let events = records(&output);
+        assert_eq!(events[1]["diff"], expected);
+        assert!(events[1].get("error").is_none());
+        assert_eq!(events.last().unwrap()["succeeded"], 1);
+        assert_eq!(events.last().unwrap()["failed"], 0);
+    }
+    // The working-tree source uses the same binary path as a committed blob.
+    fixture.write("plugin.wasm", "\0asm");
+    let mut index = fixture.repo.index().unwrap();
+    index.add_path(std::path::Path::new("plugin.wasm")).unwrap();
+    index.write().unwrap();
+    let events = records(&fixture.diffr(&[&added, "--format", "ndjson"]));
+    assert_eq!(
+        events[1]["diff"],
+        serde_json::json!({"type": "binary", "lhs": {"size": 8}, "rhs": {"size": 4}})
+    );
+}

@@ -3,7 +3,7 @@ use crate::config::Params;
 use crate::pairing::Pairing;
 use crate::plugin::Pipeline;
 use crate::protocol;
-use crate::summary::DiffResult;
+use crate::summary::{DiffResult, FileContent, FileFormat};
 use crate::tags::{self, Attributes, Prefix, PREFIX_BYTES};
 use anyhow::Context as _;
 use git2::{Delta, Diff, DiffFindOptions, DiffOptions, Oid, Repository};
@@ -207,7 +207,6 @@ impl FileChange {
 pub(crate) enum FileError {
     UnsupportedFileType,
     ReadFailed,
-    Binary,
     NotUtf8,
     Unmerged,
 }
@@ -217,7 +216,6 @@ impl FileError {
         match self {
             Self::UnsupportedFileType => "unsupported_file_type",
             Self::ReadFailed => "read_failed",
-            Self::Binary => "binary",
             Self::NotUtf8 => "not_utf8",
             Self::Unmerged => "unmerged",
         }
@@ -231,7 +229,6 @@ impl fmt::Display for FileError {
                 "structural diffs currently require regular text files (not symlinks or submodules)"
             }
             Self::ReadFailed => "could not read the source",
-            Self::Binary => "structural diffs currently support text files only",
             Self::NotUtf8 => "the source is not valid UTF-8",
             Self::Unmerged => {
                 "unmerged index entry: resolve the conflict before requesting a structural diff"
@@ -306,7 +303,7 @@ impl Source {
 
     /// The start of the source for the content rules, or `None` when they
     /// cannot apply: not a regular file, binary, or not UTF-8. Loading the
-    /// whole source reports those.
+    /// whole source handles those cases.
     fn prefix(&self, repo: &Repository) -> anyhow::Result<Option<(Vec<u8>, bool)>> {
         let Some(mut bytes) = self.head(repo, PREFIX_BYTES + 1)? else {
             return Ok(None);
@@ -346,9 +343,9 @@ impl Source {
         }
     }
 
-    fn read(&self, repo: &Repository) -> anyhow::Result<String> {
+    fn read(&self, repo: &Repository) -> anyhow::Result<Vec<u8>> {
         let mode = match self {
-            Self::Absent => return Ok(String::new()),
+            Self::Absent => return Ok(Vec::new()),
             Self::Blob { mode, .. } | Self::WorkingFile { mode, .. } => mode,
         };
         if !matches!(mode, git2::FileMode::Blob | git2::FileMode::BlobExecutable) {
@@ -363,10 +360,7 @@ impl Source {
             Self::WorkingFile { path, .. } => std::fs::read(path).context(FileError::ReadFailed)?,
             Self::Absent => unreachable!(),
         };
-        if bytes.contains(&0) {
-            return Err(FileError::Binary.into());
-        }
-        String::from_utf8(bytes).context(FileError::NotUtf8)
+        Ok(bytes)
     }
 }
 
@@ -555,8 +549,8 @@ impl DiffSession {
 /// Sources read on the session thread; diffing needs no repository access.
 pub(crate) struct LoadedFile {
     pub(crate) file: FileChange,
-    before: String,
-    after: String,
+    before: Vec<u8>,
+    after: Vec<u8>,
     pub(crate) params: Arc<Params>,
     diff_options: crate::options::DiffOptions,
 }
@@ -568,14 +562,29 @@ impl LoadedFile {
 
     /// A fold query conflict fails this file alone.
     pub(crate) fn diff(&self) -> anyhow::Result<DiffResult> {
+        // Preserve binary files as successful, size-only records. Rejecting
+        // them while loading bypasses the protocol and TUI's binary support.
+        if self.before.contains(&0) || self.after.contains(&0) {
+            return Ok(DiffResult {
+                file_format: FileFormat::Binary,
+                lhs_src: FileContent::Binary,
+                rhs_src: FileContent::Binary,
+                lhs_positions: vec![],
+                rhs_positions: vec![],
+                lhs_folds: vec![],
+                rhs_folds: vec![],
+            });
+        }
+        let before = std::str::from_utf8(&self.before).context(FileError::NotUtf8)?;
+        let after = std::str::from_utf8(&self.after).context(FileError::NotUtf8)?;
         let options = crate::options::DiffOptions {
             generated: self.file.tags.iter().any(|tag| tag == tags::GENERATED),
             ..self.diff_options.clone()
         };
         Ok(DiffResult::from_sources_with_options(
             self.file.path(),
-            &self.before,
-            &self.after,
+            before,
+            after,
             &self.params,
             &options,
         )?)

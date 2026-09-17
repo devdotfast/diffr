@@ -59,7 +59,7 @@ pub(crate) fn run() -> Result<i32> {
         .arg(flag("null").short('z'))
         .arg(flag("no-renames"))
         .arg(flag("find-renames").short('M').conflicts_with("no-renames"))
-        .arg(Arg::new("unified").short('U').long("unified").value_parser(clap::value_parser!(u32)).help("Unchanged lines kept around each change; defaults to plugins.context.lines"))
+        .arg(Arg::new("unified").short('U').long("unified").value_parser(clap::value_parser!(u32)).help("Unchanged lines kept around each change; defaults to plugins.bundled.context.lines"))
         .arg(Arg::new("format").long("format").value_parser(["ndjson"]).help("Write the event stream to stdout instead of opening the terminal UI"))
         .arg(flag("syntax").help("Include every token's tree-sitter capture name in --format ndjson output"))
         .arg(Arg::new("width").long("width").value_parser(clap::value_parser!(usize)).help("Columns for --stat; defaults to the terminal's width"))
@@ -476,15 +476,11 @@ fn apply_unified(args: &ArgMatches, config: &mut Config) {
     let Some(unified) = args.get_one::<u32>("unified") else {
         return;
     };
-    let lines = config
-        .plugins
-        .entries
-        .get_mut("context")
-        .expect("the context plugin always has an entry")
-        .options
-        .get_mut("lines")
-        .expect("plugins.context.lines has a default");
-    *lines = serde_json::Value::from(*unified);
+    if let Some(entry) = config.plugins.entries.get_mut("bundled.context") {
+        entry
+            .options
+            .insert("lines".into(), serde_json::Value::from(*unified));
+    }
 }
 
 /// The global file, or the `--config` file in its place.

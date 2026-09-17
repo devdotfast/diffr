@@ -33,7 +33,7 @@ event stream described in [streaming.md](streaming.md), diffing `--jobs N`
 files at once (default 16) and emitting each as it finishes; the terminal UI
 reads the same stream. `ndjson` is the only format.
 `-U N` sets the unchanged lines kept around each change, overriding
-`plugins.context.lines` (default 3). Matching limits and `--ignore-comments`
+`plugins.bundled.context.lines` (default 3). Matching limits and `--ignore-comments`
 remain configurable; `--width` sets the columns of `--stat`. See `--help`.
 
 Configuration comes from the global file, command-line flags and git

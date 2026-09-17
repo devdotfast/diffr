@@ -61,35 +61,27 @@ its entry says otherwise), `[options.<key>]` (each a JSON Schema with a
 with `include_str!`, and are returned by `queries()`; there is no `[queries]`
 manifest section. See [query sources and imports](config.md#queries).
 
-A plugin from disk is an entry with `path`, relative to the configuration
-file's directory (or absolute), and must be listed in `order`:
+An external plugin is explicitly selected in the user's config:
 
 ```toml
 [plugins]
-order = ["context", "hide-files", "deleted-bodies", "test-bodies", "removed-runs", "summarize", "group", "fixtures"]
+order = ["bundled.context", "external.fixtures", "bundled.group"]
 
-[plugins.fixtures]
-path = "plugins/fixtures"   # holds plugin.toml naming "fixtures"
-fail = false                # an option from its plugin.toml
+[plugins.external.fixtures]
+path = "plugins/fixtures"
+fail = false
 ```
 
-`enabled` and `path` are diffr's keys; every other key is an option,
-validated against the folder's `plugin.toml` and filled with its defaults,
-and passed to the plugin as one JSON object. The folder's `plugin.toml` must
-be named after the entry.
+The path is relative to the config file's directory, or absolute. The folder's
+manifest must name `fixtures`, and `plugin.wasm` must exist when the plugin
+is loaded. A missing component is an error even if a native plugin has the
+same name. Plugins keep their unqualified names and tag prefixes regardless
+of whether they are loaded through `bundled` or `external`.
 
-### Loading
-
-diffr reads every entry's folder the same way: a bundled plugin's embedded
-folder, or the folder `path` names. Then:
-
-- A folder holding `plugin.wasm` runs that component through wasmtime.
-- Any other folder runs the native code diffr registers under the plugin's
-  name: the bundled plugins, compiled in from the same crates that build
-  their components. A folder with neither is a setup error.
-
-So a bundled plugin's entry can set `path` to a folder holding a component,
-which then supplies queries and runs in the native plugin's place.
+Bundled plugins use their registered implementations; external plugins use
+the WASM interface. Config controls enabled state, options and order. An
+explicit order does not silently add other bundled plugins. Adding an
+external plugin never requires rebuilding diffr.
 
 ## The contract
 
@@ -302,7 +294,7 @@ next run.
   and run where that target is installed):
 
   ```toml
-  [plugins.deleted-bodies]
+  [plugins.bundled.deleted-bodies]
   path = "/path/to/diffr/plugins/deleted-bodies"
   ```
 

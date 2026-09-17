@@ -184,7 +184,7 @@ fn a_failing_plugin_aborts_the_run() {
     let fixture = Fixture::new();
     fixture.config_file(
         "config.toml",
-        "[plugins.summarize]\nenabled = true\napi_key = 'k'\nendpoint = 'http://127.0.0.1:1'\nretries = 0\nmin_lines = 1\n",
+        "[plugins.bundled.summarize]\nenabled = true\napi_key = 'k'\nendpoint = 'http://127.0.0.1:1'\nretries = 0\nmin_lines = 1\n",
     );
     fixture.write("keep.txt", "keep\n");
     let base = fixture.commit();

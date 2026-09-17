@@ -17,10 +17,11 @@ fn project_with(
     after: &str,
     options: DiffOptions,
 ) -> (FileChange, Pairing<protocol::Source>) {
-    let params = Config::from_toml("[plugins.summarize]\nenabled = true\napi_key = 'test'\n")
-        .unwrap()
-        .compile()
-        .unwrap();
+    let params =
+        Config::from_toml("[plugins.bundled.summarize]\nenabled = true\napi_key = 'test'\n")
+            .unwrap()
+            .compile()
+            .unwrap();
     project_compiled(path, before, after, &params, options)
 }
 

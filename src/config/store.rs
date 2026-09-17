@@ -15,16 +15,16 @@ pub(crate) fn show(config: &Config, reveal: bool) -> serde_json::Value {
 /// `<redacted>` unless `reveal` is set.
 pub(crate) fn redacted(config: &Config, reveal: bool) -> Config {
     let mut shown = config.clone();
-    let key = shown
-        .plugins
-        .entries
-        .get_mut("summarize")
-        .expect("the summarize plugin always has an entry")
-        .options
-        .get_mut("api_key");
-    if let Some(key) = key.filter(|key| !reveal && key.as_str().is_some_and(|key| !key.is_empty()))
-    {
-        *key = serde_json::Value::String("<redacted>".to_owned());
+    if !reveal {
+        for entry in shown.plugins.entries.values_mut() {
+            if let Some(key) = entry
+                .options
+                .get_mut("api_key")
+                .filter(|key| key.as_str().is_some_and(|key| !key.is_empty()))
+            {
+                *key = Value::String("<redacted>".into());
+            }
+        }
     }
     shown
 }
@@ -64,7 +64,7 @@ pub(crate) fn set(path: &Path, key: &str, value: &str) -> Result<(), ConfigError
 /// (in `directory`) points it at; `path` is diffr's, and a string.
 fn setting_schema(key: &str, existing: &str, directory: &Path) -> Result<Value, ConfigError> {
     let unknown = || ConfigError(format!("{key}: unknown key"));
-    if let ["plugins", name, field] = key.split('.').collect::<Vec<_>>().as_slice() {
+    if let ["plugins", namespace, name, field] = key.split('.').collect::<Vec<_>>().as_slice() {
         if *name != "order" {
             if *field == PATH {
                 return Ok(json!({"type": "string"}));
@@ -73,7 +73,7 @@ fn setting_schema(key: &str, existing: &str, directory: &Path) -> Result<Value, 
             let manifest = &config
                 .plugins
                 .entries
-                .get(*name)
+                .get(&format!("{namespace}.{name}"))
                 .ok_or_else(unknown)?
                 .folder()
                 .manifest;
@@ -247,58 +247,61 @@ mod tests {
     fn plugin_keys_are_written_under_their_quoted_names() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        set(&path, "plugins.deleted-bodies.min_lines", "30").unwrap();
-        set(&path, "plugins.summarize.api_key", "secret").unwrap();
+        set(&path, "plugins.bundled.deleted-bodies.min_lines", "30").unwrap();
+        set(&path, "plugins.bundled.summarize.api_key", "secret").unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         let config = Config::from_toml(&text).unwrap();
         assert_eq!(
-            config.plugins.entries["deleted-bodies"].options["min_lines"],
+            config.plugins.entries["bundled.deleted-bodies"].options["min_lines"],
             30
         );
-        assert!(set(&path, "plugins.deleted-bodies.typo", "1").is_err());
-        assert!(set(&path, "plugins.deleted-bodies.min_lines", "-1").is_err());
+        assert!(set(&path, "plugins.bundled.deleted-bodies.typo", "1").is_err());
+        assert!(set(&path, "plugins.bundled.deleted-bodies.min_lines", "-1").is_err());
         assert!(set(&path, "plugins.order", "[\"group\"]").is_err());
         let error = |key: &str, value: &str| set(&path, key, value).unwrap_err().to_string();
         assert_eq!(
-            error("plugins.context.enabled", "yes"),
-            "plugins.context.enabled: expected true or false, got \"yes\""
+            error("plugins.bundled.context.enabled", "yes"),
+            "plugins.bundled.context.enabled: expected true or false, got \"yes\""
         );
         assert!(error("plugins.order", "context")
             .starts_with("plugins.order: expected a TOML array such as [\"a\", \"b\"]"));
         assert_eq!(
-            error("plugins.context.lines", "many"),
-            "plugins.context.lines: expected an integer, got \"many\""
+            error("plugins.bundled.context.lines", "many"),
+            "plugins.bundled.context.lines: expected an integer, got \"many\""
         );
         assert_eq!(
-            error("plugins.summarize.provider", "openai"),
-            "plugins.summarize.provider: expected one of \"gemini\", got \"openai\""
+            error("plugins.bundled.summarize.provider", "openai"),
+            "plugins.bundled.summarize.provider: expected one of \"gemini\", got \"openai\""
         );
         assert_eq!(
-            error("plugins.mine.enabled", "true"),
-            "plugins.mine.enabled: unknown key"
+            error("plugins.external.mine.enabled", "true"),
+            "plugins.external.mine.enabled: unknown key"
         );
-        set(&path, "plugins.context.enabled", "false").unwrap();
+        set(&path, "plugins.bundled.context.enabled", "false").unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert_eq!(
-            Config::from_toml(&text).unwrap().plugins.entries["context"].enabled,
+            Config::from_toml(&text).unwrap().plugins.entries["bundled.context"].enabled,
             Some(false)
         );
         let shown = show(&config, false);
-        assert_eq!(shown["plugins"]["summarize"]["api_key"], "<redacted>");
         assert_eq!(
-            show(&config, true)["plugins"]["summarize"]["api_key"],
+            shown["plugins"]["bundled"]["summarize"]["api_key"],
+            "<redacted>"
+        );
+        assert_eq!(
+            show(&config, true)["plugins"]["bundled"]["summarize"]["api_key"],
             "secret"
         );
         assert_eq!(
-            shown["plugins"]["deleted-bodies"],
+            shown["plugins"]["bundled"]["deleted-bodies"],
             serde_json::json!({"enabled": true, "min_lines": 30})
         );
-        assert!(shown["plugins"]["summarize"]["system_prompt"]
+        assert!(shown["plugins"]["bundled"]["summarize"]["system_prompt"]
             .as_str()
             .unwrap()
             .starts_with("For each listed fold"));
         let text = toml::to_string_pretty(&redacted(&config, false)).unwrap();
-        assert!(text.contains("[plugins.summarize]"), "{text}");
+        assert!(text.contains("[plugins.bundled.summarize]"), "{text}");
         assert!(text.contains("system_prompt = "), "{text}");
     }
 
@@ -313,28 +316,28 @@ mod tests {
         )
         .unwrap();
         let path = dir.path().join("config.toml");
-        let order = "order = ['context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'summarize', 'group', 'mine']";
+        let order = "order = ['bundled.context', 'bundled.hide-files', 'bundled.deleted-bodies', 'bundled.test-bodies', 'bundled.removed-runs', 'bundled.summarize', 'bundled.group', 'external.mine']";
         std::fs::write(
             &path,
-            format!("[plugins]\n{order}\n[plugins.mine]\npath = 'plugins/mine'\n"),
+            format!("[plugins]\n{order}\n[plugins.external.mine]\npath = 'plugins/mine'\n"),
         )
         .unwrap();
-        set(&path, "plugins.mine.depth", "3").unwrap();
-        set(&path, "plugins.mine.enabled", "false").unwrap();
-        set(&path, "plugins.mine.path", "plugins/mine").unwrap();
+        set(&path, "plugins.external.mine.depth", "3").unwrap();
+        set(&path, "plugins.external.mine.enabled", "false").unwrap();
+        set(&path, "plugins.external.mine.path", "plugins/mine").unwrap();
         let error = |key: &str, value: &str| set(&path, key, value).unwrap_err().to_string();
         assert_eq!(
-            error("plugins.mine.depth", "deep"),
-            "plugins.mine.depth: expected an integer, got \"deep\""
+            error("plugins.external.mine.depth", "deep"),
+            "plugins.external.mine.depth: expected an integer, got \"deep\""
         );
         assert_eq!(
-            error("plugins.mine.typo", "1"),
-            "plugins.mine.typo: unknown key"
+            error("plugins.external.mine.typo", "1"),
+            "plugins.external.mine.typo: unknown key"
         );
         let text = std::fs::read_to_string(&path).unwrap();
         let config = Config::from_toml_in(&text, dir.path()).unwrap();
-        assert_eq!(config.plugins.entries["mine"].options["depth"], 3);
-        assert_eq!(config.plugins.entries["mine"].enabled, Some(false));
+        assert_eq!(config.plugins.entries["external.mine"].options["depth"], 3);
+        assert_eq!(config.plugins.entries["external.mine"].enabled, Some(false));
     }
 
     #[test]

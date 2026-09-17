@@ -278,11 +278,15 @@ fn check_tags(query: &AnnotationQuery, order: &[String]) -> Result<(), ConfigErr
     for pattern in &query.patterns {
         for tag in &pattern.tags {
             let owned = tag.split_once(':').is_some_and(|(plugin, name)| {
-                !name.is_empty() && order.iter().any(|own| own == plugin)
+                !name.is_empty()
+                    && (crate::plugin::builtin::manifest(plugin).is_some()
+                        || order.iter().any(|own| {
+                            own.split_once('.').map_or(own.as_str(), |(_, name)| name) == plugin
+                        }))
             });
             if !owned {
                 return Err(ConfigError(format!(
-                    "{}: tag {tag:?} must be written <plugin>:<name> with a plugin from plugins.order",
+                    "{}: tag {tag:?} must be written <plugin>:<name> with a bundled or configured plugin",
                     query.sources[pattern.source]
                 )));
             }
@@ -481,7 +485,7 @@ fn with_queries(queries: &[(&str, &str)]) -> Params {
 /// over them.
 #[cfg(test)]
 pub(crate) fn body_params() -> Params {
-    Config::from_toml("[plugins.context]\nenabled = false\n[plugins.summarize]\nenabled = true\napi_key = 'test'\n")
+    Config::from_toml("[plugins.bundled.context]\nenabled = false\n[plugins.bundled.summarize]\nenabled = true\napi_key = 'test'\n")
         .expect("a valid configuration")
         .compile()
         .expect("the bundled queries compile")

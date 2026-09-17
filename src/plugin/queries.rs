@@ -280,7 +280,8 @@ mod tests {
 
     #[test]
     fn disabled_plugins_contribute_no_queries() {
-        let config = Config::from_toml("[plugins.deleted-bodies]\nenabled = false\n").unwrap();
+        let config =
+            Config::from_toml("[plugins.bundled.deleted-bodies]\nenabled = false\n").unwrap();
         let pipeline = Pipeline::from_config(&config.plugins, Path::new(".")).unwrap();
         let assembled = assemble(&pipeline.queries().unwrap()).unwrap();
         assert!(!assembled["rust"]

@@ -360,7 +360,7 @@ fn resolve_key(config: &Options) -> anyhow::Result<String> {
         }
     }
     anyhow::bail!(
-        "no API key: set plugins.summarize.api_key, or GEMINI_API_KEY or GOOGLE_API_KEY in the environment, or turn the summarizer off with plugins.summarize.enabled = false"
+        "no API key: set plugins.bundled.summarize.api_key, or GEMINI_API_KEY or GOOGLE_API_KEY in the environment, or turn the summarizer off with plugins.bundled.summarize.enabled = false"
     )
 }
 

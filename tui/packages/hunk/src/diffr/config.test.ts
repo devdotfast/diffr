@@ -10,7 +10,8 @@ export const schemaFixture = {
     plugins: {
       type: "object",
       properties: {
-        order: { type: "array", items: { type: "string" }, "x-settings": false, default: ["deleted-bodies", "hide-files", "summarize"] },
+        order: { type: "array", items: { type: "string" }, "x-settings": false, default: ["bundled.deleted-bodies", "bundled.hide-files", "bundled.summarize"] },
+        bundled: { type: "object", properties: {
         "deleted-bodies": {
           type: "object",
           title: "Collapsed code",
@@ -37,6 +38,7 @@ export const schemaFixture = {
             system_prompt: { type: "string", title: "System prompt", "x-group": "Summaries", "x-settings": false, description: "The system instruction.", default: "Summarize." },
           },
         },
+        } },
       },
     },
   },
@@ -46,21 +48,23 @@ export const schemaFixture = {
 };
 export const valuesFixture = {
   plugins: {
-    order: ["deleted-bodies", "hide-files", "summarize"],
+    order: ["bundled.deleted-bodies", "bundled.hide-files", "bundled.summarize"],
+    bundled: {
     "deleted-bodies": { min_lines: 12, enabled: true },
     "hide-files": { enabled: false, tags: ["test"] },
     summarize: { provider: "gemini", api_key: null, model: "gemini-2.5-flash", system_prompt: "Summarize." },
+    },
   },
 };
 test("schema flattens to dotted keys with descriptions, defaults, and current values", () => {
   const settings = flattenSchema(schemaFixture, valuesFixture);
   expect(settings.map((s) => [s.key, s.type, s.default, s.value])).toEqual([
-    ["plugins.deleted-bodies.min_lines", "integer", 12, 12],
-    ["plugins.deleted-bodies.enabled", "boolean", true, true],
-    ["plugins.hide-files.enabled", "boolean", true, false],
-    ["plugins.summarize.provider", "enum", "gemini", "gemini"],
-    ["plugins.summarize.api_key", "string", null, null],
-    ["plugins.summarize.model", "string", "gemini-2.5-flash", "gemini-2.5-flash"],
+    ["plugins.bundled.deleted-bodies.min_lines", "integer", 12, 12],
+    ["plugins.bundled.deleted-bodies.enabled", "boolean", true, true],
+    ["plugins.bundled.hide-files.enabled", "boolean", true, false],
+    ["plugins.bundled.summarize.provider", "enum", "gemini", "gemini"],
+    ["plugins.bundled.summarize.api_key", "string", null, null],
+    ["plugins.bundled.summarize.model", "string", "gemini-2.5-flash", "gemini-2.5-flash"],
   ]);
   expect(settings.map((s) => [s.title, s.group])).toEqual([
     ["Shortest body to collapse", "Collapsed code"],
@@ -75,28 +79,28 @@ test("schema flattens to dotted keys with descriptions, defaults, and current va
 });
 test("a setting without a title or group is a schema error", () => {
   const schema = structuredClone(schemaFixture);
-  delete (schema.properties.plugins.properties["deleted-bodies"].properties.min_lines as Record<string, unknown>).title;
-  expect(() => flattenSchema(schema, valuesFixture)).toThrow("plugins.deleted-bodies.min_lines");
+  delete (schema.properties.plugins.properties.bundled.properties["deleted-bodies"].properties.min_lines as Record<string, unknown>).title;
+  expect(() => flattenSchema(schema, valuesFixture)).toThrow("plugins.bundled.deleted-bodies.min_lines");
 });
 test("keys marked x-settings: false are left to the file; any other list or table is a schema error", () => {
   const keys = flattenSchema(schemaFixture, valuesFixture).map((s) => s.key);
   expect(keys.some((key) => key.includes("order") || key.includes("queries") || key.includes("tags"))).toBe(false);
   const schema = structuredClone(schemaFixture);
-  delete (schema.properties.plugins.properties["hide-files"].properties.tags as Record<string, unknown>)["x-settings"];
-  expect(() => flattenSchema(schema, valuesFixture)).toThrow("Setting plugins.hide-files.tags has unsupported type array");
+  delete (schema.properties.plugins.properties.bundled.properties["hide-files"].properties.tags as Record<string, unknown>)["x-settings"];
+  expect(() => flattenSchema(schema, valuesFixture)).toThrow("Setting plugins.bundled.hide-files.tags has unsupported type array");
 });
 test("fuzzy filtering narrows over title, key, group and description, keeping groups together", () => {
   const settings = flattenSchema(schemaFixture, valuesFixture);
-  expect(fuzzyScore("hfenabled", "plugins.hide-files.enabled")).not.toBeNull();
-  expect(fuzzyScore("xyz", "plugins.hide-files.enabled")).toBeNull();
+  expect(fuzzyScore("hfenabled", "plugins.bundled.hide-files.enabled")).not.toBeNull();
+  expect(fuzzyScore("xyz", "plugins.bundled.hide-files.enabled")).toBeNull();
   // An empty query keeps schema order, which is already grouped.
   expect(filterSettings(settings, "").map((s) => s.key)).toEqual(settings.map((s) => s.key));
-  expect(filterSettings(settings, "hide test").map((s) => s.key)).toEqual(["plugins.hide-files.enabled"]);
-  expect(filterSettings(settings, "api")[0].key).toBe("plugins.summarize.api_key");
+  expect(filterSettings(settings, "hide test").map((s) => s.key)).toEqual(["plugins.bundled.hide-files.enabled"]);
+  expect(filterSettings(settings, "api")[0].key).toBe("plugins.bundled.summarize.api_key");
   // A description mention ("... or collapsed.") still finds the setting.
-  expect(filterSettings(settings, "shorter").map((s) => s.key)).toEqual(["plugins.deleted-bodies.min_lines"]);
+  expect(filterSettings(settings, "shorter").map((s) => s.key)).toEqual(["plugins.bundled.deleted-bodies.min_lines"]);
   // Matching a group name lists the group in schema order.
-  expect(filterSettings(settings, "summaries").map((s) => s.key)).toEqual(["plugins.summarize.provider", "plugins.summarize.api_key", "plugins.summarize.model"]);
+  expect(filterSettings(settings, "summaries").map((s) => s.key)).toEqual(["plugins.bundled.summarize.provider", "plugins.bundled.summarize.api_key", "plugins.bundled.summarize.model"]);
 });
 test("edited values are parsed in the setting's type and bad input is rejected", () => {
   const [minLines, collapse, , provider] = flattenSchema(schemaFixture, valuesFixture);

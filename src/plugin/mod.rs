@@ -133,7 +133,7 @@ impl Pipeline {
                     })?
                 }
                 None => {
-                    let create = native::lookup(name)?.ok_or_else(|| {
+                    let create = native::lookup(&folder.manifest.name)?.ok_or_else(|| {
                         anyhow!(
                             "plugins.{name}: the plugin folder has no {COMPONENT_FILE}, and diffr has no native plugin of that name"
                         )
@@ -150,9 +150,10 @@ impl Pipeline {
     /// Make the plugin `name` with `create` from `options` and add it to the
     /// end of the pipeline.
     fn push(&mut self, name: &str, options: Value, create: Create<'_>) -> anyhow::Result<()> {
-        let name: Arc<str> = name.into();
+        let reference = name;
+        let name: Arc<str> = name.split_once('.').map_or(name, |(_, name)| name).into();
         let runner = create(self.host(&name), &options.to_string())
-            .with_context(|| format!("plugins.{name}"))?;
+            .with_context(|| format!("plugins.{reference}"))?;
         self.plugins.push(Loaded { name, runner });
         Ok(())
     }

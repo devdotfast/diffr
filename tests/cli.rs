@@ -74,7 +74,7 @@ fn text_output_is_gone() {
 fn a_plugin_that_cannot_be_made_stops_diffr_before_any_record() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("config.toml");
-    std::fs::write(&config, "[plugins.summarize]\nenabled = true\n").unwrap();
+    std::fs::write(&config, "[plugins.bundled.summarize]\nenabled = true\n").unwrap();
     let mut cmd = get_base_command();
 
     cmd.arg("--config")
@@ -94,6 +94,6 @@ fn a_plugin_that_cannot_be_made_stops_diffr_before_any_record() {
         .code(2)
         .stdout(predicate::str::is_empty())
         .stderr(predicate::str::contains(
-            "plugins.summarize: no API key: set plugins.summarize.api_key",
+            "plugins.bundled.summarize: no API key: set plugins.bundled.summarize.api_key",
         ));
 }

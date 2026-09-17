@@ -419,7 +419,8 @@ fn a_move_that_cannot_be_carried_out_fails_naming_the_plugin() {
 
 #[test]
 fn a_plugin_that_cannot_be_made_is_a_setup_error() {
-    let config = Config::from_toml("[plugins.summarize]\nenabled = true\napi_key = ''\n").unwrap();
+    let config =
+        Config::from_toml("[plugins.bundled.summarize]\nenabled = true\napi_key = ''\n").unwrap();
     // Only meaningful when the environment carries no key.
     if std::env::var_os("GEMINI_API_KEY").is_some() || std::env::var_os("GOOGLE_API_KEY").is_some()
     {
@@ -430,7 +431,7 @@ fn a_plugin_that_cannot_be_made_is_a_setup_error() {
         .expect("a summarizer without a key cannot be made");
     assert_eq!(
         format!("{error:#}"),
-        "plugins.summarize: no API key: set plugins.summarize.api_key, or GEMINI_API_KEY or GOOGLE_API_KEY in the environment, or turn the summarizer off with plugins.summarize.enabled = false"
+        "plugins.bundled.summarize: no API key: set plugins.bundled.summarize.api_key, or GEMINI_API_KEY or GOOGLE_API_KEY in the environment, or turn the summarizer off with plugins.bundled.summarize.enabled = false"
     );
 }
 
@@ -444,4 +445,33 @@ fn options_that_do_not_deserialize_are_a_setup_error() {
         format!("{error:#}"),
         "plugins.bad: invalid options: unknown field `extra`, there are no fields at line 1 column 8"
     );
+}
+
+#[test]
+fn external_plugins_never_fall_back_to_a_native_registration() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("plugin.toml"),
+        "name = 'context'\ntitle = 'External context'\n",
+    )
+    .unwrap();
+    let config = Config::from_toml_in(
+        "[plugins]\norder = ['external.context']\n[plugins.external.context]\npath = '.'\n",
+        dir.path(),
+    )
+    .unwrap();
+    let error = Pipeline::from_config(&config.plugins, dir.path())
+        .err()
+        .unwrap();
+    let error = format!("{error:#}");
+    assert!(error.contains("plugin.wasm"), "{error}");
+    assert!(error.contains("plugins.external.context"), "{error}");
+}
+
+#[test]
+fn a_subset_of_bundled_plugins_can_use_shared_query_tags() {
+    Config::from_toml("[plugins]\norder = ['bundled.deleted-bodies']\n")
+        .unwrap()
+        .compile()
+        .unwrap();
 }

@@ -228,14 +228,14 @@ fn bundled_plugins_as_components_shape_files_exactly_as_natively() {
     );
     let head = fixture.commit("head\n");
 
-    let options = "[plugins.deleted-bodies]\nmin_lines = 3\n[plugins.test-bodies]\nmin_lines = 2\n";
+    let options = "[plugins.bundled.deleted-bodies]\nmin_lines = 3\n[plugins.bundled.test-bodies]\nmin_lines = 2\n";
     let native = fixture.config("native", options);
     let plugin = |name: &str| root().join("plugins").join(name).display().to_string();
     // Every bundled plugin that builds as a component; the summarizer is off.
     let wasm = fixture.config(
         "wasm",
         &format!(
-            "[plugins.context]\npath = {:?}\n[plugins.hide-files]\npath = {:?}\n[plugins.deleted-bodies]\npath = {:?}\nmin_lines = 3\n[plugins.test-bodies]\npath = {:?}\nmin_lines = 2\n[plugins.removed-runs]\npath = {:?}\n[plugins.group]\npath = {:?}\n",
+            "[plugins]\norder = ['external.context', 'external.hide-files', 'external.deleted-bodies', 'external.test-bodies', 'external.removed-runs', 'external.group']\n[plugins.external.context]\npath = {:?}\n[plugins.external.hide-files]\npath = {:?}\n[plugins.external.deleted-bodies]\npath = {:?}\nmin_lines = 3\n[plugins.external.test-bodies]\npath = {:?}\nmin_lines = 2\n[plugins.external.removed-runs]\npath = {:?}\n[plugins.external.group]\npath = {:?}\n",
             plugin("context"),
             plugin("hide-files"),
             plugin("deleted-bodies"),
@@ -284,7 +284,7 @@ fn fixtures_config(fixture: &Fixture, extra: &str) -> PathBuf {
     fs::write(
         &config,
         format!(
-            "[plugins]\norder = [\"context\", \"hide-files\", \"deleted-bodies\", \"test-bodies\", \"removed-runs\", \"summarize\", \"group\", \"fixtures\"]\n[plugins.fixtures]\npath = {:?}\n{extra}",
+            "[plugins]\norder = [\"bundled.context\", \"bundled.hide-files\", \"bundled.deleted-bodies\", \"bundled.test-bodies\", \"bundled.removed-runs\", \"bundled.summarize\", \"bundled.group\", \"external.fixtures\"]\n[plugins.external.fixtures]\npath = {:?}\n{extra}",
             relative.display().to_string()
         ),
     )

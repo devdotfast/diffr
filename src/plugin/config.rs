@@ -213,14 +213,78 @@ impl Manifest {
 
 /// `[plugins]`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(from = "PluginTables", into = "PluginTables")]
 pub(crate) struct PluginsConfig {
     /// The plugins in the order they run; each sees the region trees the
     /// ones before it left. Every entry is listed exactly once.
     pub(crate) order: Vec<String>,
     /// Every entry, by plugin name.
-    #[serde(flatten)]
     pub(crate) entries: BTreeMap<String, Entry>,
+}
+
+/// The on-disk namespaces. An explicit order makes the listed entries
+/// authoritative; a partial settings file without order inherits the defaults.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct PluginTables {
+    order: Option<Vec<String>>,
+    bundled: BTreeMap<String, Entry>,
+    external: BTreeMap<String, Entry>,
+}
+
+impl From<PluginTables> for PluginsConfig {
+    fn from(tables: PluginTables) -> Self {
+        let mut bundled = tables.bundled;
+        let order = tables.order.unwrap_or_else(|| {
+            for name in builtin::NAMES {
+                bundled.entry(name.into()).or_default();
+            }
+            builtin::NAMES
+                .iter()
+                .map(|name| format!("bundled.{name}"))
+                .collect()
+        });
+        for reference in &order {
+            if let Some(name) = reference.strip_prefix("bundled.") {
+                bundled.entry(name.into()).or_default();
+            }
+        }
+        let entries = bundled
+            .into_iter()
+            .map(|(name, entry)| (format!("bundled.{name}"), entry))
+            .chain(
+                tables
+                    .external
+                    .into_iter()
+                    .map(|(name, entry)| (format!("external.{name}"), entry)),
+            )
+            .collect();
+        Self { order, entries }
+    }
+}
+
+impl From<PluginsConfig> for PluginTables {
+    fn from(config: PluginsConfig) -> Self {
+        let mut tables = Self {
+            order: Some(config.order),
+            ..Self::default()
+        };
+        for (reference, entry) in config.entries {
+            let (source, name) = reference
+                .split_once('.')
+                .expect("resolved plugin reference");
+            match source {
+                "bundled" => {
+                    tables.bundled.insert(name.into(), entry);
+                }
+                "external" => {
+                    tables.external.insert(name.into(), entry);
+                }
+                _ => unreachable!("resolved plugin namespace"),
+            }
+        }
+        tables
+    }
 }
 
 /// One plugin's entry: diffr's keys, and the plugin's options.
@@ -273,7 +337,7 @@ impl Folder {
     pub(crate) fn component(&self) -> Option<PathBuf> {
         match &self.location {
             Location::Bundled => None,
-            Location::Disk(dir) => Some(dir.join(COMPONENT_FILE)).filter(|path| path.is_file()),
+            Location::Disk(dir) => Some(dir.join(COMPONENT_FILE)),
         }
     }
 
@@ -318,10 +382,7 @@ impl Entry {
 
 impl Default for PluginsConfig {
     fn default() -> Self {
-        let mut config = Self {
-            order: builtin::NAMES.map(str::to_owned).to_vec(),
-            entries: BTreeMap::new(),
-        };
+        let mut config = Self::from(PluginTables::default());
         config
             .resolve(Path::new(""))
             .expect("the bundled plugins' defaults are valid");
@@ -336,28 +397,36 @@ impl PluginsConfig {
     /// bundled plugin the file did not write, and check that `order` names
     /// every entry exactly once.
     pub(crate) fn resolve(&mut self, base: &Path) -> Result<(), ConfigError> {
-        for name in builtin::NAMES {
-            self.entries.entry(name.to_owned()).or_default();
-        }
-        for (name, entry) in &mut self.entries {
-            let folder = match &entry.path {
-                Some(path) => Folder::load(name, &base.join(path))
-                    .map_err(|error| ConfigError(format!("plugins.{name}: {error}")))?,
-                None => Folder::bundled(name).ok_or_else(|| {
-                    ConfigError(format!(
-                        "plugins.{name}: no bundled plugin has this name, and the entry has no path"
-                    ))
-                })?,
+        for (reference, entry) in &mut self.entries {
+            let (source, name) = reference
+                .split_once('.')
+                .ok_or_else(|| ConfigError(format!("invalid plugin reference {reference:?}")))?;
+            let folder = match (source, &entry.path) {
+                ("external", Some(path)) => Folder::load(name, &base.join(path))
+                    .map_err(|error| ConfigError(format!("plugins.{reference}: {error}")))?,
+                ("external", None) => return Err(ConfigError(format!("plugins.{reference}: external plugins require path"))),
+                ("bundled", None) => Folder::bundled(name).ok_or_else(|| ConfigError(format!("plugins.{reference}: unknown bundled plugin")))?,
+                ("bundled", Some(_)) => return Err(ConfigError(format!("plugins.{reference}: bundled plugins cannot set path; use plugins.external.{name}"))),
+                _ => return Err(ConfigError(format!("unknown plugin namespace {source:?}"))),
             };
             let manifest = &folder.manifest;
             entry.enabled.get_or_insert(manifest.enabled_by_default());
             manifest
                 .validate(&entry.options)
-                .map_err(|error| ConfigError(format!("plugins.{name}: {error}")))?;
+                .map_err(|error| ConfigError(format!("plugins.{reference}: {error}")))?;
             for (key, default) in manifest.defaults() {
                 entry.options.entry(key).or_insert(default);
             }
             entry.folder = Some(folder);
+        }
+        let mut identities = BTreeSet::new();
+        for entry in self.entries.values().filter(|entry| entry.is_enabled()) {
+            let name = &entry.folder().manifest.name;
+            if !identities.insert(name) {
+                return Err(ConfigError(format!(
+                    "plugin {name:?} is enabled in both bundled and external namespaces"
+                )));
+            }
         }
         let mut seen = BTreeSet::new();
         for name in &self.order {
@@ -404,13 +473,19 @@ impl PluginsConfig {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "The plugins in the order they run; each sees the region trees the ones before it left. Every entry is listed exactly once.",
-                "default": builtin::NAMES,
+                "default": builtin::NAMES.iter().map(|name| format!("bundled.{name}")).collect::<Vec<_>>(),
                 "x-settings": false,
             }),
         );
-        for manifest in builtin::manifests() {
-            properties.insert(manifest.name.clone(), manifest.settings_schema());
-        }
+        let bundled: Map<String, Value> = builtin::manifests()
+            .iter()
+            .map(|manifest| (manifest.name.clone(), manifest.settings_schema()))
+            .collect();
+        properties.insert(
+            "bundled".into(),
+            json!({"type": "object", "properties": bundled}),
+        );
+        properties.insert("external".into(), json!({"type": "object", "x-settings": false, "additionalProperties": {"type": "object"}}));
         json!({
             "type": "object",
             "description": "The plugins that decide what starts collapsed, hidden, linked or grouped, and the fold queries they own.",
@@ -505,15 +580,18 @@ mod tests {
                 .unwrap_or_else(|| panic!("no setting {key}"))
         };
         assert_eq!(
-            group("plugins.deleted-bodies.enabled"),
+            group("plugins.bundled.deleted-bodies.enabled"),
             (
                 "Collapse deleted function bodies",
                 "Deleted function bodies"
             )
         );
-        assert_eq!(group("plugins.summarize.model"), ("Model", "Summaries"));
         assert_eq!(
-            group("plugins.summarize.provider"),
+            group("plugins.bundled.summarize.model"),
+            ("Model", "Summaries")
+        );
+        assert_eq!(
+            group("plugins.bundled.summarize.provider"),
             ("Provider", "Summaries")
         );
         assert!(schema["properties"].get("languages").is_none());
@@ -521,60 +599,44 @@ mod tests {
         assert_eq!(plugins["order"]["x-settings"], false);
         assert_eq!(plugins["order"]["type"], "array");
         assert_eq!(
-            plugins["hide-files"]["properties"]["tags"]["x-settings"],
+            plugins["bundled"]["properties"]["hide-files"]["properties"]["tags"]["x-settings"],
             false
         );
-        let summarize = &plugins["summarize"]["properties"];
+        let summarize = &plugins["bundled"]["properties"]["summarize"]["properties"];
         assert_eq!(summarize["system_prompt"]["x-settings"], false);
         assert!(summarize["system_prompt"]["default"]
             .as_str()
             .unwrap()
             .starts_with("For each listed fold, rewrite that function body"));
         let keys: Vec<&String> = plugins.as_object().unwrap().keys().collect();
-        assert_eq!(
-            keys,
-            [
-                "order",
-                "context",
-                "hide-files",
-                "deleted-bodies",
-                "test-bodies",
-                "removed-runs",
-                "summarize",
-                "group"
-            ]
-        );
+        assert_eq!(keys, ["order", "bundled", "external"]);
     }
 
     #[test]
-    fn order_names_every_entry_exactly_once() {
-        let order = |names: &str| Config::from_toml(&format!("[plugins]\norder = [{names}]"));
-        assert!(order("'context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'group', 'summarize'").is_ok());
-        let error = order(
-            "'context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'summarize'",
-        )
-        .err()
-        .unwrap()
-        .to_string();
-        assert!(error.contains("\"group\" is not listed"), "{error}");
-        let error = order("'context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'summarize', 'group', 'mine'")
-            .err()
-            .unwrap()
-            .to_string();
-        assert!(error.contains("no plugin entry named \"mine\""), "{error}");
-        let error = order("'context', 'hide-files', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'summarize', 'group'")
-            .err()
-            .unwrap()
-            .to_string();
-        assert!(error.contains("listed twice"), "{error}");
-        let error = Config::from_toml("[plugins.mine]\nenabled = true")
-            .err()
-            .unwrap()
-            .to_string();
-        assert_eq!(
-            error,
-            "plugins.mine: no bundled plugin has this name, and the entry has no path"
-        );
+    fn explicit_order_is_authoritative_and_names_every_entry_once() {
+        let config = Config::from_toml("[plugins]\norder = ['bundled.context']\n").unwrap();
+        assert_eq!(config.plugins.entries.len(), 1);
+        for (text, message) in [
+            (
+                "[plugins]\norder = ['bundled.context', 'bundled.context']",
+                "listed twice",
+            ),
+            ("[plugins]\norder = ['external.mine']", "no plugin entry"),
+            (
+                "[plugins]\norder = []\n[plugins.bundled.context]",
+                "is not listed",
+            ),
+            ("[plugins.external.mine]", "external plugins require path"),
+            ("[plugins.bundled.unknown]", "unknown bundled plugin"),
+            (
+                "[plugins.bundled.context]\npath = 'context'",
+                "bundled plugins cannot set path",
+            ),
+            ("[plugins.context]", "unknown field"),
+        ] {
+            let error = Config::from_toml(text).err().unwrap().to_string();
+            assert!(error.contains(message), "{error}");
+        }
     }
 
     #[test]
@@ -587,13 +649,13 @@ mod tests {
             "name = 'mine'\ntitle = 'Mine'\n[options.depth]\ntype = 'integer'\ntitle = 'Depth'\ndefault = 2\n",
         )
         .unwrap();
-        let order = "order = ['context', 'hide-files', 'deleted-bodies', 'test-bodies', 'removed-runs', 'summarize', 'group', 'mine']";
+        let order = "order = ['bundled.context', 'bundled.hide-files', 'bundled.deleted-bodies', 'bundled.test-bodies', 'bundled.removed-runs', 'bundled.summarize', 'bundled.group', 'external.mine']";
         let config = Config::from_toml_in(
-            &format!("[plugins]\n{order}\n[plugins.mine]\npath = 'plugins/mine'\n"),
+            &format!("[plugins]\n{order}\n[plugins.external.mine]\npath = 'plugins/mine'\n"),
             dir.path(),
         )
         .unwrap();
-        let entry = &config.plugins.entries["mine"];
+        let entry = &config.plugins.entries["external.mine"];
         assert_eq!(entry.options["depth"], 2);
         assert!(entry.options.get("path").is_none());
 
@@ -604,23 +666,23 @@ mod tests {
                 .to_string()
         };
         let renamed = error(&format!(
-            "[plugins]\n{}\n[plugins.other]\npath = 'plugins/mine'\n",
-            order.replace("'mine'", "'other'")
+            "[plugins]\n{}\n[plugins.external.other]\npath = 'plugins/mine'\n",
+            order.replace("'external.mine'", "'external.other'")
         ));
         assert!(
-            renamed.starts_with("plugins.other: ")
+            renamed.starts_with("plugins.external.other: ")
                 && renamed.ends_with("the plugin is named \"mine\", not \"other\""),
             "{renamed}"
         );
-        let missing = error("[plugins.group]\npath = 'plugins/absent'\n");
-        assert!(missing.starts_with("plugins.group: "), "{missing}");
+        let missing = error("[plugins.bundled.group]\npath = 'plugins/absent'\n");
+        assert!(missing.starts_with("plugins.bundled.group: "), "{missing}");
         std::fs::write(
             folder.join("plugin.toml"),
             "name = 'mine'\ntitle = 'Mine'\n[options.path]\ntype = 'string'\ntitle = 'Path'\n",
         )
         .unwrap();
         let reserved = error(&format!(
-            "[plugins]\n{order}\n[plugins.mine]\npath = 'plugins/mine'\n"
+            "[plugins]\n{order}\n[plugins.external.mine]\npath = 'plugins/mine'\n"
         ));
         assert!(reserved.contains("which diffr owns"), "{reserved}");
     }
@@ -628,20 +690,20 @@ mod tests {
     #[test]
     fn options_are_checked_against_the_plugin_toml_and_filled_with_its_defaults() {
         let config = Config::from_toml(
-            "[plugins.deleted-bodies]\nmin_lines = 30\n[plugins.hide-files]\nenabled = false\n",
+            "[plugins.bundled.deleted-bodies]\nmin_lines = 30\n[plugins.bundled.hide-files]\nenabled = false\n",
         )
         .unwrap();
-        let deleted = &config.plugins.entries["deleted-bodies"];
+        let deleted = &config.plugins.entries["bundled.deleted-bodies"];
         assert_eq!(deleted.enabled, Some(true));
         assert_eq!(deleted.options["min_lines"], 30);
-        let hide = &config.plugins.entries["hide-files"];
+        let hide = &config.plugins.entries["bundled.hide-files"];
         assert_eq!(hide.enabled, Some(false));
         assert_eq!(hide.options["deleted"], true);
         assert_eq!(
             hide.options["tags"],
             serde_json::json!(["generated", "vendored", "test"])
         );
-        let summarize = &config.plugins.entries["summarize"];
+        let summarize = &config.plugins.entries["bundled.summarize"];
         assert_eq!(
             summarize.enabled,
             Some(false),
@@ -650,22 +712,22 @@ mod tests {
         assert!(summarize.options.get("api_key").is_none());
         assert_eq!(summarize.options["request_timeout_ms"], 60_000);
         let error = |toml: &str| Config::from_toml(toml).err().unwrap().to_string();
-        let typo = error("[plugins.deleted-bodies]\ntypo = 1\n");
+        let typo = error("[plugins.bundled.deleted-bodies]\ntypo = 1\n");
         assert!(
-            typo.starts_with("plugins.deleted-bodies: ") && typo.contains("typo"),
+            typo.starts_with("plugins.bundled.deleted-bodies: ") && typo.contains("typo"),
             "{typo}"
         );
-        let mistyped = error("[plugins.deleted-bodies]\nmin_lines = 'many'\n");
+        let mistyped = error("[plugins.bundled.deleted-bodies]\nmin_lines = 'many'\n");
         assert!(
-            mistyped.starts_with("plugins.deleted-bodies: min_lines: "),
+            mistyped.starts_with("plugins.bundled.deleted-bodies: min_lines: "),
             "{mistyped}"
         );
-        let zero = error("[plugins.summarize]\nmax_concurrency = 0\n");
+        let zero = error("[plugins.bundled.summarize]\nmax_concurrency = 0\n");
         assert!(
-            zero.starts_with("plugins.summarize: max_concurrency: "),
+            zero.starts_with("plugins.bundled.summarize: max_concurrency: "),
             "{zero}"
         );
-        assert!(error("[plugins.summarize]\nprovider = 'openai'\n")
-            .starts_with("plugins.summarize: provider: "));
+        assert!(error("[plugins.bundled.summarize]\nprovider = 'openai'\n")
+            .starts_with("plugins.bundled.summarize: provider: "));
     }
 }

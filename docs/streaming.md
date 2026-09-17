@@ -247,7 +247,7 @@ A label is the plugin's that collapsed the fold, so a fold no plugin
 collapsed has none, and the empty label shows the source. Absent means open.
 
 **Context** comes from the `context` plugin; the projection itself hides
-nothing. A line stays open when it is within `plugins.context.lines`
+nothing. A line stays open when it is within `plugins.bundled.context.lines`
 (`-U`, default 3) of a changed line, when it is paired with such a line, or
 when it opens or closes a scope, such as the function a change
 sits in, that contains a change. Scopes are folds the plugin's own queries

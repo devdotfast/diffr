@@ -7,7 +7,7 @@ diffr's configuration comes from exactly three places:
    a missing global file means every default.
 2. Command-line flags, for one run. `--byte-limit`, `--graph-limit` and
    `--parse-error-limit` override `[diff]`, and `-U` overrides
-   `plugins.context.lines`.
+   `plugins.bundled.context.lines`.
 3. Git attributes, for facts about files in a repository (`.gitattributes`
    and git's user-wide attributes file); see [File tags](#file-tags).
 
@@ -25,7 +25,7 @@ diffr config schema           # JSON Schema: title, group, description and defau
 diffr config show [--json]    # the resolved configuration
 diffr config set diff.graph_limit 5000000
 diffr config set theme.name default-light
-diffr config set plugins.deleted-bodies.min_lines 20
+diffr config set plugins.bundled.deleted-bodies.min_lines 20
 ```
 
 `set` writes one key into the global file (or the `--config` file), keeping
@@ -57,7 +57,7 @@ name = "default-dark"      # a bundled terminal theme
 path = "/path/to/theme.toml"  # or a Helix-style theme file
 
 [plugins]                  # see "Plugins" below
-order = ["context", "hide-files", "deleted-bodies", "test-bodies", "removed-runs", "summarize", "group"]
+order = ["bundled.context", "bundled.hide-files", "bundled.deleted-bodies", "bundled.test-bodies", "bundled.removed-runs", "bundled.summarize", "bundled.group"]
 ```
 
 When a file exceeds a `[diff]` limit it falls back to a line diff: the file's
@@ -79,30 +79,30 @@ produce on the wire.
 
 ```toml
 [plugins]
-order = ["context", "hide-files", "deleted-bodies", "test-bodies", "removed-runs", "summarize", "group"]
+order = ["bundled.context", "bundled.hide-files", "bundled.deleted-bodies", "bundled.test-bodies", "bundled.removed-runs", "bundled.summarize", "bundled.group"]
 
-[plugins.context]                           # unchanged lines far from any change collapse
+[plugins.bundled.context]                           # unchanged lines far from any change collapse
 enabled = true
 lines = 3                                   # kept on either side of a change; -U overrides it
 
-[plugins.hide-files]
+[plugins.bundled.hide-files]
 enabled = true
 tags = ["generated", "vendored", "test"]   # the first listed tag a file carries names the reason
 deleted = true                              # hide deleted files whatever their tags
 
-[plugins.deleted-bodies]                    # deleted function bodies, "12 lines removed"
+[plugins.bundled.deleted-bodies]                    # deleted function bodies, "12 lines removed"
 enabled = true
 min_lines = 12
 
-[plugins.test-bodies]                       # test functions and test modules, on both sides
+[plugins.bundled.test-bodies]                       # test functions and test modules, on both sides
 enabled = true
 min_lines = 3
 
-[plugins.removed-runs]                      # the middle of long removed stretches
+[plugins.bundled.removed-runs]                      # the middle of long removed stretches
 enabled = true
 min_lines = 5
 
-[plugins.summarize]                         # pseudocode for large new function bodies
+[plugins.bundled.summarize]                         # pseudocode for large new function bodies
 enabled = false            # off by default: it needs an API key
 provider = "gemini"
 model = "gemini-3.8-flash"
@@ -114,27 +114,26 @@ max_concurrency = 16
 retries = 3
 system_prompt = """…"""    # the model's system instruction; defaults to diffr's own
 
-[plugins.group]                             # adjacent collapsed regions under one row
+[plugins.bundled.group]                             # adjacent collapsed regions under one row
 enabled = true
 ```
 
-Every bundled plugin has an entry pre-filled with the values above; a file
-writes only what it changes. `order` must name every entry exactly once: a
-name without an entry, an entry left out, or a name listed twice is an error
-when the file loads. In an entry, `enabled` belongs to diffr: set
-`enabled = false` to turn a plugin off. Every other key is one of the
-plugin's options, checked against the options its `plugin.toml` declares: an
-unknown option or a value of the wrong type is an error naming the key, such
-as `plugins.deleted-bodies: min_lines: "many" is not of type "integer"`.
+Without an explicit `plugins.order`, bundled defaults are available and the
+file may override individual settings. With an explicit order, only the
+listed bundled plugins and declared entries participate: diffr does not add
+other bundled plugins. Every declared entry must appear exactly once.
 
-An entry that names no bundled plugin is an error unless it sets `path`: a
-plugin folder, relative to the configuration file's directory (or absolute),
-holding `plugin.toml` and `plugin.wasm`. The folder's
-`plugin.toml` must be named after the entry, and the entry must be listed in
-`order`. A bundled plugin's entry may set `path` too, and that folder runs in
-its place. `path` is diffr's key like `enabled`, so no plugin option may be
-named either. [plugins.md](plugins.md) describes plugins and how diffr loads
-them.
+Entries live in `plugins.bundled` or `plugins.external`; order uses qualified
+references such as `bundled.context` and `external.mine`. These references do
+not change plugin names or query tags. A bundled entry cannot set `path`.
+An external entry must set `path` to a folder containing `plugin.toml` and
+`plugin.wasm`, relative to the configuration file or absolute. Missing WASM
+components are errors; external entries never fall back to native code.
+Only one enabled implementation may use a given plugin name.
+
+`enabled` and `path` belong to diffr. Other keys are validated against the
+plugin's option schema and filled with defaults. Unknown options and wrong
+types are errors naming the entry and option.
 
 Every plugin that is on is made (its `new` runs) when diffr starts, before
 any output, and one that cannot be made stops diffr with an error naming it.
@@ -144,9 +143,9 @@ key.
 
 ```toml
 [plugins]
-order = ["context", "hide-files", "deleted-bodies", "test-bodies", "removed-runs", "summarize", "group", "fixtures"]
+order = ["bundled.context", "bundled.hide-files", "bundled.deleted-bodies", "bundled.test-bodies", "bundled.removed-runs", "bundled.summarize", "bundled.group", "external.fixtures"]
 
-[plugins.fixtures]
+[plugins.external.fixtures]
 path = "plugins/fixtures"
 ```
 
@@ -266,7 +265,7 @@ and an `x-group`: the group is the plugin's `title` (`Context`, `Hidden files`,
 does. `plugins.order`, every list option such as `hide-files.tags`, and
 `summarize.system_prompt` (a multi-line value) are marked `"x-settings":
 false`: the schema describes them, a settings screen does not edit them, and
-they are set in the file or with `diffr config set`. `diffr config show` redacts `plugins.summarize.api_key` unless
+they are set in the file or with `diffr config set`. `diffr config show` redacts `plugins.bundled.summarize.api_key` unless
 `--reveal` is given.
 
 ## File tags

@@ -7,7 +7,7 @@
 //! [`config`] reads each enabled entry's folder, embedded or on disk: its
 //! `plugin.toml` (name, title, options schema) and, when it has
 //! one, its component. [`Pipeline::from_config`] then takes the component
-//! ([`wasm`]) or, for a folder without one, the native code registered under
+//! ([`wasm`]) or the bundled native implementation registered under
 //! the plugin's name ([`native`]), and makes the plugin's one instance for
 //! the run from its options. From there a [`Runner`] is a [`Runner`]: each
 //! call gets the contract's records, built once per call from the file's
@@ -41,7 +41,7 @@ mod tests;
 use crate::pairing::Pairing;
 use crate::protocol::{self, FileChange, FileStatus, SourcePos, SourceRange};
 use anyhow::{anyhow, Context as _};
-use config::{PluginsConfig, COMPONENT_FILE};
+use config::PluginsConfig;
 use diffr_plugin_sdk::{apply, tree, types};
 use host::Host;
 use serde_json::Value;
@@ -108,8 +108,8 @@ impl Default for Pipeline {
 
 impl Pipeline {
     /// Load every enabled plugin in `plugins.order` and make its instance. A
-    /// folder with a component runs it; any other folder runs the native
-    /// code registered under its name. Loading or making a plugin can fail
+    /// external entry loads its component. A bundled entry loads its embedded
+    /// component or the native implementation selected by package metadata. Loading or making a plugin can fail
     /// (a component that does not compile or link, options that do not
     /// deserialize, a summarizer without an API key), which is a setup error
     /// naming the plugin.
@@ -135,7 +135,7 @@ impl Pipeline {
                 None => {
                     let create = native::lookup(&folder.manifest.name)?.ok_or_else(|| {
                         anyhow!(
-                            "plugins.{name}: the plugin folder has no {COMPONENT_FILE}, and diffr has no native plugin of that name"
+                            "plugins.{name}: no native implementation is registered for this bundled plugin"
                         )
                     })?;
                     pipeline.push(name, options, &|host, options| {

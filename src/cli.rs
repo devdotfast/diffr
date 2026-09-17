@@ -490,7 +490,7 @@ fn load_config(args: &ArgMatches) -> Result<Config> {
     )?)
 }
 
-/// `diffr config`: the settings screen, or one of `schema`, `show`, `set`.
+/// `diffr config`: settings, schema, resolved values and edits.
 fn run_config(args: &ArgMatches, sub: &ArgMatches) -> Result<i32> {
     let mut stdout = io::stdout().lock();
     match sub.subcommand() {

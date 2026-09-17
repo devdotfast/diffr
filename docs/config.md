@@ -30,9 +30,18 @@ diffr config set theme.name default-light
 diffr config set plugins.bundled.deleted-bodies.min_lines 20
 ```
 
-`set` writes one key into the global file (or the `--config` file), keeping
-everything else in it as written. The value is read as the type the schema
-gives the key, and only that type: a string key takes the text as it is
+On the first successful edit, `set` writes the complete resolved config,
+including `version = 1`, plugin order, and option defaults. Later edits preserve
+existing values and comments. Existing partial files are filled in on edit too;
+explicit plugin lists remain authoritative. This pins today's defaults until
+the user edits them or a future version migration changes them.
+
+To add an external plugin, edit the config file: add its
+`[plugins.external.NAME]` entry with a `path`, and include `external.NAME`
+at the desired position in `plugins.order`.
+
+`set` writes one key into the global file (or the `--config` file). The value
+is read as the type the schema gives the key, and only that type: a string key takes the text as it is
 (`diffr config set theme.name 1234` writes `"1234"`), an integer key a TOML
 integer (`12`), a number key a TOML number (`1.5`), a boolean key `true` or
 `false`, an array key a TOML array (`'["a", "b"]'`), and an enum key one of
@@ -194,8 +203,8 @@ default = 12
 ```
 
 Every option needs a `title`; one with a `default` is pre-filled in
-`[plugins.<name>]`, and one without starts unset. Options are listed in the
-settings schema in the order `plugin.toml` declares them.
+the plugin's bundled or external entry, and one without starts unset. Options
+are listed in the settings schema in the order `plugin.toml` declares them.
 
 ### Queries
 

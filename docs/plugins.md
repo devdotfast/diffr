@@ -20,7 +20,7 @@ A plugin is made once, then a file passes three points, each in
    into the plugin's own options type and calls `new` with them. A plugin
    that cannot be made (options that do not deserialize, a summarizer without
    an API key, a component that does not compile or link) is a setup error:
-   diffr writes it to stderr, naming the plugin as `plugins.<name>`, and exits
+   diffr writes it to stderr, naming its bundled or external config entry, and exits
    2 before any record, for native and component plugins alike.
 1. **Pre-process: `classify`.** Before the stream starts, each plugin's
    `classify` returns tags to add to the file's manifest entry. They join the
@@ -203,8 +203,8 @@ written with it:
 - `Plugin`: the one trait, mirroring the `plugin` resource. A plugin is a
   struct with an `Options` type (deserialized from the options JSON), and
   implements `new` (make the plugin from its options; where it can fail),
-  `classify` and `mutate`. None has a default: a plugin that does not
-  classify returns `Ok(Vec::new())`.
+  `queries`, `classify` and `mutate`. `queries` defaults to an empty list;
+  a plugin that does not classify returns `Ok(Vec::new())`.
 - `export!("my-plugin", MyPlugin)`: built for `wasm32`, exports the plugin as the
   component's `plugin` resource: its `new` deserializes the options string
   into `Options` and calls `Plugin::new`, and its `classify` and `mutate`

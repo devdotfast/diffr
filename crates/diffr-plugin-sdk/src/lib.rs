@@ -50,9 +50,9 @@ pub use types::{
 /// with [`Plugin::new`] when it builds its pipeline, before any file, and
 /// calls that one instance for every file of the run.
 pub trait Plugin: Sized {
-    /// The plugin's options, deserialized from its entry in
-    /// `[plugins.<name>]`: a JSON object, validated against the options
-    /// schema in `plugin.toml` and filled with its defaults.
+    /// The plugin's options, deserialized from its bundled or external config
+    /// entry: a JSON object, validated against the options schema in
+    /// `plugin.toml` and filled with its defaults.
     type Options: DeserializeOwned;
 
     /// Make the plugin from its options. An error, like options that do not

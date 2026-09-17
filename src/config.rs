@@ -298,8 +298,8 @@ impl Config {
     }
 }
 
-/// Every tag a fold query sets is `<plugin>:<name>`, naming a plugin in
-/// `plugins.order`: a plugin reads only the tags its own queries set.
+/// Every tag names a bundled or configured plugin. Shared queries may tag
+/// bundled consumers that this configuration has omitted or disabled.
 fn check_tags(query: &AnnotationQuery, order: &[String]) -> Result<(), ConfigError> {
     for pattern in &query.patterns {
         for tag in &pattern.tags {

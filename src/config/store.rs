@@ -29,8 +29,8 @@ pub(crate) fn redacted(config: &Config, reveal: bool) -> Config {
     shown
 }
 
-/// Write `key = value` into the global file, keeping everything else in it
-/// as written. `value` is read as the type the schema gives the key (see
+/// Materialize resolved defaults on edit, then write `key = value` while
+/// preserving existing values and comments. `value` is read as the type the schema gives the key (see
 /// [`typed_value`]), then the whole file is validated, before anything
 /// touches the disk: unknown keys, text that is not the key's type, and
 /// values the configuration rejects are errors.
@@ -38,18 +38,59 @@ pub(crate) fn set(path: &Path, key: &str, value: &str) -> Result<(), ConfigError
     if key.is_empty() || key.split('.').any(str::is_empty) {
         return Err(ConfigError(format!("invalid key {key:?}")));
     }
-    let existing = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(ConfigError(format!("{}: {error}", path.display()))),
-    };
+    let existing = read(path)?;
     let directory = directory_of(path);
     let typed = typed_value(key, &setting_schema(key, &existing, directory)?, value)?;
     let mut document: toml_edit::DocumentMut = existing
         .parse()
         .map_err(|error| ConfigError(format!("{}: {error}", path.display())))?;
+    materialize(&mut document, directory)?;
     assign(&mut document, key, &typed)?;
-    Config::from_toml_in(&document.to_string(), directory)?;
+    write(path, document)
+}
+
+fn read(path: &Path) -> Result<String, ConfigError> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => Err(ConfigError(format!("{}: {error}", path.display()))),
+    }
+}
+
+/// Fill missing fields from the resolved configuration, without replacing
+/// existing values, comments, formatting, or explicit plugin membership.
+fn materialize(document: &mut toml_edit::DocumentMut, directory: &Path) -> Result<(), ConfigError> {
+    let resolved = Config::from_toml_in(&document.to_string(), directory)?;
+    let values = toml::Value::try_from(resolved).map_err(|error| ConfigError(error.to_string()))?;
+    fill_missing(
+        document.as_table_mut(),
+        values.as_table().expect("config is a table"),
+    )
+}
+
+fn fill_missing(
+    target: &mut dyn toml_edit::TableLike,
+    values: &toml::Table,
+) -> Result<(), ConfigError> {
+    for (key, value) in values {
+        if let toml::Value::Table(children) = value {
+            if !target.contains_key(key) {
+                target.insert(key, toml_edit::Item::Table(toml_edit::Table::new()));
+            }
+            let nested = target
+                .get_mut(key)
+                .and_then(toml_edit::Item::as_table_like_mut)
+                .ok_or_else(|| ConfigError(format!("{key}: expected a table")))?;
+            fill_missing(nested, children)?;
+        } else if !target.contains_key(key) {
+            target.insert(key, toml_edit::Item::Value(edit_value(value)?));
+        }
+    }
+    Ok(())
+}
+
+fn write(path: &Path, mut document: toml_edit::DocumentMut) -> Result<(), ConfigError> {
+    materialize(&mut document, directory_of(path))?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|error| ConfigError(format!("{}: {error}", parent.display())))?;
@@ -65,23 +106,21 @@ pub(crate) fn set(path: &Path, key: &str, value: &str) -> Result<(), ConfigError
 fn setting_schema(key: &str, existing: &str, directory: &Path) -> Result<Value, ConfigError> {
     let unknown = || ConfigError(format!("{key}: unknown key"));
     if let ["plugins", namespace, name, field] = key.split('.').collect::<Vec<_>>().as_slice() {
-        if *name != "order" {
-            if *field == PATH {
-                return Ok(json!({"type": "string"}));
-            }
-            let config = Config::from_toml_in(existing, directory)?;
-            let manifest = &config
-                .plugins
-                .entries
-                .get(&format!("{namespace}.{name}"))
-                .ok_or_else(unknown)?
-                .folder()
-                .manifest;
-            return manifest.settings_schema()["properties"]
-                .get(*field)
-                .cloned()
-                .ok_or_else(unknown);
+        if *field == PATH {
+            return Ok(json!({"type": "string"}));
         }
+        let config = Config::from_toml_in(existing, directory)?;
+        let manifest = &config
+            .plugins
+            .entries
+            .get(&format!("{namespace}.{name}"))
+            .ok_or_else(unknown)?
+            .folder()
+            .manifest;
+        return manifest.settings_schema()["properties"]
+            .get(*field)
+            .cloned()
+            .ok_or_else(unknown);
     }
     let root = Config::schema();
     let resolve = |node: &Value| -> Value {
@@ -422,5 +461,53 @@ mod tests {
             error(json!({"type": "object"}), "{}"),
             "k: config set cannot write a value of type object"
         );
+    }
+}
+
+#[cfg(test)]
+mod materialization_tests {
+    use super::*;
+
+    #[test]
+    fn first_edit_pins_defaults_and_later_edits_preserve_comments() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        set(&path, "diff.graph_limit", "42").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let raw: toml::Value = toml::from_str(&text).unwrap();
+        assert_eq!(raw["version"].as_integer(), Some(1));
+        assert_eq!(
+            raw["plugins"]["order"].as_array().unwrap().len(),
+            Config::default().plugins.order.len()
+        );
+        assert_eq!(
+            raw["plugins"]["bundled"]["context"]["lines"].as_integer(),
+            Some(3)
+        );
+        assert!(raw["plugins"]["bundled"]["summarize"]["system_prompt"]
+            .as_str()
+            .is_some());
+        std::fs::write(&path, format!("# personal config\n{text}")).unwrap();
+        set(&path, "plugins.bundled.context.lines", "8").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# personal config\n"));
+        assert_eq!(Config::from_toml(&text).unwrap().diff.graph_limit, 42);
+    }
+
+    #[test]
+    fn materializing_an_explicit_list_does_not_restore_omitted_plugins() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "# just grouping\n[plugins]\norder = ['bundled.group']\n",
+        )
+        .unwrap();
+        set(&path, "diff.graph_limit", "42").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let config = Config::from_toml(&text).unwrap();
+        assert_eq!(config.plugins.entries.len(), 1);
+        assert!(text.contains("# just grouping\n[plugins]"), "{text}");
+        assert!(!text.contains("bundled.context"));
     }
 }

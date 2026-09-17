@@ -209,9 +209,9 @@ interface guest {
     use types.{file-entry, source-sides, move, query-source};
 
     resource plugin {
-        /// Make the plugin from `options`, the plugin's entry in
-        /// `[plugins.<name>]` as a JSON object, defaults filled in and
-        /// validated against the options schema in `plugin.toml`. It runs
+        /// Make the plugin from `options`, its bundled or external config
+        /// entry as a JSON object, defaults filled in and validated against
+        /// the options schema in `plugin.toml`. It runs
         /// once, when diffr builds its pipeline. An error is a setup error:
         /// diffr stops before the stream starts and names the plugin. (A
         /// static function rather than a constructor, since a constructor

@@ -2,19 +2,11 @@
 //! switch and options. Also `plugin.toml`, the static description every
 //! plugin folder carries: the plugin's name, title and options schema.
 //!
-//! Every bundled plugin has an entry, pre-filled with the defaults its
-//! `plugin.toml` declares; a file only writes the keys it changes. `order`
-//! must name every entry exactly once. In an entry, `enabled` and `path` are
-//! diffr's; every other key is one of the plugin's options, validated
-//! against the schema in its `plugin.toml`.
-//!
-//! Every entry has a plugin folder: `plugin.toml` and, for a component,
-//! `plugin.wasm`. A bundled plugin's folder is embedded in diffr
-//! ([`builtin`]); an entry with `path` names a folder on disk, relative to
-//! the configuration file's directory, whose `plugin.toml` names the entry.
-//! A bundled plugin's entry may set `path` too, and that folder then runs in
-//! its place. Both kinds of folder are read the same way, and
-//! [`super::Pipeline`] loads what they hold the same way.
+//! The embedded default config selects bundled plugins. An explicit `order`
+//! is authoritative; every declared entry must appear exactly once. Bundled
+//! entries use embedded assets and implementations; external entries require
+//! a folder containing `plugin.toml` and `plugin.wasm`. No external entry
+//! falls back to a native implementation. Options come from each manifest.
 use super::builtin;
 use crate::config::ConfigError;
 use serde::{Deserialize, Serialize};
@@ -352,8 +344,8 @@ impl Folder {
         })
     }
 
-    /// The folder's component, `plugin.wasm`, when it has one. An embedded
-    /// folder has none.
+    /// External entries always name plugin.wasm, even when it is missing.
+    /// A bundled native plugin has no component; other bundles embed one.
     pub(crate) fn component(&self) -> Option<ComponentSource> {
         match &self.location {
             Location::Bundled => {
@@ -413,11 +405,8 @@ impl Default for PluginsConfig {
 }
 
 impl PluginsConfig {
-    /// Load every entry's folder, the bundled plugin's or the one `path`
-    /// names relative to `base`, check every plugin's options against its
-    /// schema and fill in the defaults and `enabled`, add an entry for every
-    /// bundled plugin the file did not write, and check that `order` names
-    /// every entry exactly once.
+    /// Resolve each selected entry, validate its options, fill their defaults,
+    /// and require every entry to appear in the explicit order exactly once.
     pub(crate) fn resolve(&mut self, base: &Path) -> Result<(), ConfigError> {
         for (reference, entry) in &mut self.entries {
             let (source, name) = reference

@@ -105,7 +105,7 @@ present. EOF without `complete` means the output was cut off.
 One shape everywhere: `{"code": "<snake_case>", "message": "<prose>"}`.
 
 - On a `file` record, `error` replaces `diff` and the run continues. Codes:
-  `binary`, `not_utf8`, `unsupported_file_type` (symlinks, submodules),
+  `not_utf8`, `unsupported_file_type` (symlinks, submodules),
   `unmerged`, `read_failed`, `query_conflict` (two query files capture one
   syntax node with different fold ranges; the message names the line and both
   files), or `internal` for a failure diffr did not classify.
@@ -310,9 +310,9 @@ Closing stdout stops production once the files in flight finish. Terminate the
 process to cancel immediately. The CLI also retains its normal SIGPIPE behavior
 on Unix.
 
-Regular UTF-8 text files are supported. Binary and non-UTF-8 files, symlinks,
-submodules and unmerged index entries produce per-file errors. Non-UTF-8 paths
-fail discovery.
+Regular UTF-8 text files are supported. Binary files containing NUL bytes
+produce size-only binary diffs. Non-UTF-8 text files, symlinks, submodules and
+unmerged index entries produce per-file errors. Non-UTF-8 paths fail discovery.
 
 ## Plugins
 

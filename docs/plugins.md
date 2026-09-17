@@ -313,3 +313,9 @@ bundled implementation into diffr; otherwise the plugin uses WASM. This does
 not add a WASM requirement to `cargo install`. `cargo xtask test-plugins`
 builds WASM variants and runs parity tests. The workspace's
 `wasm-test-exclude` list records test-only exceptions such as the summarizer.
+
+The host also discovers bundled manifests and query assets from its plugin
+dependencies, rather than maintaining a second file list. A dependency marked
+`native = true` contributes its registration; otherwise its prebuilt
+`plugin.wasm` is embedded alongside its manifest. The default configuration
+chooses which bundled plugins run; discovering an asset does not enable it.

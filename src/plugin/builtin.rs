@@ -11,61 +11,15 @@
 use super::config::Manifest;
 use std::sync::OnceLock;
 
-/// The bundled plugins, in their default order.
-pub(crate) const NAMES: [&str; 7] = [
-    "context",
-    "hide-files",
-    "deleted-bodies",
-    "test-bodies",
-    "removed-runs",
-    "summarize",
-    "group",
-];
+// Manifests, queries and optional WASM components of plugin dependencies.
+include!(concat!(env!("OUT_DIR"), "/bundled_assets.rs"));
 
-macro_rules! embed {
-    ($($path:literal),* $(,)?) => {
-        &[$(($path, include_str!(concat!("../../plugins/", $path)))),*]
-    };
+pub(crate) fn component(name: &str) -> Option<&'static [u8]> {
+    COMPONENTS
+        .iter()
+        .find(|(own, _)| *own == name)
+        .map(|(_, bytes)| *bytes)
 }
-
-/// Every embedded file, by its path under `plugins/`.
-const FILES: &[(&str, &str)] = embed![
-    "shared/queries/go.scm",
-    "shared/queries/go-docstrings.scm",
-    "shared/queries/javascript.scm",
-    "shared/queries/javascript-docstrings.scm",
-    "shared/queries/python.scm",
-    "shared/queries/python-docstrings.scm",
-    "shared/queries/rust.scm",
-    "shared/queries/rust-docstrings.scm",
-    "context/plugin.toml",
-    "context/queries/go.scm",
-    "context/queries/javascript.scm",
-    "context/queries/python.scm",
-    "context/queries/rust.scm",
-    "hide-files/plugin.toml",
-    "deleted-bodies/plugin.toml",
-    "deleted-bodies/queries/go.scm",
-    "deleted-bodies/queries/javascript.scm",
-    "deleted-bodies/queries/python.scm",
-    "deleted-bodies/queries/rust.scm",
-    "test-bodies/plugin.toml",
-    "test-bodies/queries/go.scm",
-    "test-bodies/queries/javascript.scm",
-    "test-bodies/queries/python.scm",
-    "test-bodies/queries/rust.scm",
-    "removed-runs/plugin.toml",
-    "removed-runs/queries/go.scm",
-    "removed-runs/queries/javascript.scm",
-    "removed-runs/queries/python.scm",
-    "removed-runs/queries/rust.scm",
-    "summarize/plugin.toml",
-    "summarize/queries/go.scm",
-    "summarize/queries/javascript.scm",
-    "summarize/queries/python.scm",
-    "summarize/queries/rust.scm",
-    "group/plugin.toml",
-];
 
 /// An embedded file by its normalized path under `plugins/`.
 pub(crate) fn file(path: &str) -> Option<&'static str> {
@@ -75,15 +29,14 @@ pub(crate) fn file(path: &str) -> Option<&'static str> {
         .map(|(_, text)| *text)
 }
 
-/// Every bundled plugin's `plugin.toml`, in [`NAMES`] order.
+/// Every bundled plugin manifest, discovered from Cargo dependencies.
 pub(crate) fn manifests() -> &'static [Manifest] {
     static MANIFESTS: OnceLock<Vec<Manifest>> = OnceLock::new();
     MANIFESTS.get_or_init(|| {
-        NAMES
+        FILES
             .iter()
-            .map(|name| {
-                let path = format!("{name}/plugin.toml");
-                let text = file(&path).unwrap_or_else(|| panic!("{path} is embedded"));
+            .filter(|(path, _)| path.ends_with("/plugin.toml"))
+            .map(|(path, text)| {
                 Manifest::parse(text).unwrap_or_else(|error| panic!("plugins/{path}: {error}"))
             })
             .collect()
@@ -125,12 +78,16 @@ mod tests {
         assert_eq!(embedded, on_disk);
         assert_eq!(
             folders,
-            NAMES.iter().map(|name| (*name).to_owned()).collect()
+            manifests()
+                .iter()
+                .map(|manifest| manifest.name.clone())
+                .collect()
         );
-        for name in NAMES {
-            assert_eq!(manifest(name).unwrap().name, name);
+        for manifest in manifests() {
+            let name = manifest.name.as_str();
+            assert_eq!(super::manifest(name).unwrap().name, name);
             assert!(
-                crate::plugin::native::lookup(name).unwrap().is_some(),
+                crate::plugin::native::lookup(name).unwrap().is_some() || component(name).is_some(),
                 "{name} has native code"
             );
         }

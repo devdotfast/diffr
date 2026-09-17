@@ -316,6 +316,12 @@ pub(crate) enum Location {
     Disk(PathBuf),
 }
 
+/// A component loaded from disk or embedded with the executable.
+pub(crate) enum ComponentSource {
+    File(PathBuf),
+    Bundled(&'static [u8]),
+}
+
 /// A plugin folder and the `plugin.toml` in it.
 #[derive(Clone, Debug)]
 pub(crate) struct Folder {
@@ -334,10 +340,12 @@ impl Folder {
 
     /// The folder's component, `plugin.wasm`, when it has one. An embedded
     /// folder has none.
-    pub(crate) fn component(&self) -> Option<PathBuf> {
+    pub(crate) fn component(&self) -> Option<ComponentSource> {
         match &self.location {
-            Location::Bundled => None,
-            Location::Disk(dir) => Some(dir.join(COMPONENT_FILE)),
+            Location::Bundled => {
+                builtin::component(&self.manifest.name).map(ComponentSource::Bundled)
+            }
+            Location::Disk(dir) => Some(ComponentSource::File(dir.join(COMPONENT_FILE))),
         }
     }
 

@@ -109,7 +109,7 @@ fn commit_info() {
     println!("cargo:rustc-env=DFT_COMMIT_DATE={}", next())
 }
 
-/// Collect native registrations from plugin package metadata.
+/// Collect native registrations and bundled assets from plugin package metadata.
 fn native_plugins() {
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     println!("cargo:rerun-if-changed=Cargo.toml");
@@ -118,6 +118,13 @@ fn native_plugins() {
         .parse()
         .unwrap();
     let mut code = String::from("const PLUGINS: &[&sdk::Registration] = &[\n");
+    let mut files = String::from("const FILES: &[(&str, &str)] = &[\n");
+    let mut components = String::from("const COMPONENTS: &[(&str, &[u8])] = &[\n");
+    embed_queries(
+        &root.join("plugins/shared/queries"),
+        "shared/queries",
+        &mut files,
+    );
     for (dependency, spec) in manifest["dependencies"].as_table().unwrap() {
         let Some(path) = spec.get("path").and_then(toml::Value::as_str) else {
             continue;
@@ -125,13 +132,40 @@ fn native_plugins() {
         let file = root.join(path).join("Cargo.toml");
         println!("cargo:rerun-if-changed={}", file.display());
         let package: toml::Value = std::fs::read_to_string(file).unwrap().parse().unwrap();
-        let native = package
+        let Some(plugin) = package
             .get("package")
             .and_then(|p| p.get("metadata"))
             .and_then(|p| p.get("diffr"))
-            .and_then(|p| p.get("native"))
+        else {
+            continue;
+        };
+        let native = plugin
+            .get("native")
             .and_then(toml::Value::as_bool)
             .unwrap_or(false);
+        let folder = root.join(path);
+        let plugin_manifest = folder.join("plugin.toml");
+        let description: toml::Value = std::fs::read_to_string(&plugin_manifest)
+            .expect("a plugin has plugin.toml")
+            .parse()
+            .unwrap();
+        let name = description["name"].as_str().expect("plugin name");
+        println!("cargo:rerun-if-changed={}", plugin_manifest.display());
+        files.push_str(&format!(
+            "    ({:?}, include_str!({:?})),\n",
+            format!("{name}/plugin.toml"),
+            plugin_manifest
+        ));
+        embed_queries(
+            &folder.join("queries"),
+            &format!("{name}/queries"),
+            &mut files,
+        );
+        if !native {
+            let wasm = folder.join("plugin.wasm");
+            println!("cargo:rerun-if-changed={}", wasm.display());
+            components.push_str(&format!("    ({name:?}, include_bytes!({wasm:?})),\n"));
+        }
         if native {
             code.push_str(&format!(
                 "    &{}::DIFFR_PLUGIN,\n",
@@ -140,9 +174,42 @@ fn native_plugins() {
         }
     }
     code.push_str("];\n");
+    files.push_str("];\n");
+    components.push_str("];\n");
+    files.push_str(&components);
+    std::fs::write(
+        PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("bundled_assets.rs"),
+        files,
+    )
+    .unwrap();
     std::fs::write(
         PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("native_plugins.rs"),
         code,
     )
     .unwrap();
+}
+
+/// Embed query assets without maintaining a second file list in the host.
+fn embed_queries(directory: &std::path::Path, prefix: &str, code: &mut String) {
+    if !directory.exists() {
+        println!(
+            "cargo:rerun-if-changed={}",
+            directory.parent().unwrap().display()
+        );
+        return;
+    }
+    println!("cargo:rerun-if-changed={}", directory.display());
+    let mut entries: Vec<_> = std::fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    entries.sort();
+    for path in entries {
+        let name = format!("{prefix}/{}", path.file_name().unwrap().to_str().unwrap());
+        if path.is_dir() {
+            embed_queries(&path, &name, code);
+        } else if path.extension().is_some_and(|extension| extension == "scm") {
+            code.push_str(&format!("    ({name:?}, include_str!({path:?})),\n"));
+        }
+    }
 }

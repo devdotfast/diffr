@@ -16,13 +16,13 @@
 //! it writes to stdout or stderr diffr writes to its own stderr, a line at a
 //! time and with the plugin's name in front: diffr's stdout is the stream,
 //! and a plugin has no logging call of its own, it just prints.
+use super::config::ComponentSource;
 use super::host::Host;
 use super::Runner;
 use anyhow::Context as _;
 use bytes::Bytes;
 use diffr_plugin_sdk::types as contract;
 use std::io::Write as _;
-use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 use wasmtime::component::{Component, HasSelf, Linker, ResourceAny, ResourceTable};
@@ -177,24 +177,28 @@ pub(crate) struct WasmPlugin {
 }
 
 impl WasmPlugin {
-    /// Compile and link the component at `path`.
-    pub(crate) fn load(engine: &Engine, path: &Path) -> anyhow::Result<Self> {
+    /// Compile and link an external or bundled component.
+    pub(crate) fn load(engine: &Engine, source: &ComponentSource) -> anyhow::Result<Self> {
         let started = Instant::now();
-        let component = Component::from_file(engine, path)
-            .with_context(|| format!("compiling {}", path.display()))?;
+        let (component, label) = match source {
+            ComponentSource::File(path) => (
+                Component::from_file(engine, path),
+                path.display().to_string(),
+            ),
+            ComponentSource::Bundled(bytes) => {
+                (Component::new(engine, bytes), "bundled component".into())
+            }
+        };
+        let component = component.with_context(|| format!("compiling {label}"))?;
         let mut linker = Linker::<State>::new(engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
         bindings::Plugin::add_to_linker::<State, HasSelf<State>>(&mut linker, |state| state)?;
         let pre = bindings::PluginPre::new(
             linker
                 .instantiate_pre(&component)
-                .with_context(|| format!("linking {}", path.display()))?,
+                .with_context(|| format!("linking {label}"))?,
         )?;
-        log::debug!(
-            "compiled and linked {} in {:?}",
-            path.display(),
-            started.elapsed()
-        );
+        log::debug!("compiled and linked {} in {:?}", label, started.elapsed());
         Ok(Self {
             engine: engine.clone(),
             pre,

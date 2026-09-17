@@ -153,6 +153,7 @@ diffr-plugin-hide-files = { path = "plugins/hide-files" }
 diffr-plugin-removed-runs = { path = "plugins/removed-runs" }
 diffr-plugin-summarize = { path = "plugins/summarize" }
 diffr-plugin-test-bodies = { path = "plugins/test-bodies" }
+wasmtime-wasi-http = { version = "34.0.2", default-features = false }
 
 
 [target.'cfg(not(any(windows, target_os = "illumos", target_os = "freebsd")))'.dependencies]
@@ -199,9 +200,8 @@ default-members = [
 	"examples/plugins/fixtures",
 ]
 
-# Test-only exception: the summarizer's HTTP client is native-only today.
 [workspace.metadata.diffr]
-wasm-test-exclude = ["diffr-plugin-summarize"]
+wasm-test-exclude = []
 
 [profile.release]
 lto = "thin"

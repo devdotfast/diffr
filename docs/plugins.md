@@ -186,7 +186,7 @@ A component gets full access; diffr does not sandbox it:
 
 - WASI with the working directory preopened read-write as `.`.
 - The environment inherited.
-- The network open, with name lookup.
+- The network open, with name lookup and standard WASI HTTP/HTTPS outgoing requests.
 - Its stdout and stderr captured, and written to diffr's stderr a line at a
   time, each line prefixed with `[<plugin name>] `. Neither may reach diffr's
   stdout, which is the stream. A native plugin writes to diffr's stderr
@@ -298,8 +298,28 @@ next run.
   path = "/path/to/diffr/plugins/deleted-bodies"
   ```
 
-  The summarizer's HTTP client does not build for `wasm32-wasip2`, so it runs
-  natively only.
+- `plugins/summarize`: a network-backed component example. Its WASM transport
+  uses `wasi:http/outgoing-handler` for HTTP/HTTPS, including request headers,
+  streaming bodies and timeouts; its native transport uses reqwest. Build it
+  with `cargo xtask build-plugins`, then load it without rebuilding diffr:
+
+  ```toml
+  [plugins]
+  order = ["external.summarize", "bundled.test-bodies", "bundled.group"]
+
+  [plugins.external.summarize]
+  path = "/path/to/diffr/plugins/summarize"
+  enabled = true
+  # Reads GEMINI_API_KEY or GOOGLE_API_KEY from the inherited environment.
+  ```
+
+  `plugins/summarize/src/http.rs` is a complete outgoing-request example for
+  plugin authors. The host provides TLS; components do not need to embed a
+  TLS implementation. WASM instances process files serially; `max_concurrency`
+  controls only native requests. WASI timeouts apply to connection, first-byte
+  and between-byte waits; the native client applies a whole-request timeout.
+  `cargo test --features wasm-plugin-tests --bin diffr external_component_summarizes_over_http`
+  checks the external component against a local model endpoint, including retries.
 
 Native plugin crates register their name and constructor through the same
 `export!("name", Type)` macro used for WASM exports. The linker gathers the
@@ -312,7 +332,7 @@ Repository tooling discovers plugin crates through `cargo metadata` and
 bundled implementation into diffr; otherwise the plugin uses WASM. This does
 not add a WASM requirement to `cargo install`. `cargo xtask test-plugins`
 builds WASM variants and runs parity tests. The workspace's
-`wasm-test-exclude` list records test-only exceptions such as the summarizer.
+`wasm-test-exclude` list can record test-only exceptions; currently all plugins build as WASM.
 
 The host also discovers bundled manifests and query assets from its plugin
 dependencies, rather than maintaining a second file list. A dependency marked

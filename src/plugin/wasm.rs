@@ -57,6 +57,7 @@ pub(crate) fn engine() -> anyhow::Result<Engine> {
 /// progress, set before each call.
 struct State {
     wasi: WasiCtx,
+    http: wasmtime_wasi_http::WasiHttpCtx,
     table: ResourceTable,
     host: Host,
 }
@@ -70,6 +71,12 @@ impl IoView for State {
 impl WasiView for State {
     fn ctx(&mut self) -> &mut WasiCtx {
         &mut self.wasi
+    }
+}
+
+impl wasmtime_wasi_http::WasiHttpView for State {
+    fn ctx(&mut self) -> &mut wasmtime_wasi_http::WasiHttpCtx {
+        &mut self.http
     }
 }
 
@@ -192,6 +199,7 @@ impl WasmPlugin {
         let component = component.with_context(|| format!("compiling {label}"))?;
         let mut linker = Linker::<State>::new(engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
+        wasmtime_wasi_http::add_only_http_to_linker_sync(&mut linker)?;
         bindings::Plugin::add_to_linker::<State, HasSelf<State>>(&mut linker, |state| state)?;
         let pre = bindings::PluginPre::new(
             linker
@@ -222,6 +230,7 @@ impl WasmPlugin {
             &self.engine,
             State {
                 wasi: wasi.build(),
+                http: wasmtime_wasi_http::WasiHttpCtx::new(),
                 table: ResourceTable::new(),
                 host,
             },

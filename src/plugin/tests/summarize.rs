@@ -400,3 +400,41 @@ fn small_files_never_call_the_model() {
     let moves = moves(&pipeline, &file, &sides).unwrap();
     assert!(moves.is_empty());
 }
+
+/// Exercise the same component a user loads from an external plugin folder.
+#[cfg(feature = "wasm-plugin-tests")]
+#[test]
+fn external_component_summarizes_over_http() {
+    let (file, mut sides) = project("a.py", "", LARGE);
+    let id = select(&trees(&sides), 3)[0].0;
+    let (endpoint, server) = serve(vec![
+        (429, "{}".into()),
+        (200, gemini_answer(&[(id, "call a, b, c")])),
+    ]);
+    let engine = super::super::wasm::engine().unwrap();
+    let plugin = super::super::wasm::WasmPlugin::load(
+        &engine,
+        &super::super::config::ComponentSource::File(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/summarize/plugin.wasm"),
+        ),
+    )
+    .unwrap();
+    let mut options = builtin::manifest("summarize").unwrap().defaults();
+    options.extend(
+        json!({"api_key": "test-key", "endpoint": endpoint, "min_lines": 3, "retries": 1})
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
+    let mut pipeline = Pipeline::default();
+    pipeline
+        .push(
+            "summarize",
+            serde_json::Value::Object(options),
+            &|host, options| plugin.create(host, options),
+        )
+        .unwrap();
+    pipeline.run(&file, &mut sides).unwrap();
+    assert_eq!(fold_label(&trees(&sides)), "call a, b, c");
+    assert_eq!(server.join().unwrap().len(), 2);
+}

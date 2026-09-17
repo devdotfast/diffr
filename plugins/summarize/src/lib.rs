@@ -15,8 +15,12 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::Semaphore;
+#[cfg(target_arch = "wasm32")]
+mod http;
 
 /// The plugin's name, and the tags its queries set: a function body, and a
 /// test body, which is never summarized.
@@ -54,8 +58,11 @@ pub struct Summarize {
     options: Options,
     api_key: String,
     endpoint: String,
+    #[cfg(not(target_arch = "wasm32"))]
     client: reqwest::Client,
+    #[cfg(not(target_arch = "wasm32"))]
     runtime: Runtime,
+    #[cfg(not(target_arch = "wasm32"))]
     limit: Semaphore,
 }
 
@@ -154,6 +161,7 @@ impl Summarize {
         });
         let url = self.url();
         let failed = |message: String| anyhow!("{}: {message}", self.options.model);
+        #[cfg(not(target_arch = "wasm32"))]
         let text = self.runtime.block_on(async {
             let _permit = self
                 .limit
@@ -204,6 +212,40 @@ impl Summarize {
                 tokio::time::sleep(Duration::from_millis(250 * (1 << attempt.min(6)))).await;
             }
         })?;
+        #[cfg(target_arch = "wasm32")]
+        let text: serde_json::Value = {
+            let mut attempt = 0;
+            loop {
+                let result = http::post(
+                    &url,
+                    &self.api_key,
+                    &body.to_string(),
+                    self.options.request_timeout_ms,
+                );
+                let retry = match result {
+                    Ok((status, body)) if (200..300).contains(&status) => {
+                        break serde_json::from_slice(&body)
+                            .map_err(|error| failed(error.to_string()))?;
+                    }
+                    Ok((status, _)) if status == 429 || status >= 500 => format!("HTTP {status}"),
+                    Ok((status, body)) => {
+                        return Err(failed(format!(
+                            "HTTP {status} {}",
+                            String::from_utf8_lossy(&body)
+                                .chars()
+                                .take(200)
+                                .collect::<String>()
+                        )))
+                    }
+                    Err(error) => error.to_string(),
+                };
+                if attempt >= self.options.retries {
+                    return Err(failed(format!("{retry} after {} attempts", attempt + 1)));
+                }
+                attempt += 1;
+                std::thread::sleep(Duration::from_millis(250 * (1 << attempt.min(6))));
+            }
+        };
         let content = text["candidates"][0]["content"]["parts"]
             .as_array()
             .and_then(|parts| parts.last())
@@ -369,9 +411,11 @@ impl Plugin for Summarize {
 
     fn new(options: Options) -> anyhow::Result<Self> {
         let api_key = resolve_key(&options)?;
+        #[cfg(not(target_arch = "wasm32"))]
         let client = reqwest::Client::builder()
             .timeout(Duration::from_millis(options.request_timeout_ms))
             .build()?;
+        #[cfg(not(target_arch = "wasm32"))]
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .thread_name("diffr-summarizer")
@@ -383,8 +427,11 @@ impl Plugin for Summarize {
                 .endpoint
                 .clone()
                 .unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned()),
+            #[cfg(not(target_arch = "wasm32"))]
             client,
+            #[cfg(not(target_arch = "wasm32"))]
             runtime,
+            #[cfg(not(target_arch = "wasm32"))]
             limit: Semaphore::new(options.max_concurrency),
             options,
         })

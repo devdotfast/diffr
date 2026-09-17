@@ -2,7 +2,7 @@
 
 "tag" = { fg = "red" }
 "attribute" = { fg = "yellow" }
-"comment" = { fg = "light-gray", modifiers = ["italic"] }
+"comment" = { fg = "comment-gray", modifiers = ["italic"] }
 "constant" = { fg = "cyan" }
 "constant.numeric" = { fg = "gold" }
 "constant.builtin" = { fg = "gold" }
@@ -115,4 +115,5 @@ light-black = "#2C323C"
 gray = "#3E4452"
 faint-gray = "#3B4048"
 light-gray = "#5C6370"
+comment-gray = "#C0C6D0"
 linenr = "#4B5263"

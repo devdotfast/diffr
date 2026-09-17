@@ -23,7 +23,7 @@ use tokio::sync::Semaphore;
 mod http;
 
 /// The plugin's name, and the tags its queries set: a function body, and a
-/// test body, which is never summarized.
+/// test body, which can be summarized independently of whether it is new.
 const PLUGIN: &str = "summarize";
 const FUNCTION: &str = "summarize:function";
 const TEST: &str = "summarize:test";
@@ -35,6 +35,8 @@ pub struct Options {
     pub provider: Provider,
     pub model: String,
     pub min_lines: usize,
+    pub tests: bool,
+    pub test_min_lines: usize,
     pub api_key: Option<String>,
     pub endpoint: Option<String>,
     pub request_timeout_ms: u64,
@@ -286,6 +288,16 @@ impl Summarize {
 /// any docstring, so a docstring matched across sides never makes the new
 /// body under it look paired.
 pub fn select(sides: &Pairing<Source>, min_lines: usize) -> Vec<(u32, u32, u32, Option<u32>)> {
+    select_with_tests(sides, min_lines, None)
+}
+
+/// Include right-side tests regardless of newness or initial collapsed state.
+/// Descend through suites/modules so each test gets its own summary.
+pub fn select_with_tests(
+    sides: &Pairing<Source>,
+    min_lines: usize,
+    test_min_lines: Option<usize>,
+) -> Vec<(u32, u32, u32, Option<u32>)> {
     let (lhs, rhs) = match sides {
         Pairing::Both { lhs, rhs } => (OtherSide::of(&lhs.regions), rhs),
         Pairing::RightOnly { rhs } => (OtherSide::default(), rhs),
@@ -297,16 +309,19 @@ pub fn select(sides: &Pairing<Source>, min_lines: usize) -> Vec<(u32, u32, u32, 
         regions: &[Region],
         lhs: &OtherSide,
         min_lines: usize,
+        test_min_lines: Option<usize>,
         selected: &mut Vec<(u32, u32, u32, Option<u32>)>,
     ) {
         for region in regions {
-            if is_fold(region)
-                && has_tag(region, FUNCTION)
-                && !has_tag(region, TEST)
-                && !region.visibility.collapsed
-                && one_sided(region, lhs)
-                && line_count(region) >= min_lines
-            {
+            let eligible = if has_tag(region, TEST) {
+                test_min_lines.is_some_and(|minimum| line_count(region) >= minimum)
+            } else {
+                has_tag(region, FUNCTION)
+                    && !region.visibility.collapsed
+                    && one_sided(region, lhs)
+                    && line_count(region) >= min_lines
+            };
+            if is_fold(region) && eligible {
                 let lines = region.range.lines();
                 selected.push((
                     region.id,
@@ -317,11 +332,18 @@ pub fn select(sides: &Pairing<Source>, min_lines: usize) -> Vec<(u32, u32, u32, 
                 continue;
             }
             if let Node::Fold { children } = &region.node {
-                visit(rhs, children, lhs, min_lines, selected);
+                visit(rhs, children, lhs, min_lines, test_min_lines, selected);
             }
         }
     }
-    visit(rhs, &rhs.regions, &lhs, min_lines, &mut selected);
+    visit(
+        rhs,
+        &rhs.regions,
+        &lhs,
+        min_lines,
+        test_min_lines,
+        &mut selected,
+    );
     selected
 }
 
@@ -482,7 +504,11 @@ impl Plugin for Summarize {
     }
 
     fn mutate(&self, file: &FileEntry, sides: &Pairing<Source>) -> anyhow::Result<Vec<Move>> {
-        let selected = select(sides, self.options.min_lines);
+        let selected = select_with_tests(
+            sides,
+            self.options.min_lines,
+            self.options.tests.then_some(self.options.test_min_lines),
+        );
         let (Pairing::Both { rhs, .. } | Pairing::RightOnly { rhs }) = &sides else {
             return Ok(Vec::new());
         };

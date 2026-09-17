@@ -6,9 +6,9 @@ order = [
     "bundled.context",
     "bundled.hide-files",
     "bundled.deleted-bodies",
+    "bundled.summarize",
     "bundled.test-bodies",
     "bundled.removed-runs",
-    "bundled.summarize",
     "bundled.group",
 ]
 
@@ -41,6 +41,8 @@ enabled = false
 provider = "gemini"
 model = "gemini-3.8-flash"
 min_lines = 20
+tests = true
+test_min_lines = 20
 request_timeout_ms = 60000
 max_concurrency = 16
 retries = 3

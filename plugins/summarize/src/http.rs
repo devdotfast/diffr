@@ -51,11 +51,24 @@ pub fn post(url: &str, key: &str, body: &str, timeout_ms: u64) -> anyhow::Result
         let stream = outgoing
             .write()
             .map_err(|_| anyhow!("HTTP output stream"))?;
-        for chunk in body.as_bytes().chunks(4096) {
+        let mut remaining = body.as_bytes();
+        while !remaining.is_empty() {
+            let capacity = stream
+                .check_write()
+                .map_err(|e| anyhow!("HTTP write: {e:?}"))? as usize;
+            if capacity == 0 {
+                stream.subscribe().block();
+                continue;
+            }
+            let length = capacity.min(remaining.len());
             stream
-                .blocking_write_and_flush(chunk)
+                .write(&remaining[..length])
                 .map_err(|e| anyhow!("HTTP write: {e:?}"))?;
+            remaining = &remaining[length..];
         }
+        // Finish the body below without a separate flush: a peer can respond
+        // as soon as Content-Length bytes arrive, closing the write stream
+        // before a post-write flush even though the request succeeded.
     }
     OutgoingBody::finish(outgoing, None).map_err(|e| anyhow!("HTTP finish: {e:?}"))?;
     response.subscribe().block();

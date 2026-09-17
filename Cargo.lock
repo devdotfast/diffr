@@ -730,10 +730,8 @@ name = "diffr-plugin-summarize"
 version = "0.1.0"
 dependencies = [
  "diffr-plugin-sdk",
- "reqwest",
  "serde",
  "serde_json",
- "tokio",
  "wasi 0.14.2+wasi-0.2.4",
 ]
 

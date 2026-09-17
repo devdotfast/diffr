@@ -125,7 +125,7 @@ test_min_lines = 20
 api_key = "…"              # or GEMINI_API_KEY / GOOGLE_API_KEY
 endpoint = "https://…"     # optional base URL override
 request_timeout_ms = 60000
-max_concurrency = 16
+max_concurrency = 16      # legacy option; ignored by the WASM summarizer
 retries = 3
 system_prompt = """…"""    # the model's system instruction; defaults to diffr's own
 

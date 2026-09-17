@@ -42,14 +42,15 @@ description = "Override the provider's base URL, for proxies and tests."
 type = "integer"
 minimum = 1
 title = "Request timeout (ms)"
-description = "Per-request limit in milliseconds."
+description = "Connect, first-byte and between-byte timeout, in milliseconds."
 default = 60000
 
 [options.max_concurrency]
 type = "integer"
 minimum = 1
 title = "Parallel requests"
-description = "Requests in flight at once across files."
+description = "Legacy option accepted for compatibility; WASM runs one file at a time. This setting has no effect."
+"x-settings" = false
 default = 16
 
 [options.retries]

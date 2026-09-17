@@ -102,11 +102,11 @@ fn summarizer_with(overrides: serde_json::Value) -> Pipeline {
 #[test]
 fn selection_takes_new_bodies_of_at_least_min_lines() {
     let (_, sides) = project("a.py", "", LARGE);
-    let selected = select(&trees(&sides), 3);
+    let selected = select(&trees(&sides), 3, None);
     assert_eq!(selected.len(), 1);
     assert_eq!((selected[0].1, selected[0].2), (2, 4));
     let (_, sides) = project("a.py", LARGE, LARGE);
-    assert!(select(&trees(&sides), 3).is_empty());
+    assert!(select(&trees(&sides), 3, None).is_empty());
 }
 
 #[test]
@@ -124,7 +124,7 @@ fn selection_reads_newness_from_the_lines_when_the_match_fell_back() {
     );
     // Nothing matched, so no fold is paired; the lines still are. Only the
     // added body, whose lines pair with nothing, is new.
-    let selected = select(&trees(&sides), 3);
+    let selected = select(&trees(&sides), 3, None);
     assert_eq!(selected.len(), 1, "{selected:?}");
     assert_eq!((selected[0].1, selected[0].2), (7, 9));
 }
@@ -135,18 +135,18 @@ fn selection_takes_outermost_function_bodies_only() {
     // not a function, so the method is the outermost selection.
     let after = "impl A {\n    fn m(&self) {\n        a();\n        b();\n        c();\n        let f = || {\n            d();\n            e();\n            g();\n        };\n        f();\n    }\n}\n";
     let (_, sides) = project("a.rs", "", after);
-    let selected = select(&trees(&sides), 3);
+    let selected = select(&trees(&sides), 3, None);
     assert_eq!(selected.len(), 1, "{selected:?}");
     assert_eq!((selected[0].1, selected[0].2), (3, 11));
     // Below the threshold, nothing.
-    assert!(select(&trees(&sides), 30).is_empty());
+    assert!(select(&trees(&sides), 30, None).is_empty());
 }
 
 #[test]
 fn selection_skips_test_bodies_and_collapsed_folds() {
     let after = "#[test]\nfn t() {\n    a();\n    b();\n    c();\n}\n\nfn f() {\n    a();\n    b();\n    c();\n}\n";
     let (file, mut sides) = project("a.rs", "", after);
-    let selected = select(&trees(&sides), 3);
+    let selected = select(&trees(&sides), 3, None);
     assert_eq!(selected.len(), 1, "{selected:?}");
     assert_eq!((selected[0].1, selected[0].2), (9, 11));
     run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
@@ -159,13 +159,13 @@ fn selection_skips_test_bodies_and_collapsed_folds() {
             region.visibility.collapsed = true;
         }
     });
-    assert!(select(&sides, 3).is_empty());
+    assert!(select(&sides, 3, None).is_empty());
 }
 
 #[test]
 fn long_summaries_are_discarded_and_the_body_stays_open() {
     let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&trees(&sides), 3)[0].0;
+    let id = select(&trees(&sides), 3, None)[0].0;
     let (endpoint, server) = serve(vec![(200, gemini_answer(&[(id, "a()\nb()\nc()")]))]);
     summarizer(&endpoint, 0).run(&file, &mut sides).unwrap();
     let sides = trees(&sides);
@@ -183,7 +183,7 @@ fn long_summaries_are_discarded_and_the_body_stays_open() {
 #[test]
 fn summaries_collapse_selected_folds_behind_pseudocode() {
     let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&trees(&sides), 3)[0].0;
+    let id = select(&trees(&sides), 3, None)[0].0;
     let (endpoint, server) = serve(vec![(200, gemini_answer(&[(id, "call a, b, c")]))]);
     summarizer(&endpoint, 0).run(&file, &mut sides).unwrap();
     let sides = trees(&sides);
@@ -220,7 +220,7 @@ fn a_docstring_is_sent_and_only_a_verbatim_sentence_from_it_is_kept() {
         labels.remove(0)
     };
     let (file, mut sides) = project("a.rs", "", after);
-    let id = select(&trees(&sides), 3)[0].0;
+    let id = select(&trees(&sides), 3, None)[0].0;
     let (endpoint, server) = serve(vec![(200, answer(id, "Sums three numbers."))]);
     summarizer(&endpoint, 0).run(&file, &mut sides).unwrap();
     let sides = trees(&sides);
@@ -307,17 +307,17 @@ fn newness_is_the_lines_inside_the_body() {
         lhs_states.push(region.fold_state_id)
     });
     assert!(!lhs_states.contains(&body.expect("a function body on the after side")));
-    assert_eq!(select(&projected, 3).len(), 1);
+    assert_eq!(select(&projected, 3, None).len(), 1);
     // The same body grown from one that already had lines: `let x = a;`
     // still pairs, so this is a rewrite rather than a new body.
     let (_, sides) = project("a.rs", &grown, &after);
-    assert!(select(&trees(&sides), 3).is_empty());
+    assert!(select(&trees(&sides), 3, None).is_empty());
 }
 
 #[test]
 fn the_system_prompt_is_the_configured_one() {
     let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&trees(&sides), 3)[0].0;
+    let id = select(&trees(&sides), 3, None)[0].0;
     let request = |overrides: serde_json::Value, sides: &mut Pairing<protocol::Source>| {
         let (endpoint, server) = serve(vec![(200, gemini_answer(&[(id, "call a, b, c")]))]);
         let mut overrides = overrides;
@@ -354,7 +354,7 @@ fn the_system_prompt_is_the_configured_one() {
 #[test]
 fn transient_failures_are_retried_then_succeed() {
     let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&trees(&sides), 3)[0].0;
+    let id = select(&trees(&sides), 3, None)[0].0;
     let (endpoint, server) = serve(vec![
         (503, "{}".to_owned()),
         (429, "{}".to_owned()),
@@ -406,7 +406,7 @@ fn small_files_never_call_the_model() {
 #[test]
 fn external_component_summarizes_over_http() {
     let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&trees(&sides), 3)[0].0;
+    let id = select(&trees(&sides), 3, None)[0].0;
     let (endpoint, server) = serve(vec![
         (429, "{}".into()),
         (200, gemini_answer(&[(id, "call a, b, c")])),
@@ -441,7 +441,6 @@ fn external_component_summarizes_over_http() {
 
 #[test]
 fn tests_are_selected_when_added_modified_unchanged_or_already_collapsed() {
-    use diffr_plugin_summarize::select_with_tests;
     for (path, before, after) in [
         (
             "a.py",
@@ -470,28 +469,23 @@ fn tests_are_selected_when_added_modified_unchanged_or_already_collapsed() {
             let comment = if path.ends_with(".py") { "#" } else { "//" };
             let after = format!("{after}\n{comment} changed elsewhere\n");
             let (file, mut sides) = project(path, old, &after);
-            assert_eq!(
-                select_with_tests(&trees(&sides), 3, Some(3)).len(),
-                1,
-                "{path}: {old}"
-            );
-            assert!(select_with_tests(&trees(&sides), 3, None).is_empty());
-            assert!(select_with_tests(&trees(&sides), 3, Some(30)).is_empty());
+            assert_eq!(select(&trees(&sides), 3, Some(3)).len(), 1, "{path}: {old}");
+            assert!(select(&trees(&sides), 3, None).is_empty());
+            assert!(select(&trees(&sides), 3, Some(30)).is_empty());
             run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
-            assert_eq!(select_with_tests(&trees(&sides), 3, Some(3)).len(), 1);
+            assert_eq!(select(&trees(&sides), 3, Some(3)).len(), 1);
         }
     }
 }
 
 #[test]
 fn suites_select_individual_tests_and_preserve_nested_summary_folds() {
-    use diffr_plugin_summarize::select_with_tests;
     for (path, after, outer_tag) in [
         ("a.rs", "#[cfg(test)]\nmod tests {\n    #[test]\n    fn one() {\n        setup();\n        act();\n        check();\n    }\n    #[test]\n    fn two() {\n        setup();\n        act();\n        check();\n    }\n}\n", "test-bodies:module"),
         ("a.ts", "describe('suite', () => {\n    it('one', () => {\n        setup();\n        act();\n        check();\n    });\n    test('two', () => {\n        setup();\n        act();\n        check();\n    });\n});\n", "test-bodies:test"),
     ] {
         let (file, mut sides) = project(path, "", after);
-        let selected = select_with_tests(&trees(&sides), 3, Some(3));
+        let selected = select(&trees(&sides), 3, Some(3));
         assert_eq!(selected.len(), 2, "{path}: {selected:?}");
         let (endpoint, server) = serve(vec![(200, gemini_answer(&[(selected[0].0, "setup; act; check one"), (selected[1].0, "setup; act; check two")]))]);
         summarizer_with(json!({"api_key": "test", "endpoint": endpoint, "test_min_lines": 3})).run(&file, &mut sides).unwrap();
@@ -516,4 +510,29 @@ fn suites_select_individual_tests_and_preserve_nested_summary_folds() {
         assert!(outer_state.is_some());
         assert_eq!(found, 2);
     }
+}
+
+#[test]
+fn bundled_wasm_summarizer_streams_large_prompts() {
+    // Exceed the host's outgoing body buffer and close the server immediately
+    // after replying, exercising backpressure and the response/finish race.
+    let after = format!(
+        "def test_it():\n    setup()\n    act()\n    check()\n# {}\n",
+        "context ".repeat(16_384)
+    );
+    let (file, mut sides) = project("a.py", "", &after);
+    let id = select(&trees(&sides), 3, Some(3))[0].0;
+    let (endpoint, server) = serve(vec![(200, gemini_answer(&[(id, "setup; act; check")]))]);
+    let wasm = summarizer_with(json!({
+        "api_key": "test", "endpoint": endpoint, "test_min_lines": 3, "retries": 0,
+    }));
+    assert!(builtin::component("summarize").is_some());
+    wasm.run(&file, &mut sides).unwrap();
+    assert_eq!(fold_label(&trees(&sides)), "setup; act; check");
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 1);
+    let request: serde_json::Value = serde_json::from_str(&requests[0]).unwrap();
+    let prompt = request["contents"][0]["parts"][0]["text"].as_str().unwrap();
+    assert!(prompt.contains(&"context ".repeat(16_384)));
+    assert!(prompt.contains(&format!("fold {id}: lines 2-4")));
 }

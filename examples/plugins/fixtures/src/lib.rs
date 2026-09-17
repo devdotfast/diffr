@@ -112,4 +112,4 @@ impl Plugin for Fixtures {
     }
 }
 
-export!(Fixtures);
+export!("fixtures", Fixtures);

@@ -133,12 +133,14 @@ impl Pipeline {
                     })?
                 }
                 None => {
-                    let create = native::lookup(name).ok_or_else(|| {
+                    let create = native::lookup(name)?.ok_or_else(|| {
                         anyhow!(
                             "plugins.{name}: the plugin folder has no {COMPONENT_FILE}, and diffr has no native plugin of that name"
                         )
                     })?;
-                    pipeline.push(name, options, &create)?
+                    pipeline.push(name, options, &|host, options| {
+                        native::registered(create, host, options)
+                    })?
                 }
             }
         }

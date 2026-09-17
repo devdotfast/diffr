@@ -149,7 +149,9 @@ pub(crate) fn bundled(name: &str, overrides: serde_json::Value) -> Pipeline {
         .push(
             name,
             serde_json::Value::Object(options),
-            &native::lookup(name).expect("native code"),
+            &|host, options| {
+                native::registered(native::lookup(name)?.expect("native code"), host, options)
+            },
         )
         .unwrap();
     pipeline

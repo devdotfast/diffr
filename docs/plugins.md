@@ -213,12 +213,13 @@ written with it:
   implements `new` (make the plugin from its options; where it can fail),
   `classify` and `mutate`. None has a default: a plugin that does not
   classify returns `Ok(Vec::new())`.
-- `export!(MyPlugin)`: built for `wasm32`, exports the plugin as the
+- `export!("my-plugin", MyPlugin)`: built for `wasm32`, exports the plugin as the
   component's `plugin` resource: its `new` deserializes the options string
   into `Options` and calls `Plugin::new`, and its `classify` and `mutate`
   call the instance with the records it was given, since the guest bindings'
-  records are the contract's. Built for anything else, it expands to nothing,
-  and diffr's native registry deserializes the options and calls the trait
+  records are the contract's. Built for a native target, it exposes the name and
+  constructor as `DIFFR_PLUGIN` for diffr's native registry.
+  The native registry deserializes the options and calls the trait
   itself. The same source builds both ways.
 - `host::git`: the host function, the same call natively and in a component.
 - `tree::sides` rebuilds the contract's sides as region trees
@@ -264,7 +265,7 @@ impl Plugin for HideAll {
     }
 }
 
-export!(HideAll);
+export!("hide-all", HideAll);
 ```
 
 Build it as a component with the pinned toolchain and the `wasm32-wasip2`
@@ -307,3 +308,9 @@ next run.
 
   The summarizer's HTTP client does not build for `wasm32-wasip2`, so it runs
   natively only.
+
+Native plugin crates register their name and constructor through the same
+`export!("name", Type)` macro used for WASM exports. The linker gathers the
+registrations; configuration still controls instantiation and execution order.
+Native crates must be dependencies linked into the host. External WASM plugins
+need no native registration and do not require rebuilding diffr.

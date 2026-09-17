@@ -157,4 +157,4 @@ fn visit(
     }
 }
 
-export!(RemovedRuns);
+export!("removed-runs", RemovedRuns);

@@ -102,4 +102,4 @@ impl Plugin for DeletedBodies {
     }
 }
 
-export!(DeletedBodies);
+export!("deleted-bodies", DeletedBodies);

@@ -110,4 +110,4 @@ impl Plugin for TestBodies {
     }
 }
 
-export!(TestBodies);
+export!("test-bodies", TestBodies);

@@ -489,4 +489,4 @@ impl Plugin for Summarize {
     }
 }
 
-export!(Summarize);
+export!("summarize", Summarize);

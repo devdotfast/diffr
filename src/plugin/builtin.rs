@@ -97,7 +97,6 @@ pub(crate) fn manifest(name: &str) -> Option<&'static Manifest> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin::native::REGISTRY;
     use std::collections::BTreeSet;
     use std::path::Path;
 
@@ -131,7 +130,7 @@ mod tests {
         for name in NAMES {
             assert_eq!(manifest(name).unwrap().name, name);
             assert!(
-                REGISTRY.iter().any(|(native, _)| *native == name),
+                crate::plugin::native::lookup(name).unwrap().is_some(),
                 "{name} has native code"
             );
         }

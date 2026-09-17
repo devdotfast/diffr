@@ -12,9 +12,9 @@
 //!   and returning exactly those records.
 //! - [`host`] holds what diffr gives every plugin: `git`.
 //! - [`export!`] makes a plugin the `plugin` resource a component exports
-//!   when the crate is built for `wasm32-wasip2`, and expands to nothing
-//!   otherwise, where diffr's native registry calls the trait directly. The same source
-//!   builds both ways.
+//!   when the crate is built for `wasm32-wasip2`, and
+//!   otherwise exposes its native registration for the host to collect.
+//!   The same source builds both ways.
 //!
 //! Plugins reason about regions with the same code:
 //!
@@ -29,6 +29,8 @@
 pub mod apply;
 pub mod draft;
 pub mod host;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod native;
 pub mod tree;
 pub mod types;
 
@@ -94,10 +96,16 @@ pub mod guest;
 /// is built for `wasm32`: the resource's `new` deserializes the options
 /// string into [`Plugin::Options`] and calls [`Plugin::new`], and its
 /// `classify` and `mutate` call the instance. Built for anything else it
-/// expands to nothing: diffr calls the trait itself.
+/// exposes its name and constructor as `DIFFR_PLUGIN` for the host registry.
 #[macro_export]
 macro_rules! export {
-    ($plugin:ty) => {
+    ($name:literal, $plugin:ty) => {
+        #[cfg(not(target_arch = "wasm32"))]
+        #[doc(hidden)]
+        pub static DIFFR_PLUGIN: $crate::native::Registration = $crate::native::Registration {
+            name: $name,
+            create: $crate::native::create::<$plugin>,
+        };
         #[cfg(target_arch = "wasm32")]
         const _: () = {
             struct DiffrPluginExport;

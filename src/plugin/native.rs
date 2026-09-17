@@ -4,82 +4,114 @@
 //! same records it hands a component.
 use super::host::Host;
 use super::Runner;
-use anyhow::anyhow;
+use diffr_plugin_sdk::native as sdk;
 use diffr_plugin_sdk::types::{FileEntry, Move, SourceSides};
-use diffr_plugin_sdk::{tree, Plugin};
+#[cfg(test)]
+use diffr_plugin_sdk::Plugin;
 use std::rc::Rc;
 
-/// Makes a native plugin's instance from its options string.
-pub(crate) type Constructor = fn(Host, &str) -> anyhow::Result<Box<dyn Runner>>;
-
-/// Every plugin diffr has native code for, by the name its `plugin.toml`
-/// gives it.
-pub(crate) const REGISTRY: &[(&str, Constructor)] = &[
-    ("context", native::<diffr_plugin_context::Context>),
-    ("hide-files", native::<diffr_plugin_hide_files::HideFiles>),
-    (
-        "deleted-bodies",
-        native::<diffr_plugin_deleted_bodies::DeletedBodies>,
-    ),
-    (
-        "test-bodies",
-        native::<diffr_plugin_test_bodies::TestBodies>,
-    ),
-    (
-        "removed-runs",
-        native::<diffr_plugin_removed_runs::RemovedRuns>,
-    ),
-    ("summarize", native::<diffr_plugin_summarize::Summarize>),
-    ("group", native::<diffr_plugin_group::Group>),
+const PLUGINS: &[&sdk::Registration] = &[
+    &diffr_plugin_context::DIFFR_PLUGIN,
+    &diffr_plugin_deleted_bodies::DIFFR_PLUGIN,
+    &diffr_plugin_group::DIFFR_PLUGIN,
+    &diffr_plugin_hide_files::DIFFR_PLUGIN,
+    &diffr_plugin_removed_runs::DIFFR_PLUGIN,
+    &diffr_plugin_summarize::DIFFR_PLUGIN,
+    &diffr_plugin_test_bodies::DIFFR_PLUGIN,
 ];
 
-/// The constructor of the native plugin `name`, if diffr has one.
-pub(crate) fn lookup(name: &str) -> Option<Constructor> {
-    REGISTRY
-        .iter()
-        .find(|(native, _)| *native == name)
-        .map(|(_, constructor)| *constructor)
+#[cfg(test)]
+pub(crate) type Constructor = fn(Host, &str) -> anyhow::Result<Box<dyn Runner>>;
+
+pub(crate) fn lookup(name: &str) -> anyhow::Result<Option<&'static sdk::Registration>> {
+    lookup_in(PLUGINS, name)
 }
 
-/// Make the native plugin `P`: deserialize `options` into `P::Options`, as a
-/// component's `new` does, and call `P::new` with `host` behind the host
-/// functions.
+fn lookup_in<'a>(
+    plugins: &[&'a sdk::Registration],
+    name: &str,
+) -> anyhow::Result<Option<&'a sdk::Registration>> {
+    let mut found = None;
+    for &registration in plugins {
+        if registration.name == name {
+            anyhow::ensure!(
+                found.is_none(),
+                "duplicate native plugin registration: {name}"
+            );
+            found = Some(registration);
+        }
+    }
+    Ok(found)
+}
+
+pub(crate) fn registered(
+    registration: &sdk::Registration,
+    host: Host,
+    options: &str,
+) -> anyhow::Result<Box<dyn Runner>> {
+    let plugin = call(host, || (registration.create)(options))?;
+    Ok(Box::new(Native(plugin)))
+}
+
+#[cfg(test)]
 pub(crate) fn native<P: Plugin + Send + Sync + 'static>(
     host: Host,
     options: &str,
 ) -> anyhow::Result<Box<dyn Runner>> {
-    let options: P::Options =
-        serde_json::from_str(options).map_err(|error| anyhow!("invalid options: {error}"))?;
-    let plugin = call(host, || P::new(options))?;
+    let plugin = call(host, || sdk::create::<P>(options))?;
     Ok(Box::new(Native(plugin)))
 }
 
-/// Run `call`, one call of a native plugin, inside a host scope of its own.
 fn call<R>(host: Host, call: impl FnOnce() -> anyhow::Result<R>) -> anyhow::Result<R> {
     diffr_plugin_sdk::host::scope(Rc::new(host), call)
 }
 
-/// A native plugin's instance.
-struct Native<P>(P);
+struct Native(Box<dyn sdk::Instance>);
 
-impl<P: Plugin + Send + Sync> Runner for Native<P> {
+impl Runner for Native {
     fn queries(&self, host: Host) -> anyhow::Result<Vec<diffr_plugin_sdk::QuerySource>> {
         call(host, || self.0.queries())
     }
-
     fn classify(&self, host: Host, file: &FileEntry) -> anyhow::Result<Vec<String>> {
         call(host, || self.0.classify(file))
     }
-
     fn mutate(
         &self,
         host: Host,
         file: &FileEntry,
         sides: &SourceSides,
     ) -> anyhow::Result<Vec<Move>> {
-        call(host, || {
-            let sides = tree::sides(sides)?;
-            self.0.mutate(file, &sides)
-        })
+        call(host, || self.0.mutate(file, sides))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unused(_: &str) -> anyhow::Result<Box<dyn sdk::Instance>> {
+        anyhow::bail!("not instantiated")
+    }
+
+    #[test]
+    fn lookup_rejects_duplicate_names_without_constructing_plugins() {
+        let first = sdk::Registration {
+            name: "example",
+            create: unused,
+        };
+        let second = sdk::Registration {
+            name: "example",
+            create: unused,
+        };
+        assert!(std::ptr::eq(
+            lookup_in(&[&first], "example").unwrap().unwrap(),
+            &first
+        ));
+        assert!(lookup_in(&[&first], "absent").unwrap().is_none());
+        assert!(lookup_in(&[&first, &second], "example")
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("duplicate native plugin"));
     }
 }

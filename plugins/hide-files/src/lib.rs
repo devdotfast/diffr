@@ -55,4 +55,4 @@ fn capitalized(text: &str) -> String {
     }
 }
 
-export!(HideFiles);
+export!("hide-files", HideFiles);

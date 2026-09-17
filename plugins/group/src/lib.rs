@@ -248,4 +248,4 @@ fn label(run: &Run<'_>) -> String {
     format!("{} collapsed regions · {lines} lines", run.collapsed)
 }
 
-export!(Group);
+export!("group", Group);

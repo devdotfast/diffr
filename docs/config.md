@@ -12,6 +12,8 @@ diffr's configuration comes from exactly three places:
    and git's user-wide attributes file); see [File tags](#file-tags).
 
 There is no repository configuration file and no environment-variable layer.
+The embedded [default config](../src/config/default.toml) provides fresh-install
+settings. Config files use `version = 1`; unsupported versions are rejected.
 Keys the file omits keep their defaults. An unknown key or a mistyped value is
 an error that names the file and the key's dotted path, for example
 `config.toml: diff.typo: unknown field`.
@@ -47,6 +49,8 @@ key; keys marked `"x-settings": false` are not settings.
 ## Keys
 
 ```toml
+version = 1
+
 [diff]
 byte_limit = 1000000       # larger files on either side get a line diff
 graph_limit = 3000000      # the largest AST matching graph explored per file

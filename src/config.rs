@@ -30,18 +30,38 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use strum::IntoEnumIterator;
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
+pub(crate) const DEFAULT_CONFIG: &str = include_str!("config/default.toml");
+const CONFIG_VERSION: u32 = 1;
+fn config_version() -> u32 {
+    CONFIG_VERSION
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Config {
+    /// Configuration format version. Unknown versions require a newer diffr.
+    #[serde(default = "config_version")]
+    #[schemars(extend("x-settings" = false))]
+    pub(crate) version: u32,
     /// The plugins that decide what starts collapsed, hidden, linked or
     /// grouped, and the fold queries they own. Its schema comes from each
     /// plugin's `plugin.toml`; see [`PluginsConfig::schema`].
     #[schemars(skip)]
+    #[serde(default)]
     pub(crate) plugins: PluginsConfig,
     /// Colors for the terminal frontend.
+    #[serde(default)]
     pub(crate) theme: ThemeConfig,
     /// Limits on the structural comparison itself.
+    #[serde(default)]
     pub(crate) diff: DiffConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self::from_toml_in(DEFAULT_CONFIG, Path::new(""))
+            .expect("the embedded default config is valid")
+    }
 }
 
 /// When a file exceeds one of these, diffr falls back to a line diff for
@@ -199,6 +219,12 @@ impl Config {
                     _ => format!("{path}: {message}"),
                 })
             })?;
+        if config.version != CONFIG_VERSION {
+            return Err(ConfigError(format!(
+                "unsupported config version {}; expected {CONFIG_VERSION}",
+                config.version
+            )));
+        }
         config.plugins.resolve(directory)?;
         Ok(config)
     }
@@ -752,5 +778,35 @@ mod load_tests {
             .unwrap()
             .contains("matching graph"));
         assert!(schema["properties"].get("languages").is_none());
+    }
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+
+    #[test]
+    fn embedded_defaults_round_trip_with_an_explicit_version_and_order() {
+        let defaults = Config::default();
+        let text = toml::to_string_pretty(&defaults).unwrap();
+        let restored = Config::from_toml(&text).unwrap();
+        assert_eq!(defaults.version, 1);
+        assert_eq!(
+            serde_json::to_value(defaults).unwrap(),
+            serde_json::to_value(restored).unwrap()
+        );
+    }
+
+    #[test]
+    fn unsupported_versions_are_rejected_and_explicit_lists_stay_small() {
+        assert!(Config::from_toml("version = 2")
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("unsupported config version 2"));
+        let config =
+            Config::from_toml("version = 1\n[plugins]\norder = ['bundled.group']\n").unwrap();
+        assert_eq!(config.plugins.entries.len(), 1);
+        assert!(config.plugins.entries.contains_key("bundled.group"));
     }
 }

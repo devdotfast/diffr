@@ -232,17 +232,31 @@ struct PluginTables {
     external: BTreeMap<String, Entry>,
 }
 
+fn default_tables() -> PluginTables {
+    #[derive(Deserialize)]
+    struct Defaults {
+        plugins: PluginTables,
+    }
+    toml::from_str::<Defaults>(crate::config::DEFAULT_CONFIG)
+        .expect("embedded plugin defaults")
+        .plugins
+}
+
 impl From<PluginTables> for PluginsConfig {
     fn from(tables: PluginTables) -> Self {
         let mut bundled = tables.bundled;
         let order = tables.order.unwrap_or_else(|| {
-            for name in builtin::NAMES {
-                bundled.entry(name.into()).or_default();
+            let defaults = default_tables();
+            for (name, default) in defaults.bundled {
+                let entry = bundled.entry(name).or_default();
+                if entry.enabled.is_none() {
+                    entry.enabled = default.enabled;
+                }
+                for (key, value) in default.options {
+                    entry.options.entry(key).or_insert(value);
+                }
             }
-            builtin::NAMES
-                .iter()
-                .map(|name| format!("bundled.{name}"))
-                .collect()
+            defaults.order.expect("embedded default order")
         });
         for reference in &order {
             if let Some(name) = reference.strip_prefix("bundled.") {
@@ -390,7 +404,7 @@ impl Entry {
 
 impl Default for PluginsConfig {
     fn default() -> Self {
-        let mut config = Self::from(PluginTables::default());
+        let mut config = Self::from(default_tables());
         config
             .resolve(Path::new(""))
             .expect("the bundled plugins' defaults are valid");
@@ -481,7 +495,7 @@ impl PluginsConfig {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "The plugins in the order they run; each sees the region trees the ones before it left. Every entry is listed exactly once.",
-                "default": builtin::NAMES.iter().map(|name| format!("bundled.{name}")).collect::<Vec<_>>(),
+                "default": Self::default().order,
                 "x-settings": false,
             }),
         );

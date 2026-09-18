@@ -3,15 +3,20 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./api": "./bindings/node/api.ts"
+    "./api": "./bindings/node/api.ts",
+    "./jev": "./bindings/node/jev.ts"
   },
   "scripts": {
     "build:api": "node bindings/node/build.mjs",
     "typecheck": "tsc --noEmit",
-    "test:code-mode": "bun test tests/code-mode"
+    "test:code-mode": "bun test tests/code-mode",
+    "test:jev": "bun run tests/code-mode/jev.live.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.3.10",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "^0.6.0"
   }
 }

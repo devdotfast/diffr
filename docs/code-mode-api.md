@@ -306,6 +306,54 @@ own source line numbers. An unmatched counterpart stays unhighlighted.
 span data. Linking and collapsing can still hide highlights; preserving coverage
 and keeping matches visible are separate requirements for plugin behavior.
 
+## Jev selection adapter
+
+The optional `diffr/jev` adapter uses the official `@typesafe-ai/sdk` in
+TypeScript. Insert it between hydration and postprocessing:
+
+```typescript
+import * as diffr from "diffr/api";
+import { createJevRanker } from "diffr/jev";
+import { TypeSafeClient } from "@typesafe-ai/sdk";
+
+const jev = createJevRanker({ client: new TypeSafeClient(), concurrency: 4 });
+const hydrated = await diffr.hydrate(scope, hits);
+const ranked = await jev.rank("Find the code that describes the retry label", hydrated);
+console.table(ranked.map(({ result, side, region, score }) => ({
+  file: result.file[side]!.path, side, line: region.start.line + 1, score,
+})));
+const selected = jev.filter(ranked, { minScore: 0.6, limit: 5 });
+const results = await diffr.postprocess(scope, selected);
+console.log(results);
+```
+
+`rank` judges each candidate region independently, including its side, relative
+path, source lines, change markers, and search-highlight lines. It includes three
+preceding lines as background because a body fold can exclude its signature.
+It does not send absolute worktree paths or the entire file. Duplicate hydrated
+candidates remain separate, as they do before other selection strategies.
+
+Each score is a Noul: the probability that the candidate satisfies the query,
+not a degree-of-relevance score or a separate confidence value. Results sort
+highest first with stable ties; the caller can inspect each candidate's `model`
+and token `usage`. The model inherits the TypeSafe client's default unless
+`createJevRanker({ model })` overrides it. `rank` accepts SDK request options,
+including an abort signal, as its third argument. Errors reject the operation;
+there is no fallback that silently selects candidates after a failed judgment.
+
+`filter` is local and makes no model calls. `minScore` is inclusive; `limit` is a
+global candidate-region limit across both sides and all files. The example's
+0.6 is an illustrative threshold, not a calibrated guarantee. Selected regions
+retain their original file pairing and side. The returned results are independent
+copies with the usual methods, ready for `postprocess`; neither operation mutates
+the hydrated inputs. Postprocessing restores display order and still shows diff
+changes, including changes outside the selected search regions.
+
+Run `bun run test:jev` for the live fixture example using `TYPESAFE_API_KEY`
+(Bun loads `.env`). It prints every score and the selected pretty-printed output.
+The regular code-mode suite tests the SDK transport contract deterministically;
+the live example uses the real service and fails if credentials are missing.
+
 ## Composition example
 
 The eval host can preload the imports. `scope` below is a caller-supplied plain

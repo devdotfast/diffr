@@ -33,3 +33,16 @@ a deleted file, and an added file. The unchanged hit inside `retry()` prints
 as a context row, without a `+` or `-`, beside the changed configuration rows.
 Unchanged evidence found on both sides counts twice in the raw hit total but
 can be rendered once in the combined result. No source checkout is modified.
+
+## Jev adapter
+
+`bun run test:jev` runs the same Git fixture through real hydration, the official
+TypeSafe TypeScript SDK, local score filtering, and postprocessing. Set
+`TYPESAFE_API_KEY` in the environment or `.env`. It prints all candidate scores
+and the selected output; it has no mock or offline fallback. Its semantic query
+asks for the retry-label description, and checks that `describeRetry` ranks first.
+Model scores can vary.
+
+`jev.test.ts` separately uses a deterministic SDK HTTP transport to verify side
+selection, thresholds, concurrency, errors, and result independence without
+requiring a service key in CI. The original unfiltered output test stays intact.

@@ -1,8 +1,7 @@
 # Code-mode output test
 
 Review [search.expected.txt](./search.expected.txt) first. It is the proposed
-plain-text rendering, authored before implementation—not output captured from a
-working search engine. Changed files come first, then wholly unchanged files.
+plain-text rendering checked against the real Rust search engine and plugins. Changed files come first, then wholly unchanged files.
 Within each category files are sorted by path. Fold IDs are normalized to `<id>`
 for comparison; actual printed results will contain numeric IDs.
 
@@ -18,9 +17,15 @@ bun run typecheck
 bun run test:code-mode
 ```
 
-The Node-API Rust addon compiles and loads. Its search entry points currently
-reject with explicit not-implemented errors, so the integration test is **red**.
-Indexing, search, plugin updates, and result printing follow after review.
+The Node-API addon calls the shared Rust engine. Hydration validates hits against
+pinned Git blobs and caches structural analysis; postprocessing runs the bundled
+plugins before the JS printer renders the results. The output test passes without
+mocking these steps.
+
+The initial hand-authored expectation hid lines 16–17 of `retry.js`. The existing
+context policy keeps that short remainder at a region boundary open; the checked
+expectation preserves that behavior. The hit count and full-output assertion are
+unchanged.
 
 `fixture.ts` creates and cleans up a temporary Git repository and two pinned
 worktrees. The ten matched lines include adjacent changed and unchanged hits

@@ -36,7 +36,9 @@ retry.js — base → head
     4     4     let lastError;
     5     5     for (let attempt = 0; attempt < attempts; attempt++) {
     6     6       try {
-              … base 7–17 / head 7–17 collapsed [fold_state_id=<id>] …
+              … base 7–15 / head 7–15 collapsed [fold_state_id=<id>] …
+   16    16     }
+   17    17     throw lastError;
    18    18   }
    19    19
    20    20   export function describeRetry() {

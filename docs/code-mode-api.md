@@ -1,7 +1,8 @@
 # Diffr code-mode API proposal
 
-Proposed signatures; not implemented. The package name and Rust bridge type names
-below are placeholders. Code mode is ordinary Node.js with top-level await.
+The implementation is available through `diffr/api`, backed by the shared Rust
+engine and a Node-API addon. Code mode is ordinary Node.js or Bun with top-level
+await. This document records the API contract and the agreed type changes.
 
 ## Shared Rust types
 
@@ -140,8 +141,10 @@ nested region does not automatically open its ancestors. The helper mutates only
 this result's visibility, without rerunning plugins or changing highlights.
 
 - Scope is plain caller-supplied data. Both worktrees are required and pinned.
-- Structural analysis and query-derived regions are assumed to be indexed already,
-  before hit-dependent visibility decisions. No separate scope-resolution API.
+- Rust lazily indexes pinned Git blobs and caches structural analysis and
+  query-derived regions before attaching hit-dependent visibility. There is no
+  separate scope-resolution call. Custom postprocess plugin settings rebuild
+  the relevant trees with those plugins' queries before applying selected spans.
 - Hydration maps hits to the indexed source and attaches highlights. The current
   line-only Hit input produces whole-line highlights; token highlights would require
   richer search input later. A source counterpart isn't highlighted unless it matched.
@@ -191,8 +194,11 @@ anchors for neighboring lines and query-derived scope boundaries. No separate
 search mode is required: an ordinary diff's search highlights are empty. Changes
 away from search matches can therefore remain visible too.
 
-Folding and summarization must preserve visible changed and highlighted evidence,
-including opening containing folds when needed. Diff statistics and change coloring
+Existing policies may still fold changed code. Search highlights override those
+policies: the SDK move applier prevents file, ancestor, and linked-state collapse
+from hiding a match. Grouping treats highlighted regions as boundaries, removed
+runs skip highlighted leaves, and summarization excludes affected bodies and
+linked docstrings before requesting a summary. Diff statistics and change coloring
 continue to use only `changed`; search ranking and match coloring use
 `search_highlights`. Shared SDK helpers can provide the union for visibility
 policies without conflating the two meanings.
@@ -303,10 +309,10 @@ and keeping matches visible are separate requirements for plugin behavior.
 ## Composition example
 
 The eval host can preload the imports. `scope` below is a caller-supplied plain
-object; the comparison index is already available for its pins.
+object; Rust creates or reuses the comparison index for its pins.
 
 ```js
-import * as diffr from "@diffr/api";
+import * as diffr from "diffr/api";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import * as fs from "node:fs/promises";

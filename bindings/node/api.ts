@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { inspect } from "node:util";
+import { print } from "./print.ts";
 
 export interface Scope {
   repo: string;
@@ -28,6 +29,9 @@ export type Region = {
   end: { line: number; column: number };
   tags?: string[];
   visibility?: Visibility;
+  hasChanges(): boolean;
+  hasHighlights(): boolean;
+  hasChangedHighlights(): boolean;
 } & (
   | { kind: "leaf"; alignment_id: number; changed?: Span[]; search_highlights?: Span[] }
   | { kind: "fold"; children: Region[] }
@@ -46,13 +50,67 @@ export interface SearchResult extends SearchResultData {
   toJSON(): SearchResultData;
 }
 
-// The native exports currently reject with explicit not-implemented errors.
-// Result construction/printing will be implemented with search, not fabricated
-// here to make the snapshot pass.
+export interface PluginConfig {
+  order?: string[];
+  bundled?: Record<string, { enabled?: boolean; [option: string]: unknown }>;
+  external?: Record<string, { path: string; enabled?: boolean; [option: string]: unknown }>;
+}
+export interface PostprocessOptions { plugins?: PluginConfig }
+
 interface NativeBinding {
-  hydrate(scope: Scope, hits: Hit[]): Promise<SearchResult[]>;
-  postprocess(scope: Scope, selected: SearchResult[]): Promise<SearchResult[]>;
+  hydrate(scope: Scope, hits: Hit[]): Promise<SearchResultData[]>;
+  postprocess(scope: Scope, selected: SearchResultData[], options?: PostprocessOptions): Promise<SearchResultData[]>;
 }
 const native: NativeBinding = createRequire(import.meta.url)("./diffr.node");
-export const hydrate = native.hydrate;
-export const postprocess = native.postprocess;
+
+function walk(regions: Region[], visit: (region: Region) => void): void {
+  for (const region of regions) {
+    visit(region);
+    if (region.kind === "fold") walk(region.children, visit);
+  }
+}
+function bind(data: SearchResultData): SearchResult {
+  for (const source of Object.values(data.sources)) {
+    source.regions ??= [];
+    walk(source.regions, region => {
+      const anyLeaf = (predicate: (leaf: Extract<Region, { kind: "leaf" }>) => boolean) => {
+        let found = false;
+        walk([region], child => { if (child.kind === "leaf") found ||= predicate(child); });
+        return found;
+      };
+      Object.defineProperties(region, {
+        hasChanges: { value: () => anyLeaf(leaf => Boolean(leaf.changed?.length)) },
+        hasHighlights: { value: () => anyLeaf(leaf => Boolean(leaf.search_highlights?.length)) },
+        hasChangedHighlights: { value: () => anyLeaf(leaf => (leaf.search_highlights ?? []).some(hit =>
+          (leaf.changed ?? []).some(change => change.line === hit.line && change.start_column < hit.end_column && hit.start_column < change.end_column))) },
+      });
+    });
+  }
+  return Object.assign(Object.create(Result.prototype), data);
+}
+class Result implements SearchResult {
+  declare kind: SearchResultData["kind"];
+  declare scope: Scope;
+  declare file: Pairing<FileRef>;
+  declare sources: Pairing<Source>;
+  setCollapsed(foldStateId: number, collapsed: boolean): void {
+    if (!Number.isInteger(foldStateId) || foldStateId < 0 || typeof collapsed !== "boolean") throw new TypeError("expected a fold-state ID and boolean");
+    let found = false;
+    for (const source of Object.values(this.sources)) walk(source.regions, region => {
+      if (region.fold_state_id === foldStateId) {
+        region.visibility = { ...region.visibility, collapsed };
+        found = true;
+      }
+    });
+    if (!found) throw new RangeError(`No fold_state_id ${foldStateId} in this result`);
+  }
+  toString(): string { return print(this); }
+  [inspect.custom](): string { return this.toString(); }
+  toJSON(): SearchResultData { return { kind: this.kind, scope: this.scope, file: this.file, sources: this.sources }; }
+}
+export async function hydrate(scope: Scope, hits: Hit[]): Promise<SearchResult[]> {
+  return (await native.hydrate(scope, hits)).map(bind);
+}
+export async function postprocess(scope: Scope, selected: SearchResult[], options?: PostprocessOptions): Promise<SearchResult[]> {
+  return (await native.postprocess(scope, selected.map(result => result.toJSON()), options)).map(bind);
+}

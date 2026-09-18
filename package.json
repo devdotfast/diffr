@@ -8,7 +8,7 @@
   "scripts": {
     "build:api": "node bindings/node/build.mjs",
     "typecheck": "tsc --noEmit",
-    "test:code-mode": "bun test tests/code-mode/search.test.ts"
+    "test:code-mode": "bun test tests/code-mode"
   },
   "devDependencies": {
     "@types/bun": "^1.3.10",

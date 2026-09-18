@@ -309,7 +309,7 @@ and keeping matches visible are separate requirements for plugin behavior.
 ## Jev selection adapter
 
 The optional `diffr/jev` adapter uses the official `@typesafe-ai/sdk` in
-TypeScript. Insert it between hydration and postprocessing:
+TypeScript. Run it **after postprocessing**, as a final result ranker/filter:
 
 ```typescript
 import * as diffr from "diffr/api";
@@ -318,39 +318,44 @@ import { TypeSafeClient } from "@typesafe-ai/sdk";
 
 const jev = createJevRanker({ client: new TypeSafeClient(), concurrency: 4 });
 const hydrated = await diffr.hydrate(scope, hits);
-const ranked = await jev.rank("Find the code that describes the retry label", hydrated);
-console.table(ranked.map(({ result, side, region, score }) => ({
-  file: result.file[side]!.path, side, line: region.start.line + 1, score,
+const results = await diffr.postprocess(scope, hydrated);
+const ranked = await jev.rank("Find code that describes a retry label", results);
+console.table(ranked.map(({ result, score }) => ({
+  file: (result.file.rhs ?? result.file.lhs)!.path, score,
 })));
 const selected = jev.filter(ranked, { minScore: 0.6, limit: 5 });
-const results = await diffr.postprocess(scope, selected);
-console.log(results);
+console.log(selected);
 ```
 
-`rank` judges each candidate region independently, including its side, relative
-path, source lines, change markers, and search-highlight lines. It includes three
-preceding lines as background because a body fold can exclude its signature.
-It does not send absolute worktree paths or the entire file. Duplicate hydrated
-candidates remain separate, as they do before other selection strategies.
+One request judges one complete result. Its state is exactly:
 
-Each score is a Noul: the probability that the candidate satisfies the query,
-not a degree-of-relevance score or a separate confidence value. Results sort
-highest first with stable ties; the caller can inspect each candidate's `model`
-and token `usage`. The model inherits the TypeSafe client's default unless
-`createJevRanker({ model })` overrides it. `rank` accepts SDK request options,
-including an abort signal, as its third argument. Errors reject the operation;
-there is no fallback that silently selects candidates after a failed judgment.
+```typescript
+{ query, result: { view: result.kind, body: result.toString() } }
+```
 
-`filter` is local and makes no model calls. `minScore` is inclusive; `limit` is a
-global candidate-region limit across both sides and all files. The example's
-0.6 is an illustrative threshold, not a calibrated guarantee. Selected regions
-retain their original file pairing and side. The returned results are independent
-copies with the usual methods, ready for `postprocess`; neither operation mutates
-the hydrated inputs. Postprocessing restores display order and still shows diff
-changes, including changes outside the selected search regions.
+The body is the same pretty-printed output the caller sees, including paired
+base/head lines, function signatures, plugin-provided context, and fold notices.
+The adapter adds no surrounding source lines and does not expose hidden source.
+Jev judges visible evidence only. Expand folds before ranking if more evidence
+is needed. Postprocessing has already coalesced duplicate hydrated candidates.
+
+Each score is a Noul: the probability that the displayed result provides evidence
+relevant to the query. Results sort highest first with stable ties. The caller
+can inspect each judgment's `model` and token `usage`. The model inherits the
+TypeSafe client's default unless `createJevRanker({ model })` overrides it.
+`rank` accepts SDK request options, including an abort signal, as its third
+argument. Errors reject the operation without silently selecting a fallback.
+
+`filter` is local and makes no model calls. `minScore` is inclusive; `limit`
+counts complete results, not individual regions or sides. The example's 0.6 is
+illustrative, not a calibrated guarantee. Selected results are independent copies
+with the same source pairing, regions, fold state, and printed output. Neither
+operation mutates the input. There is no second postprocessing call.
 
 Run `bun run test:jev` for the live fixture example using `TYPESAFE_API_KEY`
-(Bun loads `.env`). It prints every score and the selected pretty-printed output.
+(Bun loads `.env`). It prints all scores and the selected pretty-printed output.
+An optional path argument saves the exact HTTP request and response bodies:
+`bun run test:jev /tmp/jev-exchanges.json`. Headers and credentials are excluded.
 The regular code-mode suite tests the SDK transport contract deterministically;
 the live example uses the real service and fails if credentials are missing.
 

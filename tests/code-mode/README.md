@@ -36,13 +36,18 @@ can be rendered once in the combined result. No source checkout is modified.
 
 ## Jev adapter
 
-`bun run test:jev` runs the same Git fixture through real hydration, the official
-TypeSafe TypeScript SDK, local score filtering, and postprocessing. Set
-`TYPESAFE_API_KEY` in the environment or `.env`. It prints all candidate scores
-and the selected output; it has no mock or offline fallback. Its semantic query
-asks for the retry-label description, and checks that `describeRetry` ranks first.
-Model scores can vary.
+`bun run test:jev` runs the same Git fixture through hydration and postprocessing,
+then uses the official TypeSafe TypeScript SDK to rank the complete printed
+results and filter them locally. Set `TYPESAFE_API_KEY` in the environment or
+`.env`. It prints every score and the selected output with no mock or offline
+fallback. Its query asks for retry-label descriptions, checking that the retry
+file is selected and the unrelated cache file is excluded. Model scores can vary.
 
-`jev.test.ts` separately uses a deterministic SDK HTTP transport to verify side
-selection, thresholds, concurrency, errors, and result independence without
-requiring a service key in CI. The original unfiltered output test stays intact.
+Pass a file path to retain exact HTTP request/response bodies, without headers:
+`bun run test:jev /tmp/jev-exchanges.json`.
+
+`jev.test.ts` separately uses a deterministic SDK HTTP transport to verify that
+Jev receives exactly `result.toString()`, one request per result, and that filtering
+preserves complete paired context and independent fold state. It also checks
+thresholds, concurrency, and failures without requiring a service key in CI.
+The original unfiltered output test stays intact.

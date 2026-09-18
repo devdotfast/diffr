@@ -22,8 +22,8 @@
 //! run whose regions are paired across sides some other way stays as it
 //! is.
 use diffr_plugin_sdk::{
-    anyhow, export, is_fold, line_count, sides_with_other_ids, Draft, FileEntry, Move, Node,
-    Pairing, Plugin, Region, Source,
+    anyhow, export, has_search_highlights, is_fold, line_count, sides_with_other_ids, Draft,
+    FileEntry, Move, Node, Pairing, Plugin, Region, Source,
 };
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -176,6 +176,11 @@ fn collapsed_runs<'a>(regions: &'a [Region], out: &mut Vec<Run<'a>>) {
     let mut separator: Vec<&Region> = Vec::new();
     let mut gap = 0;
     for region in regions {
+        if has_search_highlights(region) {
+            push_run(&mut run, &mut own);
+            separator.clear();
+            continue;
+        }
         match shape(region) {
             // A run starts with a collapsed row: a group never hides open
             // lines above its first one.

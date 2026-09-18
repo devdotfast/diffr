@@ -311,6 +311,7 @@ fn a_fold_whose_matched_partner_holds_changes_stays_open() {
         visibility: types::Visibility::default(),
         node: tree::Node::Leaf {
             alignment_id: alignment,
+            search_highlights: Vec::new(),
             changed: (start..end)
                 .filter(|_| changed)
                 .map(|line| types::Span {

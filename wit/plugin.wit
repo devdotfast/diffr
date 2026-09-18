@@ -41,6 +41,7 @@ interface types {
         renamed,
         copied,
         type-changed,
+        unchanged,
     }
 
     /// One side of a git delta, as the manifest names it.
@@ -104,6 +105,7 @@ interface types {
         /// lines up with this one.
         alignment-id: u32,
         changed: list<span>,
+        search-highlights: list<span>,
     }
 
     /// A leaf tiles the file; a fold's range is the hull of its children.

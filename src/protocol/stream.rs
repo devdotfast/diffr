@@ -375,6 +375,7 @@ pub(crate) fn visible_counts(sides: &Pairing<Source>) -> LineCounts {
                 Node::Leaf {
                     alignment_id,
                     changed,
+                    ..
                 } => {
                     if hidden {
                         continue;
@@ -442,6 +443,7 @@ mod visible_tests {
             },
             node: Node::Leaf {
                 alignment_id: alignment,
+                search_highlights: Vec::new(),
                 changed: changed
                     .iter()
                     .map(|&line| Span {

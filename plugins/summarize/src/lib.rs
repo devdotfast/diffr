@@ -422,6 +422,11 @@ impl Plugin for Summarize {
         };
         let folds: Vec<Request> = selected
             .into_iter()
+            .filter(|(id, _, _, docstring)| {
+                let mut ids = vec![*id];
+                ids.extend(*docstring);
+                !diffr_plugin_sdk::highlights_in_states(sides, &ids)
+            })
             .map(|(id, first_line, last_line, docstring)| Request {
                 id,
                 first_line,

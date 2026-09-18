@@ -73,6 +73,7 @@ pub enum Node {
     Leaf {
         alignment_id: u32,
         changed: Vec<Span>,
+        search_highlights: Vec<Span>,
     },
     Fold {
         children: Vec<Region>,
@@ -87,6 +88,36 @@ impl Region {
             Node::Fold { .. } => None,
         }
     }
+}
+
+/// Whether collapsing this region would conceal a search match.
+pub fn has_search_highlights(region: &Region) -> bool {
+    match &region.node {
+        Node::Leaf {
+            search_highlights, ..
+        } => !search_highlights.is_empty(),
+        Node::Fold { children } => children.iter().any(has_search_highlights),
+    }
+}
+
+/// Whether any of these regions' linked collapse states contains a match.
+/// Include a body's docstring when deciding whether it can be summarized.
+pub fn highlights_in_states(sides: &Pairing<Source>, ids: &[u32]) -> bool {
+    let mut states = BTreeSet::new();
+    for source in sides.sides() {
+        walk(&source.regions, &mut |region| {
+            if ids.contains(&region.id) {
+                states.insert(region.fold_state_id);
+            }
+        });
+    }
+    sides.sides().iter().any(|source| {
+        let mut found = false;
+        walk(&source.regions, &mut |region| {
+            found |= states.contains(&region.fold_state_id) && has_search_highlights(region);
+        });
+        found
+    })
 }
 
 /// One side of the diffed file as a tree.
@@ -110,6 +141,7 @@ impl Source {
                     types::Kind::Leaf(leaf) => Node::Leaf {
                         alignment_id: leaf.alignment_id,
                         changed: leaf.changed.clone(),
+                        search_highlights: leaf.search_highlights.clone(),
                     },
                     types::Kind::Fold => Node::Fold {
                         children: children(regions, region.id),
@@ -149,9 +181,11 @@ impl Source {
                     Node::Leaf {
                         alignment_id,
                         changed,
+                        search_highlights,
                     } => types::Kind::Leaf(types::Leaf {
                         alignment_id: *alignment_id,
                         changed: changed.clone(),
+                        search_highlights: search_highlights.clone(),
                     }),
                     Node::Fold { .. } => types::Kind::Fold,
                 };
@@ -415,6 +449,7 @@ mod tests {
             visibility: Visibility::default(),
             node: Node::Leaf {
                 alignment_id: alignment,
+                search_highlights: Vec::new(),
                 changed: vec![],
             },
         };
@@ -428,6 +463,7 @@ mod tests {
                     fold_state_id: id + 100,
                     node: Node::Leaf {
                         alignment_id: alignment + 100,
+                        search_highlights: Vec::new(),
                         changed: vec![],
                     },
                     ..leaf.clone()

@@ -274,6 +274,7 @@ pub(crate) fn file_entry(file: &FileChange) -> types::FileEntry {
             Pairing::RightOnly { rhs } => types::FileSides::RightOnly(file_ref(rhs)),
         },
         status: match file.status {
+            FileStatus::Unchanged => types::FileStatus::Unchanged,
             FileStatus::Added => types::FileStatus::Added,
             FileStatus::Deleted => types::FileStatus::Deleted,
             FileStatus::Modified => types::FileStatus::Modified,
@@ -322,9 +323,18 @@ pub(crate) fn to_tree(side: &protocol::Source) -> tree::Source {
                     protocol::Node::Leaf {
                         alignment_id,
                         changed,
+                        search_highlights,
                     } => tree::Node::Leaf {
                         alignment_id: *alignment_id,
                         changed: changed
+                            .iter()
+                            .map(|span| types::Span {
+                                line: span.line,
+                                start_column: span.start_column,
+                                end_column: span.end_column,
+                            })
+                            .collect(),
+                        search_highlights: search_highlights
                             .iter()
                             .map(|span| types::Span {
                                 line: span.line,
@@ -372,9 +382,18 @@ fn from_tree(regions: Vec<tree::Region>) -> Vec<protocol::Region> {
                 tree::Node::Leaf {
                     alignment_id,
                     changed,
+                    search_highlights,
                 } => protocol::Node::Leaf {
                     alignment_id,
                     changed: changed
+                        .into_iter()
+                        .map(|span| protocol::Span {
+                            line: span.line,
+                            start_column: span.start_column,
+                            end_column: span.end_column,
+                        })
+                        .collect(),
+                    search_highlights: search_highlights
                         .into_iter()
                         .map(|span| protocol::Span {
                             line: span.line,

@@ -24,6 +24,7 @@ fn leaf(id: u32, alignment: u32, start: u32, end: u32) -> tree::Region {
         visibility: types::Visibility::default(),
         node: tree::Node::Leaf {
             alignment_id: alignment,
+            search_highlights: Vec::new(),
             changed: vec![],
         },
     }

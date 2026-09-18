@@ -77,6 +77,7 @@ struct Leaf {
     paired: bool,
     /// Whether this side paints any byte of it as changed.
     spans: bool,
+    highlights: BTreeSet<u32>,
 }
 
 fn leaves(regions: &[Region], other: &BTreeSet<u32>) -> Vec<Leaf> {
@@ -85,6 +86,7 @@ fn leaves(regions: &[Region], other: &BTreeSet<u32>) -> Vec<Leaf> {
         if let Node::Leaf {
             alignment_id,
             changed,
+            search_highlights,
         } = &region.node
         {
             out.push(Leaf {
@@ -94,6 +96,7 @@ fn leaves(regions: &[Region], other: &BTreeSet<u32>) -> Vec<Leaf> {
                 end: region.range.end.line,
                 paired: other.contains(alignment_id),
                 spans: !changed.is_empty(),
+                highlights: search_highlights.iter().map(|span| span.line).collect(),
             });
         }
     });
@@ -204,6 +207,78 @@ fn segments(regions: &[Region], start: u32, end: u32, out: &mut Vec<Vec<Member>>
     }
 }
 
+// A side-only search view can contain unchanged lines. Ordinary one-sided
+// diffs retain their existing behavior when there are no search highlights.
+fn single_side_context(sides: &Pairing<Source>, context: u32) -> anyhow::Result<Vec<Move>> {
+    let source = sides.sides()[0];
+    if !source
+        .regions
+        .iter()
+        .any(diffr_plugin_sdk::has_search_highlights)
+    {
+        return Ok(Vec::new());
+    }
+    let mut anchors = BTreeSet::new();
+    walk(&source.regions, &mut |region| {
+        if let Node::Leaf {
+            changed,
+            search_highlights,
+            ..
+        } = &region.node
+        {
+            if !changed.is_empty() {
+                anchors.extend(region.range.lines());
+            }
+            anchors.extend(search_highlights.iter().map(|span| span.line));
+        }
+    });
+    let count = source.text.split_terminator('\n').count() as u32;
+    let mut shown = scope_rows(source, &anchors);
+    for line in &anchors {
+        shown.extend(
+            line.saturating_sub(context)..line.saturating_add(context).saturating_add(1).min(count),
+        );
+    }
+    let mut gaps: Vec<(u32, u32)> = Vec::new();
+    for line in (0..count).filter(|line| !shown.contains(line)) {
+        if let Some((_, end)) = gaps.last_mut().filter(|(_, end)| *end == line) {
+            *end += 1;
+        } else {
+            gaps.push((line, line + 1));
+        }
+    }
+    let mut draft = Draft::new(sides);
+    for (start, end) in gaps.into_iter().rev() {
+        if end - start < MIN_GAP {
+            continue;
+        }
+        let mut parts = Vec::new();
+        segments(&source.regions, start, end, &mut parts);
+        for part in parts.into_iter().rev() {
+            let length: u32 = part.iter().map(Member::lines).sum();
+            if length < MIN_GAP && length != end - start {
+                continue;
+            }
+            let mut members = Vec::new();
+            for member in part.into_iter().rev() {
+                let (id, lines) = match member {
+                    Member::Whole { id, lines, .. } => (id, lines),
+                    Member::Part { id, start, end, .. } => {
+                        (draft.cut_lines(id, start, end)?, end - start)
+                    }
+                };
+                draft.collapse(id, unchanged_label(lines))?;
+                members.push(id);
+            }
+            members.reverse();
+            if members.len() > 1 {
+                draft.group(members, unchanged_label(length))?;
+            }
+        }
+    }
+    Ok(draft.into_moves())
+}
+
 impl Plugin for Context {
     type Options = Options;
 
@@ -258,8 +333,7 @@ impl Plugin for Context {
     fn mutate(&self, _file: &FileEntry, sides: &Pairing<Source>) -> anyhow::Result<Vec<Move>> {
         let options = &self.options;
         let Pairing::Both { lhs, rhs } = &sides else {
-            // A one-sided file is all changed lines.
-            return Ok(Vec::new());
+            return single_side_context(sides, options.lines);
         };
         let lhs_leaves = leaves(&lhs.regions, &leaf_alignments(&rhs.regions));
         let rhs_leaves = leaves(&rhs.regions, &leaf_alignments(&lhs.regions));
@@ -293,6 +367,22 @@ impl Plugin for Context {
                 seeds[1].extend(partner.start..partner.end);
             } else {
                 unchanged.push((leaf.start, partner.start, leaf.end - leaf.start));
+            }
+        }
+        // Search matches seed their actual rows, not the whole containing leaf.
+        // Keep unchanged leaves eligible for cutting around those rows.
+        for (side, own, other) in [(0, &lhs_leaves, &rhs_leaves), (1, &rhs_leaves, &lhs_leaves)] {
+            for leaf in own {
+                novel[side].extend(&leaf.highlights);
+                seeds[side].extend(&leaf.highlights);
+                if let Some(partner) = other.iter().find(|other| other.alignment == leaf.alignment)
+                {
+                    seeds[1 - side].extend(
+                        leaf.highlights
+                            .iter()
+                            .map(|line| partner.start + line - leaf.start),
+                    );
+                }
             }
         }
         let changed = !seeds[0].is_empty() || !seeds[1].is_empty();

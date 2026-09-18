@@ -344,6 +344,7 @@ fn file_entry(file: &contract::FileEntry) -> types::FileEntry {
             contract::FileSides::RightOnly(rhs) => types::FileSides::RightOnly(file_ref(rhs)),
         },
         status: match file.status {
+            contract::FileStatus::Unchanged => types::FileStatus::Unchanged,
             contract::FileStatus::Added => types::FileStatus::Added,
             contract::FileStatus::Deleted => types::FileStatus::Deleted,
             contract::FileStatus::Modified => types::FileStatus::Modified,
@@ -393,6 +394,15 @@ fn source(side: &contract::Source) -> types::Source {
                         alignment_id: leaf.alignment_id,
                         changed: leaf
                             .changed
+                            .iter()
+                            .map(|span| types::Span {
+                                line: span.line,
+                                start_column: span.start_column,
+                                end_column: span.end_column,
+                            })
+                            .collect(),
+                        search_highlights: leaf
+                            .search_highlights
                             .iter()
                             .map(|span| types::Span {
                                 line: span.line,

@@ -25,11 +25,9 @@ test("SDK receives the exact printed result; filtering preserves its paired cont
     await new Promise(resolve => setTimeout(resolve, 1));
     const { state } = JSON.parse(String(init!.body));
     expect(state.query).toBe("Explain the retry label");
-    const original = results.find(result => result.toString() === state.result.body)!;
-    expect(state).toEqual({ query: "Explain the retry label", result: {
-      view: original.kind, body: original.toString(),
-    } });
-    bodies.push(state.result.body);
+    const original = results.find(result => result.toString() === state.result)!;
+    expect(state).toEqual({ query: "Explain the retry label", result: original.toString() });
+    bodies.push(state.result);
     active--;
     return Response.json({ model: "jev-test", answers: { relevant: { type: "noul",
       noul: original.file.rhs?.path === "retry.js" ? 0.9 : 0.1,

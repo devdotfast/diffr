@@ -330,10 +330,10 @@ console.log(selected);
 One request judges one complete result. Its state is exactly:
 
 ```typescript
-{ query, result: { view: result.kind, body: result.toString() } }
+{ query, result: result.toString() }
 ```
 
-The body is the same pretty-printed output the caller sees, including paired
+The result string is the same pretty-printed output the caller sees, including paired
 base/head lines, function signatures, plugin-provided context, and fold notices.
 The adapter adds no surrounding source lines and does not expose hidden source.
 Jev judges visible evidence only. Expand folds before ranking if more evidence

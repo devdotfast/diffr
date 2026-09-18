@@ -177,6 +177,7 @@ version_check = "0.9.4"
 [workspace]
 members = [
     "xtask",
+    "crates/diffr-node",
 	"crates/diffr-plugin-sdk",
 	"plugins/context",
 	"plugins/deleted-bodies",

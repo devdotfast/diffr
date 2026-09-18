@@ -1,0 +1,17 @@
+{
+  "name": "diffr",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./api": "./bindings/node/api.ts"
+  },
+  "scripts": {
+    "build:api": "node bindings/node/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test:code-mode": "bun test tests/code-mode/search.test.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.10",
+    "typescript": "^5.9.3"
+  }
+}

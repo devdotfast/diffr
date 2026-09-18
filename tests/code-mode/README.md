@@ -22,10 +22,9 @@ pinned Git blobs and caches structural analysis; postprocessing runs the bundled
 plugins before the JS printer renders the results. The output test passes without
 mocking these steps.
 
-The initial hand-authored expectation hid lines 16–17 of `retry.js`. The existing
-context policy keeps that short remainder at a region boundary open; the checked
-expectation preserves that behavior. The hit count and full-output assertion are
-unchanged.
+The context plugin keeps both boundaries of visible scopes open. In `retry.js`,
+lines 7–12 collapse while the `try`/`catch` and `for` closing braces remain
+visible. The output comparison checks these boundaries as well as every hit.
 
 `fixture.ts` creates and cleans up a temporary Git repository and two pinned
 worktrees. The ten matched lines include adjacent changed and unchanged hits

@@ -567,3 +567,22 @@ fn a_scope_keeps_the_line_it_closes_on() {
         );
     }
 }
+
+#[test]
+fn visible_try_and_for_headers_keep_their_closing_boundaries() {
+    let before = include_str!("../../../tests/code-mode/fixtures/base/retry.js");
+    let after = include_str!("../../../tests/code-mode/fixtures/head/retry.js");
+    // The changed line is above the loop; context reaches its try header.
+    let sides = shaped("retry.js", before, after, 4);
+    for source in [lhs(&sides), rhs(&sides)] {
+        let visible = open_lines(&source.regions);
+        for line in [4, 5, 12, 14, 15, 17] {
+            assert!(
+                visible.contains(&line),
+                "missing boundary on line {}",
+                line + 1
+            );
+        }
+        assert!(!visible.contains(&7), "the try body should still collapse");
+    }
+}

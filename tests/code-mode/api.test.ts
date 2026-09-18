@@ -63,11 +63,21 @@ test("expanding a fold updates printing locally without rerunning plugins", asyn
   const other = second.find(result => result.file.rhs?.path === "retry.js")!;
   const before = other.toString();
   const id = Number(result.toString().match(/fold_state_id=(\d+)/)![1]);
+  function flatten(regions: diffr.Region[]): diffr.Region[] {
+    return regions.flatMap(region => [region,
+      ...(region.kind === "fold" ? flatten(region.children) : [])]);
+  }
+  const outer = flatten(result.sources.rhs!.regions).find(region => region.fold_state_id === id)!;
+  if (outer.kind !== "fold") throw new Error("Expected the try body fold");
+  const child = flatten(outer.children).find(region => region.fold_state_id !== id)!;
+  // Explicitly collapse a child: context need not create a collapsed child.
+  result.setCollapsed(child.fold_state_id, true);
   result.setCollapsed(id, false);
   expect(result.toString()).not.toContain(`fold_state_id=${id}]`);
-  // Opening an outer group leaves its nested folds collapsed, by contract.
-  const child = Number(result.toString().match(/fold_state_id=(\d+)/)![1]);
-  result.setCollapsed(child, false);
+  expect(result.toString()).toContain(`fold_state_id=${child.fold_state_id}]`);
+  expect(result.toString()).not.toContain("return response;");
+  result.setCollapsed(child.fold_state_id, false);
+  expect(result.toString()).toContain("return response;");
   expect(result.toString()).toContain("const response = request();");
   expect(other.toString()).toBe(before);
   expect(() => result.setCollapsed(999999, false)).toThrow("No fold_state_id");

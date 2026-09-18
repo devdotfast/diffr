@@ -2,9 +2,10 @@
 //!
 //! A line stays visible when it is within `lines` of a changed line on its
 //! side, when it is paired with such a line, or when it opens or closes a
-//! scope that holds a change on its side. Scopes are the constructs this
-//! plugin's queries tag `context:scope` (see `scope_rows`), each covering
-//! its signature line through the line that closes it; a file the
+//! scope that holds a change on its side or has a visible boundary. Scopes
+//! are the constructs this plugin's queries tag `context:scope` (see
+//! `scope_rows`), each covering its signature through its closing line.
+//! A `context:body` fold instead excludes both delimiter lines. A file the
 //! diff did not parse has none. Every other stretch of unchanged
 //! paired lines that is at least `MIN_GAP` lines long collapses, labelled
 //! with its line count; a file with no change collapses whole, however
@@ -33,6 +34,9 @@ const MIN_GAP: u32 = 3;
 /// A fold the queries mark as a scope: a function, a type, a block.
 const SCOPE: &str = "context:scope";
 
+/// A body fold excludes its delimiter lines, unlike a whole-construct scope.
+const BODY: &str = "context:body";
+
 pub struct Context {
     options: Options,
 }
@@ -45,25 +49,42 @@ pub struct Options {
 }
 
 /// The first and last line of every scope on `source` that holds a changed
-/// line.
+/// line or has an opening or closing line already visible in the context window.
 ///
 /// A scope region is a whole construct: its first line is the line its
 /// signature or header starts on and its last is the line that closes it,
 /// since the construct's own node is what the queries tag. Keeping both
 /// always shows where a scope opens and where it ends, whatever sits inside.
-fn scope_rows(source: &Source, changed: &BTreeSet<u32>) -> BTreeSet<u32> {
-    let mut rows = BTreeSet::new();
-    walk(&source.regions, &mut |region| {
-        if !is_fold(region) || !has_tag(region, SCOPE) {
-            return;
+/// Body folds use the immediately adjacent lines for their delimiters.
+fn scope_rows(source: &Source, changed: &BTreeSet<u32>, visible: &BTreeSet<u32>) -> BTreeSet<u32> {
+    let mut rows = visible.clone();
+    loop {
+        let previous = rows.len();
+        walk(&source.regions, &mut |region| {
+            if !is_fold(region) || !(has_tag(region, SCOPE) || has_tag(region, BODY)) {
+                return;
+            }
+            let span = region.range.lines();
+            let (first, last) = if has_tag(region, BODY) {
+                (span.start.saturating_sub(1), span.end)
+            } else {
+                (span.start, span.end - 1)
+            };
+            if changed.range(span.clone()).next().is_none()
+                && !rows.contains(&first)
+                && !rows.contains(&last)
+            {
+                return;
+            }
+            rows.insert(first);
+            rows.insert(last);
+        });
+        // Shared boundaries connect constructs such as try and catch. Repeat
+        // so neither side of such a boundary leaves an unmatched delimiter.
+        if rows.len() == previous {
+            break;
         }
-        let span = region.range.lines();
-        if changed.range(span.clone()).next().is_none() {
-            return;
-        }
-        rows.insert(span.start);
-        rows.insert(span.end - 1);
-    });
+    }
     rows
 }
 
@@ -233,12 +254,13 @@ fn single_side_context(sides: &Pairing<Source>, context: u32) -> anyhow::Result<
         }
     });
     let count = source.text.split_terminator('\n').count() as u32;
-    let mut shown = scope_rows(source, &anchors);
+    let mut shown = BTreeSet::new();
     for line in &anchors {
         shown.extend(
             line.saturating_sub(context)..line.saturating_add(context).saturating_add(1).min(count),
         );
     }
+    shown.extend(scope_rows(source, &anchors, &shown));
     let mut gaps: Vec<(u32, u32)> = Vec::new();
     for line in (0..count).filter(|line| !shown.contains(line)) {
         if let Some((_, end)) = gaps.last_mut().filter(|(_, end)| *end == line) {
@@ -400,7 +422,8 @@ impl Plugin for Context {
         if changed {
             for (side, source) in [lhs, rhs].into_iter().enumerate() {
                 // Context adds unchanged rows only; changed rows are shown anyway.
-                shown[side].extend(scope_rows(source, &novel[side]));
+                let boundaries = scope_rows(source, &novel[side], &shown[side]);
+                shown[side].extend(boundaries);
             }
         }
 

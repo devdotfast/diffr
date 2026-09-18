@@ -1,16 +1,16 @@
-//! Native entry points for `diffr/api`. Search implementation follows the
-//! reviewed integration-output contract; these exports deliberately fail until
-//! that implementation exists.
+//! Node-API entry points delegate to the shared Rust search engine.
 use napi::{Error, Result};
 use napi_derive::napi;
 use serde_json::Value;
 
 #[napi]
-pub async fn hydrate(_scope: Value, _hits: Value) -> Result<Value> {
-    Err(Error::from_reason("diffr/api: hydrate is not implemented"))
+pub async fn hydrate(scope: Value, hits: Value) -> Result<Value> {
+    difftastic::search::hydrate(scope, hits)
+        .map_err(|error| Error::from_reason(format!("{error:#}")))
 }
 
 #[napi]
-pub async fn postprocess(_scope: Value, _selected: Value, _options: Option<Value>) -> Result<Value> {
-    Err(Error::from_reason("diffr/api: postprocess is not implemented"))
+pub async fn postprocess(scope: Value, selected: Value, options: Option<Value>) -> Result<Value> {
+    difftastic::search::postprocess(scope, selected, options)
+        .map_err(|error| Error::from_reason(format!("{error:#}")))
 }

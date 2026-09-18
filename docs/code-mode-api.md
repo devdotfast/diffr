@@ -306,6 +306,14 @@ own source line numbers. An unmatched counterpart stays unhighlighted.
 span data. Linking and collapsing can still hide highlights; preserving coverage
 and keeping matches visible are separate requirements for plugin behavior.
 
+## Storage
+
+Storage is controlled by diffr config, entirely in Rust. Set `storage.backend`
+to `memory`, `file`, or `sqlite` and `storage.path` to the cache directory (default
+`.cache/diffr`, relative to the source repository). The JS API does not expose
+storage options. See [computed diff storage](./diff-store.md) for configuration,
+the Rust trait, keys, and lifecycle.
+
 ## Jev selection adapter
 
 The optional `diffr/jev` adapter uses the official `@typesafe-ai/sdk` in

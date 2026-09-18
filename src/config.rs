@@ -55,6 +55,9 @@ pub(crate) struct Config {
     /// Limits on the structural comparison itself.
     #[serde(default)]
     pub(crate) diff: DiffConfig,
+    /// Host-owned cache for computed diffs.
+    #[serde(default)]
+    pub(crate) storage: crate::storage::StoreConfig,
 }
 
 impl Default for Config {

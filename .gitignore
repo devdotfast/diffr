@@ -21,3 +21,6 @@ plugin.wasm
 # Node binding build and JS dependencies.
 /bindings/node/*.node
 /node_modules/
+
+# Optional computed diff store.
+/.cache/diffr/

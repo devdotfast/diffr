@@ -59,3 +59,7 @@ name = "default-dark"
 byte_limit = 1000000
 graph_limit = 3000000
 parse_error_limit = 0
+
+[storage]
+backend = "memory"
+path = ".cache/diffr"

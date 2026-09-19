@@ -60,6 +60,8 @@ mod pairing;
 mod parse;
 mod plugin;
 pub(crate) mod protocol;
+pub mod search;
+pub mod storage;
 mod summary;
 mod tags;
 mod version;

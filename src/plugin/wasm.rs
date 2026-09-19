@@ -47,9 +47,10 @@ use bindings::diffr::plugin::{host, types};
 pub(crate) fn engine() -> anyhow::Result<Engine> {
     let mut config = Config::new();
     config.wasm_component_model(true);
-    config.cache(Some(
-        Cache::new(CacheConfig::new()).context("wasmtime's compilation cache")?,
-    ));
+    // The disk cache is an optimization; read-only homes must still run plugins.
+    if let Ok(cache) = Cache::new(CacheConfig::new()) {
+        config.cache(Some(cache));
+    }
     Engine::new(&config)
 }
 

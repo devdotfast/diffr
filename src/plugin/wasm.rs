@@ -4,10 +4,10 @@
 //! Each component is compiled once, when the pipeline is built (with
 //! wasmtime's disk cache, so an unchanged component is not recompiled on the
 //! next run), linked against WASI and the `host` imports, and instantiated
-//! once in its own [`Store`]. The plugin's `new` makes the one `plugin`
+//! in independent [`Store`]s when the plugin opts into pooling. The plugin's `new` makes the one `plugin`
 //! resource of the run in that instance, and every `classify` and `mutate`
 //! calls that resource. A store runs one call at a time, so it sits behind a
-//! mutex: the rayon workers call one component plugin one file at a time.
+//! mutex: each pooled instance accepts one call at a time.
 //! The records a call gets are the ones a native plugin gets, lowered field
 //! for field into the generated bindings.
 //!

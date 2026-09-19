@@ -133,11 +133,28 @@ diffr builds these records once per call, from the file's manifest entry and
 its trees as the plugins before left them, and hands the same records to a
 native plugin and to a component. Nothing else reaches a plugin.
 
-diffr makes one instance of each plugin per run and calls it for every file.
-A native plugin's instance is called from several files' workers in parallel,
-so it must be `Send + Sync`; interior mutability is the plugin's own
-business. A component's instance lives in one wasmtime store, which runs one
-call at a time: diffr calls a component plugin one file at a time.
+By default diffr makes one instance of each plugin and serializes calls to it.
+A plugin author can declare `parallel = true` at the top of `plugin.toml` to
+permit independent deferred-work instances. This promises that calls do not depend on shared
+mutable state, call order, or unique external side effects. Initial presentation and enrichment may use different instances. Plugin ordering within a file
+is still sequential.
+
+Opted-in plugins expose a host-owned `instances` setting (default 4, range 1–64):
+
+```toml
+[plugins.bundled.summarize]
+instances = 4
+```
+
+The pool is shared across every file and phase of that plugin, so the bound is
+per comparison, not per file. A separate initial-presentation instance keeps
+queries, classification, and mutation responsive while the deferred pool is busy.
+With `instances = 1`, all phases share the same instance for serial debugging. The host compiles a WASM component once and creates
+independent stores. Each store still executes only one call at a time. Leases
+return on success and errors. Cancellation skips queued enrichment; active calls
+retain their configured request timeouts. Native plugins use the same pool.
+The summarizer batches selected folds into one request per file, so this
+parallelizes files; it does not split a file's batch into per-fold requests.
 
 ### Fresh ids
 
@@ -319,8 +336,8 @@ next run.
 
   `plugins/summarize/src/http.rs` is a complete outgoing-request example for
   plugin authors. The host provides TLS; components do not need to embed a
-  TLS implementation. WASM instances process files serially; the legacy
-  `max_concurrency` option is accepted but has no effect. Timeouts apply to
+  TLS implementation. Each WASM instance processes calls serially; `instances` controls the host pool.
+  The legacy `max_concurrency` option is still accepted but has no effect. Timeouts apply to
   connection, first-byte and between-byte waits.
   `cargo test --features wasm-plugin-tests --bin diffr external_component_summarizes_over_http`
   checks the external component against a local model endpoint, including retries.

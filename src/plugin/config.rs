@@ -22,7 +22,7 @@ pub(crate) const PATH: &str = "path";
 
 /// The keys in a plugin entry that diffr owns: a plugin's options may not
 /// use them.
-pub(crate) const RESERVED: [&str; 2] = [ENABLED, PATH];
+pub(crate) const RESERVED: [&str; 3] = [ENABLED, PATH, "instances"];
 
 /// A plugin folder's description, and its component when it has one.
 pub(crate) const MANIFEST_FILE: &str = "plugin.toml";
@@ -35,6 +35,10 @@ pub(crate) struct Manifest {
     /// The plugin's entry name in `[plugins]`, and the prefix of every tag
     /// its queries set: `<name>:<tag>`.
     pub(crate) name: String,
+    /// Opt in only when independent instances can process different files.
+    /// No cross-call state, ordering, or unique external side effects may be required.
+    #[serde(default)]
+    pub(crate) parallel: bool,
     /// The human name settings screens group the plugin's settings under.
     pub(crate) title: String,
     #[serde(default)]
@@ -176,6 +180,13 @@ impl Manifest {
                 "x-group": group,
             }),
         );
+        if self.parallel {
+            properties.insert("instances".into(), json!({
+                "type": "integer", "minimum": 1, "maximum": 64, "default": 4,
+                "title": "Parallel instances", "description": "Maximum simultaneous deferred plugin calls across all files.",
+                "x-group": group,
+            }));
+        }
         for (key, option) in &self.options {
             let mut option = option.clone();
             if let Some(option) = option.as_object_mut() {
@@ -301,6 +312,9 @@ pub(crate) struct Entry {
     /// plugin's default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) enabled: Option<bool>,
+    /// Host-owned deferred-work bound, shared by all files of this plugin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) instances: Option<usize>,
     /// The plugin's folder on disk, as written: relative to the
     /// configuration file's directory, or absolute.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -422,6 +436,12 @@ impl PluginsConfig {
             };
             let manifest = &folder.manifest;
             entry.enabled.get_or_insert(manifest.enabled_by_default());
+            let instances = entry
+                .instances
+                .unwrap_or(if manifest.parallel { 4 } else { 1 });
+            if !(1..=64).contains(&instances) || (!manifest.parallel && instances != 1) {
+                return Err(ConfigError(format!("plugins.{reference}.instances: expected 1..=64 for a parallel plugin, or 1 for a serial plugin")));
+            }
             manifest
                 .validate(&entry.options)
                 .map_err(|error| ConfigError(format!("plugins.{reference}: {error}")))?;
@@ -740,5 +760,26 @@ mod tests {
         );
         assert!(error("[plugins.bundled.summarize]\nprovider = 'openai'\n")
             .starts_with("plugins.bundled.summarize: provider: "));
+    }
+}
+
+#[cfg(test)]
+mod concurrency_tests {
+    use crate::config::Config;
+
+    #[test]
+    fn concurrency_requires_plugin_opt_in_and_a_bounded_positive_count() {
+        for count in [0, 65] {
+            assert!(Config::from_toml(&format!(
+                "[plugins.bundled.summarize]\ninstances = {count}\n"
+            ))
+            .is_err());
+        }
+        assert!(Config::from_toml("[plugins.bundled.context]\ninstances = 2\n").is_err());
+        let config = Config::from_toml("[plugins.bundled.summarize]\ninstances = 3\n").unwrap();
+        assert_eq!(
+            config.plugins.entries["bundled.summarize"].instances,
+            Some(3)
+        );
     }
 }

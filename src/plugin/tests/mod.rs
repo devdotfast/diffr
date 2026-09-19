@@ -484,3 +484,5 @@ fn a_subset_of_bundled_plugins_can_use_shared_query_tags() {
         .compile()
         .unwrap();
 }
+
+mod deferred;

@@ -26,6 +26,8 @@ use std::thread;
 pub(crate) struct Options {
     /// Emit every token's capture name (`--syntax`).
     pub(crate) syntax: bool,
+    /// Opt-in v4 stream; v3 consumers continue to receive finished files.
+    pub(crate) updates: bool,
 }
 
 /// What the stream ended with: whether any file failed, and whether a
@@ -66,8 +68,11 @@ pub(crate) fn write(
                 failed, aborted, ..
             } = &event
             {
-                ended.failed = *failed > 0;
+                ended.failed |= *failed > 0;
                 ended.aborted = aborted.is_some();
+            }
+            if matches!(&event, Event::Annotations { error: Some(_), .. }) {
+                ended.failed = true;
             }
             serde_json::to_writer(&mut output, &event)?;
             output.write_all(b"\n")?;
@@ -104,7 +109,7 @@ fn produce(
 ) -> Result<(), Disconnected> {
     let send = |event: Event| sender.send(event).map_err(|_| Disconnected);
     let start = Event::Start {
-        version: VERSION,
+        version: if options.updates { 4 } else { VERSION },
         lhs: Snapshot::from(&session.comparison.before),
         rhs: Snapshot::from(&session.comparison.after),
         files: manifest,
@@ -118,40 +123,81 @@ fn produce(
         session,
         cancelled: Arc::clone(&cancelled),
     };
-    pool.install(|| {
-        loader.par_bridge().for_each(|(file, loaded)| {
-            let (visibility, outcome) = match loaded.and_then(|loaded| diffed(&loaded, options)) {
-                Ok((entry, diff)) => match shape(pipeline, &entry, diff) {
-                    Ok((visibility, diff)) => (visibility, Outcome::Diff { diff }),
-                    Err(error) => {
-                        // A run-level failure: stop pulling files, let the ones
-                        // in flight finish, and report why in the footer.
-                        failed.fetch_add(1, Ordering::Relaxed);
-                        cancelled.store(true, Ordering::Relaxed);
-                        aborted.lock().expect("abort reason").get_or_insert(error);
-                        return;
+    let (enrich_sender, enrich_receiver) =
+        sync_channel::<(FileChange, Pairing<Source>)>(pool.current_num_threads());
+    let enrich_receiver = Mutex::new(enrich_receiver);
+    thread::scope(|scope| {
+        let enrich_receiver = &enrich_receiver;
+        if options.updates {
+            for _ in 0..pool.current_num_threads() {
+                let sender = &sender;
+                let cancelled = &cancelled;
+                scope.spawn(move || loop {
+                    let job = enrich_receiver.lock().expect("enrichment queue").recv();
+                    let Ok((entry, sides)) = job else {
+                        break;
+                    };
+                    if cancelled.load(Ordering::Relaxed) {
+                        continue;
                     }
-                },
-                Err(error) => (
-                    Visibility::default(),
-                    Outcome::Error {
-                        error: wire_error(&error),
-                    },
-                ),
-            };
-            match &outcome {
-                Outcome::Diff { .. } => succeeded.fetch_add(1, Ordering::Relaxed),
-                Outcome::Error { .. } => failed.fetch_add(1, Ordering::Relaxed),
-            };
-            let event = Event::File {
-                file: file.sides,
-                visibility,
-                outcome,
-            };
-            if sender.send(event).is_err() {
-                cancelled.store(true, Ordering::Relaxed);
+                    let event = enrich_event(pipeline, &entry, &sides);
+                    if sender.send(event).is_err() {
+                        cancelled.store(true, Ordering::Relaxed);
+                    }
+                });
             }
+        }
+        pool.install(|| {
+            loader.par_bridge().for_each(|(file, loaded)| {
+                let (visibility, outcome) = match loaded.and_then(|loaded| diffed(&loaded, options))
+                {
+                    Ok((entry, diff)) => match shape(pipeline, &entry, diff, options.updates) {
+                        Ok((visibility, diff)) => (visibility, Outcome::Diff { diff }),
+                        Err(error) => {
+                            // A run-level failure: stop pulling files, let the ones
+                            // in flight finish, and report why in the footer.
+                            failed.fetch_add(1, Ordering::Relaxed);
+                            cancelled.store(true, Ordering::Relaxed);
+                            aborted.lock().expect("abort reason").get_or_insert(error);
+                            return;
+                        }
+                    },
+                    Err(error) => (
+                        Visibility::default(),
+                        Outcome::Error {
+                            error: wire_error(&error),
+                        },
+                    ),
+                };
+                match &outcome {
+                    Outcome::Diff { .. } => succeeded.fetch_add(1, Ordering::Relaxed),
+                    Outcome::Error { .. } => failed.fetch_add(1, Ordering::Relaxed),
+                };
+                let pending = if options.updates {
+                    match &outcome {
+                        Outcome::Diff {
+                            diff: Diff::Text { sides, .. },
+                        } => Some((file.manifest_entry(), sides.clone())),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                let event = Event::File {
+                    file: file.sides,
+                    visibility,
+                    outcome,
+                };
+                if sender.send(event).is_err() {
+                    cancelled.store(true, Ordering::Relaxed);
+                } else if let Some(pending) = pending {
+                    if !cancelled.load(Ordering::Relaxed) && enrich_sender.send(pending).is_err() {
+                        cancelled.store(true, Ordering::Relaxed);
+                    }
+                }
+            });
         });
+        drop(enrich_sender);
     });
     let aborted = aborted.into_inner().expect("abort reason");
     send(Event::Complete {
@@ -159,6 +205,25 @@ fn produce(
         failed: failed.into_inner(),
         aborted: aborted.map(|error| wire_error(&error)),
     })
+}
+
+/// An enrichment failure is local to this file's annotations.
+fn enrich_event(pipeline: &Pipeline, entry: &FileChange, sides: &Pairing<Source>) -> Event {
+    let (annotations, error) = match pipeline.enrich(entry, sides) {
+        Ok(annotations) => (annotations, None),
+        Err(error) => (
+            Vec::new(),
+            Some(Problem {
+                code: "enrichment_failed".into(),
+                message: format!("{error:#}"),
+            }),
+        ),
+    };
+    Event::Annotations {
+        file: entry.file.clone(),
+        annotations,
+        error,
+    }
 }
 
 /// The wire record for an error, built as it is written. The code comes from
@@ -220,6 +285,7 @@ fn shape(
     pipeline: &Pipeline,
     entry: &FileChange,
     diff: Diff,
+    updates: bool,
 ) -> anyhow::Result<(Visibility, Diff)> {
     match diff {
         Diff::Text {
@@ -227,7 +293,11 @@ fn shape(
             mut stats,
             ..
         } => {
-            let visibility = pipeline.run(entry, &mut sides)?;
+            let visibility = if updates {
+                pipeline.prepare(entry, &mut sides)?
+            } else {
+                pipeline.run(entry, &mut sides)?
+            };
             let coverage = change_coverage(&sides);
             stats.visible = coverage.initially_visible.counts();
             Ok((
@@ -245,7 +315,11 @@ fn shape(
                 syntax: Vec::new(),
                 regions: Vec::new(),
             });
-            let visibility = pipeline.run(entry, &mut empty)?;
+            let visibility = if updates {
+                pipeline.prepare(entry, &mut empty)?
+            } else {
+                pipeline.run(entry, &mut empty)?
+            };
             Ok((visibility, Diff::Binary { sides }))
         }
     }
@@ -283,7 +357,7 @@ pub(crate) fn write_file(
     let entry = file.manifest_entry();
     let mut output = BufWriter::new(output);
     let start = Event::Start {
-        version: VERSION,
+        version: if options.updates { 4 } else { VERSION },
         lhs: Snapshot::Path {
             path: before.to_owned(),
         },
@@ -319,7 +393,7 @@ pub(crate) fn write_file(
                     },
                 },
             );
-            match shape(pipeline, &entry, projected) {
+            match shape(pipeline, &entry, projected, options.updates) {
                 Ok((visibility, diff)) => (
                     Some(Event::File {
                         file: file.sides,
@@ -337,8 +411,24 @@ pub(crate) fn write_file(
         serde_json::to_writer(&mut output, record)?;
         output.write_all(b"\n")?;
     }
+    output.flush()?;
+    let mut enrichment_failed = false;
+    if options.updates {
+        if let Some(Event::File {
+            outcome: Outcome::Diff {
+                diff: Diff::Text { sides, .. },
+            },
+            ..
+        }) = &record
+        {
+            let event = enrich_event(pipeline, &entry, sides);
+            enrichment_failed = matches!(&event, Event::Annotations { error: Some(_), .. });
+            serde_json::to_writer(&mut output, &event)?;
+            output.write_all(b"\n")?;
+        }
+    }
     let ended = Ended {
-        failed,
+        failed: failed || enrichment_failed,
         aborted: aborted.is_some(),
     };
     serde_json::to_writer(
@@ -634,7 +724,10 @@ mod conflict_tests {
             },
             &params,
             &Pipeline::default(),
-            Options { syntax: false },
+            Options {
+                syntax: false,
+                updates: false,
+            },
             &mut output,
         )
         .unwrap();

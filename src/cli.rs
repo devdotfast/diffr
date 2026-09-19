@@ -61,6 +61,7 @@ pub(crate) fn run() -> Result<i32> {
         .arg(flag("find-renames").short('M').conflicts_with("no-renames"))
         .arg(Arg::new("unified").short('U').long("unified").value_parser(clap::value_parser!(u32)).help("Unchanged lines kept around each change; defaults to plugins.bundled.context.lines"))
         .arg(Arg::new("format").long("format").value_parser(["ndjson"]).help("Write the event stream to stdout instead of opening the terminal UI"))
+        .arg(flag("stream-annotations").requires("format").help("Emit initial files followed by deferred annotations (NDJSON v4)"))
         .arg(flag("syntax").help("Include every token's tree-sitter capture name in --format ndjson output"))
         .arg(Arg::new("width").long("width").value_parser(clap::value_parser!(usize)).help("Columns for --stat; defaults to the terminal's width"))
         .arg(flag("ignore-comments"))
@@ -104,6 +105,7 @@ pub(crate) fn run() -> Result<i32> {
     }
     let stream_options = crate::protocol::stream::Options {
         syntax: args.get_flag("syntax"),
+        updates: args.get_flag("stream-annotations"),
     };
     let items: Vec<OsString> = args
         .get_many::<OsString>("items")

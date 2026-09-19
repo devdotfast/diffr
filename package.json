@@ -4,7 +4,9 @@
   "type": "module",
   "exports": {
     "./api": "./bindings/node/api.ts",
-    "./jev": "./bindings/node/jev.ts"
+    "./jev": "./bindings/node/jev.ts",
+    "./types": "./bindings/node/types.ts",
+    "./schema": "./bindings/node/schema.ts"
   },
   "scripts": {
     "build:api": "node bindings/node/build.mjs",
@@ -17,6 +19,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@typesafe-ai/sdk": "^0.6.0"
+    "@typesafe-ai/sdk": "^0.6.0",
+    "zod": "4.4.3"
   }
 }

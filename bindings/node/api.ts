@@ -2,48 +2,19 @@ import { createRequire } from "node:module";
 import { inspect } from "node:util";
 import { bind } from "./result.ts";
 
-export interface Scope {
-  repo: string;
-  baseWorktree: { commitId: string; path: string };
-  headWorktree: { commitId: string; path: string };
-}
+export type { Scope, Hit, Pairing, Span, Visibility, FileRef, RegionData, SourceData, SearchResultData } from "./types.ts";
+import type { Scope, Hit, Pairing, RegionData, SourceData, SearchResultData } from "./types.ts";
 
-export interface Hit {
-  file: string;
-  lines: { line: number; text: string }[];
-}
-
-export type Pairing<T> = { lhs: T; rhs: T } | { lhs: T; rhs?: never } | { lhs?: never; rhs: T };
-export interface Span { line: number; start_column: number; end_column: number }
-export interface Visibility { collapsed?: boolean; label?: string }
-export interface FileRef { path: string; oid: string; mode: string }
-export interface Source {
-  text: string;
-  syntax?: (Span & { capture: string })[];
-  regions: Region[];
-}
-export type Region = {
-  id: number;
-  fold_state_id: number;
-  start: { line: number; column: number };
-  end: { line: number; column: number };
-  tags?: string[];
-  visibility?: Visibility;
+export type Region = RegionData & {
   hasChanges(): boolean;
   hasHighlights(): boolean;
   hasChangedHighlights(): boolean;
-} & (
-  | { kind: "leaf"; alignment_id: number; changed?: Span[]; search_highlights?: Span[] }
-  | { kind: "fold"; children: Region[] }
-);
-
-export interface SearchResultData {
-  kind: "combined" | "lhs" | "rhs" | "unchanged";
-  scope: Scope;
-  file: Pairing<FileRef>;
-  sources: Pairing<Source>;
+};
+export interface Source extends Omit<SourceData, "regions"> {
+  regions: Region[];
 }
 export interface SearchResult extends SearchResultData {
+  sources: Pairing<Source>;
   setCollapsed(foldStateId: number, collapsed: boolean): void;
   toString(): string;
   [inspect.custom](): string;

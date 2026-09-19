@@ -155,6 +155,8 @@ pub enum Diff {
         #[serde(flatten)]
         sides: Pairing<Source>,
         stats: Stats,
+        /// All structurally changed lines, including content hidden by folds.
+        structural_changes: StructuralChanges,
     },
     /// Either side being binary makes the whole diff binary.
     Binary {
@@ -274,6 +276,28 @@ pub struct SourcePos {
     pub column: u32,
 }
 
+/// Zero-based, half-open source line interval: `[start, end)` on the wire.
+pub type LineRange = [u32; 2];
+
+/// Structural change coverage, independent of visibility. Ranges are sorted,
+/// nonempty, disjoint, and coalesced when adjacent. A missing side has no ranges.
+/// `base` refers to `lhs`; `head` refers to `rhs`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StructuralChanges {
+    pub base: Vec<LineRange>,
+    pub head: Vec<LineRange>,
+}
+
+impl StructuralChanges {
+    pub fn counts(&self) -> LineCounts {
+        let count = |ranges: &[LineRange]| ranges.iter().map(|[start, end]| end - start).sum();
+        LineCounts {
+            added: count(&self.head),
+            removed: count(&self.base),
+        }
+    }
+}
+
 /// Line counts for one file. `fallback` is present exactly when the AST
 /// match did not run and the alignment is a line diff, carrying why:
 /// `too_complex`, `too_large`, `unsupported_language`, `parse_error`,
@@ -376,6 +400,10 @@ mod tests {
                             }],
                         ),
                     },
+                    structural_changes: StructuralChanges {
+                        base: vec![],
+                        head: vec![[1, 2]],
+                    },
                     stats: Stats {
                         textual: LineCounts {
                             added: 1,
@@ -421,6 +449,7 @@ mod tests {
                 "rhs": {"text": "fn f() {\n    1 + 2\n}\n",
                         "regions": [region(5, json!([{"line": 1, "start_column": 5, "end_column": 9}]))]},
                 "stats": {"textual": {"added": 1, "removed": 1}, "visible": {"added": 1, "removed": 1}},
+                "structural_changes": {"base": [], "head": [[1, 2]]},
             },
         });
         assert_eq!(serde_json::to_value(example_file()).unwrap(), expected);

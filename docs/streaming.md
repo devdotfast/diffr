@@ -133,6 +133,7 @@ any file failed or the run aborted.
 {"type": "text",
  "lhs": {"text": "…", "syntax": [...], "regions": [...]},
  "rhs": {"text": "…", "syntax": [...], "regions": [...]},
+ "structural_changes": {"base": [[8, 9]], "head": [[10, 14]]},
  "stats": {"textual": {"added": 4, "removed": 1},
            "visible": {"added": 2, "removed": 1}}}          // + "fallback": {code, message} on a line diff
 ```
@@ -147,14 +148,31 @@ tree-sitter highlight capture name (`keyword`, `function.method`, …). Spans ar
 per line, sorted, and non-overlapping; where captures nest, the innermost wins.
 Files that fell back to a line diff have no syntax.
 
+`structural_changes` records all structurally changed source lines, including
+those inside collapsed regions. `base` refers to `lhs`, and `head` to `rhs`.
+Each array contains zero-based, half-open `[start, end)` line ranges, sorted,
+nonempty, non-overlapping, and merged when adjacent. Both arrays are present;
+a missing or unchanged side has an empty array.
+
+A paired leaf contributes the distinct lines carrying `changed` spans. An
+unpaired leaf contributes every line, including blank lines. Formatting-only
+lines with no changed spans in paired leaves do not contribute. Fallback
+files use the same rule over their line-diff leaves; `stats.fallback` still
+identifies them. Binary diffs have no structural coverage.
+
+Consumers can intersect these ranges with a code selection and subtract viewed
+ranges to measure remaining work. Folding must not affect that calculation.
+The sum of range lengths gives complete structural counts, which may exceed
+`stats.visible` and differ from `stats.textual`.
+
 `stats.textual` counts lines with any byte change. `stats.visible` counts the
 changed lines still on screen under the default visibility: a line that carries
 a `changed` span, or any line of a leaf that exists on one side only, unless it
 sits inside a region that starts collapsed. It is computed after the plugins
-run, so configuration changes it, and with nothing collapsed it matches
-`textual` up to the blank lines of a paired changed run. A frontend that lets the
-reader fold and unfold recomputes the same rule locally; the wire value is the
-starting point.
+run, so configuration changes it. It is an initial-visibility measurement,
+not the complete structural total. A frontend can keep it fixed (as the TUI
+does), or recompute visible counts as folds toggle. For fold-independent
+progress, use `structural_changes` instead.
 
 `stats.fallback` is present when the AST match did not run: `unsupported_language`,
 `too_large`, `too_complex`, `parse_error`, or `generated` for a file tagged
@@ -327,7 +345,8 @@ Each file goes through one pipeline before its record is written:
    starts collapsed yet.
 4. The enabled plugins run in `plugins.order` on the finished trees, starting
    with `context`.
-5. `stats.visible` is recounted, and the record is written.
+5. Complete `structural_changes` and initially visible coverage are collected
+   together. The latter supplies `stats.visible`, and the record is written.
 
 Queries decide which regions exist; plugins decide how they start out. No
 plugin matches one side to the other: pairing is the projection's alone. A

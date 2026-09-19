@@ -41,6 +41,7 @@ interface types {
         renamed,
         copied,
         type-changed,
+        unchanged,
     }
 
     /// One side of a git delta, as the manifest names it.
@@ -104,6 +105,7 @@ interface types {
         /// lines up with this one.
         alignment-id: u32,
         changed: list<span>,
+        search-highlights: list<span>,
     }
 
     /// A leaf tiles the file; a fold's range is the hull of its children.
@@ -136,8 +138,10 @@ interface types {
         regions: list<region>,
     }
 
-    /// The sides a diffed file has, the same sides as its entry's `file`.
+    /// Original comparison, independent of display-side selection. `same`
+    /// represents identical sources once; its file entry still names both refs.
     variant source-sides {
+        same(source),
         both(tuple<source, source>),
         left-only(source),
         right-only(source),

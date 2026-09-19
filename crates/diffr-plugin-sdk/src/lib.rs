@@ -38,8 +38,9 @@ pub use anyhow;
 pub use draft::Draft;
 use serde::de::DeserializeOwned;
 pub use tree::{
-    before_and_after_ids, docstring_of, has_tag, is_fold, line_count, one_sided, path_to,
-    siblings_of, sides_with_other_ids, walk, walk_mut, Node, OtherSide, Pairing, Region, Source,
+    before_and_after_ids, docstring_of, has_search_highlights, has_tag, highlights_in_states,
+    is_fold, line_count, one_sided, path_to, siblings_of, sides_with_other_ids, walk, walk_mut,
+    Node, OtherSide, Pairing, Region, Source,
 };
 pub use types::{
     FileEntry, FileRef, FileSides, FileStatus, Move, Position, QuerySource, Range, Side, Span,

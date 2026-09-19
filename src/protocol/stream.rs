@@ -226,7 +226,7 @@ fn shape(
             mut sides,
             mut stats,
         } => {
-            let visibility = pipeline.run(entry, &mut sides)?;
+            let visibility = pipeline.run_diff(entry, &mut sides)?;
             stats.visible = visible_counts(&sides);
             Ok((visibility, Diff::Text { sides, stats }))
         }
@@ -236,7 +236,7 @@ fn shape(
                 syntax: Vec::new(),
                 regions: Vec::new(),
             });
-            let visibility = pipeline.run(entry, &mut empty)?;
+            let visibility = pipeline.run_diff(entry, &mut empty)?;
             Ok((visibility, Diff::Binary { sides }))
         }
     }
@@ -375,6 +375,7 @@ pub(crate) fn visible_counts(sides: &Pairing<Source>) -> LineCounts {
                 Node::Leaf {
                     alignment_id,
                     changed,
+                    ..
                 } => {
                     if hidden {
                         continue;
@@ -442,6 +443,7 @@ mod visible_tests {
             },
             node: Node::Leaf {
                 alignment_id: alignment,
+                search_highlights: Vec::new(),
                 changed: changed
                     .iter()
                     .map(|&line| Span {

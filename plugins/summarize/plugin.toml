@@ -76,7 +76,7 @@ verbatim from that doc; otherwise leave it empty. Answer with a JSON array of \
 [options.tests]
 type = "boolean"
 title = "Summarize tests"
-description = "Summarize right-side test bodies, including modified and unchanged tests in diffed files."
+description = "Summarize only added, unpaired right-side test bodies."
 default = true
 
 [options.test_min_lines]

@@ -22,6 +22,7 @@ fn removed_leaf(id: u32, alignment: u32, start: u32, end: u32, changed: &[u32]) 
         visibility: types::Visibility::default(),
         node: tree::Node::Leaf {
             alignment_id: alignment,
+            search_highlights: Vec::new(),
             changed: changed
                 .iter()
                 .map(|&line| types::Span {
@@ -76,6 +77,7 @@ fn shape(regions: &[tree::Region]) -> Vec<Shape> {
             let tree::Node::Leaf {
                 alignment_id,
                 changed,
+                ..
             } = &region.node
             else {
                 panic!("leaf expected");

@@ -201,15 +201,13 @@ impl Pipeline {
         Ok(entry.tags)
     }
 
-    /// Run every plugin on one file's sides, returning the file's own
-    /// visibility.
-    pub(crate) fn run(
+    /// Ordinary diff protocol retains its three-way source representation.
+    pub(crate) fn run_diff(
         &self,
         file: &FileChange,
         sides: &mut Pairing<protocol::Source>,
     ) -> anyhow::Result<protocol::Visibility> {
-        let entry = file_entry(file);
-        let mut trees = match &*sides {
+        let trees = match &*sides {
             Pairing::Both { lhs, rhs } => tree::Pairing::Both {
                 lhs: to_tree(lhs),
                 rhs: to_tree(rhs),
@@ -217,6 +215,84 @@ impl Pipeline {
             Pairing::LeftOnly { lhs } => tree::Pairing::LeftOnly { lhs: to_tree(lhs) },
             Pairing::RightOnly { rhs } => tree::Pairing::RightOnly { rhs: to_tree(rhs) },
         };
+        let (trees, visibility) = self.mutate(file, trees)?;
+        match (sides, trees) {
+            (
+                Pairing::Both { lhs, rhs },
+                tree::Pairing::Both {
+                    lhs: left,
+                    rhs: right,
+                },
+            ) => {
+                lhs.regions = from_tree(left.regions);
+                rhs.regions = from_tree(right.regions);
+            }
+            (Pairing::LeftOnly { lhs }, tree::Pairing::LeftOnly { lhs: left }) => {
+                lhs.regions = from_tree(left.regions)
+            }
+            (Pairing::RightOnly { rhs }, tree::Pairing::RightOnly { rhs: right }) => {
+                rhs.regions = from_tree(right.regions)
+            }
+            _ => unreachable!("moves never add or remove a side"),
+        }
+        Ok(visibility)
+    }
+
+    /// Run every plugin on one file's sides, returning the file's own
+    /// visibility.
+    pub(crate) fn run(
+        &self,
+        file: &FileChange,
+        sides: &mut crate::pairing::Comparison<protocol::FileRef, protocol::Source>,
+    ) -> anyhow::Result<protocol::Visibility> {
+        use crate::pairing::Comparison;
+        let trees = match &*sides {
+            Comparison::Same { source, .. } => tree::Pairing::Same {
+                source: to_tree(source),
+            },
+            Comparison::Both { lhs, rhs, .. } => tree::Pairing::Both {
+                lhs: to_tree(lhs),
+                rhs: to_tree(rhs),
+            },
+            Comparison::LeftOnly { source, .. } => tree::Pairing::LeftOnly {
+                lhs: to_tree(source),
+            },
+            Comparison::RightOnly { source, .. } => tree::Pairing::RightOnly {
+                rhs: to_tree(source),
+            },
+        };
+        let (trees, visibility) = self.mutate(file, trees)?;
+        match (sides, trees) {
+            (Comparison::Same { source, .. }, tree::Pairing::Same { source: processed }) => {
+                source.regions = from_tree(processed.regions)
+            }
+            (
+                Comparison::Both { lhs, rhs, .. },
+                tree::Pairing::Both {
+                    lhs: left,
+                    rhs: right,
+                },
+            ) => {
+                lhs.regions = from_tree(left.regions);
+                rhs.regions = from_tree(right.regions);
+            }
+            (Comparison::LeftOnly { source, .. }, tree::Pairing::LeftOnly { lhs }) => {
+                source.regions = from_tree(lhs.regions)
+            }
+            (Comparison::RightOnly { source, .. }, tree::Pairing::RightOnly { rhs }) => {
+                source.regions = from_tree(rhs.regions)
+            }
+            _ => unreachable!("moves never add or remove a side"),
+        }
+        Ok(visibility)
+    }
+
+    fn mutate(
+        &self,
+        file: &FileChange,
+        mut trees: tree::Pairing<tree::Source>,
+    ) -> anyhow::Result<(tree::Pairing<tree::Source>, protocol::Visibility)> {
+        let entry = file_entry(file);
         let mut visibility = types::Visibility::default();
         for plugin in &self.plugins {
             let started = Instant::now();
@@ -234,29 +310,13 @@ impl Pipeline {
             apply::apply(moves, &mut trees, &mut visibility)
                 .with_context(|| MutationFailed(plugin.name.to_string()))?;
         }
-        match (sides, trees) {
-            (
-                Pairing::Both { lhs, rhs },
-                tree::Pairing::Both {
-                    lhs: left,
-                    rhs: right,
-                },
-            ) => {
-                lhs.regions = from_tree(left.regions);
-                rhs.regions = from_tree(right.regions);
-            }
-            (Pairing::LeftOnly { lhs }, tree::Pairing::LeftOnly { lhs: left }) => {
-                lhs.regions = from_tree(left.regions);
-            }
-            (Pairing::RightOnly { rhs }, tree::Pairing::RightOnly { rhs: right }) => {
-                rhs.regions = from_tree(right.regions);
-            }
-            _ => unreachable!("moves never add or remove a side"),
-        }
-        Ok(protocol::Visibility {
-            collapsed: visibility.collapsed,
-            label: visibility.label,
-        })
+        Ok((
+            trees,
+            protocol::Visibility {
+                collapsed: visibility.collapsed,
+                label: visibility.label,
+            },
+        ))
     }
 }
 
@@ -274,6 +334,7 @@ pub(crate) fn file_entry(file: &FileChange) -> types::FileEntry {
             Pairing::RightOnly { rhs } => types::FileSides::RightOnly(file_ref(rhs)),
         },
         status: match file.status {
+            FileStatus::Unchanged => types::FileStatus::Unchanged,
             FileStatus::Added => types::FileStatus::Added,
             FileStatus::Deleted => types::FileStatus::Deleted,
             FileStatus::Modified => types::FileStatus::Modified,
@@ -288,6 +349,7 @@ pub(crate) fn file_entry(file: &FileChange) -> types::FileEntry {
 /// The trees a plugin is given, as the contract's records.
 fn source_sides(trees: &tree::Pairing<tree::Source>) -> types::SourceSides {
     match trees {
+        tree::Pairing::Same { source } => types::SourceSides::Same(source.to_record()),
         tree::Pairing::Both { lhs, rhs } => {
             types::SourceSides::Both((lhs.to_record(), rhs.to_record()))
         }
@@ -322,9 +384,18 @@ pub(crate) fn to_tree(side: &protocol::Source) -> tree::Source {
                     protocol::Node::Leaf {
                         alignment_id,
                         changed,
+                        search_highlights,
                     } => tree::Node::Leaf {
                         alignment_id: *alignment_id,
                         changed: changed
+                            .iter()
+                            .map(|span| types::Span {
+                                line: span.line,
+                                start_column: span.start_column,
+                                end_column: span.end_column,
+                            })
+                            .collect(),
+                        search_highlights: search_highlights
                             .iter()
                             .map(|span| types::Span {
                                 line: span.line,
@@ -372,9 +443,18 @@ fn from_tree(regions: Vec<tree::Region>) -> Vec<protocol::Region> {
                 tree::Node::Leaf {
                     alignment_id,
                     changed,
+                    search_highlights,
                 } => protocol::Node::Leaf {
                     alignment_id,
                     changed: changed
+                        .into_iter()
+                        .map(|span| protocol::Span {
+                            line: span.line,
+                            start_column: span.start_column,
+                            end_column: span.end_column,
+                        })
+                        .collect(),
+                    search_highlights: search_highlights
                         .into_iter()
                         .map(|span| protocol::Span {
                             line: span.line,

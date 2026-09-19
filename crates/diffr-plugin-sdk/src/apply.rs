@@ -12,7 +12,7 @@
 //!   side keeps its leaf's ids. The second piece takes a fresh `id` on each
 //!   side and a fresh `alignment_id` shared by the two, and its
 //!   `fold_state_id` is the `id` of the lhs piece, or of its only piece.
-//!   Pieces keep the leaf's tags and visibility and the `changed` spans on
+//!   Pieces keep the leaf's tags and visibility and both change/search spans on
 //!   their lines. A fold, or the file, cannot be cut.
 //! - `JoinFolds { regions }` needs two or more region ids. Each side wraps the
 //!   ones it holds, which must be two or more consecutive siblings under one
@@ -24,10 +24,12 @@
 //!   so is an id no side holds.
 //! - `LinkFoldState { regions }` needs two or more region ids. Every region
 //!   in any of their fold states, on either side, takes the first region's
-//!   `fold_state_id` and whether it starts collapsed.
+//!   `fold_state_id` and whether it starts collapsed. A linked state containing
+//!   search highlights stays open.
 //! - `SetCollapsed { region, collapsed }` sets whether every region sharing
 //!   the region's `fold_state_id` starts collapsed, on both sides: they open
 //!   and close together. On [`ROOT`] it sets whether the file starts hidden.
+//!   Collapse requests that would conceal search highlights leave it open.
 //! - `SetLabel { region, label }` sets the label of that region alone, or of
 //!   the file on [`ROOT`]; `None` clears it.
 //! - `SetTags { region, tags }` replaces that region's tags. The file's tags
@@ -38,7 +40,9 @@
 //! [`ROOT`]) when a plugin's moves begin, and fresh `alignment_id`s above the
 //! largest leaf `alignment_id`; each is handed out in the order the moves
 //! need them, lhs before rhs.
-use crate::tree::{walk, walk_mut, Node, Pairing, Region, Source};
+use crate::tree::{
+    has_search_highlights, highlights_in_states, walk, walk_mut, Node, Pairing, Region, Source,
+};
 use crate::types::{Cut, Move, Position, Range, Visibility, ROOT};
 use anyhow::{bail, ensure};
 use std::collections::BTreeSet;
@@ -68,11 +72,16 @@ impl Applier {
             Move::JoinFolds(regions) => join(sides, &regions, &mut self.fresh),
             Move::LinkFoldState(regions) => link(sides, &regions),
             Move::SetCollapsed((ROOT, collapsed)) => {
-                file.collapsed = collapsed;
+                file.collapsed = collapsed
+                    && !sides
+                        .sides()
+                        .iter()
+                        .any(|source| source.regions.iter().any(has_search_highlights));
                 Ok(())
             }
             Move::SetCollapsed((region, collapsed)) => {
                 let state = region_of(sides, region)?.fold_state_id;
+                let collapsed = collapsed && !highlights_in_states(sides, &[region]);
                 for tree in trees(sides) {
                     walk_mut(tree, &mut |region| {
                         if region.fold_state_id == state {
@@ -116,6 +125,7 @@ pub fn apply(
 
 fn trees(sides: &mut Pairing<Source>) -> Vec<&mut Vec<Region>> {
     match sides {
+        Pairing::Same { source } => vec![&mut source.regions],
         Pairing::Both { lhs, rhs } => vec![&mut lhs.regions, &mut rhs.regions],
         Pairing::LeftOnly { lhs } => vec![&mut lhs.regions],
         Pairing::RightOnly { rhs } => vec![&mut rhs.regions],
@@ -124,6 +134,7 @@ fn trees(sides: &mut Pairing<Source>) -> Vec<&mut Vec<Region>> {
 
 pub fn trees_ref(sides: &Pairing<Source>) -> Vec<&[Region]> {
     match sides {
+        Pairing::Same { source } => vec![&source.regions],
         Pairing::Both { lhs, rhs } => vec![&lhs.regions, &rhs.regions],
         Pairing::LeftOnly { lhs } => vec![&lhs.regions],
         Pairing::RightOnly { rhs } => vec![&rhs.regions],
@@ -306,7 +317,12 @@ fn cut(sides: &mut Pairing<Source>, id: u32, offset: u32, fresh: &mut Fresh) -> 
 /// A leaf split at relative line `offset`. The second piece takes `id`,
 /// `alignment_id` and `fold_state_id`.
 fn split(leaf: Region, offset: u32, id: u32, alignment_id: u32, fold_state_id: u32) -> [Region; 2] {
-    let Node::Leaf { changed, .. } = &leaf.node else {
+    let Node::Leaf {
+        changed,
+        search_highlights,
+        ..
+    } = &leaf.node
+    else {
         unreachable!("only leaves are cut");
     };
     let boundary = Position {
@@ -324,6 +340,11 @@ fn split(leaf: Region, offset: u32, id: u32, alignment_id: u32, fold_state_id: u
             node: Node::Leaf {
                 alignment_id,
                 changed: changed
+                    .iter()
+                    .copied()
+                    .filter(|span| lines.contains(&span.line))
+                    .collect(),
+                search_highlights: search_highlights
                     .iter()
                     .copied()
                     .filter(|span| lines.contains(&span.line))
@@ -366,7 +387,10 @@ fn check_regions(ids: &[u32], what: &str) -> anyhow::Result<()> {
 fn link(sides: &mut Pairing<Source>, ids: &[u32]) -> anyhow::Result<()> {
     check_regions(ids, "a link")?;
     let first = region_of(sides, ids[0])?;
-    let (state, collapsed) = (first.fold_state_id, first.visibility.collapsed);
+    let (state, collapsed) = (
+        first.fold_state_id,
+        first.visibility.collapsed && !highlights_in_states(sides, ids),
+    );
     let states = ids
         .iter()
         .map(|id| Ok(region_of(sides, *id)?.fold_state_id))
@@ -462,6 +486,7 @@ mod tests {
             visibility: Visibility::default(),
             node: Node::Leaf {
                 alignment_id: alignment,
+                search_highlights: Vec::new(),
                 changed: changed
                     .iter()
                     .map(|&line| Span {
@@ -806,5 +831,79 @@ mod tests {
         let (lhs, rhs) = sides_of(&sides);
         assert_eq!(lhs.regions[0].visibility, Visibility::default());
         assert_eq!(rhs.regions[0].tags, ["mine:tag"]);
+    }
+    #[test]
+    fn cuts_preserve_each_sides_search_spans_through_record_roundtrips() {
+        let mut left = leaf(1, 7, 10, 16, &[11]);
+        let right = in_state(leaf(2, 7, 20, 26, &[]), 1);
+        if let Node::Leaf {
+            search_highlights, ..
+        } = &mut left.node
+        {
+            *search_highlights = vec![
+                Span {
+                    line: 11,
+                    start_column: 2,
+                    end_column: 7,
+                },
+                Span {
+                    line: 13,
+                    start_column: 0,
+                    end_column: 5,
+                },
+            ];
+        }
+        let mut sides = both(vec![left], vec![right]);
+        run(vec![Move::Cut(Cut { region: 1, at: 3 })], &mut sides).unwrap();
+        let (lhs, rhs) = sides_of(&sides);
+        let spans = |region: &Region| match &region.node {
+            Node::Leaf {
+                search_highlights, ..
+            } => search_highlights.clone(),
+            _ => panic!("expected leaf"),
+        };
+        assert_eq!(spans(&lhs.regions[0])[0].line, 11);
+        assert_eq!(spans(&lhs.regions[1])[0].line, 13);
+        assert!(rhs.regions.iter().all(|r| spans(r).is_empty()));
+        assert_eq!(Source::from_record(&lhs.to_record()).unwrap(), *lhs);
+        assert_eq!(Source::from_record(&rhs.to_record()).unwrap(), *rhs);
+    }
+
+    #[test]
+    fn later_moves_cannot_hide_highlights_through_files_links_or_ancestors() {
+        let mut matched = leaf(1, 0, 0, 2, &[]);
+        if let Node::Leaf {
+            search_highlights, ..
+        } = &mut matched.node
+        {
+            search_highlights.push(Span {
+                line: 1,
+                start_column: 0,
+                end_column: 3,
+            });
+        }
+        let mut sides = both(
+            vec![fold(3, false, vec![matched]), leaf(4, 2, 2, 4, &[2])],
+            vec![],
+        );
+        let visibility = run(
+            vec![
+                Move::SetCollapsed((4, true)),
+                Move::LinkFoldState(vec![4, 3]),
+                Move::SetCollapsed((4, true)),
+                Move::SetCollapsed((ROOT, true)),
+                Move::JoinFolds(vec![3, 4]),
+                Move::SetCollapsed((5, true)),
+                Move::SetLabel((5, Some("summary".into()))),
+                Move::SetTags((5, vec!["test:tag".into()])),
+            ],
+            &mut sides,
+        )
+        .unwrap();
+        assert!(!visibility.collapsed);
+        walk(&sides.lhs().unwrap().regions, &mut |region| {
+            assert!(!region.visibility.collapsed)
+        });
+        assert!(has_search_highlights(&sides.lhs().unwrap().regions[0]));
     }
 }

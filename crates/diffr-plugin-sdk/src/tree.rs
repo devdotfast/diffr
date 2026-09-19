@@ -6,6 +6,8 @@ use std::collections::BTreeSet;
 /// Which sides a thing exists on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pairing<T> {
+    /// One unchanged source, with highlights on its regions. Never an addition or deletion.
+    Same { source: T },
     Both { lhs: T, rhs: T },
     LeftOnly { lhs: T },
     RightOnly { rhs: T },
@@ -19,6 +21,7 @@ impl<T> Pairing<T> {
                 lhs: f(lhs),
                 rhs: f(rhs),
             },
+            Self::Same { source } => Pairing::Same { source: f(source) },
             Self::LeftOnly { lhs } => Pairing::LeftOnly { lhs: f(lhs) },
             Self::RightOnly { rhs } => Pairing::RightOnly { rhs: f(rhs) },
         }
@@ -26,6 +29,7 @@ impl<T> Pairing<T> {
 
     pub fn lhs(&self) -> Option<&T> {
         match self {
+            Self::Same { source } => Some(source),
             Self::Both { lhs, .. } | Self::LeftOnly { lhs } => Some(lhs),
             Self::RightOnly { .. } => None,
         }
@@ -33,6 +37,7 @@ impl<T> Pairing<T> {
 
     pub fn rhs(&self) -> Option<&T> {
         match self {
+            Self::Same { source } => Some(source),
             Self::Both { rhs, .. } | Self::RightOnly { rhs } => Some(rhs),
             Self::LeftOnly { .. } => None,
         }
@@ -41,6 +46,7 @@ impl<T> Pairing<T> {
     /// Every side that exists, lhs first.
     pub fn sides(&self) -> Vec<&T> {
         match self {
+            Self::Same { source } => vec![source],
             Self::Both { lhs, rhs } => vec![lhs, rhs],
             Self::LeftOnly { lhs } => vec![lhs],
             Self::RightOnly { rhs } => vec![rhs],
@@ -50,6 +56,7 @@ impl<T> Pairing<T> {
     /// Every side that exists, lhs first.
     pub fn sides_mut(&mut self) -> Vec<&mut T> {
         match self {
+            Self::Same { source } => vec![source],
             Self::Both { lhs, rhs } => vec![lhs, rhs],
             Self::LeftOnly { lhs } => vec![lhs],
             Self::RightOnly { rhs } => vec![rhs],
@@ -73,6 +80,7 @@ pub enum Node {
     Leaf {
         alignment_id: u32,
         changed: Vec<Span>,
+        search_highlights: Vec<Span>,
     },
     Fold {
         children: Vec<Region>,
@@ -87,6 +95,36 @@ impl Region {
             Node::Fold { .. } => None,
         }
     }
+}
+
+/// Whether collapsing this region would conceal a search match.
+pub fn has_search_highlights(region: &Region) -> bool {
+    match &region.node {
+        Node::Leaf {
+            search_highlights, ..
+        } => !search_highlights.is_empty(),
+        Node::Fold { children } => children.iter().any(has_search_highlights),
+    }
+}
+
+/// Whether any of these regions' linked collapse states contains a match.
+/// Include a body's docstring when deciding whether it can be summarized.
+pub fn highlights_in_states(sides: &Pairing<Source>, ids: &[u32]) -> bool {
+    let mut states = BTreeSet::new();
+    for source in sides.sides() {
+        walk(&source.regions, &mut |region| {
+            if ids.contains(&region.id) {
+                states.insert(region.fold_state_id);
+            }
+        });
+    }
+    sides.sides().iter().any(|source| {
+        let mut found = false;
+        walk(&source.regions, &mut |region| {
+            found |= states.contains(&region.fold_state_id) && has_search_highlights(region);
+        });
+        found
+    })
 }
 
 /// One side of the diffed file as a tree.
@@ -110,6 +148,7 @@ impl Source {
                     types::Kind::Leaf(leaf) => Node::Leaf {
                         alignment_id: leaf.alignment_id,
                         changed: leaf.changed.clone(),
+                        search_highlights: leaf.search_highlights.clone(),
                     },
                     types::Kind::Fold => Node::Fold {
                         children: children(regions, region.id),
@@ -149,9 +188,11 @@ impl Source {
                     Node::Leaf {
                         alignment_id,
                         changed,
+                        search_highlights,
                     } => types::Kind::Leaf(types::Leaf {
                         alignment_id: *alignment_id,
                         changed: changed.clone(),
+                        search_highlights: search_highlights.clone(),
                     }),
                     Node::Fold { .. } => types::Kind::Fold,
                 };
@@ -182,6 +223,7 @@ impl Source {
 /// on the way in, so a plugin is handed the pairing rather than the record.
 pub fn sides(sides: &types::SourceSides) -> anyhow::Result<Pairing<Source>> {
     Ok(match sides {
+        types::SourceSides::Same(source) => Pairing::Same { source: Source::from_record(source)? },
         types::SourceSides::Both((lhs, rhs)) => Pairing::Both {
             lhs: Source::from_record(lhs)?,
             rhs: Source::from_record(rhs)?,
@@ -376,7 +418,7 @@ pub fn before_and_after_ids(sides: &Pairing<Source>) -> Option<(&Source, OtherSi
     match sides {
         Pairing::Both { lhs, rhs } => Some((lhs, OtherSide::of(&rhs.regions))),
         Pairing::LeftOnly { lhs } => Some((lhs, OtherSide::default())),
-        Pairing::RightOnly { .. } => None,
+        Pairing::Same { .. } | Pairing::RightOnly { .. } => None,
     }
 }
 
@@ -387,6 +429,7 @@ pub fn sides_with_other_ids(sides: &Pairing<Source>) -> Vec<(&Source, OtherSide)
             (lhs, OtherSide::of(&rhs.regions)),
             (rhs, OtherSide::of(&lhs.regions)),
         ],
+        Pairing::Same { source } => vec![(source, OtherSide::of(&source.regions))],
         Pairing::LeftOnly { lhs } => vec![(lhs, OtherSide::default())],
         Pairing::RightOnly { rhs } => vec![(rhs, OtherSide::default())],
     }
@@ -415,6 +458,7 @@ mod tests {
             visibility: Visibility::default(),
             node: Node::Leaf {
                 alignment_id: alignment,
+                search_highlights: Vec::new(),
                 changed: vec![],
             },
         };
@@ -428,6 +472,7 @@ mod tests {
                     fold_state_id: id + 100,
                     node: Node::Leaf {
                         alignment_id: alignment + 100,
+                        search_highlights: Vec::new(),
                         changed: vec![],
                     },
                     ..leaf.clone()

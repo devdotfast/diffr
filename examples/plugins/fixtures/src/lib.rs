@@ -88,6 +88,7 @@ impl Plugin for Fixtures {
         // piece on this leaf's side takes the first fresh id either way.
         let side = match &sides {
             Pairing::Both { lhs, .. } | Pairing::LeftOnly { lhs } => lhs,
+            Pairing::Same { source } => source,
             Pairing::RightOnly { rhs } => rhs,
         };
         let leaf = side

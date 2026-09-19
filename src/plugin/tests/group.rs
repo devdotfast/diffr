@@ -24,6 +24,7 @@ fn leaf(id: u32, alignment: u32, start: u32, end: u32) -> tree::Region {
         visibility: types::Visibility::default(),
         node: tree::Node::Leaf {
             alignment_id: alignment,
+            search_highlights: Vec::new(),
             changed: vec![],
         },
     }
@@ -229,4 +230,45 @@ fn a_single_collapsed_fold_is_left_alone() {
     assert!(moves(&bundled("group", json!({})), &file, &sides)
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn unchanged_source_groups_once_and_keeps_shared_fold_state() {
+    let sides = tree::Pairing::Same {
+        source: source(vec![
+            fold(1, 1, 0, 5, true, "5 unchanged lines"),
+            fold(2, 2, 5, 10, true, "5 unchanged lines"),
+        ]),
+    };
+    let file = manifest("same.py", &sides, FileStatus::Unchanged);
+    let tree::Pairing::Same { source } = sides else {
+        unreachable!()
+    };
+    let Pairing::Both {
+        lhs: lhs_file,
+        rhs: rhs_file,
+    } = file.file.clone()
+    else {
+        unreachable!()
+    };
+    let mut comparison = crate::pairing::Comparison::Same {
+        lhs_file,
+        rhs_file,
+        source: protocol::Source {
+            text: source.text,
+            syntax: vec![],
+            regions: from_tree(source.regions),
+        },
+    };
+    bundled("group", json!({}))
+        .run(&file, &mut comparison)
+        .unwrap();
+    let crate::pairing::Comparison::Same { source, .. } = comparison else {
+        panic!("shared tree retained")
+    };
+    assert_eq!(source.regions.len(), 1);
+    assert_eq!(
+        source.regions[0].visibility.label,
+        "2 collapsed regions · 10 lines"
+    );
 }

@@ -85,6 +85,8 @@ pub(crate) fn diff(result: &DiffResult, inputs: Inputs<'_>) -> Diff {
     Diff::Text {
         sides,
         stats: stats(result, lhs_src, rhs_src),
+        // Filled together with visible counts after plugins shape the trees.
+        structural_changes: Default::default(),
     }
 }
 

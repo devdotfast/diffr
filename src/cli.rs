@@ -223,7 +223,9 @@ fn select(
         }
     }
     paths.extend(explicit_paths);
-    let prefix = location.strip_prefix(repo.workdir().unwrap_or(repo.path()))?;
+    // Match canonical path forms, including Windows verbatim path prefixes.
+    let root = std::fs::canonicalize(repo.workdir().unwrap_or(repo.path()))?;
+    let prefix = location.strip_prefix(&root)?;
     let paths = paths
         .into_iter()
         .map(|path| normalize_path(prefix, &path))

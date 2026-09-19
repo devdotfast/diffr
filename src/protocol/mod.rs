@@ -24,6 +24,13 @@ pub(crate) mod stream;
 /// The current wire version. Changes within a version are additive.
 pub const VERSION: u32 = 3;
 
+/// Deferred content for an existing region; never changes fold state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Annotation {
+    pub region_id: u32,
+    pub label: String,
+}
+
 // ── stream ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

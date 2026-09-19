@@ -15,9 +15,16 @@
 ///
 /// diffr makes one instance of each enabled plugin per run and calls it for
 /// every file, so what a plugin keeps from `new` lasts the whole run.
-package diffr:plugin@0.1.0;
+package diffr:plugin@0.2.0;
 
 interface types {
+    /// Deferred presentation content for an existing region. This cannot
+    /// change topology, alignment, fold identity, or collapsed state.
+    record annotation {
+        region-id: u32,
+        label: string,
+    }
+
     /// A named query source. diffr compiles all enabled sources per language.
     /// Names identify sources for imports and diagnostics; shared names must
     /// have identical text. Relative imports resolve against this name.
@@ -206,7 +213,7 @@ interface host {
 
 /// What every plugin exports: the plugin itself, as a resource.
 interface guest {
-    use types.{file-entry, source-sides, move, query-source};
+    use types.{file-entry, source-sides, move, query-source, annotation};
 
     resource plugin {
         /// Make the plugin from `options`, its bundled or external config
@@ -232,6 +239,11 @@ interface guest {
         /// the sides the file has, the same sides as its entry's `file`. An
         /// error aborts the run with `mutation_failed`.
         mutate: func(file: file-entry, sides: source-sides) -> result<list<move>, string>;
+
+        /// Optional slow enrichment after every plugin has shaped the file.
+        /// Errors leave the initial diff usable. Return no annotations when
+        /// this plugin has no deferred work.
+        enrich: func(file: file-entry, sides: source-sides) -> result<list<annotation>, string>;
     }
 }
 

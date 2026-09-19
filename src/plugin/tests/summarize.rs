@@ -163,7 +163,7 @@ fn selection_skips_test_bodies_and_collapsed_folds() {
 }
 
 #[test]
-fn long_summaries_are_discarded_and_the_body_stays_open() {
+fn long_summaries_are_discarded_without_changing_initial_folding() {
     let (file, mut sides) = project("a.py", "", LARGE);
     let id = select(&trees(&sides), 3, None)[0].0;
     let (endpoint, server) = serve(vec![(200, gemini_answer(&[(id, "a()\nb()\nc()")]))]);
@@ -176,8 +176,8 @@ fn long_summaries_are_discarded_and_the_body_stays_open() {
             folds.push((region.visibility.collapsed, region.visibility.label.clone()));
         }
     });
-    // No plugin collapsed it, so it has no label.
-    assert_eq!(folds, vec![(false, String::new())]);
+    // Enrichment cannot reopen a fold after the initial file was displayed.
+    assert_eq!(folds, vec![(true, String::new())]);
 }
 
 #[test]
@@ -535,4 +535,49 @@ fn bundled_wasm_summarizer_streams_large_prompts() {
     let prompt = request["contents"][0]["parts"][0]["text"].as_str().unwrap();
     assert!(prompt.contains(&"context ".repeat(16_384)));
     assert!(prompt.contains(&format!("fold {id}: lines 2-4")));
+}
+
+#[test]
+fn deferred_summary_preserves_user_fold_state_and_region_identity() {
+    let (file, mut sides) = project("a.py", "", LARGE);
+    let id = select(&trees(&sides), 3, None)[0].0;
+    let (endpoint, server) = serve(vec![(200, gemini_answer(&[(id, "call a, b, c")]))]);
+    let pipeline = summarizer(&endpoint, 0);
+    pipeline.prepare(&file, &mut sides).unwrap();
+    // No HTTP is required for prepare. The selected fold already exists.
+    assert_eq!(fold_label(&trees(&sides)), "");
+    let annotations = pipeline.enrich(&file, &sides).unwrap();
+    fn open(regions: &mut [protocol::Region]) {
+        for region in regions {
+            region.visibility.collapsed = false;
+            if let protocol::Node::Fold { children } = &mut region.node {
+                open(children);
+            }
+        }
+    }
+    match &mut sides {
+        Pairing::Both { lhs, rhs } => {
+            open(&mut lhs.regions);
+            open(&mut rhs.regions);
+        }
+        Pairing::RightOnly { rhs } => open(&mut rhs.regions),
+        _ => panic!("right side required"),
+    }
+    let before = sides.clone();
+    Pipeline::apply_annotations(&mut sides, &annotations).unwrap();
+    assert_eq!(fold_label(&trees(&sides)), "call a, b, c");
+    walk(&rhs(&trees(&sides)).regions, &mut |region| {
+        assert!(!region.visibility.collapsed);
+    });
+    // Removing only the added label recovers the exact initial tree.
+    Pipeline::apply_annotations(
+        &mut sides,
+        &[protocol::Annotation {
+            region_id: id,
+            label: String::new(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(sides, before);
+    server.join().unwrap();
 }

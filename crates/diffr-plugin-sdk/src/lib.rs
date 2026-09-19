@@ -42,8 +42,8 @@ pub use tree::{
     siblings_of, sides_with_other_ids, walk, walk_mut, Node, OtherSide, Pairing, Region, Source,
 };
 pub use types::{
-    FileEntry, FileRef, FileSides, FileStatus, Move, Position, QuerySource, Range, Side, Span,
-    Visibility, ROOT,
+    Annotation, FileEntry, FileRef, FileSides, FileStatus, Move, Position, QuerySource, Range,
+    Side, Span, Visibility, ROOT,
 };
 
 /// A diffr plugin: the `plugin` resource of `wit/plugin.wit`. diffr makes one
@@ -71,6 +71,15 @@ pub trait Plugin: Sized {
     /// The moves that shape how the diffed file starts out. `sides` are the
     /// sides the file has, already rebuilt as trees.
     fn mutate(&self, file: &FileEntry, sides: &Pairing<Source>) -> anyhow::Result<Vec<Move>>;
+
+    /// Deferred labels for stable region IDs, after all initial mutations.
+    fn enrich(
+        &self,
+        _file: &FileEntry,
+        _sides: &Pairing<Source>,
+    ) -> anyhow::Result<Vec<Annotation>> {
+        Ok(Vec::new())
+    }
 }
 
 /// The contract generated from `wit/plugin.wit`. Its records are plain Rust

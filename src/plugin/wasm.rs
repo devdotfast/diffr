@@ -277,6 +277,32 @@ impl WasmInstance {
 }
 
 impl Runner for WasmInstance {
+    fn enrich(
+        &self,
+        host: Host,
+        file: &contract::FileEntry,
+        sides: &contract::SourceSides,
+    ) -> anyhow::Result<Vec<contract::Annotation>> {
+        let instance = &mut *self.enter(host);
+        let labels = instance
+            .exports
+            .diffr_plugin_guest()
+            .plugin()
+            .call_enrich(
+                &mut instance.store,
+                instance.plugin,
+                &file_entry(file),
+                &source_sides(sides),
+            )?
+            .map_err(anyhow::Error::msg)?;
+        Ok(labels
+            .into_iter()
+            .map(|label| contract::Annotation {
+                region_id: label.region_id,
+                label: label.label,
+            })
+            .collect())
+    }
     fn queries(&self, host: Host) -> anyhow::Result<Vec<contract::QuerySource>> {
         let instance = &mut *self.enter(host);
         let sources = instance

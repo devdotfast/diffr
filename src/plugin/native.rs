@@ -62,6 +62,14 @@ fn call<R>(host: Host, call: impl FnOnce() -> anyhow::Result<R>) -> anyhow::Resu
 struct Native(Box<dyn sdk::Instance>);
 
 impl Runner for Native {
+    fn enrich(
+        &self,
+        host: Host,
+        file: &FileEntry,
+        sides: &SourceSides,
+    ) -> anyhow::Result<Vec<diffr_plugin_sdk::Annotation>> {
+        call(host, || self.0.enrich(file, sides))
+    }
     fn queries(&self, host: Host) -> anyhow::Result<Vec<diffr_plugin_sdk::QuerySource>> {
         call(host, || self.0.queries())
     }

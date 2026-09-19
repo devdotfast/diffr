@@ -86,7 +86,7 @@ external plugin never requires rebuilding diffr.
 ## The contract
 
 [`wit/plugin.wit`](../wit/plugin.wit) is the contract: the package
-`diffr:plugin@0.1.0`, world `plugin`. A plugin exports the interface `guest`,
+`diffr:plugin@0.2.0`, world `plugin`. A plugin exports the interface `guest`,
 which holds one resource, the plugin itself (the component model has no
 optional exports; a plugin that does not classify returns an empty list):
 
@@ -358,3 +358,18 @@ Opening a module or aggregate fold reveals each test's pseudocode; opening an
 individual body reveals its source. JS/TS `describe` suites remain containers,
 with summaries on their individual `it`/`test` callbacks. An explicit custom
 `plugins.order` is respected; update it to this order to match the defaults.
+
+## Deferred annotations
+
+The 0.2 plugin ABI adds `enrich(file, sides) -> list<annotation>`. Rebuild
+external components against the updated SDK (`cargo xtask build-plugins` rebuilds
+bundled components). SDK plugins default to returning no annotations.
+
+`mutate` performs initial presentation only. After all mutations finish, `enrich`
+may do slow work and return `{region-id, label}` records. IDs refer to the final
+region trees and are validated by the host. Annotations cannot change ranges,
+alignment, fold-state IDs, or collapsed state. The summarizer reserves its folds
+and links docstrings during mutation; enrichment only attaches pseudocode.
+Rejected or absent summaries leave the initial fold available to expand.
+
+The ordinary stream still applies both phases before emitting a file.

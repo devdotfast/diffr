@@ -511,3 +511,24 @@ mod materialization_tests {
         assert!(!text.contains("bundled.context"));
     }
 }
+
+#[cfg(test)]
+mod storage_settings_tests {
+    use super::*;
+    #[test]
+    fn backend_and_directory_are_editable_config_settings() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        set(&path, "storage.backend", "file").unwrap();
+        set(&path, "storage.path", ".cache/custom").unwrap();
+        let shown = show(&Config::load(Some(&path)).unwrap(), false);
+        assert_eq!(shown["storage"]["backend"], "file");
+        assert_eq!(shown["storage"]["path"], ".cache/custom");
+        set(&path, "storage.backend", "sqlite").unwrap();
+        assert_eq!(
+            show(&Config::load(Some(&path)).unwrap(), false)["storage"]["backend"],
+            "sqlite"
+        );
+        assert!(set(&path, "storage.backend", "unknown").is_err());
+    }
+}

@@ -8,7 +8,7 @@
 //! `plugin.toml` (name, title, options schema) and, when it has
 //! one, its component. [`Pipeline::from_config`] then takes the component
 //! ([`wasm`]) or the bundled native implementation registered under
-//! the plugin's name ([`native`]), and makes the plugin's one instance for
+//! the plugin's name ([`native`]), and makes the plugin's instance pool for
 //! the run from its options. From there a [`Runner`] is a [`Runner`]: each
 //! call gets the contract's records, built once per call from the file's
 //! manifest entry and its current trees, and the host functions of [`host`].
@@ -32,6 +32,7 @@ pub(crate) mod builtin;
 pub(crate) mod config;
 pub(crate) mod host;
 pub(crate) mod native;
+mod pool;
 pub(crate) mod queries;
 pub(crate) mod wasm;
 
@@ -137,9 +138,16 @@ impl Pipeline {
                         Some(engine) => engine,
                         None => engine.insert(wasm::engine()?),
                     };
-                    pipeline.push(name, options, &|host, options| {
-                        wasm::WasmPlugin::load(engine, &path)?.create(host, options)
-                    })?
+                    let plugin = wasm::WasmPlugin::load(engine, &path)
+                        .with_context(|| format!("plugins.{name}"))?;
+                    pipeline.push_instances(
+                        name,
+                        options,
+                        entry
+                            .instances
+                            .unwrap_or(if folder.manifest.parallel { 4 } else { 1 }),
+                        &|host, options| plugin.create(host, options),
+                    )?
                 }
                 None => {
                     let create = native::lookup(&folder.manifest.name)?.ok_or_else(|| {
@@ -147,9 +155,14 @@ impl Pipeline {
                             "plugins.{name}: no native implementation is registered for this bundled plugin"
                         )
                     })?;
-                    pipeline.push(name, options, &|host, options| {
-                        native::registered(create, host, options)
-                    })?
+                    pipeline.push_instances(
+                        name,
+                        options,
+                        entry
+                            .instances
+                            .unwrap_or(if folder.manifest.parallel { 4 } else { 1 }),
+                        &|host, options| native::registered(create, host, options),
+                    )?
                 }
             }
         }
@@ -158,11 +171,35 @@ impl Pipeline {
 
     /// Make the plugin `name` with `create` from `options` and add it to the
     /// end of the pipeline.
+    #[cfg(test)]
     fn push(&mut self, name: &str, options: Value, create: Create<'_>) -> anyhow::Result<()> {
+        self.push_instances(name, options, 1, create)
+    }
+
+    fn push_instances(
+        &mut self,
+        name: &str,
+        options: Value,
+        instances: usize,
+        create: Create<'_>,
+    ) -> anyhow::Result<()> {
         let reference = name;
         let name: Arc<str> = name.split_once('.').map_or(name, |(_, name)| name).into();
-        let runner = create(self.host(&name), &options.to_string())
-            .with_context(|| format!("plugins.{reference}"))?;
+        let runners = (0..instances)
+            .map(|_| {
+                create(self.host(&name), &options.to_string())
+                    .with_context(|| format!("plugins.{reference}"))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let initial = if instances > 1 {
+            Some(
+                create(self.host(&name), &options.to_string())
+                    .with_context(|| format!("plugins.{reference}"))?,
+            )
+        } else {
+            None
+        };
+        let runner = Box::new(pool::Pool::with_initial(runners, initial));
         self.plugins.push(Loaded { name, runner });
         Ok(())
     }

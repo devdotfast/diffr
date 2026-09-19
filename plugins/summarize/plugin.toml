@@ -1,4 +1,5 @@
 name = "summarize"
+parallel = true
 title = "Summaries"
 description = "Pseudocode summaries for large new function bodies and tests."
 

@@ -30,7 +30,7 @@ pub(crate) fn run() -> Result<i32> {
             paths
         })
         .unwrap_or_default();
-    let args = Command::new(env!("CARGO_BIN_NAME"))
+    let args = Command::new("diffr")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Structural diffs with Git-style comparison inputs")
         .arg(Arg::new("repo").long("repo").default_value("."))

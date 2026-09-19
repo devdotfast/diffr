@@ -1,7 +1,7 @@
 //! Collapse the middle of long removed stretches.
 use diffr_plugin_sdk::{
-    anyhow, before_and_after_ids, export, has_tag, line_count, one_sided, Draft, FileEntry, Move,
-    Node, OtherSide, Pairing, Plugin, Region, Source,
+    anyhow, before_and_after_ids, export, has_search_highlights, has_tag, line_count, one_sided,
+    Draft, FileEntry, Move, Node, OtherSide, Pairing, Plugin, Region, Source,
 };
 use serde::Deserialize;
 
@@ -149,7 +149,12 @@ fn visit(
             }
             Node::Leaf { .. } => {
                 let len = line_count(region);
-                if !collapsed && gates.open() && !rhs.pairs(region) && len >= threshold {
+                if !collapsed
+                    && !has_search_highlights(region)
+                    && gates.open()
+                    && !rhs.pairs(region)
+                    && len >= threshold
+                {
                     leaves.push((region.id, len as u32));
                 }
             }

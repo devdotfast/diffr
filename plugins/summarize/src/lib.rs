@@ -16,7 +16,7 @@ use std::time::Duration;
 mod http;
 
 /// The plugin's name, and the tags its queries set: a function body, and a
-/// test body, which can be summarized independently of whether it is new.
+/// test body. Both must be added and unpaired in the original comparison.
 const PLUGIN: &str = "summarize";
 const FUNCTION: &str = "summarize:function";
 const TEST: &str = "summarize:test";
@@ -214,7 +214,7 @@ impl Summarize {
 }
 
 /// Select new right-side function bodies and, when a threshold is supplied,
-/// right-side tests regardless of newness or initial collapsed state. Descend
+/// new right-side tests, including bodies already collapsed by the test plugin. Descend
 /// through suites/modules so each test gets its own summary. Only the outermost
 /// eligible body is selected; docstrings are linked after selection.
 pub fn select(
@@ -225,7 +225,7 @@ pub fn select(
     let (lhs, rhs) = match sides {
         Pairing::Both { lhs, rhs } => (OtherSide::of(&lhs.regions), rhs),
         Pairing::RightOnly { rhs } => (OtherSide::default(), rhs),
-        Pairing::LeftOnly { .. } => return Vec::new(),
+        Pairing::Same { .. } | Pairing::LeftOnly { .. } => return Vec::new(),
     };
     let mut selected = Vec::new();
     fn visit(
@@ -238,7 +238,8 @@ pub fn select(
     ) {
         for region in regions {
             let eligible = if has_tag(region, TEST) {
-                test_min_lines.is_some_and(|minimum| line_count(region) >= minimum)
+                one_sided(region, lhs)
+                    && test_min_lines.is_some_and(|minimum| line_count(region) >= minimum)
             } else {
                 has_tag(region, FUNCTION)
                     && !region.visibility.collapsed
@@ -422,6 +423,11 @@ impl Plugin for Summarize {
         };
         let folds: Vec<Request> = selected
             .into_iter()
+            .filter(|(id, _, _, docstring)| {
+                let mut ids = vec![*id];
+                ids.extend(*docstring);
+                !diffr_plugin_sdk::highlights_in_states(sides, &ids)
+            })
             .map(|(id, first_line, last_line, docstring)| Request {
                 id,
                 first_line,

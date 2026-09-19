@@ -167,7 +167,9 @@ fn long_summaries_are_discarded_and_the_body_stays_open() {
     let (file, mut sides) = project("a.py", "", LARGE);
     let id = select(&trees(&sides), 3, None)[0].0;
     let (endpoint, server) = serve(vec![(200, gemini_answer(&[(id, "a()\nb()\nc()")]))]);
-    summarizer(&endpoint, 0).run(&file, &mut sides).unwrap();
+    summarizer(&endpoint, 0)
+        .run_diff(&file, &mut sides)
+        .unwrap();
     let sides = trees(&sides);
     server.join().unwrap();
     let mut folds = Vec::new();
@@ -185,7 +187,9 @@ fn summaries_collapse_selected_folds_behind_pseudocode() {
     let (file, mut sides) = project("a.py", "", LARGE);
     let id = select(&trees(&sides), 3, None)[0].0;
     let (endpoint, server) = serve(vec![(200, gemini_answer(&[(id, "call a, b, c")]))]);
-    summarizer(&endpoint, 0).run(&file, &mut sides).unwrap();
+    summarizer(&endpoint, 0)
+        .run_diff(&file, &mut sides)
+        .unwrap();
     let sides = trees(&sides);
     let bodies = server.join().unwrap();
     assert!(bodies[0].contains("thinkingBudget"));
@@ -222,7 +226,9 @@ fn a_docstring_is_sent_and_only_a_verbatim_sentence_from_it_is_kept() {
     let (file, mut sides) = project("a.rs", "", after);
     let id = select(&trees(&sides), 3, None)[0].0;
     let (endpoint, server) = serve(vec![(200, answer(id, "Sums three numbers."))]);
-    summarizer(&endpoint, 0).run(&file, &mut sides).unwrap();
+    summarizer(&endpoint, 0)
+        .run_diff(&file, &mut sides)
+        .unwrap();
     let sides = trees(&sides);
     let bodies = server.join().unwrap();
     assert!(
@@ -236,7 +242,9 @@ fn a_docstring_is_sent_and_only_a_verbatim_sentence_from_it_is_kept() {
     // A sentence the docstring does not contain is dropped.
     let (file, mut sides) = project("a.rs", "", after);
     let (endpoint, server) = serve(vec![(200, answer(id, "Adds things up."))]);
-    summarizer(&endpoint, 0).run(&file, &mut sides).unwrap();
+    summarizer(&endpoint, 0)
+        .run_diff(&file, &mut sides)
+        .unwrap();
     let sides = trees(&sides);
     server.join().unwrap();
     assert_eq!(body_label(&sides), "return a + b + c");
@@ -324,7 +332,7 @@ fn the_system_prompt_is_the_configured_one() {
         overrides["api_key"] = json!("test-key");
         overrides["endpoint"] = json!(endpoint);
         overrides["min_lines"] = json!(3);
-        summarizer_with(overrides).run(&file, sides).unwrap();
+        summarizer_with(overrides).run_diff(&file, sides).unwrap();
         let bodies = server.join().unwrap();
         let body: serde_json::Value = serde_json::from_str(&bodies[0]).unwrap();
         (
@@ -360,7 +368,9 @@ fn transient_failures_are_retried_then_succeed() {
         (429, "{}".to_owned()),
         (200, gemini_answer(&[(id, "retry ok")])),
     ]);
-    summarizer(&endpoint, 3).run(&file, &mut sides).unwrap();
+    summarizer(&endpoint, 3)
+        .run_diff(&file, &mut sides)
+        .unwrap();
     let sides = trees(&sides);
     assert_eq!(server.join().unwrap().len(), 3);
     let label = fold_label(&sides);
@@ -372,7 +382,7 @@ fn hard_failures_and_exhausted_retries_are_run_failures() {
     let (file, sides) = project("a.py", "", LARGE);
     let (endpoint, server) = serve(vec![(400, "{\"error\": \"bad key\"}".to_owned())]);
     let error = summarizer(&endpoint, 3)
-        .run(&file, &mut sides.clone())
+        .run_diff(&file, &mut sides.clone())
         .unwrap_err();
     server.join().unwrap();
     assert!(error.downcast_ref::<MutationFailed>().is_some());
@@ -380,7 +390,7 @@ fn hard_failures_and_exhausted_retries_are_run_failures() {
     assert!(format!("{error:#}").contains("HTTP 400"), "{error:#}");
     let (endpoint, server) = serve(vec![(500, "{}".to_owned()), (500, "{}".to_owned())]);
     let error = summarizer(&endpoint, 1)
-        .run(&file, &mut sides.clone())
+        .run_diff(&file, &mut sides.clone())
         .unwrap_err();
     server.join().unwrap();
     assert!(
@@ -434,13 +444,13 @@ fn external_component_summarizes_over_http() {
             &|host, options| plugin.create(host, options),
         )
         .unwrap();
-    pipeline.run(&file, &mut sides).unwrap();
+    pipeline.run_diff(&file, &mut sides).unwrap();
     assert_eq!(fold_label(&trees(&sides)), "call a, b, c");
     assert_eq!(server.join().unwrap().len(), 2);
 }
 
 #[test]
-fn tests_are_selected_when_added_modified_unchanged_or_already_collapsed() {
+fn only_unpaired_added_tests_are_selected_even_when_already_collapsed() {
     for (path, before, after) in [
         (
             "a.py",
@@ -469,11 +479,18 @@ fn tests_are_selected_when_added_modified_unchanged_or_already_collapsed() {
             let comment = if path.ends_with(".py") { "#" } else { "//" };
             let after = format!("{after}\n{comment} changed elsewhere\n");
             let (file, mut sides) = project(path, old, &after);
-            assert_eq!(select(&trees(&sides), 3, Some(3)).len(), 1, "{path}: {old}");
+            assert_eq!(
+                select(&trees(&sides), 3, Some(3)).len(),
+                usize::from(old.is_empty()),
+                "{path}: {old}"
+            );
             assert!(select(&trees(&sides), 3, None).is_empty());
             assert!(select(&trees(&sides), 3, Some(30)).is_empty());
             run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
-            assert_eq!(select(&trees(&sides), 3, Some(3)).len(), 1);
+            assert_eq!(
+                select(&trees(&sides), 3, Some(3)).len(),
+                usize::from(old.is_empty())
+            );
         }
     }
 }
@@ -488,7 +505,7 @@ fn suites_select_individual_tests_and_preserve_nested_summary_folds() {
         let selected = select(&trees(&sides), 3, Some(3));
         assert_eq!(selected.len(), 2, "{path}: {selected:?}");
         let (endpoint, server) = serve(vec![(200, gemini_answer(&[(selected[0].0, "setup; act; check one"), (selected[1].0, "setup; act; check two")]))]);
-        summarizer_with(json!({"api_key": "test", "endpoint": endpoint, "test_min_lines": 3})).run(&file, &mut sides).unwrap();
+        summarizer_with(json!({"api_key": "test", "endpoint": endpoint, "test_min_lines": 3})).run_diff(&file, &mut sides).unwrap();
         run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
         server.join().unwrap();
         run("group", json!({}), &file, &mut sides);
@@ -527,7 +544,7 @@ fn bundled_wasm_summarizer_streams_large_prompts() {
         "api_key": "test", "endpoint": endpoint, "test_min_lines": 3, "retries": 0,
     }));
     assert!(builtin::component("summarize").is_some());
-    wasm.run(&file, &mut sides).unwrap();
+    wasm.run_diff(&file, &mut sides).unwrap();
     assert_eq!(fold_label(&trees(&sides)), "setup; act; check");
     let requests = server.join().unwrap();
     assert_eq!(requests.len(), 1);

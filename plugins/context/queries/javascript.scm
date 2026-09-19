@@ -22,3 +22,11 @@
   (#set! tag "context:scope"))
 ((return_statement) @fold
   (#set! tag "context:scope"))
+
+; Preserve both the try body boundary (`} catch`) and the end of the whole
+; try/catch construct when its opening line is visible in context.
+((try_statement) @fold
+  (#set! tag "context:scope"))
+(try_statement
+  body: (statement_block "{" @fold.open "}" @fold.close) @fold
+  (#set! tag "context:body"))

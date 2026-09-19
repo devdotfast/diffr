@@ -18,7 +18,7 @@ pub(crate) const DEFAULT_BYTE_LIMIT: usize = 1_000_000;
 pub(crate) const DEFAULT_GRAPH_LIMIT: usize = 3_000_000;
 pub(crate) const DEFAULT_PARSE_ERROR_LIMIT: usize = 0;
 
-pub(crate) const USAGE: &str = concat!(env!("CARGO_BIN_NAME"), " debug [OPTIONS]");
+pub(crate) const USAGE: &str = "diffr debug [OPTIONS]";
 
 pub(crate) const DEFAULT_TERMINAL_WIDTH: usize = 80;
 
@@ -93,13 +93,13 @@ fn app() -> clap::Command {
                 .action(ArgAction::Append)
                 .help(concat!("Associate this glob pattern with this language, overriding normal language detection. For example:
 
-$ ", env!("CARGO_BIN_NAME"), " debug --override='*.c:C++' --dump-syntax file.c
+$ ", "diffr", " debug --override='*.c:C++' --dump-syntax file.c
 
 See --list-languages for the list of language names. Language names are matched case insensitively. Overrides may also specify the language \"text\" to treat a file as plain text.
 
 This argument may be given more than once. For example:
 
-$ ", env!("CARGO_BIN_NAME"), " debug --override='CustomFile:json' --override='*.c:text' --dump-syntax file.c
+$ ", "diffr", " debug --override='CustomFile:json' --override='*.c:text' --dump-syntax file.c
 
 To configure multiple overrides using environment variables, difftastic also accepts DFT_OVERRIDE_1 up to DFT_OVERRIDE_9.
 

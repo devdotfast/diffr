@@ -64,6 +64,20 @@ jobs:
       # rather than on every target the matrix above cross-compiles for.
       - run: cargo xtask test-plugins
 
+  test_code_mode:
+    name: Test code-mode API
+    runs-on: ubuntu-22.04
+    steps:
+      # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - run: npm install --global bun@1.3.14
+      - run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - run: bun install --frozen-lockfile
+      - run: bun run build:api
+      - run: bun run typecheck
+      - run: bun run test:code-mode
+
   test_mime_db:
     name: Test with MIME database
     runs-on: ubuntu-22.04

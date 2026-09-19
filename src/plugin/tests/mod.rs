@@ -85,7 +85,7 @@ pub(crate) fn manifest<T>(path: &str, sides: &tree::Pairing<T>, status: FileStat
     };
     FileChange {
         file: match sides {
-            tree::Pairing::Both { .. } => Pairing::Both {
+            tree::Pairing::Same { .. } | tree::Pairing::Both { .. } => Pairing::Both {
                 lhs: file_ref(),
                 rhs: file_ref(),
             },
@@ -117,6 +117,10 @@ pub(crate) fn wire(sides: tree::Pairing<tree::Source>) -> Pairing<protocol::Sour
         regions: from_tree(side.regions),
     };
     match sides {
+        tree::Pairing::Same { source: same } => Pairing::Both {
+            lhs: source(same.clone()),
+            rhs: source(same),
+        },
         tree::Pairing::Both { lhs, rhs } => Pairing::Both {
             lhs: source(lhs),
             rhs: source(rhs),
@@ -173,7 +177,7 @@ pub(crate) fn run(
     file: &FileChange,
     sides: &mut Pairing<protocol::Source>,
 ) {
-    bundled(name, overrides).run(file, sides).unwrap();
+    bundled(name, overrides).run_diff(file, sides).unwrap();
 }
 
 /// Run the bundled plugin `name` with `overrides` on trees built by hand,
@@ -421,7 +425,7 @@ fn classifying_plugins_add_tags_in_order_and_a_bad_tag_is_an_error() {
 fn a_move_that_cannot_be_carried_out_fails_naming_the_plugin() {
     let (file, mut sides) = project("a.rs", "fn a() {}\n", "fn b() {}\n");
     let bad = pipeline(vec![("bad", native::native::<Bad>)]);
-    let error = bad.run(&file, &mut sides).unwrap_err();
+    let error = bad.run_diff(&file, &mut sides).unwrap_err();
     assert!(error.downcast_ref::<MutationFailed>().is_some());
     assert_eq!(format!("{error:#}"), "mutation bad: no region 99999");
 }

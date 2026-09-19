@@ -1,0 +1,64 @@
+Total matched lines: 10
+
+added.js — head
+ head
+    1 + export function retryLabel() {
+    2 +   return "search_token: newly added file";
+    3 + }
+
+removed.js — base
+ base
+    1 - export function legacyRetry(request) {
+    2 -   const attempts = 5;
+    3 -   const history = [];
+    4 -   let lastError;
+    5 -   for (let attempt = 0; attempt < attempts; attempt++) {
+    6 -     try {
+    7 -       const response = request();
+    8 -       history.push(response.status);
+    9 -       if (response.ok) {
+   10 -         return response;
+   11 -       }
+   12 -       lastError = new Error("search_token: removed failure path");
+   13 -     } catch (error) {
+   14 -       lastError = error;
+   15 -     }
+   16 -   }
+   17 -   throw lastError;
+   18 - }
+
+retry.js — base → head
+ base  head
+    1     1   export function retry(request, options) {
+    2       -   const attempts = 3; // search_token: changed configuration
+          2 +   const attempts = options.attempts ?? 3; // search_token: changed configuration
+    3     3     const history = []; // search_token: unchanged line inside changed function
+    4     4     let lastError;
+    5     5     for (let attempt = 0; attempt < attempts; attempt++) {
+    6     6       try {
+              … base 7–12 / head 7–12 collapsed [fold_state_id=<id>] …
+   13    13       } catch (error) {
+   14    14         lastError = error;
+   15    15       }
+   16    16     }
+   17    17     throw lastError;
+   18    18   }
+   19    19
+   20    20   export function describeRetry() {
+   21    21     const label = "search_token: unchanged explanation";
+   22    22     return label;
+   23    23   }
+
+[More context: call result.setCollapsed(fold_state_id, false) with an indicated
+ID, then print the result again. Full source text and region children are already
+present; no read call is needed.]
+
+unchanged.js — base = head
+ line
+    1   export function describeCache(cache) {
+    2     if (cache.enabled) {
+    3       const label = "search_token: wholly unchanged file";
+    4       return `${label}: ${cache.size}`;
+    5     }
+    6     return "cache disabled";
+    7   }

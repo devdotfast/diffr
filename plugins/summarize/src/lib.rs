@@ -6,8 +6,8 @@
 //! Requests use WASI HTTP. The host calls one file at a time per instance.
 use diffr_plugin_sdk::anyhow::{self, anyhow, Context as _};
 use diffr_plugin_sdk::{
-    docstring_of, export, has_tag, is_fold, line_count, one_sided, walk, Draft, FileEntry, Move,
-    Node, OtherSide, Pairing, Plugin, Region, Source,
+    docstring_of, export, has_tag, is_fold, line_count, one_sided, walk, Annotation, Draft,
+    FileEntry, Move, Node, OtherSide, Pairing, Plugin, Region, Source,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -61,7 +61,6 @@ struct Request {
     id: u32,
     first_line: u32,
     last_line: u32,
-    docstring: Option<u32>,
     doc: Option<String>,
 }
 
@@ -320,7 +319,7 @@ fn quoted(doc: Option<&str>, summary: &str) -> Option<String> {
 
 /// Pseudocode earns its place only when it is clearly shorter than the
 /// code: a summary with more than half the body's non-blank lines is
-/// dropped and the body stays open.
+/// dropped; the initially folded body remains expandable.
 fn compresses(summary: &str, body: &[&str]) -> bool {
     let summary_lines = summary
         .lines()
@@ -411,12 +410,46 @@ impl Plugin for Summarize {
         Ok(Vec::new())
     }
 
-    fn mutate(&self, file: &FileEntry, sides: &Pairing<Source>) -> anyhow::Result<Vec<Move>> {
+    fn mutate(&self, _file: &FileEntry, sides: &Pairing<Source>) -> anyhow::Result<Vec<Move>> {
         let selected = select(
             sides,
             self.options.min_lines,
             self.options.tests.then_some(self.options.test_min_lines),
         );
+        let mut draft = Draft::new(sides);
+        let mut tags = BTreeMap::new();
+        if let Pairing::Both { rhs, .. } | Pairing::RightOnly { rhs } = sides {
+            walk(&rhs.regions, &mut |region| {
+                tags.insert(region.id, region.tags.clone());
+            });
+        }
+        for (id, _, _, docstring) in selected {
+            let mut region_tags = tags.remove(&id).expect("selected region exists");
+            region_tags.push("summarize:pending".into());
+            draft.push(Move::SetTags((id, region_tags)))?;
+            draft.collapse(id, String::new())?;
+            if let Some(docstring) = docstring {
+                draft.link(&[id, docstring])?;
+            }
+        }
+        Ok(draft.into_moves())
+    }
+
+    fn enrich(&self, file: &FileEntry, sides: &Pairing<Source>) -> anyhow::Result<Vec<Annotation>> {
+        let mut selected = Vec::new();
+        if let Pairing::Both { rhs, .. } | Pairing::RightOnly { rhs } = sides {
+            walk(&rhs.regions, &mut |region| {
+                if has_tag(region, "summarize:pending") {
+                    let lines = region.range.lines();
+                    selected.push((
+                        region.id,
+                        lines.start + 1,
+                        lines.end,
+                        docstring_of(rhs, region, PLUGIN),
+                    ));
+                }
+            });
+        }
         let (Pairing::Both { rhs, .. } | Pairing::RightOnly { rhs }) = &sides else {
             return Ok(Vec::new());
         };
@@ -426,7 +459,6 @@ impl Plugin for Summarize {
                 id,
                 first_line,
                 last_line,
-                docstring,
                 doc: docstring.and_then(|docstring| documentation(rhs, docstring)),
             })
             .collect();
@@ -445,28 +477,16 @@ impl Plugin for Summarize {
             let body = &lines[fold.first_line as usize - 1..fold.last_line as usize];
             compresses(&summary.pseudocode, body)
         });
-        // Collapse every summarized body first, then link each to its
-        // docstring: a summary and its docstring are one thing.
-        let mut draft = Draft::new(sides);
-        let mut links = Vec::new();
-        for (id, summary) in texts {
-            let text = match &summary.quote {
-                Some(quote) => format!("{quote}\n{}", summary.pseudocode),
-                None => summary.pseudocode.clone(),
-            };
-            draft.collapse(id, text)?;
-            let fold = folds
-                .iter()
-                .find(|fold| fold.id == id)
-                .expect("answered fold");
-            if let Some(docstring) = fold.docstring {
-                links.push([id, docstring]);
-            }
-        }
-        for link in links {
-            draft.link(&link)?;
-        }
-        Ok(draft.into_moves())
+        Ok(texts
+            .into_iter()
+            .map(|(region_id, summary)| Annotation {
+                region_id,
+                label: match summary.quote {
+                    Some(quote) => format!("{quote}\n{}", summary.pseudocode),
+                    None => summary.pseudocode,
+                },
+            })
+            .collect())
     }
 }
 

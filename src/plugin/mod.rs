@@ -55,6 +55,15 @@ use std::time::Instant;
 /// its options, behind the contract's two calls on a file. Each call gets
 /// the host for that call.
 pub(crate) trait Runner: Send + Sync {
+    fn enrich(
+        &self,
+        _host: Host,
+        _file: &types::FileEntry,
+        _sides: &types::SourceSides,
+    ) -> anyhow::Result<Vec<types::Annotation>> {
+        Ok(Vec::new())
+    }
+
     fn queries(&self, host: Host) -> anyhow::Result<Vec<types::QuerySource>>;
 
     fn classify(&self, host: Host, file: &types::FileEntry) -> anyhow::Result<Vec<String>>;
@@ -201,9 +210,88 @@ impl Pipeline {
         Ok(entry.tags)
     }
 
+    /// Compatibility path: return the fully enriched file in one operation.
+    pub(crate) fn run(
+        &self,
+        file: &FileChange,
+        sides: &mut Pairing<protocol::Source>,
+    ) -> anyhow::Result<protocol::Visibility> {
+        let visibility = self.prepare(file, sides)?;
+        let annotations = self.enrich(file, sides)?;
+        Self::apply_annotations(sides, &annotations)?;
+        Ok(visibility)
+    }
+
+    /// Deferred plugins may only attach labels to existing regions.
+    pub(crate) fn enrich(
+        &self,
+        file: &FileChange,
+        sides: &Pairing<protocol::Source>,
+    ) -> anyhow::Result<Vec<protocol::Annotation>> {
+        let trees = match sides {
+            Pairing::Both { lhs, rhs } => tree::Pairing::Both {
+                lhs: to_tree(lhs),
+                rhs: to_tree(rhs),
+            },
+            Pairing::LeftOnly { lhs } => tree::Pairing::LeftOnly { lhs: to_tree(lhs) },
+            Pairing::RightOnly { rhs } => tree::Pairing::RightOnly { rhs: to_tree(rhs) },
+        };
+        let records = source_sides(&trees);
+        let entry = file_entry(file);
+        let mut annotations = Vec::new();
+        for plugin in &self.plugins {
+            let labels = plugin
+                .runner
+                .enrich(self.host(&plugin.name), &entry, &records)
+                .with_context(|| MutationFailed(plugin.name.to_string()))?;
+            annotations.extend(labels.into_iter().map(|label| protocol::Annotation {
+                region_id: label.region_id,
+                label: label.label,
+            }));
+        }
+        // Validate the complete batch before it can leave the host.
+        Self::apply_annotations(&mut sides.clone(), &annotations)?;
+        Ok(annotations)
+    }
+
+    pub(crate) fn apply_annotations(
+        sides: &mut Pairing<protocol::Source>,
+        annotations: &[protocol::Annotation],
+    ) -> anyhow::Result<()> {
+        fn find(regions: &mut [protocol::Region], id: u32) -> Option<&mut protocol::Region> {
+            for region in regions {
+                if region.id == id {
+                    return Some(region);
+                }
+                if let protocol::Node::Fold { children } = &mut region.node {
+                    if let Some(found) = find(children, id) {
+                        return Some(found);
+                    }
+                }
+            }
+            None
+        }
+        for annotation in annotations {
+            let region = match sides {
+                Pairing::Both { lhs, rhs } => find(&mut lhs.regions, annotation.region_id)
+                    .or_else(|| find(&mut rhs.regions, annotation.region_id)),
+                Pairing::LeftOnly { lhs } => find(&mut lhs.regions, annotation.region_id),
+                Pairing::RightOnly { rhs } => find(&mut rhs.regions, annotation.region_id),
+            }
+            .ok_or_else(|| {
+                anyhow!(
+                    "annotation refers to missing region {}",
+                    annotation.region_id
+                )
+            })?;
+            region.visibility.label = annotation.label.clone();
+        }
+        Ok(())
+    }
+
     /// Run every plugin on one file's sides, returning the file's own
     /// visibility.
-    pub(crate) fn run(
+    pub(crate) fn prepare(
         &self,
         file: &FileChange,
         sides: &mut Pairing<protocol::Source>,

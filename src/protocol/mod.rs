@@ -56,6 +56,14 @@ pub enum Event {
         #[serde(flatten)]
         outcome: Outcome,
     },
+    /// Deferred labels for a previously emitted successful file. A failure
+    /// affects enrichment only; the initial file and its counts stay valid.
+    Annotations {
+        file: Pairing<FileRef>,
+        annotations: Vec<Annotation>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<Problem>,
+    },
     /// The footer. `aborted` is present when a run-level failure stopped
     /// the comparison early; every file already emitted stays valid.
     Complete {

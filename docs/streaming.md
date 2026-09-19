@@ -415,3 +415,34 @@ The bundled plugins, in their default order, each a folder under `plugins/`:
 A binary diff has no regions, so only `hide-files` can change how it starts
 out.
 
+
+## Progressive annotations (opt-in v4)
+
+`diffr main HEAD --format ndjson --stream-annotations` emits `start.version = 4`.
+Without the flag the v3 stream continues to emit fully enriched files, for
+existing consumers including the TUI.
+
+In v4, each successful `file` contains the complete source, initial folds,
+alignment, and authoritative structural changed-line ranges. It is flushed
+before enrichment starts. Text files subsequently receive an `annotations`
+event, identified by the same file pair:
+
+```json
+{"type":"annotations","file":{"rhs":{"path":"a.rs","oid":"...","mode":"100644"}},"annotations":[{"region_id":12,"label":"validate input\nwrite result"}]}
+```
+
+Apply each label to the existing region. Do not rebuild the editor or replace
+collapsed state, selection, or scroll position. The update never changes region
+IDs, fold-state IDs, line ranges, alignment, or counts. An empty annotations list
+is valid. If enrichment fails, the event instead has an empty list and an
+`error` with code `enrichment_failed`; keep showing the initial file.
+
+Events for different files may interleave, but a file always precedes its
+annotations. `complete` follows all annotation work. Its succeeded/failed totals
+count initial file results, not annotation updates. An annotation error still
+sets process exit status 2, independently of `--exit-code`.
+
+Parsing and enrichment use separate workers with a bounded queue. This keeps
+slow model requests off parsing workers while bounding retained file trees;
+when enrichment falls behind, the queue applies backpressure. Disconnecting
+stops queued work; already-running plugin calls finish under their own timeouts.

@@ -17,3 +17,10 @@ plugin.wasm
 
 # Generated data left behind by the retired review web viewer.
 /examples/review/viewer/data/
+
+# Node binding build and JS dependencies.
+/bindings/node/*.node
+/node_modules/
+
+# Optional computed diff store.
+/.cache/diffr/

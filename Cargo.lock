@@ -745,7 +745,7 @@ dependencies = [
 
 [[package]]
 name = "difftastic"
-version = "0.71.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_cmd",

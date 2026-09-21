@@ -14,6 +14,3 @@ plugin.wasm
 # The bundled WASM summarizer ships ready to embed without a WASM toolchain.
 !/plugins/summarize/plugin.wasm
 /crates/*/target
-
-# Generated data left behind by the retired review web viewer.
-/examples/review/viewer/data/

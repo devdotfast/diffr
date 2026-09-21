@@ -2,7 +2,7 @@
  * Hand-maintained mirror of diffr's wire format. These files change together:
  *   src/protocol/mod.rs and src/pairing.rs   (the Rust source of truth)
  *   docs/streaming.md                        (the documented shapes)
- *   npm/diffr/src/contract.ts                (this file)
+ *   diffr-ts/src/contract.ts                (this file)
  *   tui/packages/hunk/src/diffr/wire.ts      (the terminal UI's copy, v3 only)
  * contract.test.ts runs the built binary and validates every record against
  * these schemas; version.test.ts checks the Rust VERSION constant.

@@ -13,7 +13,7 @@ test("STRUCTURAL_DIFF_BASE_WIRE_VERSION matches src/protocol/mod.rs", () => {
 });
 
 test("release pins match the package version and cover both supported targets", () => {
-  const root = join(repositoryRoot, "npm/diffr");
+  const root = join(repositoryRoot, "diffr-ts");
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   const pins = JSON.parse(readFileSync(join(root, "pins.json"), "utf8"));
   expect(pins.version).toBe(pkg.version);

@@ -26,7 +26,7 @@ A wire-format change is not done until every row is updated.
 
 | Source of truth | Mirror | Checked by |
 |---|---|---|
-| `src/protocol/mod.rs`, `src/pairing.rs` | `npm/diffr/src/contract.ts` | `contract.test.ts` runs the built `diffr` and validates every record |
+| `src/protocol/mod.rs`, `src/pairing.rs` | `diffr-ts/src/contract.ts` | `contract.test.ts` runs the built `diffr` and validates every record |
 | `src/protocol/mod.rs` `VERSION` | `contract.ts` `STRUCTURAL_DIFF_BASE_WIRE_VERSION` | `version.test.ts` |
 | `docs/streaming.md` | `contract.ts` doc comments | review |
 | `src/protocol/mod.rs` | `tui/packages/hunk/src/diffr/wire.ts` (v3 only) | `tui` tests on `tui/test/fixtures/comparison.ndjson` |
@@ -39,7 +39,7 @@ source where zod is the only external, so keep it that way.
 
 1. Merge the Rust and `contract.ts` change together.
 2. Tag the release; wait for the archives.
-3. From `npm/diffr`, `npm run pin` writes `pins.json` for this version.
+3. From `diffr-ts`, `npm run pin` writes `pins.json` for this version.
 4. Build the Rust binary, then run `bun install --frozen-lockfile`,
    `bun run typecheck`, and `bun test` in the package directory.
 5. `npm publish --access public` builds the package before packing.

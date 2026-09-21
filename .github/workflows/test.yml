@@ -129,7 +129,7 @@ jobs:
           bun-version: 1.3.10
       - uses: dtolnay/rust-toolchain@1.85.0
       - run: cargo build --locked
-      - working-directory: npm/diffr
+      - working-directory: diffr-ts
         run: |
           bun install --frozen-lockfile
           bun run typecheck

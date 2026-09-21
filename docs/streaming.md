@@ -1,7 +1,7 @@
 # CLI diff streaming
 
-The TypeScript contract lives in `npm/diffr/src/contract.ts`. See
-[the sync table](../npm/diffr/README.md#files-that-change-together) when changing the wire format.
+The TypeScript contract lives in `diffr-ts/src/contract.ts`. See
+[the sync table](../diffr-ts/README.md#files-that-change-together) when changing the wire format.
 
 ```sh
 diffr main HEAD --format ndjson

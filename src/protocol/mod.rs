@@ -1,5 +1,5 @@
 //! The NDJSON wire protocol between diffr and its frontends.
-//! Wire mirrors and sync checks: see npm/diffr/README.md.
+//! Wire mirrors and sync checks: see diffr-ts/README.md.
 //!
 //! One `Event` per line: a `start` header, one `file` record per changed
 //! file in completion order, and a `complete` footer. Every enum on the

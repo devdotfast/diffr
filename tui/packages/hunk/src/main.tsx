@@ -90,7 +90,7 @@ if (args[0] === "--input" && args[1]) {
     .slice(0, separator < 0 ? comparison.length : separator)
     .includes("--exit-code");
   // The frontend has no tokenizer, so it asks Rust for syntax spans.
-  child = spawn(args[1], ["--format", "ndjson", "--syntax", ...comparison], {
+  child = spawn(args[1], ["--format", "ndjson", "--stream-annotations", "--syntax", ...comparison], {
     stdio: ["ignore", "pipe", "pipe"],
   });
   chunks = child.stdout!;

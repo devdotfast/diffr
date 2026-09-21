@@ -100,3 +100,11 @@ test("a stream recorded from diffr parses, with manifest tags and each record's 
   expect(source.diff?.type === "text" && source.diff.rhs!.syntax.length).toBeGreaterThan(0);
   expect(complete).toEqual({ type: "complete", succeeded: 2, failed: 0 });
 });
+
+test("decode v4 initial files followed by Unicode summary updates", async () => {
+  const file = createTestDiffFile();
+  const events = [{ ...start, version: 4 }, file,
+    { type: "annotations", file: file.file, annotations: [{ region_id: 3, label: "Résumé → ready" }] },
+    { type: "complete", succeeded: 1, failed: 0 }];
+  expect((await decode(events)) as unknown).toEqual(events);
+});

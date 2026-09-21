@@ -1,5 +1,5 @@
 /** Hold streamed files separately from presentation state and notify React in batches. */
-import { fileIdentity, filePath, type FileChange, type DiffEvent, type DiffFile } from "./wire";
+import { fileIdentity, filePath, type FileChange, type DiffEvent, type DiffFile, type Region, type Source } from "./wire";
 type StartEvent = Extract<DiffEvent, { type: "start" }>;
 export interface Snapshot {
   /** The two ends of the comparison, from the start event. */
@@ -52,6 +52,29 @@ export class DiffStore {
           failedFiles: new Map(this.value.failedFiles).set(identity, event.error.message),
           errors: [...this.value.errors, `${filePath(event.file)}: ${event.error.message}`],
         };
+    }
+    if (event.type === "annotations") {
+      const identity = fileIdentity(event.file);
+      const labels = new Map(event.annotations.map(({ region_id, label }) => [region_id, label]));
+      const updateRegion = (region: Region): Region => ({
+        ...region,
+        visibility: labels.has(region.id)
+          ? { ...region.visibility, label: labels.get(region.id)! }
+          : region.visibility,
+        children: region.children.map(updateRegion),
+      });
+      const updateSource = (source: Source | undefined) => source && ({
+        ...source, regions: source.regions.map(updateRegion),
+      });
+      this.value = {
+        ...this.value,
+        files: this.value.files.map(file => fileIdentity(file.file) === identity && file.diff.type === "text" && labels.size
+          ? { ...file, diff: { ...file.diff, lhs: updateSource(file.diff.lhs), rhs: updateSource(file.diff.rhs) } }
+          : file),
+        errors: event.error
+          ? [...this.value.errors, `${filePath(event.file)}: summaries unavailable: ${event.error.message}`]
+          : this.value.errors,
+      };
     }
     if (event.type === "complete")
       this.value = {

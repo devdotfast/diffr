@@ -477,3 +477,26 @@ test("a file record's visibility hides the file behind its reason until it is op
     await act(async () => { t.renderer.destroy(); });
   }
 });
+
+test("deferred summaries repaint an existing fold without reopening it or moving its row", async () => {
+  const store = new DiffStore(), file = createFoldedDiffFile();
+  store.accept(startFor([file]));
+  store.accept(file);
+  const t = await testRender(<App store={store} onQuit={() => {}} themes={themes} />, { width: 150, height: 20 });
+  try {
+    await act(async () => { await t.renderOnce(); });
+    await t.waitForFrame(f => f.includes("a();"));
+    const lines = t.captureCharFrame().split("\n");
+    const row = lines.findIndex(l => l.includes("a();"));
+    await act(async () => { await t.mockMouse.click(lines[row].indexOf("▾"), row); });
+    await t.waitForFrame(f => !f.includes("a();") && f.includes("⋯ Body"));
+    await accept(store, { type: "annotations", file: file.file,
+      annotations: [{ region_id: 11, label: "Runs the callback" }] });
+    await t.waitForFrame(f => f.includes("Runs the callback"));
+    expect(t.captureCharFrame()).not.toContain("a();");
+    expect(t.captureCharFrame().split("\n")[row]).toContain("Runs the callback");
+    expect(store.getSnapshot().complete).toBe(false);
+  } finally {
+    await act(async () => { t.renderer.destroy(); });
+  }
+});

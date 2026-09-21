@@ -38,3 +38,26 @@ test("an unsubscribed viewer is not notified by a pending batch", async () => {
   await Bun.sleep(30);
   expect(calls).toBe(0);
 });
+
+test("deferred labels preserve initial files, counts, and collapse defaults", () => {
+  const store = new DiffStore(), file = createTestDiffFile();
+  const start = startFor([file]);
+  if (start.type !== "start") throw Error("Expected start");
+  store.accept({ ...start, version: 4 });
+  store.accept(file);
+  const initial = store.getSnapshot();
+  expect(initial.files).toHaveLength(1);
+  expect(initial.complete).toBe(false);
+  store.accept({ type: "annotations", file: file.file, annotations: [{ region_id: 3, label: "Later summary" }] });
+  const updated = store.getSnapshot().files[0];
+  if (updated.diff.type !== "text" || file.diff.type !== "text") throw Error("Expected text");
+  expect(updated.diff.rhs!.regions[2].visibility.label).toBe("Later summary");
+  expect(file.diff.rhs!.regions[2].visibility.label).toBe("");
+  expect(updated.diff.rhs!.regions[2].visibility.collapsed).toBe(false);
+  expect(updated.diff.stats).toBe(file.diff.stats);
+  expect(updated.diff.rhs!.text).toBe(file.diff.rhs!.text);
+  store.accept({ type: "annotations", file: file.file, annotations: [], error: { code: "failed", message: "offline" } });
+  expect(store.getSnapshot().files[0]).toBe(updated);
+  expect(store.getSnapshot().failedFiles.size).toBe(0);
+  expect(store.getSnapshot().errors[0]).toContain("summaries unavailable");
+});

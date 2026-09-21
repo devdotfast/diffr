@@ -1,4 +1,4 @@
-/** Parse diffr's wire v3 (src/protocol/mod.rs, docs/streaming.md): tagged enums, pairings by presence, defaults omitted. The shapes are checked; invariants between records are diffr's and trusted. */
+/** Parse diffr's wire v3/v4 (src/protocol/mod.rs, docs/streaming.md): tagged enums, pairings by presence, defaults omitted. The shapes are checked; invariants between records are diffr's and trusted. */
 import { z } from "zod";
 const uint = z.number().int().nonnegative();
 /** `{lhs, rhs}`, `{lhs}` or `{rhs}`; diffr never sends neither. */
@@ -98,12 +98,18 @@ const fileEvent = z.object({
 export const eventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("start"),
-    version: z.literal(3),
+    version: z.union([z.literal(3), z.literal(4)]),
     lhs: snapshot,
     rhs: snapshot,
     files: z.array(fileChange),
   }),
   fileEvent,
+  z.object({
+    type: z.literal("annotations"),
+    file: pairing(fileRef),
+    annotations: z.array(z.object({ region_id: uint, label: z.string() })),
+    error: problem.optional(),
+  }),
   z.object({ type: z.literal("complete"), succeeded: uint, failed: uint, aborted: problem.optional() }),
 ]);
 export type FileRef = z.infer<typeof fileRef>;

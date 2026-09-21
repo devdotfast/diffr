@@ -206,6 +206,9 @@ wasm-test-exclude = []
 
 [profile.release]
 lto = "thin"
+# Release archives ship this binary inside Review Desktop; 0.1.1 was 138 MB
+# unstripped.
+strip = true
 
 [[bin]]
 name = "diffr"

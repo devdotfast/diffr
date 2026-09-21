@@ -1,0 +1,22 @@
+[files]
+extend-exclude = [
+  "vendored_parsers/", "sample_files/",
+  "src/tags/linguist/",
+  "demo_files/",
+  # Git index lines carry blob hashes that can spell words.
+  "examples/review/real/*/change.patch",
+]
+
+[default.extend-words]
+ba = "ba"
+edn = "edn"
+# esy is the OCaml/Reason package manager, whose lockfile Linguist lists.
+esy = "esy"
+mak = "mak"
+ND = "ND"
+
+diffstatic = "difftastic"
+
+# The algorithm was created by Eugene Myers, so the correct phrasing
+# is Myers' algorithm.
+myer = "myers"

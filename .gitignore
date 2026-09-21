@@ -1,0 +1,16 @@
+/target
+**/*.rs.bk
+perf.data*
+flamegraph.svg
+.idea
+
+notes.md
+perf_baseline_*.txt
+__pycache__/
+.env
+
+# WASM plugin builds: scripts/build-wasm-plugins.sh
+plugin.wasm
+# The bundled WASM summarizer ships ready to embed without a WASM toolchain.
+!/plugins/summarize/plugin.wasm
+/crates/*/target

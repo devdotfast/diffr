@@ -1,0 +1,119 @@
+on: [push, pull_request]
+
+name: Test
+
+jobs:
+  build:
+    name: Test ${{ matrix.job.target }}
+    runs-on: ${{ matrix.job.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          # Operating systems available: https://docs.github.com/en/actions/using-github-hosted-runners/using-github-hosted-runners/about-github-hosted-runners#standard-github-hosted-runners-for-public-repositories
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: aarch64-pc-windows-msvc, os: windows-11-arm }
+
+          # Wasmtime needs native memfd support unavailable under QEMU user emulation.
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
+
+          # mac-14 is an M1 ARM device.
+          - { target: aarch64-apple-darwin, os: macos-14 }
+          - { target: x86_64-apple-darwin, os: macos-14, use-cross: true }
+
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-22.04, use-cross: true }
+    env:
+      BUILD_CMD: cargo
+
+    steps:
+    - name: Checkout source code
+      # v4.2.2
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@1.85.0
+      with:
+        targets: ${{ matrix.job.target }}
+
+    - name: Install cross
+      if: matrix.job.use-cross
+      uses: taiki-e/install-action@1329c298aa20c3257846c9b2e0e55967df3e3c37 # v2
+      with:
+        tool: cross@0.2.5
+
+    - name: Overwrite build command env variable
+      if: matrix.job.use-cross
+      shell: bash
+      run: echo "BUILD_CMD=cross" >> $GITHUB_ENV
+
+    - name: Test
+      shell: bash
+      run: $BUILD_CMD test --target ${{ matrix.job.target }}
+
+  test_wasm_plugins:
+    name: Test WASM component plugins
+    runs-on: ubuntu-22.04
+    steps:
+      # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          # The tests build every bundled plugin as a component.
+          targets: wasm32-wasip2
+      # Component loading is host behaviour, so it is tested once, natively,
+      # rather than on every target the matrix above cross-compiles for.
+      - run: cargo xtask test-plugins
+
+  test_mime_db:
+    name: Test with MIME database
+    runs-on: ubuntu-22.04
+    steps:
+      # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: dtolnay/rust-toolchain@1.85.0
+      # This runs tests that rely on the MIME database being present.
+      - run: cargo test -- --ignored
+
+  test_linux_latest_stable:
+    name: Test Linux (latest stable Rust)
+    runs-on: ubuntu-22.04
+    steps:
+      # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo +stable test
+
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-22.04
+    steps:
+      # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - run: cargo fmt --all -- --check
+
+  actionlint:
+    name: Actionlint
+    runs-on: ubuntu-22.04
+    steps:
+      # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: raven-actions/actionlint@205b530c5d9fa8f44ae9ed59f341a0db994aa6f8 # v2
+        with:
+          shellcheck: false
+
+  typo-check:
+    name: Typo Check
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      FORCE_COLOR: 1
+      TYPOS_VERSION: v1.38.1
+    steps:
+      # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Download typos
+        run: curl -LsSf https://github.com/crate-ci/typos/releases/download/$TYPOS_VERSION/typos-$TYPOS_VERSION-x86_64-unknown-linux-musl.tar.gz | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
+      - name: Check for typos
+        run: typos

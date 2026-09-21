@@ -1,0 +1,17 @@
+[package]
+name = "diffr-plugin-sdk"
+description = "The diffr plugin contract in Rust: one trait for native and WASM plugins."
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85.0"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = "1.0"
+serde_json = "1.0"
+serde = "1.0"
+# Generates the contract's records from `wit/plugin.wit`, for every target:
+# the records are plain Rust, and only the export glue is wasm-specific. The
+# newest wit-bindgen whose rust-version (1.85) matches diffr's.
+wit-bindgen = "0.60.0"

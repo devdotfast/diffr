@@ -1,0 +1,14 @@
+name = "removed-runs"
+title = "Removed stretches"
+description = "Collapse the middle of long removed stretches in code that was removed rather than rewritten."
+
+[enabled]
+title = "Collapse long removed stretches"
+description = "Collapse removed stretches with no counterpart, keeping their first and last line visible."
+
+[options.min_lines]
+type = "integer"
+minimum = 0
+title = "Shortest stretch to collapse (lines)"
+description = "Removed stretches shorter than this stay open. A stretch needs at least three lines to keep one open at each end."
+default = 5

@@ -1,0 +1,7 @@
+name = "group"
+title = "Groups"
+description = "Wrap runs of adjacent collapsed regions in one collapsed group fold."
+
+[enabled]
+title = "Group adjacent collapsed regions"
+description = "Wrap two or more adjacent collapsed regions in one collapsed fold that counts them and their lines."

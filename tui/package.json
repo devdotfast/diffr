@@ -1,6 +1,7 @@
 {
   "name": "@diffr/tui",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "start": "bun run packages/hunk/src/main.tsx",

@@ -9,7 +9,7 @@
     "install": "npx tree-sitter generate && npx node-gyp configure && npx node-gyp rebuild"
   },
   "author": "",
-  "license": "",
+  "license": "CC0-1.0",
   "dependencies": {
     "nan": "2.14.2"
   },

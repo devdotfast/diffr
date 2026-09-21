@@ -8,11 +8,16 @@ for every upstream and its license.
 
 ## Installation
 
+The CLI, from crates.io (prebuilt via [cargo-binstall](https://github.com/cargo-bins/cargo-binstall), or compiled):
+
 ```sh
-cargo xtask install
+cargo binstall diffr-cli
+cargo install diffr-cli --locked
 ```
 
-Run this from the checkout with Rust and [Bun](https://bun.sh) on `PATH`.
+The terminal UI is not yet published. From a checkout, with Rust and
+[Bun](https://bun.sh) installed, `cargo xtask install` builds and installs
+both the CLI and the UI.
 
 ## Configuration
 

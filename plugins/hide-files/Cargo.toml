@@ -5,6 +5,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.85.0"
 license = "MIT"
+links = "diffr-plugin-hide-files"
 publish = false
 
 [dependencies]

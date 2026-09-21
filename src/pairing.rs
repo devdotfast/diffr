@@ -1,4 +1,5 @@
 //! Which sides of a comparison a thing exists on.
+//! Wire mirrors and sync checks: see npm/diffr/README.md.
 //!
 //! Sides are always `lhs` (before) and `rhs` (after). On the wire a
 //! `Pairing` serializes by presence: `{lhs, rhs}`, `{lhs}`, or `{rhs}`.

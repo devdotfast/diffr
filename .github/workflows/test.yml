@@ -120,6 +120,8 @@ jobs:
 
   test_typescript:
     name: Test @dev.fast/diffr
+    permissions:
+      contents: read
     runs-on: ubuntu-22.04
     steps:
       # v4.2.2

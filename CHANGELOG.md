@@ -4,6 +4,12 @@ diffr's history before this file begins is difftastic's; see
 https://github.com/Wilfred/difftastic/blob/master/CHANGELOG.md for releases
 up to 0.71.
 
+## 0.1.1
+
+- Published to crates.io as `diffr-cli` (binary `diffr`) and
+  `diffr-plugin-sdk`, with the bundled plugins as `diffr-plugin-*`.
+- `cargo binstall diffr-cli` installs the prebuilt `diffr` from a release.
+
 ## 0.1.0
 
 First public release of diffr as its own project.

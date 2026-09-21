@@ -123,6 +123,15 @@ fn a_stretch_over_whole_folds_collapses_as_one_group() {
         "the two sides' groups open and close together"
     );
     assert_eq!(open_lines(&lhs.regions), BTreeSet::from([0, 1, 2, 16, 17]));
+    // Opening the context group reveals its entire unchanged stretch on
+    // either side, rather than another layer of context folds.
+    for source in [lhs, rhs] {
+        let mut regions = source.regions.clone();
+        for region in &mut regions {
+            region.visibility.collapsed = false;
+        }
+        assert_eq!(open_lines(&regions), (0..18).collect());
+    }
 }
 
 #[test]

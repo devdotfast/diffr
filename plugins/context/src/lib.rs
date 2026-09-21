@@ -13,7 +13,7 @@
 //! A stretch is cut at region edges. The part in one list of siblings
 //! collapses when it is at least `MIN_GAP` lines long or is the whole
 //! stretch; a shorter sliver stays open. When a part spans several
-//! siblings, each collapses and a group wraps them in one row on each side,
+//! siblings, only their enclosing group collapses into one row on each side,
 //! provided the two sides' siblings match one for one: leaves sharing an
 //! `alignment_id`, or folds sharing a fold state. A fold in it collapses only when every
 //! region on the other side in its fold state lies wholly inside the
@@ -407,6 +407,16 @@ impl Plugin for Context {
                 if lines < MIN_GAP && lines != total {
                     continue;
                 }
+                // One context fold is enough for a group. Leave its members'
+                // visibility intact so expanding it reveals code directly.
+                let grouped = same_shape
+                    && part.len() >= 2
+                    && part.iter().all(|member| match member {
+                        Member::Whole {
+                            id, state: Some(_), ..
+                        } => hides_only_this(*id),
+                        _ => true,
+                    });
                 let mut members = Vec::new();
                 // The rhs leaves and pieces the lhs members pair with.
                 let mut rhs_members = Vec::new();
@@ -418,28 +428,34 @@ impl Plugin for Context {
                         Member::Whole {
                             id, lines, state, ..
                         } => {
-                            draft.collapse(*id, unchanged_label(*lines))?;
+                            if !grouped {
+                                draft.collapse(*id, unchanged_label(*lines))?;
+                            }
                             members.push(*id);
                             let Some(state) = state else {
                                 rhs_members.extend(rhs_leaf_ids.get(id));
                                 continue;
                             };
                             for rhs_id in rhs_by_state.get(state).into_iter().flatten() {
-                                if let Some(rhs_lines) = rhs_fold_lines.get(rhs_id) {
+                                if let Some(rhs_lines) =
+                                    rhs_fold_lines.get(rhs_id).filter(|_| !grouped)
+                                {
                                     draft.collapse(*rhs_id, unchanged_label(*rhs_lines))?;
                                 }
                             }
                         }
                         Member::Part { id, start, end, .. } => {
                             let piece = draft.cut_lines(*id, *start, *end)?;
-                            draft.collapse(piece, unchanged_label(end - start))?;
+                            if !grouped {
+                                draft.collapse(piece, unchanged_label(end - start))?;
+                            }
                             members.push(piece);
                             rhs_members.extend(draft.paired_leaf(piece)?);
                         }
                     }
                 }
                 // A fold left open breaks the run, so nothing is grouped.
-                if same_shape && members.len() == part.len() && members.len() >= 2 {
+                if grouped {
                     members.reverse();
                     // The rhs leaves and pieces, then the rhs folds.
                     members.extend(rhs_members);

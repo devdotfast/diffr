@@ -1,6 +1,5 @@
 import { type StructuralDiffEvent, StructuralDiffEventSchema } from "./contract.js";
 
-/** JSON is untrusted until the complete nested Rust wire contract validates. */
 export function decodeStructuralDiffEvent(line: string): StructuralDiffEvent {
   try {
     return StructuralDiffEventSchema.parse(JSON.parse(line));

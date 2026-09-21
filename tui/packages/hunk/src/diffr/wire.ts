@@ -1,7 +1,4 @@
-// Mirrors wire v3 (src/protocol/mod.rs, docs/streaming.md). The canonical
-// TypeScript contract is diffr-ts/src/contract.ts; this copy predates it,
-// lacks v4 annotations and structural_changes, and is listed in
-// diffr-ts/README.md as a file that changes with the wire format.
+// Full v3/v4 contract: diffr-ts/src/contract.ts.
 /** Parse diffr's wire v3 (src/protocol/mod.rs, docs/streaming.md): tagged enums, pairings by presence, defaults omitted. The shapes are checked; invariants between records are diffr's and trusted. */
 import { z } from "zod";
 const uint = z.number().int().nonnegative();

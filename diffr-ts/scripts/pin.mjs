@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-// Rewrites pins.json with the sha256 of each release archive for this
-// package's version. Run after the release exists, before `npm publish`.
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

@@ -1,16 +1,8 @@
 /**
- * Hand-maintained mirror of diffr's wire format. These files change together:
- *   src/protocol/mod.rs and src/pairing.rs   (the Rust source of truth)
- *   docs/streaming.md                        (the documented shapes)
- *   diffr-ts/src/contract.ts                (this file)
- *   tui/packages/hunk/src/diffr/wire.ts      (the terminal UI's copy, v3 only)
- * contract.test.ts runs the built binary and validates every record against
- * these schemas; version.test.ts checks the Rust VERSION constant.
- *
- * This file may import only zod: consumers concatenate it into generated
- * source where zod is the sole external.
- * Serde omits default/empty fields rather than sending null. Lines are zero-based,
- * columns are UTF-8 byte offsets, and ranges are half-open.
+ * Mirrors src/protocol/mod.rs and src/pairing.rs. See ../README.md for sync checks.
+ * Import only zod: Review embeds this file in generated source.
+ * Defaults are omitted, not null. Lines are zero-based, columns are UTF-8 bytes,
+ * and ranges are half-open.
  */
 import { z } from "zod";
 

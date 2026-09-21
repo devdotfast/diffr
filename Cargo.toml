@@ -212,8 +212,7 @@ name = "diffr"
 path = "src/main.rs"
 
 [package.metadata.binstall]
-# Release archives are diffr-<tag>-<target>.tar.gz with diffr at the root;
-# tags carry no "v" prefix.
+# Tags have no "v" prefix; binaries sit at the archive root.
 pkg-url = "{ repo }/releases/download/{ version }/diffr-{ version }-{ target }{ archive-suffix }"
 pkg-fmt = "tgz"
 bin-dir = "{ bin }{ binary-ext }"

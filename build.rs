@@ -126,7 +126,7 @@ fn native_plugins() {
         &mut files,
     );
     for dependency in manifest["dependencies"].as_table().unwrap().keys() {
-        // Plugin crates publish their asset directory through links metadata.
+        // Resolve assets through Cargo links metadata.
         if !dependency.starts_with("diffr-plugin-") || dependency == "diffr-plugin-sdk" {
             continue;
         }

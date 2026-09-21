@@ -7,6 +7,8 @@ on:
 
 jobs:
   create-release:
+    permissions:
+      contents: write
     runs-on: ubuntu-22.04
     steps:
       # v4.2.2
@@ -20,6 +22,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   upload-assets:
+    needs: create-release
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:

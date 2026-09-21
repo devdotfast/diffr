@@ -89,7 +89,7 @@ pub trait Plugin: Sized {
 #[doc(hidden)]
 pub mod bindings {
     wit_bindgen::generate!({
-        path: "../../wit",
+        path: "wit",
         world: "plugin",
         pub_export_macro: true,
         default_bindings_module: "diffr_plugin_sdk::bindings",

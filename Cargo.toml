@@ -1,10 +1,10 @@
 [package]
-name = "difftastic"
+name = "diffr-cli"
 description = "Structural diffs with a streaming API and interactive terminal frontend."
 repository = "https://github.com/devdotfast/diffr"
 homepage = "https://github.com/devdotfast/diffr"
 license = "MIT"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["dev.fast"]
 keywords = ["diff", "syntax"]
 categories = ["development-tools", "command-line-utilities", "parser-implementations"]
@@ -23,6 +23,7 @@ rust-version = "1.85.0"
 include = [
         "/build.rs",
         "/src/",
+        "/wit/",
         "/plugins/",
         "/vendored_parsers/highlights/*.scm",
         "/vendored_parsers/*-src/**/*.c",
@@ -145,14 +146,14 @@ wasmtime-wasi = { version = "34.0.2", default-features = false }
 bytes = "1.12"
 # The plugin contract, and the bundled plugins: each a crate the native
 # registry calls, which also builds as a WASM component.
-diffr-plugin-sdk = { path = "crates/diffr-plugin-sdk" }
-diffr-plugin-context = { path = "plugins/context" }
-diffr-plugin-deleted-bodies = { path = "plugins/deleted-bodies" }
-diffr-plugin-group = { path = "plugins/group" }
-diffr-plugin-hide-files = { path = "plugins/hide-files" }
-diffr-plugin-removed-runs = { path = "plugins/removed-runs" }
-diffr-plugin-summarize = { path = "plugins/summarize" }
-diffr-plugin-test-bodies = { path = "plugins/test-bodies" }
+diffr-plugin-sdk = { path = "crates/diffr-plugin-sdk", version = "0.1.1" }
+diffr-plugin-context = { path = "plugins/context", version = "0.1.1" }
+diffr-plugin-deleted-bodies = { path = "plugins/deleted-bodies", version = "0.1.1" }
+diffr-plugin-group = { path = "plugins/group", version = "0.1.1" }
+diffr-plugin-hide-files = { path = "plugins/hide-files", version = "0.1.1" }
+diffr-plugin-removed-runs = { path = "plugins/removed-runs", version = "0.1.1" }
+diffr-plugin-summarize = { path = "plugins/summarize", version = "0.1.1" }
+diffr-plugin-test-bodies = { path = "plugins/test-bodies", version = "0.1.1" }
 wasmtime-wasi-http = { version = "34.0.2", default-features = false }
 
 
@@ -209,6 +210,12 @@ lto = "thin"
 [[bin]]
 name = "diffr"
 path = "src/main.rs"
+
+[package.metadata.binstall]
+# Tags have no "v" prefix; binaries sit at the archive root.
+pkg-url = "{ repo }/releases/download/{ version }/diffr-{ version }-{ target }{ archive-suffix }"
+pkg-fmt = "tgz"
+bin-dir = "{ bin }{ binary-ext }"
 
 [package.metadata.deb]
 depends = "$auto"

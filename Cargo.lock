@@ -676,76 +676,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6184e33543162437515c2e2b48714794e37845ec9851711914eec9d308f6ebe8"
 
 [[package]]
-name = "diffr-plugin-context"
-version = "0.1.0"
-dependencies = [
- "diffr-plugin-sdk",
- "serde",
-]
-
-[[package]]
-name = "diffr-plugin-deleted-bodies"
-version = "0.1.0"
-dependencies = [
- "diffr-plugin-sdk",
- "serde",
-]
-
-[[package]]
-name = "diffr-plugin-group"
-version = "0.1.0"
-dependencies = [
- "diffr-plugin-sdk",
- "serde",
-]
-
-[[package]]
-name = "diffr-plugin-hide-files"
-version = "0.1.0"
-dependencies = [
- "diffr-plugin-sdk",
- "serde",
-]
-
-[[package]]
-name = "diffr-plugin-removed-runs"
-version = "0.1.0"
-dependencies = [
- "diffr-plugin-sdk",
- "serde",
-]
-
-[[package]]
-name = "diffr-plugin-sdk"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
- "wit-bindgen 0.60.0",
-]
-
-[[package]]
-name = "diffr-plugin-summarize"
-version = "0.1.0"
-dependencies = [
- "diffr-plugin-sdk",
- "serde",
- "serde_json",
- "wasi 0.14.2+wasi-0.2.4",
-]
-
-[[package]]
-name = "diffr-plugin-test-bodies"
-version = "0.1.0"
-dependencies = [
- "diffr-plugin-sdk",
- "serde",
-]
-
-[[package]]
-name = "difftastic"
-version = "0.1.0"
+name = "diffr-cli"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -862,6 +794,74 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
+]
+
+[[package]]
+name = "diffr-plugin-context"
+version = "0.1.1"
+dependencies = [
+ "diffr-plugin-sdk",
+ "serde",
+]
+
+[[package]]
+name = "diffr-plugin-deleted-bodies"
+version = "0.1.1"
+dependencies = [
+ "diffr-plugin-sdk",
+ "serde",
+]
+
+[[package]]
+name = "diffr-plugin-group"
+version = "0.1.1"
+dependencies = [
+ "diffr-plugin-sdk",
+ "serde",
+]
+
+[[package]]
+name = "diffr-plugin-hide-files"
+version = "0.1.1"
+dependencies = [
+ "diffr-plugin-sdk",
+ "serde",
+]
+
+[[package]]
+name = "diffr-plugin-removed-runs"
+version = "0.1.1"
+dependencies = [
+ "diffr-plugin-sdk",
+ "serde",
+]
+
+[[package]]
+name = "diffr-plugin-sdk"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "wit-bindgen 0.60.0",
+]
+
+[[package]]
+name = "diffr-plugin-summarize"
+version = "0.1.1"
+dependencies = [
+ "diffr-plugin-sdk",
+ "serde",
+ "serde_json",
+ "wasi 0.14.2+wasi-0.2.4",
+]
+
+[[package]]
+name = "diffr-plugin-test-bodies"
+version = "0.1.1"
+dependencies = [
+ "diffr-plugin-sdk",
+ "serde",
 ]
 
 [[package]]

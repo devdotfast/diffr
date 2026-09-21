@@ -1,11 +1,10 @@
 [package]
 name = "diffr-plugin-sdk"
 description = "The diffr plugin contract in Rust: one trait for native and WASM plugins."
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.85.0"
 license = "MIT"
-publish = false
 
 [dependencies]
 anyhow = "1.0"

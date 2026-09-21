@@ -125,11 +125,17 @@ fn native_plugins() {
         "shared/queries",
         &mut files,
     );
-    for (dependency, spec) in manifest["dependencies"].as_table().unwrap() {
-        let Some(path) = spec.get("path").and_then(toml::Value::as_str) else {
+    for dependency in manifest["dependencies"].as_table().unwrap().keys() {
+        // Resolve assets through Cargo links metadata.
+        if !dependency.starts_with("diffr-plugin-") || dependency == "diffr-plugin-sdk" {
             continue;
-        };
-        let file = root.join(path).join("Cargo.toml");
+        }
+        let variable = format!("DEP_{}_ASSETS", dependency.to_uppercase().replace('-', "_"));
+        let folder = PathBuf::from(
+            std::env::var_os(&variable)
+                .unwrap_or_else(|| panic!("{dependency} did not publish {variable}")),
+        );
+        let file = folder.join("Cargo.toml");
         println!("cargo:rerun-if-changed={}", file.display());
         let package: toml::Value = std::fs::read_to_string(file).unwrap().parse().unwrap();
         let Some(plugin) = package
@@ -143,7 +149,6 @@ fn native_plugins() {
             .get("native")
             .and_then(toml::Value::as_bool)
             .unwrap_or(false);
-        let folder = root.join(path);
         let plugin_manifest = folder.join("plugin.toml");
         let description: toml::Value = std::fs::read_to_string(&plugin_manifest)
             .expect("a plugin has plugin.toml")

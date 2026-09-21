@@ -1,4 +1,4 @@
-Difftastic's AI policy is based on the [LLVM AI Tool Use
+diffr's AI policy is based on the [LLVM AI Tool Use
 Policy](https://llvm.org/docs/AIToolPolicy.html).
 
 **Understanding**: You can use any coding tool you like, but you need to read

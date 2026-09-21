@@ -272,7 +272,7 @@ mod tests {
             "sub/readme.txt",
             "CHANGELOG.md",
             "LICENSE",
-            "examples/review/viewer/README.md",
+            "examples/review/README.md",
             "CITATION.cff",
         ] {
             assert!(tags(path).contains(&DOCS), "{path}");

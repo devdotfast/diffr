@@ -5,7 +5,7 @@ use std::ffi::OsStr;
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 
-use clap::{crate_authors, crate_description, Arg, ArgAction, Command};
+use clap::{crate_description, Arg, ArgAction, Command};
 
 use crate::exit_codes::EXIT_BAD_ARGUMENTS;
 use crate::parse::guess_language::{language_override_from_name, LanguageOverride};
@@ -45,7 +45,7 @@ impl Default for DiffOptions {
 }
 
 fn app() -> clap::Command {
-    Command::new("Difftastic")
+    Command::new("diffr")
         // Show options in alphabetical order, rather than in
         // declaration order.
         .next_display_order(None)
@@ -53,14 +53,13 @@ fn app() -> clap::Command {
         .version(env!("CARGO_PKG_VERSION"))
         .long_version(VERSION.as_str())
         .about(crate_description!())
-        .author(crate_authors!())
         .arg(
             Arg::new("dump-syntax")
                 .long("dump-syntax")
                 .value_name("PATH")
                 .action(ArgAction::Set)
                 .long_help(
-                    "Parse a single file with tree-sitter and display the difftastic syntax tree.",
+                    "Parse a single file with tree-sitter and display the diffr syntax tree.",
                 ).help_heading("DEBUG OPTIONS"),
         )
         .arg(
@@ -69,7 +68,7 @@ fn app() -> clap::Command {
                 .value_name("PATH")
                 .action(ArgAction::Set)
                 .long_help(
-                    "Parse a single file with tree-sitter and display the difftastic syntax tree, as a DOT graph.",
+                    "Parse a single file with tree-sitter and display the diffr syntax tree, as a DOT graph.",
                 ).help_heading("DEBUG OPTIONS"),
         )
         .arg(
@@ -101,7 +100,7 @@ This argument may be given more than once. For example:
 
 $ ", env!("CARGO_BIN_NAME"), " debug --override='CustomFile:json' --override='*.c:text' --dump-syntax file.c
 
-To configure multiple overrides using environment variables, difftastic also accepts DFT_OVERRIDE_1 up to DFT_OVERRIDE_9.
+To configure multiple overrides using environment variables, diffr also accepts DFT_OVERRIDE_1 up to DFT_OVERRIDE_9.
 
 $ export DFT_OVERRIDE='CustomFile:json'
 $ export DFT_OVERRIDE_1='*.c:text'
@@ -113,7 +112,7 @@ When multiple overrides are specified, the first matching override wins."))
         .arg(
             Arg::new("list-languages").long("list-languages")
                 .action(ArgAction::SetTrue)
-                .help("Print all the languages supported by difftastic, along with their recognised extensions.")
+                .help("Print all the languages supported by diffr, along with their recognised extensions.")
         )
         .arg_required_else_help(true)
 }

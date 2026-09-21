@@ -7,42 +7,32 @@ on:
 
 jobs:
   create-release:
+    permissions:
+      contents: write
     runs-on: ubuntu-22.04
     steps:
       # v4.2.2
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: taiki-e/create-gh-release-action@eba8ea96c86cca8a37f1b56e94b4d13301fba651 # v1
         with:
-          # Create a draft release so we can add the changelog before publishing it
-          # so the changelog is included in the release email
-          draft: true
+          # Publish immediately: Review's build downloads the assets by tag.
+          draft: false
         env:
           # (required)
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   upload-assets:
+    needs: create-release
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Targets that match the OS of the runner.
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-22.04
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
           - target: aarch64-apple-darwin
             os: macos-latest
-
-          # Targets using cross-compilation (upload-rust-binary-action
-          # detects that they need cross).
-          - target: x86_64-unknown-linux-musl
+          - target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-22.04
-          - target: aarch64-pc-windows-msvc
-            os: windows-latest
-          - target: x86_64-apple-darwin
-            os: macos-latest
     runs-on: ${{ matrix.os }}
     steps:
       # v4.2.2
@@ -63,12 +53,3 @@ jobs:
         env:
           # (required)
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  push_crates_io:
-    runs-on: ubuntu-22.04
-    steps:
-      # v4.2.2
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: katyo/publish-crates@02cc2f1ad653fb25c7d1ff9eb590a8a50d06186b # v2
-        with:
-          registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}

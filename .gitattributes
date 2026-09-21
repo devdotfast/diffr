@@ -1,4 +1,3 @@
-# Ignore the following directories when showing which languages
-# difftastic is implemented in on GitHub.
+# diffr is implemented in Rust; keep GitHub's language stats honest.
 sample_files/** linguist-vendored
 vendored_parsers/** linguist-vendored

@@ -1,5 +1,11 @@
 # diffr
 
+Structural diffs with a streaming API and an interactive terminal frontend.
+diffr is derived from [difftastic](https://github.com/Wilfred/difftastic)
+(MIT, Wilfred Hughes) and its terminal UI from
+[hunk](https://github.com/modem-dev/hunk) (MIT, Modem Labs). See `NOTICE`
+for every upstream and its license.
+
 ## Installation
 
 ```sh
@@ -129,4 +135,6 @@ or [Writing plugins](docs/plugins.md) for the full guide.
 
 ## License
 
-This project was forked from the lovely [difftastic](https://github.com/wilfred/difftastic).
+MIT. See `LICENSE` for the terms and `NOTICE` for the third-party work
+diffr builds on, starting with the lovely
+[difftastic](https://github.com/Wilfred/difftastic).

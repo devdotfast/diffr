@@ -577,7 +577,9 @@ fn launch_tui(args: &[OsString], comparison: bool) -> Result<i32> {
             .arg(std::env::current_exe()?)
             .args(&args[1..]);
     }
-    let launch_error = |error| format!("Could not launch terminal frontend: {error}. Run cargo xtask install-tui from the checkout to install the frontend, or use --format ndjson. For source development, set DIFFR_TUI_ENTRY and ensure Bun is available.");
+    let launch_error = |error| {
+        format!("Could not launch terminal frontend: {error}. Run cargo xtask install-tui from the checkout to install the frontend, or use --format ndjson. For source development, set DIFFR_TUI_ENTRY and ensure Bun is available.")
+    };
     // Replace the launcher so a signal sent to diffr reaches the actual TUI,
     // rather than leaving an unsupervised child when the launcher exits.
     #[cfg(unix)]

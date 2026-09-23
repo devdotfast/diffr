@@ -8,6 +8,12 @@ for every upstream and its license.
 
 ## Installation
 
+CLI and terminal UI (Apple Silicon macOS and x64 Linux):
+
+```sh
+brew install devdotfast/tap/diffr
+```
+
 The CLI, from crates.io (prebuilt via [cargo-binstall](https://github.com/cargo-bins/cargo-binstall), or compiled):
 
 ```sh
@@ -15,9 +21,7 @@ cargo binstall diffr-cli
 cargo install diffr-cli --locked
 ```
 
-The terminal UI is not yet published. From a checkout, with Rust and
-[Bun](https://bun.sh) installed, `cargo xtask install` builds and installs
-both the CLI and the UI.
+From source: `cargo xtask install` (requires Rust and [Bun](https://bun.sh)).
 
 ## Configuration
 

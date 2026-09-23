@@ -45,7 +45,7 @@ pub struct Options {
 }
 
 /// The first and last line of every scope on `source` that holds a changed
-/// line.
+/// line, plus its full header when the query marks the function body.
 ///
 /// A scope region is a whole construct: its first line is the line its
 /// signature or header starts on and its last is the line that closes it,
@@ -63,6 +63,11 @@ fn scope_rows(source: &Source, changed: &BTreeSet<u32>) -> BTreeSet<u32> {
         }
         rows.insert(span.start);
         rows.insert(span.end - 1);
+        if let Node::Fold { children } = &region.node {
+            if let Some(body) = children.iter().find(|child| has_tag(child, "context:body")) {
+                rows.extend(span.start..body.range.start.line);
+            }
+        }
     });
     rows
 }

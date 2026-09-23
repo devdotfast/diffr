@@ -15,11 +15,15 @@
 //! stretch; a shorter sliver stays open. When a part spans several
 //! siblings, only their enclosing group collapses into one row on each side,
 //! provided the two sides' siblings match one for one: leaves sharing an
-//! `alignment_id`, or folds sharing a fold state. A fold in it collapses only when every
-//! region on the other side in its fold state lies wholly inside the
-//! stretch there, so no fold is hidden on one side while it holds changed
-//! lines on the other, such as a matched function that moved elsewhere.
-//! Both folds of a matched pair are labelled with their line count.
+//! `alignment_id`, or folds sharing a fold state. When they do not, as after
+//! a line diff fallback, whose folds are all unpaired, the part is grouped
+//! with the other side's part over the same lines, if there is one of two or
+//! more siblings; the two groups share a fold state all the same. A fold in
+//! it collapses only when every region on the other side in its fold state
+//! lies wholly inside the stretch there, so no fold is hidden on one side
+//! while it holds changed lines on the other, such as a matched function
+//! that moved elsewhere. Both folds of a matched pair are labelled with
+//! their line count, and a fold with no partner collapses on its own side.
 use diffr_plugin_sdk::{
     anyhow, export, has_tag, is_fold, walk, Draft, FileEntry, Move, Node, Pairing, Plugin, Region,
     Source,
@@ -69,7 +73,6 @@ fn scope_rows(source: &Source, changed: &BTreeSet<u32>) -> BTreeSet<u32> {
 
 /// One leaf, as far as context cares.
 struct Leaf {
-    id: u32,
     alignment: u32,
     start: u32,
     end: u32,
@@ -88,7 +91,6 @@ fn leaves(regions: &[Region], other: &BTreeSet<u32>) -> Vec<Leaf> {
         } = &region.node
         {
             out.push(Leaf {
-                id: region.id,
                 alignment: *alignment_id,
                 start: region.range.start.line,
                 end: region.range.end.line,
@@ -337,8 +339,14 @@ impl Plugin for Context {
         }
 
         let mut lhs_states: BTreeMap<u32, u32> = BTreeMap::new();
+        // The lhs regions in each fold state, by id.
+        let mut lhs_by_state: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
         walk(&lhs.regions, &mut |region| {
             lhs_states.insert(region.id, region.fold_state_id);
+            lhs_by_state
+                .entry(region.fold_state_id)
+                .or_default()
+                .push(region.id);
         });
         // The rhs regions in each fold state, by id.
         let mut rhs_by_state: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
@@ -348,11 +356,6 @@ impl Plugin for Context {
                 .or_default()
                 .push(region.id);
         });
-        // The rhs leaf paired with each lhs leaf, by id.
-        let rhs_leaf_ids: BTreeMap<u32, u32> = lhs_leaves
-            .iter()
-            .filter_map(|leaf| Some((leaf.id, rhs_by_alignment.get(&leaf.alignment)?.id)))
-            .collect();
         // Stretches are shaped in reverse document order, so a cut leaf's id
         // still names the piece that starts where the leaf did.
         let mut draft = Draft::new(sides);
@@ -372,20 +375,54 @@ impl Plugin for Context {
                     .collect()
             };
             let same_shape = key(&lhs_parts) == key(&rhs_parts);
+            // The first line and line count of each part, relative to the
+            // stretch, which the parts cover in order.
+            let spans = |parts: &[Vec<Member>]| -> Vec<(u32, u32)> {
+                let mut at = 0;
+                parts
+                    .iter()
+                    .map(|part| {
+                        let lines: u32 = part.iter().map(Member::lines).sum();
+                        at += lines;
+                        (at - lines, lines)
+                    })
+                    .collect()
+            };
+            let (lhs_spans, rhs_spans) = (spans(&lhs_parts), spans(&rhs_parts));
+            // The leaves a part cuts, by alignment and first line, which a
+            // leaf and the leaf paired with it share.
+            let cuts = |part: &[Member]| -> Vec<(u32, u32)> {
+                part.iter()
+                    .filter_map(|member| match member {
+                        Member::Part {
+                            alignment, start, ..
+                        } => Some((*alignment, *start)),
+                        Member::Whole { .. } => None,
+                    })
+                    .collect()
+            };
+            let whole = |parts: &[Vec<Member>]| -> BTreeSet<u32> {
+                parts
+                    .iter()
+                    .flatten()
+                    .filter_map(|member| match member {
+                        Member::Whole { id, .. } => Some(*id),
+                        Member::Part { .. } => None,
+                    })
+                    .collect()
+            };
             // A fold may collapse when everything its collapse reaches on the
-            // rhs hides only these unchanged lines.
-            let rhs_whole: BTreeSet<u32> = rhs_parts
-                .iter()
-                .flatten()
-                .filter_map(|member| match member {
-                    Member::Whole { id, .. } => Some(*id),
-                    Member::Part { .. } => None,
-                })
-                .collect();
+            // other side hides only these unchanged lines.
+            let (lhs_whole, rhs_whole) = (whole(&lhs_parts), whole(&rhs_parts));
             let hides_only_this = |id: u32| {
                 rhs_by_state
                     .get(&lhs_states[&id])
                     .is_none_or(|ids| ids.iter().all(|id| rhs_whole.contains(id)))
+            };
+            let rhs_hides_only_this = |state: u32| {
+                lhs_by_state
+                    .get(&state)
+                    .is_none_or(|ids| ids.iter().all(|id| lhs_whole.contains(id)))
             };
             // Line counts of the rhs folds wholly in the stretch, so each
             // side's fold takes its own label.
@@ -402,14 +439,37 @@ impl Plugin for Context {
                     _ => None,
                 })
                 .collect();
+            // The rhs parts grouped with an lhs part.
+            let mut partnered = BTreeSet::new();
             for (index, part) in lhs_parts.iter().enumerate().rev() {
                 let lines: u32 = part.iter().map(Member::lines).sum();
                 if lines < MIN_GAP && lines != total {
                     continue;
                 }
+                // The rhs part grouped with this one: the part it matches, or,
+                // when the sides' folds do not match, as after a line diff
+                // fallback, the part over the same lines. Both groups are
+                // made in one join, so they share a fold state.
+                let partner = if same_shape {
+                    Some(index)
+                } else {
+                    rhs_spans
+                        .iter()
+                        .position(|span| *span == lhs_spans[index])
+                        .filter(|&other| {
+                            rhs_parts[other].len() >= 2
+                                && cuts(&rhs_parts[other]) == cuts(part)
+                                && rhs_parts[other].iter().all(|member| match member {
+                                    Member::Whole {
+                                        state: Some(state), ..
+                                    } => rhs_hides_only_this(*state),
+                                    _ => true,
+                                })
+                        })
+                };
                 // One context fold is enough for a group. Leave its members'
                 // visibility intact so expanding it reveals code directly.
-                let grouped = same_shape
+                let grouped = partner.is_some()
                     && part.len() >= 2
                     && part.iter().all(|member| match member {
                         Member::Whole {
@@ -418,8 +478,9 @@ impl Plugin for Context {
                         _ => true,
                     });
                 let mut members = Vec::new();
-                // The rhs leaves and pieces the lhs members pair with.
-                let mut rhs_members = Vec::new();
+                // The pieces cut from leaves, by their alignment and first
+                // line, which the rhs piece of each shares.
+                let mut pieces = BTreeMap::new();
                 for member in part.iter().rev() {
                     match member {
                         Member::Whole {
@@ -433,7 +494,6 @@ impl Plugin for Context {
                             }
                             members.push(*id);
                             let Some(state) = state else {
-                                rhs_members.extend(rhs_leaf_ids.get(id));
                                 continue;
                             };
                             for rhs_id in rhs_by_state.get(state).into_iter().flatten() {
@@ -444,28 +504,56 @@ impl Plugin for Context {
                                 }
                             }
                         }
-                        Member::Part { id, start, end, .. } => {
+                        Member::Part {
+                            id,
+                            alignment,
+                            start,
+                            end,
+                        } => {
                             let piece = draft.cut_lines(*id, *start, *end)?;
                             if !grouped {
                                 draft.collapse(piece, unchanged_label(end - start))?;
                             }
                             members.push(piece);
-                            rhs_members.extend(draft.paired_leaf(piece)?);
+                            pieces.insert((*alignment, *start), piece);
                         }
                     }
                 }
                 // A fold left open breaks the run, so nothing is grouped.
-                if grouped {
-                    members.reverse();
-                    // The rhs leaves and pieces, then the rhs folds.
-                    members.extend(rhs_members);
-                    members.extend(rhs_parts[index].iter().filter_map(|member| match member {
-                        Member::Whole {
-                            id, state: Some(_), ..
-                        } => Some(*id),
-                        _ => None,
-                    }));
-                    draft.group(members, unchanged_label(lines))?;
+                let Some(partner) = partner.filter(|_| grouped) else {
+                    continue;
+                };
+                partnered.insert(partner);
+                members.reverse();
+                for member in &rhs_parts[partner] {
+                    match member {
+                        Member::Whole { id, .. } => members.push(*id),
+                        Member::Part {
+                            alignment, start, ..
+                        } => members.extend(draft.paired_leaf(pieces[&(*alignment, *start)])?),
+                    }
+                }
+                draft.group(members, unchanged_label(lines))?;
+            }
+            // A fold only the rhs holds collapses on its own: no lhs fold
+            // shares its fold state to collapse it with.
+            for (index, part) in rhs_parts.iter().enumerate() {
+                let lines: u32 = part.iter().map(Member::lines).sum();
+                if partnered.contains(&index) || (lines < MIN_GAP && lines != total) {
+                    continue;
+                }
+                for member in part {
+                    if let Member::Whole {
+                        id,
+                        lines,
+                        state: Some(state),
+                        ..
+                    } = member
+                    {
+                        if !lhs_by_state.contains_key(state) {
+                            draft.collapse(*id, unchanged_label(*lines))?;
+                        }
+                    }
                 }
             }
         }

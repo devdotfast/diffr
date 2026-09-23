@@ -1,6 +1,6 @@
 {
   "name": "@dev.fast/diffr",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "description": "diffr's NDJSON wire contract, validators, and release binary fetcher",
   "repository": "https://github.com/devdotfast/diffr",
   "license": "MIT",

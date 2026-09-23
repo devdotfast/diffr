@@ -1,7 +1,7 @@
 {
-  "version": "0.1.1",
+  "version": "0.1.3",
   "sha256": {
-    "aarch64-apple-darwin": "7312213893286b804190da46d4c181cc9646320b6c651ada68a42fd97a84bb7f",
-    "x86_64-unknown-linux-gnu": "1cce58b34031b274b1ab511bf929f501d9e99a8710d4ca33b0ed4cdc94d9ab60"
+    "aarch64-apple-darwin": "f4a8ab41893d7a670de7457cfa0090ea9367bdc585500b600e1b692eca216dbe",
+    "x86_64-unknown-linux-gnu": "2bbdc89ffbcd5356c0527cf97e58169ffd9d940db3e518715e24d6cc11f5d4ff"
   }
 }

@@ -1,6 +1,7 @@
 /** Run the terminal frontend against a diffr subprocess or saved NDJSON recording. */
 import { createReadStream, openSync, closeSync } from "node:fs";
 import { ReadStream } from "node:tty";
+import { installShutdownHandlers } from "./shutdown";
 import { spawn } from "node:child_process";
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
@@ -34,6 +35,10 @@ if (args[0] === "--settings") {
   }
   // Reading the config can fail: a key the binary no longer knows, a malformed file. Read it
   // before the alternate screen exists, so the error reaches the terminal the user is looking at.
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    console.error("Settings requires a terminal; use diffr config show/set for non-interactive use.");
+    process.exit(2);
+  }
   const client = cliClient(args[2]);
   let settings: Setting[];
   try {
@@ -45,14 +50,14 @@ if (args[0] === "--settings") {
   const settingsRenderer = await createCliRenderer({
     useMouse: false,
     exitOnCtrlC: false,
+    exitSignals: [],
     screenMode: "alternate-screen",
   });
   const quitSettings = () => {
     settingsRenderer.destroy();
     process.exit(0);
   };
-  process.once("SIGTERM", quitSettings);
-  process.once("SIGINT", quitSettings);
+  installShutdownHandlers(process.stdin, quitSettings);
   restoreOnCrash(settingsRenderer);
   createRoot(settingsRenderer).render(
     <Settings client={client} initial={settings} onQuit={quitSettings} initialQuery={args.slice(3).join(" ")} />,
@@ -105,6 +110,7 @@ const renderer = await createCliRenderer({
   useMouse: true,
   enableMouseMovement: true,
   exitOnCtrlC: false,
+  exitSignals: [],
   screenMode: "alternate-screen",
 });
 let quitting = false;
@@ -121,8 +127,7 @@ function quit() {
   }
   process.exit(store.getSnapshot().errors.length ? 2 : comparisonExitCode);
 }
-process.once("SIGTERM", quit);
-process.once("SIGINT", quit);
+installShutdownHandlers(input, quit);
 restoreOnCrash(renderer);
 const root = createRoot(renderer);
 root.render(<App store={store} onQuit={quit} themes={themes!} />);

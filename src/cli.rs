@@ -546,6 +546,9 @@ fn opens_tui(explicit_format: bool, metadata_or_quiet: bool) -> bool {
 /// `comparison` passes the arguments after `--` as the comparison to open;
 /// otherwise they are frontend flags such as `--settings`.
 fn launch_tui(args: &[OsString], comparison: bool) -> Result<i32> {
+    if !(io::stdin().is_terminal() && io::stdout().is_terminal()) {
+        return Err("diffr's terminal UI needs a terminal; use config show/set or --format ndjson for non-interactive use".into());
+    }
     let mut command = if let Some(entry) = std::env::var_os("DIFFR_TUI_ENTRY") {
         let bun = std::env::var_os("DIFFR_BUN").unwrap_or_else(|| "bun".into());
         let mut command = std::process::Command::new(bun);
@@ -574,9 +577,19 @@ fn launch_tui(args: &[OsString], comparison: bool) -> Result<i32> {
             .arg(std::env::current_exe()?)
             .args(&args[1..]);
     }
-    let status = command.status()
-        .map_err(|error| format!("Could not launch terminal frontend: {error}. Run cargo xtask install-tui from the checkout to install the frontend, or use --format ndjson. For source development, set DIFFR_TUI_ENTRY and ensure Bun is available."))?;
-    Ok(status.code().unwrap_or(2))
+    let launch_error = |error| format!("Could not launch terminal frontend: {error}. Run cargo xtask install-tui from the checkout to install the frontend, or use --format ndjson. For source development, set DIFFR_TUI_ENTRY and ensure Bun is available.");
+    // Replace the launcher so a signal sent to diffr reaches the actual TUI,
+    // rather than leaving an unsupervised child when the launcher exits.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        Err(launch_error(command.exec()).into())
+    }
+    #[cfg(not(unix))]
+    {
+        let status = command.status().map_err(launch_error)?;
+        Ok(status.code().unwrap_or(2))
+    }
 }
 
 #[cfg(test)]

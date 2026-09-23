@@ -9,7 +9,7 @@ diffr \- structural Git comparisons and local diff streaming
 BEFORE AFTER
 .br
 .B diffr
-REVISION REVISION --format ndjson
+REVISION REVISION --format ndjson|patch
 .SH DESCRIPTION
 Without revisions, compare index to working tree. With --cached, compare HEAD
 to index. With one revision, compare it to working tree. With two, compare
@@ -34,6 +34,17 @@ Exit 1 for changes. Quiet also suppresses output. Errors exit 2.
 .B --format ndjson
 Write the event stream described under STREAMING instead of opening the
 terminal UI, which needs a terminal.
+.TP
+.B --format patch
+Write a plain-text patch with base and head line numbers on every line,
+printing each region that starts collapsed as one @@ … label @@ line.
+Files print in order whatever -j is. See docs/cli.md.
+.TP
+.B --no-folds
+With --format patch, print collapsed regions and hidden files in full.
+.TP
+.B --no-annotations
+Do not wait for deferred annotations such as summaries.
 .TP
 .B -U N
 Ordinary context padding (default 3).

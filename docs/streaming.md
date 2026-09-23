@@ -420,7 +420,8 @@ out.
 
 `diffr main HEAD --format ndjson --stream-annotations` emits `start.version = 4`.
 Without the flag the v3 stream continues to emit fully enriched files, for
-existing consumers including the TUI.
+existing consumers including the TUI. `--no-annotations` emits v3 files without
+running enrichment at all.
 
 In v4, each successful `file` contains the complete source, initial folds,
 alignment, and authoritative structural changed-line ranges. It is flushed

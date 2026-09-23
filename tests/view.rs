@@ -278,3 +278,137 @@ fn git_binary_files_stream_as_diff_records_with_side_sizes() {
         serde_json::json!({"type": "binary", "lhs": {"size": 8}, "rhs": {"size": 4}})
     );
 }
+
+/// Stdout of a successful run.
+fn stdout(output: &Output) -> String {
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout.clone()).unwrap()
+}
+
+/// Twenty numbered lines of a function body.
+fn body(name: &str) -> String {
+    let lines: String = (1..=20).map(|i| format!("    let v{i} = {i};\n")).collect();
+    format!("fn {name}() {{\n{lines}}}\n")
+}
+
+/// A comparison touching every kind of file change.
+fn changes() -> (Fixture, String, String) {
+    let fixture = Fixture::new();
+    fixture.write(
+        "src/lib.rs",
+        &format!("{}\nfn f() {{ old(); }}\n", body("keep")),
+    );
+    fixture.write("src/moved.rs", &body("moved"));
+    fixture.write("gone.rs", &body("gone"));
+    fixture.write("tests/it.rs", "#[test]\nfn t() {}\n");
+    fixture.write("logo.png", "\0PNG\x01\0");
+    let base = fixture.commit();
+    fixture.write(
+        "src/lib.rs",
+        &format!("{}\nfn f() {{ new(); }}\n", body("keep")),
+    );
+    fixture.remove("src/moved.rs");
+    fixture.write("src/renamed.rs", &body("moved"));
+    fixture.remove("gone.rs");
+    fixture.write("src/new.rs", "fn added() {}\n");
+    fixture.write("tests/it.rs", "#[test]\nfn t() { assert!(true); }\n");
+    fixture.write("logo.png", "\0PNG\x02\0");
+    let head = fixture.commit();
+    (fixture, base, head)
+}
+
+#[test]
+fn patch_output_has_git_headers_and_folds_what_starts_collapsed() {
+    let (fixture, base, head) = changes();
+    let text = stdout(&fixture.diffr(&[&base, &head, "--format", "patch"]));
+    assert_eq!(
+        text,
+        "diff --git a/gone.rs b/gone.rs
+deleted file mode 100644
+@@ … file folded: Deleted file · hidden by default, +0 −22 @@
+diff --git a/logo.png b/logo.png
+Binary files a/logo.png and b/logo.png differ
+diff --git a/src/lib.rs b/src/lib.rs
+ 1  1  fn keep() {
+@@ … 19 unchanged lines · fn keep() @@
+21 21      let v20 = 20;
+22 22  }
+23 23  
+24    -fn f() { old(); }
+   24 +fn f() { new(); }
+diff --git a/src/new.rs b/src/new.rs
+new file mode 100644
+  1 +fn added() {}
+diff --git a/src/moved.rs b/src/renamed.rs
+rename from src/moved.rs
+rename to src/renamed.rs
+diff --git a/tests/it.rs b/tests/it.rs
+@@ … file folded: Test file · hidden by default, +1 −1 @@
+"
+    );
+    // Files finish in any order on the workers and print in file order.
+    let serial = stdout(&fixture.diffr(&[&base, &head, "--format", "patch", "-j", "1"]));
+    assert_eq!(serial, text);
+}
+
+#[test]
+fn no_folds_prints_hidden_files_and_collapsed_regions_in_full() {
+    let (fixture, base, head) = changes();
+    let text = stdout(&fixture.diffr(&[
+        &base,
+        &head,
+        "--format",
+        "patch",
+        "--no-folds",
+        "--",
+        "src/lib.rs",
+        "tests/",
+    ]));
+    assert!(!text.contains("@@"), "{text}");
+    assert!(text.contains("11 11      let v10 = 10;\n"), "{text}");
+    assert!(
+        text.ends_with(
+            "diff --git a/tests/it.rs b/tests/it.rs
+1 1  #[test]
+2   -fn t() {}
+  2 +fn t() { assert!(true); }
+"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn patch_output_takes_unified_reverse_and_the_engine_limits() {
+    let (fixture, base, head) = changes();
+    let patch = |extra: &[&str]| {
+        let mut args = vec![base.as_str(), head.as_str(), "--format", "patch"];
+        args.extend_from_slice(extra);
+        args.extend_from_slice(&["--", "src/lib.rs"]);
+        stdout(&fixture.diffr(&args))
+    };
+    let text = patch(&["-U", "0"]);
+    assert_eq!(
+        text,
+        "diff --git a/src/lib.rs b/src/lib.rs\n@@ … 23 unchanged lines @@\n24    -fn f() { old(); }\n   24 +fn f() { new(); }\n"
+    );
+    assert!(patch(&["-R"]).contains("24    -fn f() { new(); }\n   24 +fn f() { old(); }\n"));
+    assert!(patch(&["--graph-limit", "1"]).contains(
+        "diff --git a/src/lib.rs b/src/lib.rs\nLine diff (too_complex): structural diff exceeded diff.graph_limit (1); raise it in diffr config\n"
+    ));
+}
+
+#[test]
+fn patch_output_rejects_ndjson_only_flags() {
+    let (fixture, base, head) = changes();
+    for flag in ["--syntax", "--stream-annotations"] {
+        let output = fixture.diffr(&[&base, &head, "--format", "patch", flag]);
+        assert_eq!(output.status.code(), Some(2), "{flag}");
+    }
+    let output = fixture.diffr(&[&base, &head, "--format", "ndjson", "--no-folds"]);
+    assert_eq!(output.status.code(), Some(2));
+}

@@ -41,7 +41,7 @@ pub(crate) fn run() -> Result<i32> {
                 .short('j')
                 .value_parser(clap::value_parser!(usize))
                 .default_value("16")
-                .help("Concurrent file diffs for --format ndjson; results are emitted as each finishes"),
+                .help("Concurrent file diffs for --format; ndjson emits results as each finishes, patch in file order"),
         )
         .arg(Arg::new("order").long("order").value_delimiter(',').action(ArgAction::Append).help("File tag priority: files carrying an earlier listed tag come first"))
         .arg(flag("cached").visible_alias("staged"))
@@ -60,8 +60,10 @@ pub(crate) fn run() -> Result<i32> {
         .arg(flag("no-renames"))
         .arg(flag("find-renames").short('M').conflicts_with("no-renames"))
         .arg(Arg::new("unified").short('U').long("unified").value_parser(clap::value_parser!(u32)).help("Unchanged lines kept around each change; defaults to plugins.bundled.context.lines"))
-        .arg(Arg::new("format").long("format").value_parser(["ndjson"]).help("Write the event stream to stdout instead of opening the terminal UI"))
+        .arg(Arg::new("format").long("format").value_parser(["ndjson", "patch"]).help("Write to stdout instead of opening the terminal UI: ndjson is the event stream; patch is a plain-text patch with line numbers, printing each region that starts collapsed as one @@ … @@ line"))
         .arg(flag("stream-annotations").requires("format").help("Emit initial files followed by deferred annotations (NDJSON v4)"))
+        .arg(flag("no-annotations").requires("format").conflicts_with("stream-annotations").help("Do not wait for deferred annotations such as summaries; the folds they would label keep their placeholders"))
+        .arg(flag("no-folds").requires("format").help("With --format patch, print every region and hidden file in full instead of folded"))
         .arg(flag("syntax").help("Include every token's tree-sitter capture name in --format ndjson output"))
         .arg(Arg::new("width").long("width").value_parser(clap::value_parser!(usize)).help("Columns for --stat; defaults to the terminal's width"))
         .arg(flag("ignore-comments"))
@@ -87,7 +89,7 @@ pub(crate) fn run() -> Result<i32> {
                         .arg(Arg::new("value").required(true)),
                 ),
         )
-        .after_help("Examples:\n  diffr\n  diffr --cached\n  diffr main...HEAD -- src/\n  diffr --no-index -- before.rs after.rs\n  diffr main HEAD --format ndjson\n\nUnsupported Git flags are rejected; this is not a complete git diff implementation.")
+        .after_help("Examples:\n  diffr\n  diffr --cached\n  diffr main...HEAD -- src/\n  diffr --no-index -- before.rs after.rs\n  diffr main HEAD --format ndjson\n  diffr main...HEAD --format patch -- src/\n\nUnsupported Git flags are rejected; this is not a complete git diff implementation.")
         .get_matches_from(argv);
     if let Some(("config", sub)) = args.subcommand() {
         return run_config(&args, sub);
@@ -96,16 +98,33 @@ pub(crate) fn run() -> Result<i32> {
     let metadata_or_quiet = args.get_flag("quiet") || args.contains_id("metadata");
     if opens_tui(streaming, metadata_or_quiet) {
         if !(io::stdin().is_terminal() && io::stdout().is_terminal()) {
-            return Err("diffr shows diffs in its terminal UI, which needs a terminal; use --format ndjson for the event stream".into());
+            return Err("diffr shows diffs in its terminal UI, which needs a terminal; use --format patch for a text patch or --format ndjson for the event stream".into());
         }
         return launch_tui(&frontend_args, true);
     }
     if streaming && metadata_or_quiet {
-        return Err("--format ndjson cannot be combined with --quiet or metadata output".into());
+        return Err("--format cannot be combined with --quiet or metadata output".into());
     }
+    let patch = args
+        .get_one::<String>("format")
+        .is_some_and(|format| format == "patch");
+    if patch && (args.get_flag("stream-annotations") || args.get_flag("syntax")) {
+        return Err("--stream-annotations and --syntax apply to --format ndjson, not patch".into());
+    }
+    if !patch && args.get_flag("no-folds") {
+        return Err("--no-folds applies to --format patch".into());
+    }
+    let expand = args.get_flag("no-folds");
     let stream_options = crate::protocol::stream::Options {
         syntax: args.get_flag("syntax"),
         updates: args.get_flag("stream-annotations"),
+        // Expanded folds show the code, not the labels annotations set.
+        annotations: !args.get_flag("no-annotations") && !expand,
+        format: if patch {
+            crate::protocol::stream::Format::Patch { expand }
+        } else {
+            crate::protocol::stream::Format::Ndjson
+        },
     };
     let items: Vec<OsString> = args
         .get_many::<OsString>("items")

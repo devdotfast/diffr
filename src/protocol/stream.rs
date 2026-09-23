@@ -28,6 +28,47 @@ pub(crate) struct Options {
     pub(crate) syntax: bool,
     /// Opt-in v4 stream; v3 consumers continue to receive finished files.
     pub(crate) updates: bool,
+    /// Run deferred annotations, such as summaries, before a file is
+    /// written. Off (`--no-annotations`), folds keep their placeholders.
+    pub(crate) annotations: bool,
+    pub(crate) format: Format,
+}
+
+/// How records are written to stdout.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Format {
+    /// One JSON event per line, in completion order.
+    Ndjson,
+    /// A plain-text patch per file, in manifest order (see `patch`).
+    /// `expand` prints regions and files that start collapsed in full.
+    Patch { expand: bool },
+}
+
+/// Writes events in the chosen format.
+enum Sink {
+    Ndjson,
+    Patch(super::patch::Writer),
+}
+
+impl Sink {
+    fn new(format: Format) -> Self {
+        match format {
+            Format::Ndjson => Self::Ndjson,
+            Format::Patch { expand } => Self::Patch(super::patch::Writer::new(expand)),
+        }
+    }
+
+    fn event(&mut self, event: &Event, output: &mut impl Write) -> anyhow::Result<()> {
+        match self {
+            Self::Ndjson => {
+                serde_json::to_writer(&mut *output, event)?;
+                output.write_all(b"\n")?;
+                output.flush()?;
+            }
+            Self::Patch(writer) => writer.event(event, output)?,
+        }
+        Ok(())
+    }
 }
 
 /// What the stream ended with: whether any file failed, and whether a
@@ -58,6 +99,7 @@ pub(crate) fn write(
         let _ = produce(session, manifest, &pool, &pipeline, options, sender);
     });
     let mut output = BufWriter::new(output);
+    let mut sink = Sink::new(options.format);
     let result: anyhow::Result<Ended> = (|| {
         let mut ended = Ended {
             failed: false,
@@ -74,9 +116,7 @@ pub(crate) fn write(
             if matches!(&event, Event::Annotations { error: Some(_), .. }) {
                 ended.failed = true;
             }
-            serde_json::to_writer(&mut output, &event)?;
-            output.write_all(b"\n")?;
-            output.flush()?;
+            sink.event(&event, &mut output)?;
         }
         Ok(ended)
     })();
@@ -151,7 +191,7 @@ fn produce(
             loader.par_bridge().for_each(|(file, loaded)| {
                 let (visibility, outcome) = match loaded.and_then(|loaded| diffed(&loaded, options))
                 {
-                    Ok((entry, diff)) => match shape(pipeline, &entry, diff, options.updates) {
+                    Ok((entry, diff)) => match shape(pipeline, &entry, diff, options) {
                         Ok((visibility, diff)) => (visibility, Outcome::Diff { diff }),
                         Err(error) => {
                             // A run-level failure: stop pulling files, let the ones
@@ -280,20 +320,22 @@ fn syntax_spans(
 
 /// Run the plugins on a diff and recount what stays visible. A binary diff has
 /// no text and no regions, so only moves on the file apply to it. `Err`
-/// is a run-level failure.
+/// is a run-level failure. Deferred annotations are applied here unless they
+/// stream after the file or are off.
 fn shape(
     pipeline: &Pipeline,
     entry: &FileChange,
     diff: Diff,
-    updates: bool,
+    options: Options,
 ) -> anyhow::Result<(Visibility, Diff)> {
+    let prepare_only = options.updates || !options.annotations;
     match diff {
         Diff::Text {
             mut sides,
             mut stats,
             ..
         } => {
-            let visibility = if updates {
+            let visibility = if prepare_only {
                 pipeline.prepare(entry, &mut sides)?
             } else {
                 pipeline.run(entry, &mut sides)?
@@ -315,7 +357,7 @@ fn shape(
                 syntax: Vec::new(),
                 regions: Vec::new(),
             });
-            let visibility = if updates {
+            let visibility = if prepare_only {
                 pipeline.prepare(entry, &mut empty)?
             } else {
                 pipeline.run(entry, &mut empty)?
@@ -356,6 +398,7 @@ pub(crate) fn write_file(
     let file = crate::git::FileChange::standalone(before, after);
     let entry = file.manifest_entry();
     let mut output = BufWriter::new(output);
+    let mut sink = Sink::new(options.format);
     let start = Event::Start {
         version: if options.updates { 4 } else { VERSION },
         lhs: Snapshot::Path {
@@ -366,9 +409,7 @@ pub(crate) fn write_file(
         },
         files: vec![entry.clone()],
     };
-    serde_json::to_writer(&mut output, &start)?;
-    output.write_all(b"\n")?;
-    output.flush()?;
+    sink.event(&start, &mut output)?;
     let (record, failed, aborted) = match compute() {
         Err(conflict) => (
             Some(Event::File {
@@ -393,7 +434,7 @@ pub(crate) fn write_file(
                     },
                 },
             );
-            match shape(pipeline, &entry, projected, options.updates) {
+            match shape(pipeline, &entry, projected, options) {
                 Ok((visibility, diff)) => (
                     Some(Event::File {
                         file: file.sides,
@@ -408,10 +449,8 @@ pub(crate) fn write_file(
         }
     };
     if let Some(record) = &record {
-        serde_json::to_writer(&mut output, record)?;
-        output.write_all(b"\n")?;
+        sink.event(record, &mut output)?;
     }
-    output.flush()?;
     let mut enrichment_failed = false;
     if options.updates {
         if let Some(Event::File {
@@ -423,16 +462,14 @@ pub(crate) fn write_file(
         {
             let event = enrich_event(pipeline, &entry, sides);
             enrichment_failed = matches!(&event, Event::Annotations { error: Some(_), .. });
-            serde_json::to_writer(&mut output, &event)?;
-            output.write_all(b"\n")?;
+            sink.event(&event, &mut output)?;
         }
     }
     let ended = Ended {
         failed: failed || enrichment_failed,
         aborted: aborted.is_some(),
     };
-    serde_json::to_writer(
-        &mut output,
+    sink.event(
         &Event::Complete {
             succeeded: u32::from(matches!(
                 &record,
@@ -444,9 +481,8 @@ pub(crate) fn write_file(
             failed: u32::from(failed),
             aborted,
         },
+        &mut output,
     )?;
-    output.write_all(b"\n")?;
-    output.flush()?;
     Ok(ended)
 }
 
@@ -727,6 +763,8 @@ mod conflict_tests {
             Options {
                 syntax: false,
                 updates: false,
+                annotations: true,
+                format: Format::Ndjson,
             },
             &mut output,
         )

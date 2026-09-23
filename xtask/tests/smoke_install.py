@@ -12,6 +12,7 @@ import select
 import shutil
 import signal
 import struct
+import subprocess
 import sys
 import tempfile
 import termios
@@ -74,4 +75,12 @@ if __name__ == "__main__":
         (root / "before.txt").write_text("old packaging\n")
         (root / "after.txt").write_text("standalone packaging\n")
         check(root, ["config"], b"Collapse unchanged lines")
-        check(root, ["--no-index", "--", "before.txt", "after.txt"], b"standalone")
+        for theme in ("default-dark", "default-light", "gruvbox", "solarized_light"):
+            subprocess.run(
+                [root / "diffr", "config", "set", "theme.name", theme],
+                env={"PATH": "", "HOME": str(root), "XDG_CONFIG_HOME": str(root / "config")},
+                check=True,
+                capture_output=True,
+            )
+            check(root, ["--no-index", "--", "before.txt", "after.txt"], b"standalone")
+            print(f"PASS bundled theme: {theme}")

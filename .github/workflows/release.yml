@@ -115,6 +115,14 @@ jobs:
           PYTHON
           brew install devdotfast/tap/diffr
           brew test devdotfast/tap/diffr
+          python3 - "$tap/Formula/diffr.rb" <<'PYTHON'
+          from pathlib import Path
+          import sys
+          path = Path(sys.argv[1])
+          path.write_text(path.read_text().replace('  license ', '  revision 1\n  license ', 1))
+          PYTHON
+          brew upgrade devdotfast/tap/diffr
+          brew test devdotfast/tap/diffr
           python3 xtask/tests/smoke_install.py "$(brew --prefix devdotfast/tap/diffr)"
           brew uninstall devdotfast/tap/diffr
 

@@ -99,6 +99,8 @@ fn initial_file_is_flushed_before_enrichment_and_survives_failure() {
             crate::protocol::stream::Options {
                 syntax: false,
                 updates: true,
+                annotations: true,
+                format: crate::protocol::stream::Format::Ndjson,
             },
             &mut output,
         )

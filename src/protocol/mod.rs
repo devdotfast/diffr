@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::pairing::Pairing;
 
+pub(crate) mod patch;
 pub(crate) mod project;
 pub(crate) mod stream;
 

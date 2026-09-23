@@ -28,7 +28,9 @@ fn project_with(
 const LARGE: &str = "def f():\n    a()\n    b()\n    c()\n\ndef g(): d()\n";
 
 /// Answer each request with the next canned response.
-fn serve(responses: Vec<(u16, String)>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+pub(super) fn serve(
+    responses: Vec<(u16, String)>,
+) -> (String, std::thread::JoinHandle<Vec<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let handle = std::thread::spawn(move || {
@@ -75,7 +77,7 @@ fn fold_label(sides: &tree::Pairing<tree::Source>) -> String {
     labels.remove(0)
 }
 
-fn gemini_answer(items: &[(u32, &str)]) -> String {
+pub(super) fn gemini_answer(items: &[(u32, &str)]) -> String {
     let answers: Vec<_> = items
         .iter()
         .map(|(id, text)| json!({"id": id, "pseudocode": text}))
@@ -84,7 +86,7 @@ fn gemini_answer(items: &[(u32, &str)]) -> String {
         .to_string()
 }
 
-fn summarizer(endpoint: &str, retries: u32) -> Pipeline {
+pub(super) fn summarizer(endpoint: &str, retries: u32) -> Pipeline {
     summarizer_with(json!({
         "api_key": "test-key",
         "endpoint": endpoint,

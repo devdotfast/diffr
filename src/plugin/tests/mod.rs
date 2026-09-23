@@ -5,6 +5,7 @@ mod context;
 mod deleted_bodies;
 mod group;
 mod hide_files;
+mod patch;
 mod removed_runs;
 mod summarize;
 mod test_bodies;

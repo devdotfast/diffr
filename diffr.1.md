@@ -11,7 +11,7 @@ diffr - structural Git comparisons and local diff streaming
 
 **diffr** **--no-index** BEFORE AFTER
 
-**diffr** REVISION REVISION **--format ndjson**
+**diffr** REVISION REVISION **--format** ndjson|patch
 
 # DESCRIPTION
 
@@ -39,6 +39,17 @@ compare their trees. A...B compares merge-base(A,B) to B; A..B compares A to B.
 **--format** ndjson
 : Write the event stream described under STREAMING instead of opening the
   terminal UI, which needs a terminal.
+
+**--format** patch
+: Write a plain-text patch with base and head line numbers on every line,
+  printing each region that starts collapsed as one `@@ … label @@` line.
+  Files print in order whatever `-j` is. See docs/cli.md.
+
+**--no-folds**
+: With --format patch, print collapsed regions and hidden files in full.
+
+**--no-annotations**
+: Do not wait for deferred annotations such as summaries.
 
 **-U** N
 : Select ordinary context padding (default 3).

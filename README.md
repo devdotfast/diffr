@@ -44,6 +44,13 @@ You can also use `diffr` in streaming mode, which is useful for TUI or GUI appli
 diffr main HEAD --format ndjson
 ```
 
+Or print a plain-text patch with line numbers, where every region diffr folds
+by default is one `@@ … @@` line (see [docs/cli.md](docs/cli.md#patch-output)):
+
+```sh
+diffr main...HEAD --format patch
+```
+
 ## Architecture
 
 When you run `diffr ${commit_range_exp}`, the following happens:

@@ -5,11 +5,6 @@ on:
     tags:
       - "[0-9]+.*"
   pull_request:
-    paths:
-      - .github/workflows/release.yml
-      - scripts/release.py
-      - xtask/**
-      - tui/**
   workflow_dispatch:
 
 permissions:
@@ -126,9 +121,22 @@ jobs:
           python3 xtask/tests/smoke_install.py "$(brew --prefix devdotfast/tap/diffr)"
           brew uninstall devdotfast/tap/diffr
 
+  packaging:
+    name: Release packaging
+    if: always()
+    needs: [build, prepare, homebrew]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Require all packaging checks to pass
+        env:
+          BUILD: ${{ needs.build.result }}
+          PREPARE: ${{ needs.prepare.result }}
+          HOMEBREW: ${{ needs.homebrew.result }}
+        run: test "$BUILD" = success && test "$PREPARE" = success && test "$HOMEBREW" = success
+
   publish:
     if: github.event_name == 'push' && github.ref_type == 'tag'
-    needs: homebrew
+    needs: packaging
     permissions:
       contents: write
     runs-on: ubuntu-22.04

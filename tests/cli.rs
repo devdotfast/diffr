@@ -97,3 +97,13 @@ fn a_plugin_that_cannot_be_made_stops_diffr_before_any_record() {
             "plugins.bundled.summarize: no API key: set plugins.bundled.summarize.api_key",
         ));
 }
+
+#[test]
+fn config_ui_requires_a_terminal() {
+    let mut cmd = get_base_command();
+    cmd.arg("config");
+    cmd.assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("terminal UI needs a terminal"));
+}

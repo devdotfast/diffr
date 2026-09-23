@@ -5,7 +5,7 @@ import { once } from "node:events";
 for (const trigger of ["SIGTERM", "SIGINT", "SIGHUP", "SIGPIPE", "EOF"] as const) {
   test(`frontend exits and cleans up on ${trigger}`, async () => {
     const child = spawn(process.execPath, ["--eval", `
-      import { installShutdownHandlers } from ${JSON.stringify(new URL("./shutdown.ts", import.meta.url).pathname)};
+      import { installShutdownHandlers } from ${JSON.stringify(new URL("./shutdown.ts", import.meta.url).href)};
       installShutdownHandlers(process.stdin, () => {
         process.stdout.write("cleaned up\\n");
         process.exit(0);
@@ -33,7 +33,7 @@ for (const trigger of ["SIGTERM", "SIGINT", "SIGHUP", "SIGPIPE", "EOF"] as const
 
 test("frontend cleans up when its parent is killed without a hangup", async () => {
   const frontend = `
-    import { installShutdownHandlers } from ${JSON.stringify(new URL("./shutdown.ts", import.meta.url).pathname)};
+    import { installShutdownHandlers } from ${JSON.stringify(new URL("./shutdown.ts", import.meta.url).href)};
     installShutdownHandlers(process.stdin, () => {
       process.stdout.write("cleaned up\\n");
       process.exit(0);

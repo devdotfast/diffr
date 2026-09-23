@@ -94,10 +94,7 @@ pub(crate) fn run() -> Result<i32> {
     }
     let streaming = args.contains_id("format");
     let metadata_or_quiet = args.get_flag("quiet") || args.contains_id("metadata");
-    if opens_tui(streaming, metadata_or_quiet) {
-        if !(io::stdin().is_terminal() && io::stdout().is_terminal()) {
-            return Err("diffr shows diffs in its terminal UI, which needs a terminal; use --format ndjson for the event stream".into());
-        }
+    if !streaming && !metadata_or_quiet {
         return launch_tui(&frontend_args, true);
     }
     if streaming && metadata_or_quiet {
@@ -537,17 +534,19 @@ fn run_config(args: &ArgMatches, sub: &ArgMatches) -> Result<i32> {
     Ok(0)
 }
 
-/// Without `--format`, a comparison opens the terminal UI; metadata and
-/// `--quiet` print, or exit, without it.
-fn opens_tui(explicit_format: bool, metadata_or_quiet: bool) -> bool {
-    !explicit_format && !metadata_or_quiet
-}
-
 /// `comparison` passes the arguments after `--` as the comparison to open;
 /// otherwise they are frontend flags such as `--settings`.
 fn launch_tui(args: &[OsString], comparison: bool) -> Result<i32> {
-    if !(io::stdin().is_terminal() && io::stdout().is_terminal()) {
-        return Err("diffr's terminal UI needs a terminal; use config show/set or --format ndjson for non-interactive use".into());
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        let alternative = if comparison {
+            "--format ndjson"
+        } else {
+            "config show/set"
+        };
+        return Err(format!(
+            "diffr's terminal UI needs a terminal; use {alternative} for non-interactive use"
+        )
+        .into());
     }
     let mut command = if let Some(entry) = std::env::var_os("DIFFR_TUI_ENTRY") {
         let bun = std::env::var_os("DIFFR_BUN").unwrap_or_else(|| "bun".into());
@@ -577,30 +576,17 @@ fn launch_tui(args: &[OsString], comparison: bool) -> Result<i32> {
             .arg(std::env::current_exe()?)
             .args(&args[1..]);
     }
-    let launch_error = |error| {
-        format!("Could not launch terminal frontend: {error}. Run cargo xtask install-tui from the checkout to install the frontend, or use --format ndjson. For source development, set DIFFR_TUI_ENTRY and ensure Bun is available.")
-    };
-    // Replace the launcher so a signal sent to diffr reaches the actual TUI,
-    // rather than leaving an unsupervised child when the launcher exits.
+    // Unix exec replaces this process, so signals to diffr's PID reach the TUI
+    // directly. std has no portable exec; other platforms spawn and wait.
     #[cfg(unix)]
-    {
+    let result: io::Result<i32> = {
         use std::os::unix::process::CommandExt;
-        Err(launch_error(command.exec()).into())
-    }
+        Err(command.exec())
+    };
     #[cfg(not(unix))]
-    {
-        let status = command.status().map_err(launch_error)?;
-        Ok(status.code().unwrap_or(2))
-    }
-}
+    let result = command.status().map(|status| status.code().unwrap_or(2));
 
-#[cfg(test)]
-mod tui_launch_tests {
-    use super::opens_tui;
-    #[test]
-    fn only_a_comparison_without_format_opens_the_viewer() {
-        assert!(opens_tui(false, false));
-        assert!(!opens_tui(true, false));
-        assert!(!opens_tui(false, true));
-    }
+    result.map_err(|error| {
+        format!("Could not launch terminal frontend: {error}. Run cargo xtask install-tui from the checkout to install the frontend, or use --format ndjson. For source development, set DIFFR_TUI_ENTRY and ensure Bun is available.").into()
+    })
 }

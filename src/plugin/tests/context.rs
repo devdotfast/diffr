@@ -575,3 +575,20 @@ fn a_scope_keeps_the_line_it_closes_on() {
         );
     }
 }
+
+#[test]
+fn exported_tsx_functions_keep_complete_headers_above_distant_changes() {
+    let body = repeated(0..30, |i| format!("    const value_{i} = {i};\n"));
+    let before = format!("export function ReviewHome({{\n    reviews,\n    setup,\n}}: Props) {{\n{body}    return <h1>Reviews</h1>;\n}}\n");
+    let after = before.replace("<h1>Reviews</h1>", "<h1>Sessions</h1>");
+    let sides = shaped("home.tsx", &before, &after, 3);
+    for source in [lhs(&sides), rhs(&sides)] {
+        let open = open_leaf_lines(&source.regions);
+        assert!(
+            (0..4).all(|line| open.contains(&line)),
+            "header hidden: {open:?}"
+        );
+        assert!(!open.contains(&10), "unrelated body should collapse");
+        assert!(open.contains(&34), "changed JSX should stay visible");
+    }
+}

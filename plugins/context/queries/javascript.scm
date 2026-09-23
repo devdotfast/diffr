@@ -22,3 +22,20 @@
   (#set! tag "context:scope"))
 ((return_statement) @fold
   (#set! tag "context:scope"))
+
+; Export prefixes belong to the declaration header. Without the wrapper,
+; whole-line projection starts the function scope on its first parameter.
+((export_statement declaration: [
+  (function_declaration)
+  (generator_function_declaration)
+  (class_declaration)
+]) @fold (#set! tag "context:scope"))
+
+; Keep the complete function header up to the body, including destructured
+; parameters and multiline return types.
+([
+  (function_declaration body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+  (generator_function_declaration body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+  (method_definition body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+  (arrow_function body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+] (#set! tag "context:body"))

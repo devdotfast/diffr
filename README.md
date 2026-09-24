@@ -7,10 +7,16 @@ diffr is a Rust-based structural diffing (AST-aware) library. It is also package
 ## Features
 
 1. Interactive TUI with AST-aware code folding
-3. Sane defaults for AI coding
-  - Summarize long changes as pseudocode
-  - Collapse tests and docs
-3. WASM-based plugin system
+
+   ![AST-aware code folding in the diffr TUI](docs/images/folding.gif)
+
+2. Sane defaults for AI coding
+   - Summarize long changes as pseudocode
+   - Collapse tests and docs
+
+   ![Long changes summarized as pseudocode in the diffr TUI](docs/images/pseudocode.gif)
+
+3. [WASM-based plugin system](docs/plugin.md)
 
 ## Usage
 

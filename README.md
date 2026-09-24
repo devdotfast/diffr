@@ -50,7 +50,7 @@ From source: `cargo xtask install` (requires Rust and [Bun](https://bun.sh)).
 diffr is a fork of the lovely [difftastic](https://github.com/Wilfred/difftastic)(MIT, Wilfred Hughes) and its terminal UI from
 [hunk](https://github.com/modem-dev/hunk) (MIT, Modem Labs).
 
-We forked [difftastic](https://github.com/Wilfred/difftastic)(MIT, Wilfred Hughes) because of the following 3 technical reasons:
+We forked [difftastic](https://github.com/Wilfred/difftastic) because of the following 3 technical reasons:
 
 1. TUI affordance
 2. AST-based fold matching

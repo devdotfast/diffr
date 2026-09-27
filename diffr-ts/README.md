@@ -12,7 +12,7 @@ const event = decodeStructuralDiffEvent(line);
 npx --package @dev.fast/diffr@0.1.3 diffr-fetch --into ./bin --required
 ```
 
-Supports macOS arm64 and Linux x64. `--check` verifies an existing install without
+Supports macOS arm64, macOS x64, and Linux x64. `--check` verifies an existing install without
 network access. Downloads warn on network failure unless `--required`; invalid
 hashes or archives always fail.
 

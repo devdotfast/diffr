@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
 const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
-const targets = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"];
+const targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"];
 const sha256 = {};
 for (const target of targets) {
   const url = `https://github.com/devdotfast/diffr/releases/download/${version}/diffr-${version}-${target}.tar.gz`;

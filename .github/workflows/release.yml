@@ -22,6 +22,8 @@ jobs:
         include:
           - target: aarch64-apple-darwin
             os: macos-14
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
     runs-on: ${{ matrix.os }}
@@ -81,7 +83,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, ubuntu-22.04]
+        os: [macos-14, macos-15-intel, ubuntu-22.04]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     env:

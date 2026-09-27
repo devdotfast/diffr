@@ -6,7 +6,7 @@ import re
 import subprocess
 import tarfile
 
-TARGETS = ("aarch64-apple-darwin", "x86_64-unknown-linux-gnu")
+TARGETS = ("aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu")
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -41,15 +41,20 @@ def formula(version, output):
   license all_of: ["MIT", "MPL-2.0"]
 
   on_macos do
-    depends_on arch: :arm64
-    url "{url}-aarch64-apple-darwin.tar.gz"
-    sha256 "{checksums[TARGETS[0]]}"
+    on_arm do
+      url "{url}-aarch64-apple-darwin.tar.gz"
+      sha256 "{checksums['aarch64-apple-darwin']}"
+    end
+    on_intel do
+      url "{url}-x86_64-apple-darwin.tar.gz"
+      sha256 "{checksums['x86_64-apple-darwin']}"
+    end
   end
 
   on_linux do
     depends_on arch: :x86_64
     url "{url}-x86_64-unknown-linux-gnu.tar.gz"
-    sha256 "{checksums[TARGETS[1]]}"
+    sha256 "{checksums['x86_64-unknown-linux-gnu']}"
   end
 
   def install

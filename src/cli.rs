@@ -25,9 +25,6 @@ struct Cli {
     command: Option<Command>,
     #[arg(long, value_name = "repo", default_value = ".")]
     repo: String,
-    /// Replace the global configuration file
-    #[arg(long = "config", value_name = "PATH")]
-    config_file: Option<PathBuf>,
     /// Concurrent file diffs for --format ndjson; results are emitted as each finishes
     #[arg(short, long, value_name = "jobs", default_value_t = 16)]
     jobs: usize,
@@ -152,7 +149,7 @@ pub(crate) fn run() -> Result<i32> {
         .unwrap_or_default();
     let args = Cli::parse_from(argv);
     match &args.command {
-        Some(Command::Config(config)) => return run_config(&args, config),
+        Some(Command::Config(config)) => return run_config(config),
         None => {}
     }
     let streaming = args.format.is_some();
@@ -198,7 +195,7 @@ pub(crate) fn run() -> Result<i32> {
         }
         return Ok(i32::from(changed && (args.exit_code || args.quiet)));
     }
-    let mut config = load_config(&args)?;
+    let mut config = Config::load()?;
     apply_unified(&args, &mut config);
     let pipeline =
         Pipeline::from_config(&config.plugins, workspace).map_err(|error| format!("{error:#}"))?;
@@ -456,7 +453,7 @@ fn no_index(
     if args.quiet {
         return Ok(i32::from(changed));
     }
-    let mut config = load_config(args)?;
+    let mut config = Config::load()?;
     apply_unified(args, &mut config);
     let pipeline = Pipeline::from_config(&config.plugins, &std::env::current_dir()?)
         .map_err(|error| format!("{error:#}"))?;
@@ -521,13 +518,8 @@ fn apply_unified(args: &Cli, config: &mut Config) {
     }
 }
 
-/// The global file, or the `--config` file in its place.
-fn load_config(args: &Cli) -> Result<Config> {
-    Ok(Config::load(args.config_file.as_deref())?)
-}
-
 /// `diffr config`: settings, schema, resolved values and edits.
-fn run_config(args: &Cli, config: &ConfigArgs) -> Result<i32> {
+fn run_config(config: &ConfigArgs) -> Result<i32> {
     let mut stdout = io::stdout().lock();
     match &config.command {
         Some(ConfigCommand::Schema) => {
@@ -535,7 +527,7 @@ fn run_config(args: &Cli, config: &ConfigArgs) -> Result<i32> {
             stdout.write_all(b"\n")?;
         }
         Some(ConfigCommand::Show { json, reveal }) => {
-            let config = load_config(args)?;
+            let config = Config::load()?;
             if *json {
                 serde_json::to_writer_pretty(&mut stdout, &config::store::show(&config, *reveal))?;
                 stdout.write_all(b"\n")?;
@@ -546,11 +538,7 @@ fn run_config(args: &Cli, config: &ConfigArgs) -> Result<i32> {
             }
         }
         Some(ConfigCommand::Set { key, value }) => {
-            let path = match &args.config_file {
-                Some(path) => path.clone(),
-                None => config::global_path()?,
-            };
-            config::store::set(&path, key, value)?;
+            config::store::set(&config::global_path()?, key, value)?;
         }
         None => {
             let mut frontend = vec![OsString::from("--settings")];

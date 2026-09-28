@@ -75,10 +75,10 @@ struct Cli {
     #[arg(long, conflicts_with = "quiet", conflicts_with_all = METADATA)]
     format: Option<Format>,
     /// Emit initial files followed by deferred annotations (NDJSON v4)
-    #[arg(long, requires = "format")]
+    #[arg(long, requires = "format", conflicts_with = "quiet", conflicts_with_all = METADATA)]
     stream_annotations: bool,
     /// Include every token's tree-sitter capture name in --format ndjson output
-    #[arg(long, requires = "format")]
+    #[arg(long, requires = "format", conflicts_with = "quiet", conflicts_with_all = METADATA)]
     syntax: bool,
     /// Columns for --stat; defaults to the terminal's width
     #[arg(long)]

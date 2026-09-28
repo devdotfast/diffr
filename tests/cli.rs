@@ -236,3 +236,21 @@ fn a_malformed_numbered_override_names_its_variable() {
             "invalid value 'bad' for DFT_OVERRIDE_2: expected GLOB:LANG_NAME",
         ));
 }
+
+#[test]
+fn debug_needs_exactly_one_action() {
+    debug_command()
+        .arg("--ignore-comments")
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "the following required arguments were not provided",
+        ));
+    debug_command()
+        .args(["--list-languages", "--dump-ts", "sample_files/simple_1.js"])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("cannot be used with"));
+}

@@ -15,12 +15,17 @@ use std::{
     sync::Arc,
 };
 
+/// The metadata outputs, named one by one in conflicts so clap's error names
+/// the flag that was given rather than the whole group.
+const METADATA: [&str; 5] = ["name_only", "name_status", "stat", "numstat", "shortstat"];
+
 /// Structural diffs with Git-style comparison inputs
 #[derive(Parser)]
 #[command(
     name = env!("CARGO_BIN_NAME"),
     version,
-    group(ArgGroup::new("metadata").args(["name_only", "name_status", "stat", "numstat", "shortstat"])),
+    group(ArgGroup::new("metadata").args(METADATA)),
+    group(ArgGroup::new("names").args(["name_only", "name_status"])),
     after_help = "Examples:\n  diffr\n  diffr --cached\n  diffr main...HEAD -- src/\n  diffr --no-index -- before.rs after.rs\n  diffr main HEAD --format ndjson\n\nUnsupported Git flags are rejected; this is not a complete git diff implementation."
 )]
 struct Cli {
@@ -38,7 +43,7 @@ struct Cli {
     cached: bool,
     #[arg(long)]
     merge_base: bool,
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["cached", "merge_base", "null"], conflicts_with_all = METADATA)]
     no_index: bool,
     #[arg(short = 'R', long)]
     reverse: bool,
@@ -56,7 +61,7 @@ struct Cli {
     numstat: bool,
     #[arg(long)]
     shortstat: bool,
-    #[arg(short = 'z', long)]
+    #[arg(short = 'z', long, requires = "names")]
     null: bool,
     #[arg(long)]
     no_renames: bool,
@@ -66,13 +71,13 @@ struct Cli {
     #[arg(short = 'U', long)]
     unified: Option<u32>,
     /// Write the event stream to stdout instead of opening the terminal UI
-    #[arg(long)]
+    #[arg(long, conflicts_with = "quiet", conflicts_with_all = METADATA)]
     format: Option<Format>,
     /// Emit initial files followed by deferred annotations (NDJSON v4)
     #[arg(long, requires = "format")]
     stream_annotations: bool,
     /// Include every token's tree-sitter capture name in --format ndjson output
-    #[arg(long)]
+    #[arg(long, requires = "format")]
     syntax: bool,
     /// Columns for --stat; defaults to the terminal's width
     #[arg(long)]
@@ -162,9 +167,6 @@ pub(crate) fn run() -> Result<i32> {
     if !streaming && !metadata_or_quiet {
         return launch_tui(&frontend_args, true);
     }
-    if streaming && metadata_or_quiet {
-        return Err("--format ndjson cannot be combined with --quiet or metadata output".into());
-    }
     let stream_options = crate::protocol::stream::Options {
         syntax: args.syntax,
         updates: args.stream_annotations,
@@ -175,9 +177,6 @@ pub(crate) fn run() -> Result<i32> {
             args.items.iter().chain(&args.paths).cloned().collect(),
             stream_options,
         );
-    }
-    if args.null && !args.name_only && !args.name_status {
-        return Err("-z currently requires --name-only or --name-status".into());
     }
     let location = std::fs::canonicalize(&args.repo)?;
     let repo = Repository::discover(&location)?;
@@ -460,9 +459,6 @@ fn no_index(
 ) -> Result<i32> {
     if paths.len() != 2 {
         return Err("--no-index requires two file paths".into());
-    }
-    if args.cached || args.merge_base || args.metadata() || args.null {
-        return Err("--no-index currently supports structural file output and --quiet, not index or metadata options".into());
     }
     let mut paths = paths;
     if args.reverse {

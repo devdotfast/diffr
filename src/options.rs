@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 
 use clap::{error::ErrorKind, Args};
 
-use crate::exit_codes::EXIT_BAD_ARGUMENTS;
 use crate::parse::guess_language::{language_override_from_name, LanguageOverride};
 
 pub(crate) const DEFAULT_BYTE_LIMIT: usize = 1_000_000;
@@ -44,27 +43,8 @@ impl Default for DiffOptions {
 /// `diffr debug`: syntax dumps and the language list.
 #[derive(Args)]
 pub(crate) struct DebugArgs {
-    #[arg(
-        long,
-        value_name = "PATH",
-        long_help = "Parse a single file with tree-sitter and display the diffr syntax tree.",
-        help_heading = "DEBUG OPTIONS"
-    )]
-    dump_syntax: Option<String>,
-    #[arg(
-        long,
-        value_name = "PATH",
-        long_help = "Parse a single file with tree-sitter and display the diffr syntax tree, as a DOT graph.",
-        help_heading = "DEBUG OPTIONS"
-    )]
-    dump_syntax_dot: Option<String>,
-    #[arg(
-        long,
-        value_name = "PATH",
-        long_help = "Parse a single file with tree-sitter and display the tree-sitter parse tree.",
-        help_heading = "DEBUG OPTIONS"
-    )]
-    dump_ts: Option<String>,
+    #[command(flatten)]
+    action: DebugAction,
     #[arg(
         long,
         env = "DFT_IGNORE_COMMENTS",
@@ -95,6 +75,33 @@ $ export DFT_OVERRIDE_2='*.js:javascript jsx'
 When multiple overrides are specified, the first matching override wins.")
     )]
     overrides: Vec<(LanguageOverride, glob::Pattern)>,
+}
+
+/// What `diffr debug` does: exactly one of these.
+#[derive(Args)]
+#[group(required = true, multiple = false)]
+struct DebugAction {
+    #[arg(
+        long,
+        value_name = "PATH",
+        long_help = "Parse a single file with tree-sitter and display the diffr syntax tree.",
+        help_heading = "DEBUG OPTIONS"
+    )]
+    dump_syntax: Option<String>,
+    #[arg(
+        long,
+        value_name = "PATH",
+        long_help = "Parse a single file with tree-sitter and display the diffr syntax tree, as a DOT graph.",
+        help_heading = "DEBUG OPTIONS"
+    )]
+    dump_syntax_dot: Option<String>,
+    #[arg(
+        long,
+        value_name = "PATH",
+        long_help = "Parse a single file with tree-sitter and display the tree-sitter parse tree.",
+        help_heading = "DEBUG OPTIONS"
+    )]
+    dump_ts: Option<String>,
     #[arg(
         long,
         help = "Print all the languages supported by diffr, along with their recognised extensions."
@@ -231,35 +238,32 @@ impl DebugArgs {
                 .chain(numbered_env_overrides()),
         );
 
-        if self.list_languages {
+        let action = &self.action;
+        if action.list_languages {
             return Mode::ListLanguages { language_overrides };
         }
-
-        if let Some(path) = &self.dump_syntax {
+        if let Some(path) = &action.dump_syntax {
             return Mode::DumpSyntax {
                 path: path.to_owned(),
                 ignore_comments: self.ignore_comments,
                 language_overrides,
             };
         }
-
-        if let Some(path) = &self.dump_syntax_dot {
+        if let Some(path) = &action.dump_syntax_dot {
             return Mode::DumpSyntaxDot {
                 path: path.to_owned(),
                 ignore_comments: self.ignore_comments,
                 language_overrides,
             };
         }
-
-        if let Some(path) = &self.dump_ts {
-            return Mode::DumpTreeSitter {
-                path: path.to_owned(),
-                language_overrides,
-            };
+        let path = action
+            .dump_ts
+            .as_ref()
+            .expect("clap requires exactly one debug action");
+        Mode::DumpTreeSitter {
+            path: path.to_owned(),
+            language_overrides,
         }
-
-        eprintln!("Pass one of --dump-syntax, --dump-syntax-dot, --dump-ts or --list-languages.");
-        std::process::exit(EXIT_BAD_ARGUMENTS);
     }
 }
 

@@ -45,34 +45,34 @@ impl Default for DiffOptions {
 pub(crate) struct DebugArgs {
     #[command(flatten)]
     action: DebugAction,
-    #[arg(
-        long,
-        env = "DFT_IGNORE_COMMENTS",
-        help = "Don't consider comments when diffing."
-    )]
+    /// Don't consider comments when diffing.
+    #[arg(long, env = "DFT_IGNORE_COMMENTS")]
     ignore_comments: bool,
+    /// Associate this glob pattern with this language, overriding normal language detection
+    ///
+    /// For example:
+    ///
+    /// $ diffr debug --override='*.c:C++' --dump-syntax file.c
+    ///
+    /// See --list-languages for the list of language names. Language names are matched case insensitively. Overrides may also specify the language "text" to treat a file as plain text.
+    ///
+    /// This argument may be given more than once. For example:
+    ///
+    /// $ diffr debug --override='CustomFile:json' --override='*.c:text' --dump-syntax file.c
+    ///
+    /// To configure multiple overrides using environment variables, diffr also accepts DFT_OVERRIDE_1 up to DFT_OVERRIDE_9.
+    ///
+    /// $ export DFT_OVERRIDE='CustomFile:json'
+    /// $ export DFT_OVERRIDE_1='*.c:text'
+    /// $ export DFT_OVERRIDE_2='*.js:javascript jsx'
+    ///
+    /// When multiple overrides are specified, the first matching override wins.
     #[arg(
         long = "override",
         value_name = "GLOB:NAME",
         env = "DFT_OVERRIDE",
         value_parser = parse_override,
-        help = concat!("Associate this glob pattern with this language, overriding normal language detection. For example:
-
-$ ", env!("CARGO_BIN_NAME"), " debug --override='*.c:C++' --dump-syntax file.c
-
-See --list-languages for the list of language names. Language names are matched case insensitively. Overrides may also specify the language \"text\" to treat a file as plain text.
-
-This argument may be given more than once. For example:
-
-$ ", env!("CARGO_BIN_NAME"), " debug --override='CustomFile:json' --override='*.c:text' --dump-syntax file.c
-
-To configure multiple overrides using environment variables, diffr also accepts DFT_OVERRIDE_1 up to DFT_OVERRIDE_9.
-
-$ export DFT_OVERRIDE='CustomFile:json'
-$ export DFT_OVERRIDE_1='*.c:text'
-$ export DFT_OVERRIDE_2='*.js:javascript jsx'
-
-When multiple overrides are specified, the first matching override wins.")
+        verbatim_doc_comment
     )]
     overrides: Vec<(LanguageOverride, glob::Pattern)>,
 }
@@ -81,31 +81,17 @@ When multiple overrides are specified, the first matching override wins.")
 #[derive(Args)]
 #[group(required = true, multiple = false)]
 struct DebugAction {
-    #[arg(
-        long,
-        value_name = "PATH",
-        long_help = "Parse a single file with tree-sitter and display the diffr syntax tree.",
-        help_heading = "DEBUG OPTIONS"
-    )]
+    /// Parse a single file with tree-sitter and display the diffr syntax tree.
+    #[arg(long, value_name = "PATH", help_heading = "DEBUG OPTIONS")]
     dump_syntax: Option<String>,
-    #[arg(
-        long,
-        value_name = "PATH",
-        long_help = "Parse a single file with tree-sitter and display the diffr syntax tree, as a DOT graph.",
-        help_heading = "DEBUG OPTIONS"
-    )]
+    /// Parse a single file with tree-sitter and display the diffr syntax tree, as a DOT graph.
+    #[arg(long, value_name = "PATH", help_heading = "DEBUG OPTIONS")]
     dump_syntax_dot: Option<String>,
-    #[arg(
-        long,
-        value_name = "PATH",
-        long_help = "Parse a single file with tree-sitter and display the tree-sitter parse tree.",
-        help_heading = "DEBUG OPTIONS"
-    )]
+    /// Parse a single file with tree-sitter and display the tree-sitter parse tree.
+    #[arg(long, value_name = "PATH", help_heading = "DEBUG OPTIONS")]
     dump_ts: Option<String>,
-    #[arg(
-        long,
-        help = "Print all the languages supported by diffr, along with their recognised extensions."
-    )]
+    /// Print all the languages supported by diffr, along with their recognised extensions.
+    #[arg(long)]
     list_languages: bool,
 }
 

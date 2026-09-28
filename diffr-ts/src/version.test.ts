@@ -18,7 +18,7 @@ test("release pins match the package version and cover both supported targets", 
   const pins = JSON.parse(readFileSync(join(root, "pins.json"), "utf8"));
   expect(pins.version).toBe(pkg.version);
   expect(Object.keys(pins.sha256).sort()).toEqual([
-    "aarch64-apple-darwin", "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu",
   ]);
   for (const hash of Object.values(pins.sha256)) expect(hash).toMatch(/^[a-f0-9]{64}$/);
 });

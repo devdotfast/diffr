@@ -3,8 +3,7 @@ use crate::config::{self, Config};
 use crate::git::{Comparison, DiffSession, FileParams, Operand, Result};
 use crate::options::DiffOptions;
 use crate::plugin::Pipeline;
-use clap::{Arg, ArgAction, ArgGroup, ArgMatches, Command};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use git2::{DiffStatsFormat, Repository};
 use std::{
     ffi::OsString,
@@ -137,10 +136,6 @@ enum ConfigCommand {
     },
 }
 
-fn flag(name: &'static str) -> Arg {
-    Arg::new(name).long(name).action(ArgAction::SetTrue)
-}
-
 pub(crate) fn run() -> Result<i32> {
     let mut argv: Vec<OsString> = std::env::args_os().collect();
     let frontend_args = argv[1..].to_vec();
@@ -155,70 +150,13 @@ pub(crate) fn run() -> Result<i32> {
             paths
         })
         .unwrap_or_default();
-    let args = Command::new(env!("CARGO_BIN_NAME"))
-        .version(env!("CARGO_PKG_VERSION"))
-        .about("Structural diffs with Git-style comparison inputs")
-        .arg(Arg::new("repo").long("repo").default_value("."))
-        .arg(Arg::new("config_file").long("config").value_name("PATH").help("Replace the global configuration file"))
-        .arg(
-            Arg::new("jobs")
-                .long("jobs")
-                .short('j')
-                .value_parser(clap::value_parser!(usize))
-                .default_value("16")
-                .help("Concurrent file diffs for --format ndjson; results are emitted as each finishes"),
-        )
-        .arg(Arg::new("order").long("order").value_delimiter(',').action(ArgAction::Append).help("File tag priority: files carrying an earlier listed tag come first"))
-        .arg(flag("cached").visible_alias("staged"))
-        .arg(flag("merge-base"))
-        .arg(flag("no-index"))
-        .arg(flag("reverse").short('R'))
-        .arg(flag("exit-code"))
-        .arg(flag("quiet"))
-        .arg(flag("name-only"))
-        .arg(flag("name-status"))
-        .arg(flag("stat"))
-        .arg(flag("numstat"))
-        .arg(flag("shortstat"))
-        .group(ArgGroup::new("metadata").args(["name-only", "name-status", "stat", "numstat", "shortstat"]))
-        .arg(flag("null").short('z'))
-        .arg(flag("no-renames"))
-        .arg(flag("find-renames").short('M').conflicts_with("no-renames"))
-        .arg(Arg::new("unified").short('U').long("unified").value_parser(clap::value_parser!(u32)).help("Unchanged lines kept around each change; defaults to plugins.bundled.context.lines"))
-        .arg(Arg::new("format").long("format").value_parser(["ndjson"]).help("Write the event stream to stdout instead of opening the terminal UI"))
-        .arg(flag("stream-annotations").requires("format").help("Emit initial files followed by deferred annotations (NDJSON v4)"))
-        .arg(flag("syntax").help("Include every token's tree-sitter capture name in --format ndjson output"))
-        .arg(Arg::new("width").long("width").value_parser(clap::value_parser!(usize)).help("Columns for --stat; defaults to the terminal's width"))
-        .arg(flag("ignore-comments"))
-        .arg(Arg::new("byte-limit").long("byte-limit").value_parser(clap::value_parser!(usize)))
-        .arg(Arg::new("graph-limit").long("graph-limit").value_parser(clap::value_parser!(usize)))
-        .arg(Arg::new("parse-error-limit").long("parse-error-limit").value_parser(clap::value_parser!(usize)))
-        .arg(Arg::new("items").num_args(0..).value_parser(clap::value_parser!(OsString)))
-        .subcommand(
-            Command::new("config")
-                .about("Show, edit, or open the settings screen for diffr's configuration")
-                .arg(Arg::new("query").help("Initial search in the settings screen"))
-                .subcommand(Command::new("schema").about("Print the configuration's JSON Schema"))
-                .subcommand(
-                    Command::new("show")
-                        .about("Print the resolved configuration")
-                        .arg(flag("json"))
-                        .arg(flag("reveal").help("Do not redact the API key")),
-                )
-                .subcommand(
-                    Command::new("set")
-                        .about("Write one key to the global configuration file")
-                        .arg(Arg::new("key").required(true))
-                        .arg(Arg::new("value").required(true)),
-                ),
-        )
-        .after_help("Examples:\n  diffr\n  diffr --cached\n  diffr main...HEAD -- src/\n  diffr --no-index -- before.rs after.rs\n  diffr main HEAD --format ndjson\n\nUnsupported Git flags are rejected; this is not a complete git diff implementation.")
-        .get_matches_from(argv);
-    if let Some(("config", sub)) = args.subcommand() {
-        return run_config(&args, sub);
+    let args = Cli::parse_from(argv);
+    match &args.command {
+        Some(Command::Config(config)) => return run_config(&args, config),
+        None => {}
     }
-    let streaming = args.contains_id("format");
-    let metadata_or_quiet = args.get_flag("quiet") || args.contains_id("metadata");
+    let streaming = args.format.is_some();
+    let metadata_or_quiet = args.quiet || args.metadata();
     if !streaming && !metadata_or_quiet {
         return launch_tui(&frontend_args, true);
     }
@@ -226,59 +164,39 @@ pub(crate) fn run() -> Result<i32> {
         return Err("--format ndjson cannot be combined with --quiet or metadata output".into());
     }
     let stream_options = crate::protocol::stream::Options {
-        syntax: args.get_flag("syntax"),
-        updates: args.get_flag("stream-annotations"),
+        syntax: args.syntax,
+        updates: args.stream_annotations,
     };
-    let items: Vec<OsString> = args
-        .get_many::<OsString>("items")
-        .into_iter()
-        .flatten()
-        .cloned()
-        .collect();
-    if args.get_flag("no-index") {
+    if args.no_index {
         return no_index(
             &args,
-            items.into_iter().chain(explicit_paths).collect(),
+            args.items.iter().cloned().chain(explicit_paths).collect(),
             stream_options,
         );
     }
-    if args.get_flag("null") && !args.get_flag("name-only") && !args.get_flag("name-status") {
+    if args.null && !args.name_only && !args.name_status {
         return Err("-z currently requires --name-only or --name-status".into());
     }
-    let location = std::fs::canonicalize(args.get_one::<String>("repo").unwrap())?;
+    let location = std::fs::canonicalize(&args.repo)?;
     let repo = Repository::discover(&location)?;
     let workspace = repo.workdir().unwrap_or(repo.path());
-    let (comparison, paths) = select(
-        &repo,
-        &location,
-        &args,
-        items,
-        explicit_paths,
-        has_separator,
-    )?;
+    let (comparison, paths) = select(&repo, &location, &args, explicit_paths, has_separator)?;
     let files = FileParams {
         paths,
-        renames: !args.get_flag("no-renames"),
-        order: args
-            .get_many::<String>("order")
-            .into_iter()
-            .flatten()
-            .cloned()
-            .collect(),
+        // `-M` conflicts with `--no-renames`; renames are on by default.
+        renames: args.find_renames || !args.no_renames,
+        order: args.order.clone(),
     };
     if metadata_or_quiet {
         let diff = comparison.resolve(&repo)?.diff(&repo, &files)?;
         let changed = diff.deltas().len() > 0;
-        if !args.get_flag("quiet") {
+        if !args.quiet {
             let width = args
-                .get_one::<usize>("width")
-                .copied()
+                .width
                 .unwrap_or_else(crate::options::detect_terminal_width);
             print_metadata(&diff, &args, width)?;
         }
-        return Ok(i32::from(
-            changed && (args.get_flag("exit-code") || args.get_flag("quiet")),
-        ));
+        return Ok(i32::from(changed && (args.exit_code || args.quiet)));
     }
     let mut config = load_config(&args)?;
     apply_unified(&args, &mut config);
@@ -295,13 +213,12 @@ pub(crate) fn run() -> Result<i32> {
     )?;
     session.diff_options = diff_options;
     let changed = session.remaining() > 0;
-    let jobs = *args.get_one::<usize>("jobs").unwrap();
-    if jobs == 0 {
+    if args.jobs == 0 {
         return Err("--jobs must be at least 1".into());
     }
     let ended = crate::protocol::stream::write(
         session,
-        jobs,
+        args.jobs,
         Arc::new(pipeline),
         stream_options,
         &mut io::stdout().lock(),
@@ -309,26 +226,25 @@ pub(crate) fn run() -> Result<i32> {
     Ok(if ended.failed || ended.aborted {
         2
     } else {
-        i32::from(changed && args.get_flag("exit-code"))
+        i32::from(changed && args.exit_code)
     })
 }
 
 fn select(
     repo: &Repository,
     location: &Path,
-    args: &ArgMatches,
-    items: Vec<OsString>,
+    args: &Cli,
     explicit_paths: Vec<OsString>,
     has_separator: bool,
 ) -> Result<(Comparison, Vec<String>)> {
     let mut revisions = Vec::new();
     let mut paths = Vec::new();
-    for item in items {
+    for item in &args.items {
         let text = item
             .to_str()
             .ok_or("non-UTF-8 revision/path arguments are unsupported")?;
         let is_rev = repo.revparse(text).is_ok();
-        let is_path = location.join(&item).exists();
+        let is_path = location.join(item).exists();
         if is_rev && is_path && !has_separator {
             return Err(
                 format!("ambiguous revision and path {text:?}; use -- to separate them").into(),
@@ -339,7 +255,7 @@ fn select(
         } else if is_rev {
             return Err("revisions must precede paths; use -- to separate them".into());
         } else if is_path {
-            paths.push(item);
+            paths.push(item.clone());
         } else {
             return Err(
                 format!("unknown revision or path {text:?}; use -- before pathspecs").into(),
@@ -354,7 +270,7 @@ fn select(
         .into_iter()
         .map(|path| normalize_path(prefix, &path))
         .collect::<Result<Vec<_>>>()?;
-    let cached = args.get_flag("cached");
+    let cached = args.cached;
     let mut comparison = match revisions.as_slice() {
         [] if cached => Comparison {
             before: match repo.head() {
@@ -403,7 +319,7 @@ fn select(
         },
         _ => return Err("expected at most two revisions (--cached takes at most one)".into()),
     };
-    if args.get_flag("merge-base") {
+    if args.merge_base {
         let a = revisions
             .first()
             .ok_or("--merge-base requires a revision")?;
@@ -416,7 +332,7 @@ fn select(
             revisions.get(1).map(String::as_str).unwrap_or("HEAD"),
         )?;
     }
-    if args.get_flag("reverse") {
+    if args.reverse {
         comparison.reverse();
     }
     Ok((comparison, paths))
@@ -444,13 +360,13 @@ fn normalize_path(prefix: &Path, path: &std::ffi::OsStr) -> Result<String> {
     Ok(normalized.to_str().ok_or("non-UTF-8 pathspec")?.to_owned())
 }
 
-fn print_metadata(diff: &git2::Diff<'_>, args: &ArgMatches, width: usize) -> Result<()> {
+fn print_metadata(diff: &git2::Diff<'_>, args: &Cli, width: usize) -> Result<()> {
     let mut stdout = io::stdout().lock();
-    if args.get_flag("name-only") || args.get_flag("name-status") {
-        let separator: &[u8] = if args.get_flag("null") { b"\0" } else { b"\t" };
-        let terminator: &[u8] = if args.get_flag("null") { b"\0" } else { b"\n" };
+    if args.name_only || args.name_status {
+        let separator: &[u8] = if args.null { b"\0" } else { b"\t" };
+        let terminator: &[u8] = if args.null { b"\0" } else { b"\n" };
         for delta in diff.deltas() {
-            if args.get_flag("name-status") {
+            if args.name_status {
                 write!(
                     stdout,
                     "{}",
@@ -480,7 +396,7 @@ fn print_metadata(diff: &git2::Diff<'_>, args: &ArgMatches, width: usize) -> Res
         }
         return Ok(());
     }
-    if args.get_flag("numstat") {
+    if args.numstat {
         for (index, delta) in diff.deltas().enumerate() {
             let patch = git2::Patch::from_diff(diff, index)?;
             if let Some(patch) = patch {
@@ -504,7 +420,7 @@ fn print_metadata(diff: &git2::Diff<'_>, args: &ArgMatches, width: usize) -> Res
         }
         return Ok(());
     }
-    let format = if args.get_flag("shortstat") {
+    let format = if args.shortstat {
         DiffStatsFormat::SHORT
     } else {
         DiffStatsFormat::FULL
@@ -514,22 +430,18 @@ fn print_metadata(diff: &git2::Diff<'_>, args: &ArgMatches, width: usize) -> Res
 }
 
 fn no_index(
-    args: &ArgMatches,
+    args: &Cli,
     paths: Vec<OsString>,
     stream_options: crate::protocol::stream::Options,
 ) -> Result<i32> {
     if paths.len() != 2 {
         return Err("--no-index requires two file paths".into());
     }
-    if args.get_flag("cached")
-        || args.get_flag("merge-base")
-        || args.contains_id("metadata")
-        || args.get_flag("null")
-    {
+    if args.cached || args.merge_base || args.metadata() || args.null {
         return Err("--no-index currently supports structural file output and --quiet, not index or metadata options".into());
     }
     let mut paths = paths;
-    if args.get_flag("reverse") {
+    if args.reverse {
         paths.swap(0, 1);
     }
     let read = |path: &OsString| -> Result<Vec<u8>> {
@@ -541,7 +453,7 @@ fn no_index(
     let before = read(&paths[0])?;
     let after = read(&paths[1])?;
     let changed = before != after;
-    if args.get_flag("quiet") {
+    if args.quiet {
         return Ok(i32::from(changed));
     }
     let mut config = load_config(args)?;
@@ -577,80 +489,72 @@ fn no_index(
     Ok(if ended.failed || ended.aborted {
         2
     } else {
-        i32::from(changed && args.get_flag("exit-code"))
+        i32::from(changed && args.exit_code)
     })
 }
 
 /// The engine limits: the configured `[diff]` table, then the command-line
 /// flags.
-fn diff_options(args: &ArgMatches, params: &config::Params) -> DiffOptions {
-    let mut options = params.diff.options(args.get_flag("ignore-comments"));
-    if let Some(limit) = args.get_one::<usize>("byte-limit") {
-        options.byte_limit = *limit;
+fn diff_options(args: &Cli, params: &config::Params) -> DiffOptions {
+    let mut options = params.diff.options(args.ignore_comments);
+    if let Some(limit) = args.byte_limit {
+        options.byte_limit = limit;
     }
-    if let Some(limit) = args.get_one::<usize>("graph-limit") {
-        options.graph_limit = *limit;
+    if let Some(limit) = args.graph_limit {
+        options.graph_limit = limit;
     }
-    if let Some(limit) = args.get_one::<usize>("parse-error-limit") {
-        options.parse_error_limit = *limit;
+    if let Some(limit) = args.parse_error_limit {
+        options.parse_error_limit = limit;
     }
     options
 }
 
 /// `-U` overrides the context plugin's `lines` for this run.
-fn apply_unified(args: &ArgMatches, config: &mut Config) {
-    let Some(unified) = args.get_one::<u32>("unified") else {
+fn apply_unified(args: &Cli, config: &mut Config) {
+    let Some(unified) = args.unified else {
         return;
     };
     if let Some(entry) = config.plugins.entries.get_mut("bundled.context") {
         entry
             .options
-            .insert("lines".into(), serde_json::Value::from(*unified));
+            .insert("lines".into(), serde_json::Value::from(unified));
     }
 }
 
 /// The global file, or the `--config` file in its place.
-fn load_config(args: &ArgMatches) -> Result<Config> {
-    Ok(Config::load(
-        args.get_one::<String>("config_file").map(Path::new),
-    )?)
+fn load_config(args: &Cli) -> Result<Config> {
+    Ok(Config::load(args.config_file.as_deref())?)
 }
 
 /// `diffr config`: settings, schema, resolved values and edits.
-fn run_config(args: &ArgMatches, sub: &ArgMatches) -> Result<i32> {
+fn run_config(args: &Cli, config: &ConfigArgs) -> Result<i32> {
     let mut stdout = io::stdout().lock();
-    match sub.subcommand() {
-        Some(("schema", _)) => {
+    match &config.command {
+        Some(ConfigCommand::Schema) => {
             serde_json::to_writer_pretty(&mut stdout, &Config::schema())?;
             stdout.write_all(b"\n")?;
         }
-        Some(("show", show)) => {
+        Some(ConfigCommand::Show { json, reveal }) => {
             let config = load_config(args)?;
-            let reveal = show.get_flag("reveal");
-            if show.get_flag("json") {
-                serde_json::to_writer_pretty(&mut stdout, &config::store::show(&config, reveal))?;
+            if *json {
+                serde_json::to_writer_pretty(&mut stdout, &config::store::show(&config, *reveal))?;
                 stdout.write_all(b"\n")?;
             } else {
                 stdout.write_all(
-                    toml::to_string_pretty(&config::store::redacted(&config, reveal))?.as_bytes(),
+                    toml::to_string_pretty(&config::store::redacted(&config, *reveal))?.as_bytes(),
                 )?;
             }
         }
-        Some(("set", set)) => {
-            let path = match args.get_one::<String>("config_file") {
-                Some(path) => PathBuf::from(path),
+        Some(ConfigCommand::Set { key, value }) => {
+            let path = match &args.config_file {
+                Some(path) => path.clone(),
                 None => config::global_path()?,
             };
-            config::store::set(
-                &path,
-                set.get_one::<String>("key").unwrap(),
-                set.get_one::<String>("value").unwrap(),
-            )?;
+            config::store::set(&path, key, value)?;
         }
-        Some((other, _)) => return Err(format!("unknown config command {other}").into()),
         None => {
             let mut frontend = vec![OsString::from("--settings")];
-            if let Some(query) = sub.get_one::<String>("query") {
+            if let Some(query) = &config.query {
                 frontend.push(query.into());
             }
             return launch_tui(&frontend, false);

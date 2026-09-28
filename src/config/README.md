@@ -3,7 +3,7 @@
 The caller parses TOML with `Config::from_toml`, builds the plugin pipeline, then calls `compile_with(&pipeline)` once.
 The resulting `Params` owns one compiled query per language, holding the enabled plugins' fold
 patterns, and is borrowed by each diff.
-`Config::load` reads the global file (`$XDG_CONFIG_HOME/diffr/config.toml`) or an explicit replacement file.
+`Config::load` reads the global file (`$XDG_CONFIG_HOME/diffr/config.toml`).
 File selection and ordering belong to the caller, not this configuration.
 
 ```rust

@@ -1,5 +1,5 @@
 //! diffr's configuration comes from three places: the global file
-//! (`$XDG_CONFIG_HOME/diffr/config.toml`, or `--config PATH` in its place),
+//! (`$XDG_CONFIG_HOME/diffr/config.toml`),
 //! command-line flags, and git attributes. This module owns the file: every
 //! key it omits keeps its serde default, and an unknown key or mistyped
 //! value is an error naming the key's dotted path. Flags and attributes are
@@ -182,21 +182,21 @@ pub(crate) fn directory_of(file: &Path) -> &Path {
 }
 
 impl Config {
-    /// Read the global file, or `explicit` in its place. A missing global
-    /// file is the defaults; an explicit file must exist.
-    pub(crate) fn load(explicit: Option<&Path>) -> Result<Self, ConfigError> {
-        let path = match explicit {
-            Some(path) => path.to_path_buf(),
-            None => global_path()?,
-        };
-        let source = match std::fs::read_to_string(&path) {
+    /// Read the global file; a missing one is the defaults.
+    pub(crate) fn load() -> Result<Self, ConfigError> {
+        Self::load_from(&global_path()?)
+    }
+
+    /// The file at `path`; a missing file is the defaults.
+    fn load_from(path: &Path) -> Result<Self, ConfigError> {
+        let source = match std::fs::read_to_string(path) {
             Ok(source) => source,
-            Err(error) if explicit.is_none() && error.kind() == std::io::ErrorKind::NotFound => {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(Self::default());
             }
             Err(error) => return Err(ConfigError(format!("{}: {error}", path.display()))),
         };
-        Self::from_toml_in(&source, directory_of(&path))
+        Self::from_toml_in(&source, directory_of(path))
             .map_err(|error| ConfigError(format!("{}: {error}", path.display())))
     }
 
@@ -728,7 +728,7 @@ mod load_tests {
             "[diff]\ngraph_limit = 5\nbyte_limit = 6\n[theme]\nname = 'mine'\n",
         )
         .unwrap();
-        let config = Config::load(Some(&path)).unwrap();
+        let config = Config::load_from(&path).unwrap();
         assert_eq!(config.diff.graph_limit, 5);
         assert_eq!(config.diff.byte_limit, 6);
         assert_eq!(
@@ -744,20 +744,21 @@ mod load_tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(&path, "[diff]\ngraph_limit = 5\ntypo = 1\n").unwrap();
-        let error = Config::load(Some(&path)).unwrap_err().to_string();
+        let error = Config::load_from(&path).unwrap_err().to_string();
         assert!(
             error.starts_with(&format!("{}: diff.typo: ", path.display())),
             "{error}"
         );
         std::fs::write(&path, "[diff]\ngraph_limit = 'many'\n").unwrap();
-        let error = Config::load(Some(&path)).unwrap_err().to_string();
+        let error = Config::load_from(&path).unwrap_err().to_string();
         assert!(error.contains("diff.graph_limit: "), "{error}");
     }
 
     #[test]
-    fn a_missing_explicit_file_is_an_error() {
+    fn a_missing_file_is_the_defaults() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(Config::load(Some(&dir.path().join("absent.toml"))).is_err());
+        let config = Config::load_from(&dir.path().join("absent.toml")).unwrap();
+        assert_eq!(config.theme.name, Config::default().theme.name);
     }
 
     #[test]

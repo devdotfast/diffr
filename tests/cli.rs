@@ -173,6 +173,33 @@ fn config_ui_requires_a_terminal() {
         .stderr(predicate::str::contains("terminal UI needs a terminal"));
 }
 
+/// Invalid flag combinations are rejected while parsing, before the terminal
+/// UI would launch.
+#[test]
+fn invalid_flag_combinations_are_rejected_before_the_terminal_ui() {
+    for (args, message) in [
+        (&["-z"][..], "<--name-only|--name-status>"),
+        (&["--jobs", "0"], "invalid value '0' for '--jobs <JOBS>'"),
+        (&["--syntax"], "--format <FORMAT>"),
+        (
+            &["--format", "ndjson", "--stat"],
+            "cannot be used with '--stat'",
+        ),
+        (&["--syntax", "--stat"], "cannot be used with '--stat'"),
+        (
+            &["--no-index", "--cached", "a", "b"],
+            "cannot be used with '--cached'",
+        ),
+    ] {
+        get_base_command()
+            .args(args)
+            .assert()
+            .failure()
+            .code(2)
+            .stderr(predicate::str::contains(message));
+    }
+}
+
 #[test]
 fn diff_flags_before_a_subcommand_are_rejected() {
     get_base_command()

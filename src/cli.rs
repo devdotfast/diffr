@@ -3,7 +3,10 @@ use crate::config::{self, Config};
 use crate::git::{Comparison, DiffSession, FileParams, Operand, Result};
 use crate::options::{DebugArgs, DiffOptions};
 use crate::plugin::Pipeline;
-use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
+use clap::{
+    error::ErrorKind, parser::ValueSource, ArgGroup, ArgMatches, Args, CommandFactory,
+    FromArgMatches, Parser, Subcommand, ValueEnum,
+};
 use git2::{DiffStatsFormat, Repository};
 use std::{
     ffi::OsString,
@@ -150,7 +153,9 @@ pub(crate) fn run() -> Result<i32> {
     // Git treats an argument before `--` as a revision even when a file shares
     // its name, so a bare trailing `--` still matters.
     let has_separator = frontend_args.iter().any(|arg| arg == "--");
-    let args = Cli::parse();
+    let matches = Cli::command().get_matches();
+    reject_diff_arguments_before_subcommand(&matches);
+    let args = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
     match &args.command {
         Some(Command::Config(config)) => return run_config(config),
         Some(Command::Debug(debug)) => {
@@ -232,6 +237,29 @@ pub(crate) fn run() -> Result<i32> {
     } else {
         i32::from(changed && args.exit_code)
     })
+}
+
+/// The top-level flags configure a diff; a subcommand given after one would
+/// silently drop it.
+fn reject_diff_arguments_before_subcommand(matches: &ArgMatches) {
+    let Some((name, _)) = matches.subcommand() else {
+        return;
+    };
+    let mut command = Cli::command();
+    // Formatting an `Arg` reads settings that only `build` fills in.
+    command.build();
+    let given = command
+        .get_arguments()
+        .find(|arg| matches.value_source(arg.get_id().as_str()) == Some(ValueSource::CommandLine))
+        .map(ToString::to_string);
+    if let Some(arg) = given {
+        command
+            .error(
+                ErrorKind::ArgumentConflict,
+                format!("the argument '{arg}' cannot be used with the '{name}' subcommand"),
+            )
+            .exit();
+    }
 }
 
 fn select(

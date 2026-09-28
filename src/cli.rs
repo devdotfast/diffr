@@ -84,6 +84,8 @@ struct Cli {
     parse_error_limit: Option<usize>,
     #[arg(value_name = "items", num_args = 0..)]
     items: Vec<OsString>,
+    #[arg(value_name = "paths", last = true)]
+    paths: Vec<OsString>,
 }
 
 impl Cli {
@@ -134,20 +136,11 @@ enum ConfigCommand {
 }
 
 pub(crate) fn run() -> Result<i32> {
-    let mut argv: Vec<OsString> = std::env::args_os().collect();
-    let frontend_args = argv[1..].to_vec();
-    // Preserve the distinction between revisions and paths explicitly following --.
-    let has_separator = argv.iter().any(|arg| arg == "--");
-    let explicit_paths = argv
-        .iter()
-        .position(|arg| arg == "--")
-        .map(|at| {
-            let paths = argv.split_off(at + 1);
-            argv.pop();
-            paths
-        })
-        .unwrap_or_default();
-    let args = Cli::parse_from(argv);
+    let frontend_args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    // Git treats an argument before `--` as a revision even when a file shares
+    // its name, so a bare trailing `--` still matters.
+    let has_separator = frontend_args.iter().any(|arg| arg == "--");
+    let args = Cli::parse();
     match &args.command {
         Some(Command::Config(config)) => return run_config(config),
         None => {}
@@ -167,7 +160,7 @@ pub(crate) fn run() -> Result<i32> {
     if args.no_index {
         return no_index(
             &args,
-            args.items.iter().cloned().chain(explicit_paths).collect(),
+            args.items.iter().chain(&args.paths).cloned().collect(),
             stream_options,
         );
     }
@@ -177,7 +170,7 @@ pub(crate) fn run() -> Result<i32> {
     let location = std::fs::canonicalize(&args.repo)?;
     let repo = Repository::discover(&location)?;
     let workspace = repo.workdir().unwrap_or(repo.path());
-    let (comparison, paths) = select(&repo, &location, &args, explicit_paths, has_separator)?;
+    let (comparison, paths) = select(&repo, &location, &args, has_separator)?;
     let files = FileParams {
         paths,
         // `-M` conflicts with `--no-renames`; renames are on by default.
@@ -231,7 +224,6 @@ fn select(
     repo: &Repository,
     location: &Path,
     args: &Cli,
-    explicit_paths: Vec<OsString>,
     has_separator: bool,
 ) -> Result<(Comparison, Vec<String>)> {
     let mut revisions = Vec::new();
@@ -259,7 +251,7 @@ fn select(
             );
         }
     }
-    paths.extend(explicit_paths);
+    paths.extend(args.paths.iter().cloned());
     // Match canonical path forms, including Windows verbatim path prefixes.
     let root = std::fs::canonicalize(repo.workdir().unwrap_or(repo.path()))?;
     let prefix = location.strip_prefix(&root)?;

@@ -11,6 +11,7 @@ use git2::{DiffStatsFormat, Repository};
 use std::{
     ffi::OsString,
     io::{self, IsTerminal, Write},
+    num::NonZeroUsize,
     path::{Component, Path, PathBuf},
     sync::Arc,
 };
@@ -34,8 +35,8 @@ struct Cli {
     #[arg(long, default_value = ".")]
     repo: PathBuf,
     /// Concurrent file diffs for --format ndjson; results are emitted as each finishes
-    #[arg(short, long, default_value_t = 16)]
-    jobs: usize,
+    #[arg(short, long, default_value = "16")]
+    jobs: NonZeroUsize,
     /// File tag priority: files carrying an earlier listed tag come first
     #[arg(long, value_delimiter = ',')]
     order: Vec<String>,
@@ -214,12 +215,9 @@ pub(crate) fn run() -> Result<i32> {
     )?;
     session.diff_options = diff_options;
     let changed = session.remaining() > 0;
-    if args.jobs == 0 {
-        return Err("--jobs must be at least 1".into());
-    }
     let ended = crate::protocol::stream::write(
         session,
-        args.jobs,
+        args.jobs.get(),
         Arc::new(pipeline),
         stream_options,
         &mut io::stdout().lock(),

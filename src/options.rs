@@ -5,7 +5,7 @@ use std::ffi::OsStr;
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 
-use clap::{crate_description, Arg, ArgAction, Command};
+use clap::{crate_description, Parser};
 
 use crate::exit_codes::EXIT_BAD_ARGUMENTS;
 use crate::parse::guess_language::{language_override_from_name, LanguageOverride};
@@ -44,53 +44,52 @@ impl Default for DiffOptions {
     }
 }
 
-fn app() -> clap::Command {
-    Command::new("diffr")
-        // Show options in alphabetical order, rather than in
-        // declaration order.
-        .next_display_order(None)
-        .override_usage(USAGE)
-        .version(env!("CARGO_PKG_VERSION"))
-        .long_version(VERSION.as_str())
-        .about(crate_description!())
-        .arg(
-            Arg::new("dump-syntax")
-                .long("dump-syntax")
-                .value_name("PATH")
-                .action(ArgAction::Set)
-                .long_help(
-                    "Parse a single file with tree-sitter and display the diffr syntax tree.",
-                ).help_heading("DEBUG OPTIONS"),
-        )
-        .arg(
-            Arg::new("dump-syntax-dot")
-                .long("dump-syntax-dot")
-                .value_name("PATH")
-                .action(ArgAction::Set)
-                .long_help(
-                    "Parse a single file with tree-sitter and display the diffr syntax tree, as a DOT graph.",
-                ).help_heading("DEBUG OPTIONS"),
-        )
-        .arg(
-            Arg::new("dump-ts")
-                .long("dump-ts")
-                                .value_name("PATH")
-                .action(ArgAction::Set)
-                .long_help(
-                    "Parse a single file with tree-sitter and display the tree-sitter parse tree.",
-                ).help_heading("DEBUG OPTIONS"),
-        )
-        .arg(
-            Arg::new("ignore-comments").long("ignore-comments")
-                .action(ArgAction::SetTrue)
-                .env("DFT_IGNORE_COMMENTS")
-                .help("Don't consider comments when diffing.")
-        )
-        .arg(
-            Arg::new("override").long("override")
-                .value_name("GLOB:NAME")
-                .action(ArgAction::Append)
-                .help(concat!("Associate this glob pattern with this language, overriding normal language detection. For example:
+/// `diffr debug`: syntax dumps and the language list.
+#[derive(Parser)]
+#[command(
+    name = "diffr",
+    // Show options in alphabetical order, rather than in
+    // declaration order.
+    next_display_order = None,
+    override_usage = USAGE,
+    version = env!("CARGO_PKG_VERSION"),
+    long_version = VERSION.as_str(),
+    about = crate_description!(),
+    arg_required_else_help = true
+)]
+pub(crate) struct DebugArgs {
+    #[arg(
+        long,
+        value_name = "PATH",
+        long_help = "Parse a single file with tree-sitter and display the diffr syntax tree.",
+        help_heading = "DEBUG OPTIONS"
+    )]
+    dump_syntax: Option<String>,
+    #[arg(
+        long,
+        value_name = "PATH",
+        long_help = "Parse a single file with tree-sitter and display the diffr syntax tree, as a DOT graph.",
+        help_heading = "DEBUG OPTIONS"
+    )]
+    dump_syntax_dot: Option<String>,
+    #[arg(
+        long,
+        value_name = "PATH",
+        long_help = "Parse a single file with tree-sitter and display the tree-sitter parse tree.",
+        help_heading = "DEBUG OPTIONS"
+    )]
+    dump_ts: Option<String>,
+    #[arg(
+        long,
+        env = "DFT_IGNORE_COMMENTS",
+        help = "Don't consider comments when diffing."
+    )]
+    ignore_comments: bool,
+    #[arg(
+        long = "override",
+        value_name = "GLOB:NAME",
+        env = "DFT_OVERRIDE",
+        help = concat!("Associate this glob pattern with this language, overriding normal language detection. For example:
 
 $ ", env!("CARGO_BIN_NAME"), " debug --override='*.c:C++' --dump-syntax file.c
 
@@ -106,15 +105,14 @@ $ export DFT_OVERRIDE='CustomFile:json'
 $ export DFT_OVERRIDE_1='*.c:text'
 $ export DFT_OVERRIDE_2='*.js:javascript jsx'
 
-When multiple overrides are specified, the first matching override wins."))
-                .env("DFT_OVERRIDE")
-        )
-        .arg(
-            Arg::new("list-languages").long("list-languages")
-                .action(ArgAction::SetTrue)
-                .help("Print all the languages supported by diffr, along with their recognised extensions.")
-        )
-        .arg_required_else_help(true)
+When multiple overrides are specified, the first matching override wins.")
+    )]
+    overrides: Vec<String>,
+    #[arg(
+        long,
+        help = "Print all the languages supported by diffr, along with their recognised extensions."
+    )]
+    list_languages: bool,
 }
 
 #[derive(Eq, PartialEq, Debug)]
@@ -235,51 +233,50 @@ fn parse_overrides_or_die(raw_overrides: &[String]) -> Vec<(LanguageOverride, Ve
 
 /// Parse CLI arguments passed to the binary.
 pub(crate) fn parse_args() -> Mode {
-    let matches = app().get_matches_from(std::env::args_os().skip(1));
+    DebugArgs::parse_from(std::env::args_os().skip(1)).mode()
+}
 
-    let ignore_comments = matches.get_flag("ignore-comments");
-
-    let mut raw_overrides: Vec<String> = vec![];
-    if let Some(overrides) = matches.get_many("override") {
-        raw_overrides = overrides.cloned().collect();
-    }
-    for i in 1..=9 {
-        if let Ok(value) = env::var(format!("DFT_OVERRIDE_{}", i)) {
-            raw_overrides.push(value);
+impl DebugArgs {
+    fn mode(&self) -> Mode {
+        let mut raw_overrides = self.overrides.clone();
+        for i in 1..=9 {
+            if let Ok(value) = env::var(format!("DFT_OVERRIDE_{}", i)) {
+                raw_overrides.push(value);
+            }
         }
+
+        let language_overrides = parse_overrides_or_die(&raw_overrides);
+
+        if self.list_languages {
+            return Mode::ListLanguages { language_overrides };
+        }
+
+        if let Some(path) = &self.dump_syntax {
+            return Mode::DumpSyntax {
+                path: path.to_owned(),
+                ignore_comments: self.ignore_comments,
+                language_overrides,
+            };
+        }
+
+        if let Some(path) = &self.dump_syntax_dot {
+            return Mode::DumpSyntaxDot {
+                path: path.to_owned(),
+                ignore_comments: self.ignore_comments,
+                language_overrides,
+            };
+        }
+
+        if let Some(path) = &self.dump_ts {
+            return Mode::DumpTreeSitter {
+                path: path.to_owned(),
+                language_overrides,
+            };
+        }
+
+        eprintln!("Pass one of --dump-syntax, --dump-syntax-dot, --dump-ts or --list-languages.");
+        std::process::exit(EXIT_BAD_ARGUMENTS);
     }
-
-    let language_overrides = parse_overrides_or_die(&raw_overrides);
-
-    if matches.get_flag("list-languages") {
-        return Mode::ListLanguages { language_overrides };
-    }
-
-    if let Some(path) = matches.get_one::<String>("dump-syntax") {
-        return Mode::DumpSyntax {
-            path: path.to_owned(),
-            ignore_comments,
-            language_overrides,
-        };
-    }
-
-    if let Some(path) = matches.get_one::<String>("dump-syntax-dot") {
-        return Mode::DumpSyntaxDot {
-            path: path.to_owned(),
-            ignore_comments,
-            language_overrides,
-        };
-    }
-
-    if let Some(path) = matches.get_one::<String>("dump-ts") {
-        return Mode::DumpTreeSitter {
-            path: path.to_owned(),
-            language_overrides,
-        };
-    }
-
-    eprintln!("Pass one of --dump-syntax, --dump-syntax-dot, --dump-ts or --list-languages.");
-    std::process::exit(EXIT_BAD_ARGUMENTS);
 }
 
 /// Try to work out the width of the terminal we're on, or fall back
@@ -309,11 +306,13 @@ pub(crate) fn detect_terminal_width() -> usize {
 
 #[cfg(test)]
 mod tests {
+    use clap::CommandFactory;
+
     use super::*;
 
     #[test]
     fn test_app() {
-        app().debug_assert();
+        DebugArgs::command().debug_assert();
     }
 
     #[test]

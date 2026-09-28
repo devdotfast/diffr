@@ -1,7 +1,7 @@
 //! Git-style CLI input: the terminal UI, the NDJSON stream, and Git metadata.
 use crate::config::{self, Config};
 use crate::git::{Comparison, DiffSession, FileParams, Operand, Result};
-use crate::options::DiffOptions;
+use crate::options::{DebugArgs, DiffOptions};
 use crate::plugin::Pipeline;
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use git2::{DiffStatsFormat, Repository};
@@ -103,6 +103,16 @@ enum Format {
 enum Command {
     /// Show, edit, or open the settings screen for diffr's configuration
     Config(ConfigArgs),
+    #[command(
+        hide = true,
+        display_name = env!("CARGO_BIN_NAME"),
+        about,
+        version,
+        long_version = crate::version::VERSION.as_str(),
+        next_display_order = None,
+        arg_required_else_help = true
+    )]
+    Debug(DebugArgs),
 }
 
 #[derive(Args)]
@@ -143,6 +153,10 @@ pub(crate) fn run() -> Result<i32> {
     let args = Cli::parse();
     match &args.command {
         Some(Command::Config(config)) => return run_config(config),
+        Some(Command::Debug(debug)) => {
+            crate::run_debug(debug.mode());
+            return Ok(0);
+        }
         None => {}
     }
     let streaming = args.format.is_some();

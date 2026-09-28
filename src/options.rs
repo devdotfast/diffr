@@ -5,11 +5,10 @@ use std::ffi::OsStr;
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 
-use clap::{crate_description, Parser};
+use clap::Args;
 
 use crate::exit_codes::EXIT_BAD_ARGUMENTS;
 use crate::parse::guess_language::{language_override_from_name, LanguageOverride};
-use crate::version::VERSION;
 
 pub(crate) const DEFAULT_BYTE_LIMIT: usize = 1_000_000;
 // Chosen experimentally: this is sufficiently many for all the sample
@@ -17,8 +16,6 @@ pub(crate) const DEFAULT_BYTE_LIMIT: usize = 1_000_000;
 // small enough to terminate in ~5 seconds like the test file in #306.
 pub(crate) const DEFAULT_GRAPH_LIMIT: usize = 3_000_000;
 pub(crate) const DEFAULT_PARSE_ERROR_LIMIT: usize = 0;
-
-pub(crate) const USAGE: &str = concat!(env!("CARGO_BIN_NAME"), " debug [OPTIONS]");
 
 pub(crate) const DEFAULT_TERMINAL_WIDTH: usize = 80;
 
@@ -45,18 +42,7 @@ impl Default for DiffOptions {
 }
 
 /// `diffr debug`: syntax dumps and the language list.
-#[derive(Parser)]
-#[command(
-    name = "diffr",
-    // Show options in alphabetical order, rather than in
-    // declaration order.
-    next_display_order = None,
-    override_usage = USAGE,
-    version = env!("CARGO_PKG_VERSION"),
-    long_version = VERSION.as_str(),
-    about = crate_description!(),
-    arg_required_else_help = true
-)]
+#[derive(Args)]
 pub(crate) struct DebugArgs {
     #[arg(
         long,
@@ -231,13 +217,8 @@ fn parse_overrides_or_die(raw_overrides: &[String]) -> Vec<(LanguageOverride, Ve
     combined_overrides
 }
 
-/// Parse CLI arguments passed to the binary.
-pub(crate) fn parse_args() -> Mode {
-    DebugArgs::parse_from(std::env::args_os().skip(1)).mode()
-}
-
 impl DebugArgs {
-    fn mode(&self) -> Mode {
+    pub(crate) fn mode(&self) -> Mode {
         let mut raw_overrides = self.overrides.clone();
         for i in 1..=9 {
             if let Ok(value) = env::var(format!("DFT_OVERRIDE_{}", i)) {
@@ -306,14 +287,7 @@ pub(crate) fn detect_terminal_width() -> usize {
 
 #[cfg(test)]
 mod tests {
-    use clap::CommandFactory;
-
     use super::*;
-
-    #[test]
-    fn test_app() {
-        DebugArgs::command().debug_assert();
-    }
 
     #[test]
     fn test_detect_display_width() {

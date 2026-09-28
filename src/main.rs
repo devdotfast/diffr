@@ -134,14 +134,7 @@ fn main() {
         .expect("The logger has not been previously initialized");
     reset_sigpipe();
 
-    let result = match std::env::args_os().nth(1).as_deref() {
-        Some(arg) if arg == "debug" => {
-            run_debug();
-            return;
-        }
-        _ => cli::run(),
-    };
-    match result {
+    match cli::run() {
         Ok(code) => std::process::exit(code),
         Err(error) => {
             eprintln!("{error}");
@@ -150,10 +143,11 @@ fn main() {
     }
 }
 
-fn run_debug() {
+/// `diffr debug`: syntax dumps and the language list.
+fn run_debug(mode: Mode) {
     let params = &Params::default();
 
-    match options::parse_args() {
+    match mode {
         Mode::DumpTreeSitter {
             path,
             language_overrides,

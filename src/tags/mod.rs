@@ -57,6 +57,7 @@ fn is_test(path: &str) -> bool {
         || (name.starts_with("test_") && name.ends_with(".py"))
         || name.contains(".test.")
         || name.contains(".spec.")
+        || name.contains(".integration.")
 }
 
 /// Every bundled rule that looks at the repository-relative path alone.
@@ -289,6 +290,7 @@ mod tests {
             "src/foo_test.go",
             "src/App.test.tsx",
             "src/App.spec.ts",
+            "src/server.integration.ts",
             "pkg/test_widgets.py",
             "pkg/conftest.py",
             "src/__tests__/a.js",

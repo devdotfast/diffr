@@ -32,6 +32,7 @@ const METADATA: [&str; 5] = ["name_only", "name_status", "stat", "numstat", "sho
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
+    /// Directory in the repository to diff from; paths are relative to it
     #[arg(long, default_value = ".")]
     repo: PathBuf,
     /// Concurrent file diffs for --format ndjson; results are emitted as each finishes
@@ -40,32 +41,46 @@ struct Cli {
     /// File tag priority: files carrying an earlier listed tag come first
     #[arg(long, value_delimiter = ',')]
     order: Vec<String>,
+    /// Compare the index with HEAD, or with the given revision
     #[arg(long, visible_alias = "staged")]
     cached: bool,
+    /// Compare from the merge base of the given revision and the second one, or HEAD
     #[arg(long)]
     merge_base: bool,
+    /// Compare two files on disk rather than Git revisions
     #[arg(long, conflicts_with_all = ["cached", "merge_base", "null"], conflicts_with_all = METADATA)]
     no_index: bool,
+    /// Swap the two sides of the comparison
     #[arg(short = 'R', long)]
     reverse: bool,
+    /// Exit with 1 when there are differences
     #[arg(long)]
     exit_code: bool,
+    /// Print nothing; exit with 1 when there are differences
     #[arg(long)]
     quiet: bool,
+    /// Print the names of changed files
     #[arg(long)]
     name_only: bool,
+    /// Print the names and statuses of changed files
     #[arg(long)]
     name_status: bool,
+    /// Print a diffstat
     #[arg(long)]
     stat: bool,
+    /// Print added and deleted line counts for each file
     #[arg(long)]
     numstat: bool,
+    /// Print the diffstat's summary line
     #[arg(long)]
     shortstat: bool,
+    /// Terminate --name-only and --name-status output with NULs
     #[arg(short = 'z', long, requires = "names")]
     null: bool,
+    /// Do not detect renames
     #[arg(long)]
     no_renames: bool,
+    /// Detect renames, which is the default
     #[arg(short = 'M', long, conflicts_with = "no_renames")]
     find_renames: bool,
     /// Unchanged lines kept around each change; defaults to plugins.bundled.context.lines
@@ -83,15 +98,21 @@ struct Cli {
     /// Columns for --stat; defaults to the terminal's width
     #[arg(long)]
     width: Option<usize>,
+    /// Don't consider comments when diffing
     #[arg(long)]
     ignore_comments: bool,
+    /// Files larger than this many bytes on either side get a line diff; defaults to diff.byte_limit
     #[arg(long)]
     byte_limit: Option<usize>,
+    /// The largest AST matching graph to explore for one file; defaults to diff.graph_limit
     #[arg(long)]
     graph_limit: Option<usize>,
+    /// Files with more parse errors than this get a line diff; defaults to diff.parse_error_limit
     #[arg(long)]
     parse_error_limit: Option<usize>,
+    /// Revisions, then paths
     items: Vec<OsString>,
+    /// Paths
     #[arg(last = true)]
     paths: Vec<OsString>,
 }

@@ -211,3 +211,28 @@ fn diff_flags_before_a_subcommand_are_rejected() {
             "the argument '--cached' cannot be used with the 'config' subcommand",
         ));
 }
+
+#[test]
+fn a_malformed_override_is_a_clap_error() {
+    debug_command()
+        .args(["--override=*.c:Nope", "--list-languages"])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "invalid value '*.c:Nope' for '--override <GLOB:NAME>': no such language 'Nope'",
+        ));
+}
+
+#[test]
+fn a_malformed_numbered_override_names_its_variable() {
+    debug_command()
+        .arg("--list-languages")
+        .env("DFT_OVERRIDE_2", "bad")
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "invalid value 'bad' for DFT_OVERRIDE_2: expected GLOB:LANG_NAME",
+        ));
+}

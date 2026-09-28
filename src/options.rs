@@ -5,7 +5,7 @@ use std::ffi::OsStr;
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 
-use clap::Args;
+use clap::{error::ErrorKind, Args};
 
 use crate::exit_codes::EXIT_BAD_ARGUMENTS;
 use crate::parse::guess_language::{language_override_from_name, LanguageOverride};
@@ -75,6 +75,7 @@ pub(crate) struct DebugArgs {
         long = "override",
         value_name = "GLOB:NAME",
         env = "DFT_OVERRIDE",
+        value_parser = parse_override,
         help = concat!("Associate this glob pattern with this language, overriding normal language detection. For example:
 
 $ ", env!("CARGO_BIN_NAME"), " debug --override='*.c:C++' --dump-syntax file.c
@@ -93,7 +94,7 @@ $ export DFT_OVERRIDE_2='*.js:javascript jsx'
 
 When multiple overrides are specified, the first matching override wins.")
     )]
-    overrides: Vec<String>,
+    overrides: Vec<(LanguageOverride, glob::Pattern)>,
     #[arg(
         long,
         help = "Print all the languages supported by diffr, along with their recognised extensions."
@@ -168,65 +169,67 @@ pub(crate) enum Mode {
     },
 }
 
-fn parse_overrides_or_die(raw_overrides: &[String]) -> Vec<(LanguageOverride, Vec<glob::Pattern>)> {
-    let mut overrides: Vec<(LanguageOverride, Vec<glob::Pattern>)> = vec![];
-    let mut invalid_syntax = false;
+/// One `GLOB:LANG_NAME` override, as `--override` and `DFT_OVERRIDE_N` take it.
+fn parse_override(raw: &str) -> Result<(LanguageOverride, glob::Pattern), String> {
+    let (glob_str, lang_name) = raw
+        .rsplit_once(':')
+        .ok_or("expected GLOB:LANG_NAME, e.g. '*.js:JSON'")?;
+    let pattern = glob::Pattern::new(glob_str)
+        .map_err(|error| format!("invalid glob '{glob_str}': {}", error.msg))?;
+    let language = language_override_from_name(lang_name).ok_or_else(|| {
+        format!("no such language '{lang_name}'; see --list-languages for the names, which match case insensitively")
+    })?;
+    Ok((language, pattern))
+}
 
-    for raw_override in raw_overrides {
-        if let Some((glob_str, lang_name)) = raw_override.rsplit_once(':') {
-            match glob::Pattern::new(glob_str) {
-                Ok(pattern) => {
-                    if let Some(language_override) = language_override_from_name(lang_name) {
-                        overrides.push((language_override, vec![pattern]));
-                    } else {
-                        eprintln!("No such language '{}'", lang_name);
-                        eprintln!("See --list-languages for the names of all languages available. Language overrides are case insensitive.");
-                        invalid_syntax = true;
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Invalid glob syntax '{}'", glob_str);
-                    eprintln!("Glob parsing error: {}", e.msg);
-                    invalid_syntax = true;
-                }
-            }
-        } else {
-            eprintln!("Invalid language override syntax '{}'", raw_override);
-            eprintln!("Language overrides are in the format 'GLOB:LANG_NAME', e.g. '*.js:JSON'.");
-            invalid_syntax = true;
+/// `DFT_OVERRIDE_1` up to `DFT_OVERRIDE_9`, which clap does not read.
+fn numbered_env_overrides() -> Vec<(LanguageOverride, glob::Pattern)> {
+    let mut overrides = vec![];
+    for i in 1..=9 {
+        let name = format!("DFT_OVERRIDE_{i}");
+        let value = match env::var(&name) {
+            Ok(value) => value,
+            Err(env::VarError::NotPresent) => continue,
+            Err(env::VarError::NotUnicode(_)) => clap::Error::raw(
+                ErrorKind::InvalidUtf8,
+                format!("{name} is not valid UTF-8\n"),
+            )
+            .exit(),
+        };
+        match parse_override(&value) {
+            Ok(language_override) => overrides.push(language_override),
+            Err(message) => clap::Error::raw(
+                ErrorKind::ValueValidation,
+                format!("invalid value '{value}' for {name}: {message}\n"),
+            )
+            .exit(),
         }
     }
+    overrides
+}
 
-    if invalid_syntax {
-        std::process::exit(EXIT_BAD_ARGUMENTS);
-    }
-
-    let mut combined_overrides: Vec<(LanguageOverride, Vec<glob::Pattern>)> = vec![];
-    for (lang, globs) in overrides {
-        if let Some((prev_lang, prev_globs)) = combined_overrides.last_mut() {
-            if *prev_lang == lang {
-                prev_globs.extend(globs);
-            } else {
-                combined_overrides.push((lang, globs));
-            }
-        } else {
-            combined_overrides.push((lang, globs));
+/// Adjacent overrides naming the same language share one entry.
+fn combine_overrides(
+    overrides: impl IntoIterator<Item = (LanguageOverride, glob::Pattern)>,
+) -> Vec<(LanguageOverride, Vec<glob::Pattern>)> {
+    let mut combined: Vec<(LanguageOverride, Vec<glob::Pattern>)> = vec![];
+    for (lang, pattern) in overrides {
+        match combined.last_mut() {
+            Some((prev_lang, prev_globs)) if *prev_lang == lang => prev_globs.push(pattern),
+            _ => combined.push((lang, vec![pattern])),
         }
     }
-
-    combined_overrides
+    combined
 }
 
 impl DebugArgs {
     pub(crate) fn mode(&self) -> Mode {
-        let mut raw_overrides = self.overrides.clone();
-        for i in 1..=9 {
-            if let Ok(value) = env::var(format!("DFT_OVERRIDE_{}", i)) {
-                raw_overrides.push(value);
-            }
-        }
-
-        let language_overrides = parse_overrides_or_die(&raw_overrides);
+        let language_overrides = combine_overrides(
+            self.overrides
+                .iter()
+                .cloned()
+                .chain(numbered_env_overrides()),
+        );
 
         if self.list_languages {
             return Mode::ListLanguages { language_overrides };

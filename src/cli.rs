@@ -26,13 +26,13 @@ use std::{
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
-    #[arg(long, value_name = "repo", default_value = ".")]
-    repo: String,
+    #[arg(long, default_value = ".")]
+    repo: PathBuf,
     /// Concurrent file diffs for --format ndjson; results are emitted as each finishes
-    #[arg(short, long, value_name = "jobs", default_value_t = 16)]
+    #[arg(short, long, default_value_t = 16)]
     jobs: usize,
     /// File tag priority: files carrying an earlier listed tag come first
-    #[arg(long, value_name = "order", value_delimiter = ',')]
+    #[arg(long, value_delimiter = ',')]
     order: Vec<String>,
     #[arg(long, visible_alias = "staged")]
     cached: bool,
@@ -63,10 +63,10 @@ struct Cli {
     #[arg(short = 'M', long, conflicts_with = "no_renames")]
     find_renames: bool,
     /// Unchanged lines kept around each change; defaults to plugins.bundled.context.lines
-    #[arg(short = 'U', long, value_name = "unified")]
+    #[arg(short = 'U', long)]
     unified: Option<u32>,
     /// Write the event stream to stdout instead of opening the terminal UI
-    #[arg(long, value_name = "format")]
+    #[arg(long)]
     format: Option<Format>,
     /// Emit initial files followed by deferred annotations (NDJSON v4)
     #[arg(long, requires = "format")]
@@ -75,19 +75,18 @@ struct Cli {
     #[arg(long)]
     syntax: bool,
     /// Columns for --stat; defaults to the terminal's width
-    #[arg(long, value_name = "width")]
+    #[arg(long)]
     width: Option<usize>,
     #[arg(long)]
     ignore_comments: bool,
-    #[arg(long, value_name = "byte-limit")]
+    #[arg(long)]
     byte_limit: Option<usize>,
-    #[arg(long, value_name = "graph-limit")]
+    #[arg(long)]
     graph_limit: Option<usize>,
-    #[arg(long, value_name = "parse-error-limit")]
+    #[arg(long)]
     parse_error_limit: Option<usize>,
-    #[arg(value_name = "items", num_args = 0..)]
     items: Vec<OsString>,
-    #[arg(value_name = "paths", last = true)]
+    #[arg(last = true)]
     paths: Vec<OsString>,
 }
 
@@ -121,7 +120,6 @@ enum Command {
 #[derive(Args)]
 struct ConfigArgs {
     /// Initial search in the settings screen
-    #[arg(value_name = "query")]
     query: Option<String>,
     #[command(subcommand)]
     command: Option<ConfigCommand>,
@@ -140,12 +138,7 @@ enum ConfigCommand {
         reveal: bool,
     },
     /// Write one key to the global configuration file
-    Set {
-        #[arg(value_name = "key")]
-        key: String,
-        #[arg(value_name = "value")]
-        value: String,
-    },
+    Set { key: String, value: String },
 }
 
 pub(crate) fn run() -> Result<i32> {

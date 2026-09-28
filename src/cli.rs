@@ -4,6 +4,7 @@ use crate::git::{Comparison, DiffSession, FileParams, Operand, Result};
 use crate::options::DiffOptions;
 use crate::plugin::Pipeline;
 use clap::{Arg, ArgAction, ArgGroup, ArgMatches, Command};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use git2::{DiffStatsFormat, Repository};
 use std::{
     ffi::OsString,
@@ -11,6 +12,130 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::Arc,
 };
+
+/// Structural diffs with Git-style comparison inputs
+#[derive(Parser)]
+#[command(
+    name = env!("CARGO_BIN_NAME"),
+    version,
+    group(ArgGroup::new("metadata").args(["name_only", "name_status", "stat", "numstat", "shortstat"])),
+    after_help = "Examples:\n  diffr\n  diffr --cached\n  diffr main...HEAD -- src/\n  diffr --no-index -- before.rs after.rs\n  diffr main HEAD --format ndjson\n\nUnsupported Git flags are rejected; this is not a complete git diff implementation."
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+    #[arg(long, value_name = "repo", default_value = ".")]
+    repo: String,
+    /// Replace the global configuration file
+    #[arg(long = "config", value_name = "PATH")]
+    config_file: Option<PathBuf>,
+    /// Concurrent file diffs for --format ndjson; results are emitted as each finishes
+    #[arg(short, long, value_name = "jobs", default_value_t = 16)]
+    jobs: usize,
+    /// File tag priority: files carrying an earlier listed tag come first
+    #[arg(long, value_name = "order", value_delimiter = ',')]
+    order: Vec<String>,
+    #[arg(long, visible_alias = "staged")]
+    cached: bool,
+    #[arg(long)]
+    merge_base: bool,
+    #[arg(long)]
+    no_index: bool,
+    #[arg(short = 'R', long)]
+    reverse: bool,
+    #[arg(long)]
+    exit_code: bool,
+    #[arg(long)]
+    quiet: bool,
+    #[arg(long)]
+    name_only: bool,
+    #[arg(long)]
+    name_status: bool,
+    #[arg(long)]
+    stat: bool,
+    #[arg(long)]
+    numstat: bool,
+    #[arg(long)]
+    shortstat: bool,
+    #[arg(short = 'z', long)]
+    null: bool,
+    #[arg(long)]
+    no_renames: bool,
+    #[arg(short = 'M', long, conflicts_with = "no_renames")]
+    find_renames: bool,
+    /// Unchanged lines kept around each change; defaults to plugins.bundled.context.lines
+    #[arg(short = 'U', long, value_name = "unified")]
+    unified: Option<u32>,
+    /// Write the event stream to stdout instead of opening the terminal UI
+    #[arg(long, value_name = "format")]
+    format: Option<Format>,
+    /// Emit initial files followed by deferred annotations (NDJSON v4)
+    #[arg(long, requires = "format")]
+    stream_annotations: bool,
+    /// Include every token's tree-sitter capture name in --format ndjson output
+    #[arg(long)]
+    syntax: bool,
+    /// Columns for --stat; defaults to the terminal's width
+    #[arg(long, value_name = "width")]
+    width: Option<usize>,
+    #[arg(long)]
+    ignore_comments: bool,
+    #[arg(long, value_name = "byte-limit")]
+    byte_limit: Option<usize>,
+    #[arg(long, value_name = "graph-limit")]
+    graph_limit: Option<usize>,
+    #[arg(long, value_name = "parse-error-limit")]
+    parse_error_limit: Option<usize>,
+    #[arg(value_name = "items", num_args = 0..)]
+    items: Vec<OsString>,
+}
+
+impl Cli {
+    fn metadata(&self) -> bool {
+        self.name_only || self.name_status || self.stat || self.numstat || self.shortstat
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Format {
+    Ndjson,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Show, edit, or open the settings screen for diffr's configuration
+    Config(ConfigArgs),
+}
+
+#[derive(Args)]
+struct ConfigArgs {
+    /// Initial search in the settings screen
+    #[arg(value_name = "query")]
+    query: Option<String>,
+    #[command(subcommand)]
+    command: Option<ConfigCommand>,
+}
+
+#[derive(Subcommand)]
+enum ConfigCommand {
+    /// Print the configuration's JSON Schema
+    Schema,
+    /// Print the resolved configuration
+    Show {
+        #[arg(long)]
+        json: bool,
+        /// Do not redact the API key
+        #[arg(long)]
+        reveal: bool,
+    },
+    /// Write one key to the global configuration file
+    Set {
+        #[arg(value_name = "key")]
+        key: String,
+        #[arg(value_name = "value")]
+        value: String,
+    },
+}
 
 fn flag(name: &'static str) -> Arg {
     Arg::new(name).long(name).action(ArgAction::SetTrue)

@@ -36,7 +36,8 @@ fn optional_languages_follow_build_features() {
         .clone();
     let listed = String::from_utf8(listed).unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let config = dir.path().join("config.toml");
+    let config = dir.path().join("diffr/config.toml");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
     std::fs::write(&config, "[plugins]\norder = []\n").unwrap();
 
     for (name, fixture, extension, enabled) in [
@@ -58,8 +59,6 @@ fn optional_languages_follow_build_features() {
     ] {
         assert_eq!(listed.contains(name), enabled, "{name}");
         let output = get_base_command()
-            .arg("--config")
-            .arg(&config)
             .args([
                 "--format",
                 "ndjson",
@@ -67,6 +66,7 @@ fn optional_languages_follow_build_features() {
                 &format!("sample_files/{fixture}_1.{extension}"),
                 &format!("sample_files/{fixture}_2.{extension}"),
             ])
+            .env("XDG_CONFIG_HOME", dir.path())
             .assert()
             .success()
             .get_output()
@@ -139,22 +139,21 @@ fn text_output_is_gone() {
 #[test]
 fn a_plugin_that_cannot_be_made_stops_diffr_before_any_record() {
     let dir = tempfile::tempdir().unwrap();
-    let config = dir.path().join("config.toml");
+    let config = dir.path().join("diffr/config.toml");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
     std::fs::write(&config, "[plugins.bundled.summarize]\nenabled = true\n").unwrap();
     let mut cmd = get_base_command();
 
-    cmd.arg("--config")
-        .arg(&config)
-        .args([
-            "--no-index",
-            "sample_files/simple_1.js",
-            "sample_files/simple_2.js",
-            "--format",
-            "ndjson",
-        ])
-        .env("XDG_CONFIG_HOME", dir.path())
-        .env_remove("GEMINI_API_KEY")
-        .env_remove("GOOGLE_API_KEY");
+    cmd.args([
+        "--no-index",
+        "sample_files/simple_1.js",
+        "sample_files/simple_2.js",
+        "--format",
+        "ndjson",
+    ])
+    .env("XDG_CONFIG_HOME", dir.path())
+    .env_remove("GEMINI_API_KEY")
+    .env_remove("GOOGLE_API_KEY");
     cmd.assert()
         .failure()
         .code(2)

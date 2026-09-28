@@ -100,24 +100,23 @@ impl Fixture {
             .to_string()
     }
 
-    /// A config file holding `text`, in a directory of its own.
+    /// A global config file holding `text`, under a config home of its own.
     fn config(&self, name: &str, text: &str) -> PathBuf {
-        let path = self.dir.path().join(name).join("config.toml");
+        let path = self.dir.path().join(name).join("diffr/config.toml");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, text).unwrap();
         path
     }
 
+    /// Diff `base` to `head` with `config` as the global config file.
     fn run(&self, config: &Path, base: &str, head: &str) -> Output {
-        let home = self.dir.path().join("home");
+        let config_home = config.parent().unwrap().parent().unwrap();
         get_base_command()
             .arg("--repo")
             .arg(self.dir.path().join("repo"))
-            .arg("--config")
-            .arg(config)
             .args([base, head, "--format", "ndjson"])
-            .env("HOME", &home)
-            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("HOME", self.dir.path().join("home"))
+            .env("XDG_CONFIG_HOME", config_home)
             .env_remove("GIT_DIR")
             .env_remove("GEMINI_API_KEY")
             .env_remove("GOOGLE_API_KEY")

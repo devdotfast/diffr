@@ -172,3 +172,15 @@ fn config_ui_requires_a_terminal() {
         .code(2)
         .stderr(predicate::str::contains("terminal UI needs a terminal"));
 }
+
+#[test]
+fn diff_flags_before_a_subcommand_are_rejected() {
+    get_base_command()
+        .args(["--cached", "config", "show"])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "the argument '--cached' cannot be used with the 'config' subcommand",
+        ));
+}

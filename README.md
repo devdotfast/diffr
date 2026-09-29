@@ -78,11 +78,3 @@ We hope in the future that we can find some way to upstream some / all of these 
 MIT. See `LICENSE` for the terms and `NOTICE` for the third-party work
 diffr builds on, starting with the lovely
 [difftastic](https://github.com/Wilfred/difftastic).
-
-## Language editions
-
-Default builds omit Apex, Fortran, F#, Haskell, Julia, OCaml, QML, Verilog, and
-VHDL, and fall back to text diffs for them. Build with `--features all-languages`
-(or individual `lang-*` features) to include them. Releases ship both
-`diffr-cli-<version>-<target>.tar.gz` (lean) and
-`diffr-cli-full-<version>-<target>.tar.gz`.

@@ -456,6 +456,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
+        #[cfg(feature = "lang-fsharp")]
         FSharp => {
             let language_fn = tree_sitter_fsharp::LANGUAGE_FSHARP;
             let language = tree_sitter::Language::new(language_fn);
@@ -471,6 +472,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
+        #[cfg(feature = "lang-fortran")]
         Fortran => {
             let language_fn = tree_sitter_fortran::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
@@ -1246,6 +1248,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
+        #[cfg(feature = "lang-verilog")]
         Verilog => {
             let language_fn = tree_sitter_verilog::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);

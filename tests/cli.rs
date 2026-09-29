@@ -26,6 +26,60 @@ fn list_languages() {
 }
 
 #[test]
+fn optional_languages_follow_build_features() {
+    let listed = debug_command()
+        .arg("--list-languages")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let listed = String::from_utf8(listed).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    std::fs::write(&config, "[plugins]\norder = []\n").unwrap();
+
+    for (name, fixture, extension, enabled) in [
+        ("Fortran", "fortran", "f90", cfg!(feature = "lang-fortran")),
+        ("Verilog", "verilog", "sv", cfg!(feature = "lang-verilog")),
+        ("F#", "f_sharp", "fs", cfg!(feature = "lang-fsharp")),
+    ] {
+        assert_eq!(listed.contains(name), enabled, "{name}");
+        let output = get_base_command()
+            .arg("--config")
+            .arg(&config)
+            .args([
+                "--format",
+                "ndjson",
+                "--no-index",
+                &format!("sample_files/{fixture}_1.{extension}"),
+                &format!("sample_files/{fixture}_2.{extension}"),
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let events: Vec<serde_json::Value> = std::str::from_utf8(&output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let file = events.iter().find(|event| event["type"] == "file").unwrap();
+        assert_eq!(file["diff"]["type"], "text", "{name}: {file}");
+        assert_eq!(
+            file["diff"]["stats"]["fallback"]["code"].as_str(),
+            if enabled {
+                None
+            } else {
+                Some("unsupported_language")
+            },
+            "{name}",
+        );
+    }
+}
+
+#[test]
 fn dump_tree_sitter() {
     let mut cmd = debug_command();
 

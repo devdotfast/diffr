@@ -13,7 +13,7 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function fixture(entry = "diffr") {
+function fixture(entry = "diffr", artifact?: string) {
   if (!target) throw new Error("Fetch tests require a supported release platform");
   const dir = mkdtempSync(join(tmpdir(), "diffr-fetch-test-"));
   dirs.push(dir);
@@ -23,7 +23,7 @@ function fixture(entry = "diffr") {
   expect(Bun.spawnSync(["tar", "-czf", archive, "-C", dir, entry]).exitCode).toBe(0);
   const hash = createHash("sha256").update(readFileSync(archive)).digest("hex");
   const pins = join(dir, "pins.json");
-  writeFileSync(pins, JSON.stringify({ version, sha256: { [target]: hash } }));
+  writeFileSync(pins, JSON.stringify({ version, artifact, sha256: { [target]: hash } }));
   const mock = join(dir, "mock.mjs");
   // Intercept only the network boundary, leaving the actual CLI and tar intact.
   writeFileSync(mock, `
@@ -118,4 +118,20 @@ test("missing option values fail clearly", () => {
   const f = fixture();
   expect(f.run(["--pins"]).code).toBe(1);
   expect(f.run(["--into"]).code).toBe(1);
+});
+
+test("CLI-only pins download the CLI archive", () => {
+  const f = fixture("diffr", "diffr-cli");
+  const result = f.run(["--required"]);
+  expect(result.code, result.err).toBe(0);
+  expect(readFileSync(join(f.dir, "requested"), "utf8")).toBe(
+    `https://github.com/devdotfast/diffr/releases/download/${version}/diffr-cli-${version}-${target}.tar.gz`,
+  );
+  expect(readFileSync(join(f.into, "diffr"), "utf8")).toBe(f.content);
+});
+
+test("unknown pinned artifacts fail before downloading", () => {
+  const f = fixture("diffr", "other");
+  expect(f.run().err).toContain("unknown pinned artifact");
+  expect(existsSync(join(f.dir, "requested"))).toBe(false);
 });

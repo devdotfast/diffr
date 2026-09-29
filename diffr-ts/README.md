@@ -9,7 +9,7 @@ const event = decodeStructuralDiffEvent(line);
 ```
 
 ```sh
-npx --package @dev.fast/diffr@0.1.4 diffr-fetch --into ./bin --required
+npx --package @dev.fast/diffr@0.1.5 diffr-fetch --into ./bin --required
 ```
 
 Supports macOS arm64, macOS x64, and Linux x64. `--check` verifies an existing install without
@@ -30,10 +30,11 @@ Keep these files in sync:
 ## Release
 
 Linux ARM64 fetch support requires a release containing an `aarch64-unknown-linux-gnu`
-archive and regenerated pins; the bundled 0.1.4 pins do not include it.
+archive and regenerated pins; the bundled 0.1.5 pins do not include it.
 
 After tagging the matching Rust release and building with `cargo build --locked`,
-run from `diffr-ts`:
+run from `diffr-ts`. New pins select the CLI-only release archives; older pins
+continue to use the full archives:
 
 ```sh
 bun install --frozen-lockfile

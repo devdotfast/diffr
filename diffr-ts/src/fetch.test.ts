@@ -13,7 +13,7 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function fixture(entry = "diffr", platform = process.platform, arch = process.arch) {
+function fixture(entry = "diffr", artifact?: string, platform = process.platform, arch = process.arch) {
   const target = targets[`${platform}-${arch}`];
   if (!target) throw new Error("Fetch tests require a supported release platform");
   const dir = mkdtempSync(join(tmpdir(), "diffr-fetch-test-"));
@@ -24,7 +24,7 @@ function fixture(entry = "diffr", platform = process.platform, arch = process.ar
   expect(Bun.spawnSync(["tar", "-czf", archive, "-C", dir, entry]).exitCode).toBe(0);
   const hash = createHash("sha256").update(readFileSync(archive)).digest("hex");
   const pins = join(dir, "pins.json");
-  writeFileSync(pins, JSON.stringify({ version, sha256: { [target]: hash } }));
+  writeFileSync(pins, JSON.stringify({ version, artifact, sha256: { [target]: hash } }));
   const mock = join(dir, "mock.mjs");
   // Mock the platform and network, leaving the actual CLI and tar intact.
   writeFileSync(mock, `
@@ -124,15 +124,31 @@ test("missing option values fail clearly", () => {
 });
 
 test("Linux ARM64 downloads and stamps the aarch64 release", () => {
-  const f = fixture("diffr", "linux", "arm64");
+  const f = fixture("diffr", "diffr-cli", "linux", "arm64");
   const result = f.run(["--required"]);
   expect(result.code, result.err).toBe(0);
   expect(readFileSync(join(f.dir, "requested"), "utf8")).toBe(
-    `https://github.com/devdotfast/diffr/releases/download/${version}/diffr-${version}-aarch64-unknown-linux-gnu.tar.gz`,
+    `https://github.com/devdotfast/diffr/releases/download/${version}/diffr-cli-${version}-aarch64-unknown-linux-gnu.tar.gz`,
   );
   expect(readFileSync(join(f.into, "diffr"), "utf8")).toBe(f.content);
   expect(JSON.parse(readFileSync(join(f.into, "diffr.stamp.json"), "utf8"))).toEqual({
     version, target: "aarch64-unknown-linux-gnu",
   });
   expect(f.run(["--check"], true).code).toBe(0);
+});
+
+test("CLI-only pins download the CLI archive", () => {
+  const f = fixture("diffr", "diffr-cli");
+  const result = f.run(["--required"]);
+  expect(result.code, result.err).toBe(0);
+  expect(readFileSync(join(f.dir, "requested"), "utf8")).toBe(
+    `https://github.com/devdotfast/diffr/releases/download/${version}/diffr-cli-${version}-${target}.tar.gz`,
+  );
+  expect(readFileSync(join(f.into, "diffr"), "utf8")).toBe(f.content);
+});
+
+test("unknown pinned artifacts fail before downloading", () => {
+  const f = fixture("diffr", "other");
+  expect(f.run().err).toContain("unknown pinned artifact");
+  expect(existsSync(join(f.dir, "requested"))).toBe(false);
 });

@@ -6,7 +6,7 @@ import re
 import subprocess
 import tarfile
 
-TARGETS = ("aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu")
+TARGETS = ("aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu")
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -55,9 +55,14 @@ def formula(version, output):
   end
 
   on_linux do
-    depends_on arch: :x86_64
-    url "{url}-x86_64-unknown-linux-gnu.tar.gz"
-    sha256 "{checksums[archive_name(version, 'x86_64-unknown-linux-gnu')]}"
+    on_arm do
+      url "{url}-aarch64-unknown-linux-gnu.tar.gz"
+      sha256 "{checksums[archive_name(version, 'aarch64-unknown-linux-gnu')]}"
+    end
+    on_intel do
+      url "{url}-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "{checksums[archive_name(version, 'x86_64-unknown-linux-gnu')]}"
+    end
   end
 
   def install

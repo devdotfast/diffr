@@ -30,7 +30,7 @@ diffr main...HEAD -- src/      # merge-base comparison
 
 ## Installation
 
-CLI and terminal UI (Apple Silicon macOS, Intel macOS, and x64 Linux):
+CLI and terminal UI (Apple Silicon macOS, Intel macOS, and x64/ARM64 Linux):
 
 ```sh
 brew install devdotfast/tap/diffr

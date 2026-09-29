@@ -29,6 +29,9 @@ Keep these files in sync:
 
 ## Release
 
+Linux ARM64 fetch support requires a release containing an `aarch64-unknown-linux-gnu`
+archive and regenerated pins; the bundled 0.1.5 pins do not include it.
+
 After tagging the matching Rust release and building with `cargo build --locked`,
 run from `diffr-ts`. New pins select the CLI-only release archives; older pins
 continue to use the full archives:

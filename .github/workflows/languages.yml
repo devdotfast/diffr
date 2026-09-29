@@ -65,6 +65,7 @@ jobs:
         run: |
           cargo xtask check-languages
           python3 languages/tests/test_definitions.py
+          python3 languages/tests/test_licenses.py
           python3 languages/tests/test_publish.py
       - name: Build locked grammars
         run: cargo xtask build-languages --target '${{ matrix.target }}'

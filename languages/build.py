@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tarfile
 from definitions import check
+from licenses import package_licenses
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {
@@ -53,8 +54,8 @@ def main():
     package = output / 'package'
     template = read(ROOT / 'languages/package.template.json')
     name = '@dev.fast/diffr-languages-extra-' + suffix
+    metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--all-features', '--format-version', '1'], cwd=ROOT))
     if args.action == 'build':
-        metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--all-features', '--format-version', '1'], cwd=ROOT))
         if package.exists():
             shutil.rmtree(package)
         package.mkdir(parents=True)
@@ -82,12 +83,8 @@ def main():
                     dependency = next(p for p in metadata['packages'] if p['name'] == query['crate'])
                     dependency_root = Path(dependency['manifest_path']).parent
                     path = dependency_root / query['path']
-                    if query['crate'] != definition['crate']:
-                        license = ROOT / query['license'] if 'license' in query else dependency_root / 'LICENSE'
-                        shutil.copyfile(license, package / (query['crate'] + '.LICENSE'))
                 highlights.append(path.read_text())
             (package / (definition['id'] + '.highlights.scm')).write_text(''.join(highlights))
-            shutil.copyfile(ROOT / 'languages' / definition['id'] / 'LICENSE', package / (definition['id'] + '.LICENSE'))
         write(package / 'manifest.json', dict(schema=1, pack='extra', version=template['version'], target=args.target, libraries=libraries))
         write(package / 'package.json', dict(template, name=name, os=[system], cpu=[cpu], **({'libc': ['glibc']} if system == 'linux' else {})))
     else:
@@ -95,6 +92,7 @@ def main():
         assert manifest['target'] == args.target and manifest['version'] == template['version']
         expected = {(d['id'], d['symbol']) for d in definitions}
         assert {(d['id'], d['symbol']) for d in manifest['libraries']} == expected, 'stale package: rebuild the language libraries'
+        package_licenses(definitions, metadata, package, ROOT / 'target/languages/licenses')
         expected_files = {'manifest.json', 'package.json'}
         for library in manifest['libraries']:
             expected_files.update([library['file'], library['id'] + '.LICENSE', library['id'] + '.highlights.scm'])

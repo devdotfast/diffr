@@ -45,7 +45,11 @@
         "constant": "apex::HIGHLIGHTS_QUERY",
         "path": "apex/queries/highlights.scm"
       }
-    ]
+    ],
+    "license": {
+      "path": "LICENSE",
+      "sha256": "c3d045abbc0a8dec1b00737c0668f6dbb028d248521b74e79778c726671925ed"
+    }
   },
   {
     "id": "fortran",
@@ -88,7 +92,11 @@
         "constant": "HIGHLIGHTS_QUERY",
         "path": "queries/highlights.scm"
       }
-    ]
+    ],
+    "license": {
+      "path": "LICENSE",
+      "sha256": "c0fc02a86ae2b179c4729694c523bbf42da674e5136ed8e12e3cb2f26556ea9f"
+    }
   },
   {
     "id": "fsharp",
@@ -131,7 +139,11 @@
         "constant": "HIGHLIGHTS_QUERY",
         "path": "queries/highlights.scm"
       }
-    ]
+    ],
+    "license": {
+      "path": "LICENSE",
+      "sha256": "f9352b63e87252b282b252bf27530027c8ca69829e0023f8b8b682a736f271fd"
+    }
   },
   {
     "id": "haskell",
@@ -169,7 +181,11 @@
         "constant": "HIGHLIGHTS_QUERY",
         "path": "queries/highlights.scm"
       }
-    ]
+    ],
+    "license": {
+      "path": "LICENSE",
+      "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+    }
   },
   {
     "id": "julia",
@@ -212,7 +228,11 @@
       {
         "local": "vendored_parsers/highlights/julia.scm"
       }
-    ]
+    ],
+    "license": {
+      "path": "LICENSE",
+      "sha256": "74f800107f200f4e28da33e9c3f86230d37d8f4c0a4916f7111e800c395ee3a2"
+    }
   },
   {
     "id": "ocaml",
@@ -259,7 +279,11 @@
         "constant": "HIGHLIGHTS_QUERY",
         "path": "queries/highlights.scm"
       }
-    ]
+    ],
+    "license": {
+      "path": "LICENSE",
+      "sha256": "f977a20805dd6e275f14bc090a5f8e638401dad4df366841c1060f12c75b74ae"
+    }
   },
   {
     "id": "ocaml-interface",
@@ -300,7 +324,11 @@
       ]
     ],
     "ignore_trailing": [],
-    "highlights": []
+    "highlights": [],
+    "license": {
+      "path": "LICENSE",
+      "sha256": "f977a20805dd6e275f14bc090a5f8e638401dad4df366841c1060f12c75b74ae"
+    }
   },
   {
     "id": "qml",
@@ -346,20 +374,31 @@
       {
         "crate": "tree-sitter-javascript",
         "constant": "HIGHLIGHT_QUERY",
-        "path": "queries/highlights.scm"
+        "path": "queries/highlights.scm",
+        "license": {
+          "path": "LICENSE",
+          "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+        }
       },
       {
         "crate": "tree-sitter-typescript",
         "constant": "HIGHLIGHTS_QUERY",
         "path": "queries/highlights.scm",
-        "license": "languages/typescript/LICENSE"
+        "license": {
+          "path": "LICENSE",
+          "sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559"
+        }
       },
       {
         "crate": "tree-sitter-qmljs",
         "constant": "HIGHLIGHTS_QUERY",
         "path": "queries/highlights.scm"
       }
-    ]
+    ],
+    "license": {
+      "path": "LICENSE",
+      "sha256": "a8fb3a7df5ba9ef3b6511a1d65ad69869de66828fe2d690b7b65913678739738"
+    }
   },
   {
     "id": "verilog",
@@ -399,7 +438,11 @@
       {
         "local": "vendored_parsers/highlights/verilog.scm"
       }
-    ]
+    ],
+    "license": {
+      "path": "LICENSE",
+      "sha256": "8d2ff8d1e308828099436c43dc8bfbb8b6f368ad2a012ab9802a80ca22b03b53"
+    }
   },
   {
     "id": "vhdl",
@@ -431,6 +474,10 @@
         "constant": "HIGHLIGHTS_QUERY",
         "path": "queries/Neovim/highlights.scm"
       }
-    ]
+    ],
+    "license": {
+      "path": "License.md",
+      "sha256": "a9323218abe9aabd3429b76634470b40c3be012600e1f96bd16ca254724fa954"
+    }
   }
 ]

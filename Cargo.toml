@@ -25,7 +25,6 @@ include = [
         "/src/",
         "/languages/catalog.json",
         "/languages/extra.json",
-        "/languages/*/LICENSE",
         "/wit/",
         "/plugins/",
         "/vendored_parsers/highlights/*.scm",

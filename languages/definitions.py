@@ -32,10 +32,12 @@ def validate(items, metadata, root=ROOT):
         assert re.fullmatch(r'[a-zA-Z_][a-zA-Z_0-9]*', definition['symbol']), f'{id}: invalid symbol'
         assert definition['smoke'].strip(), f'{id}: missing parse smoke input'
         assert re.fullmatch(r'\w+(::\w+)+', definition['parser']), f'{id}: invalid parser constant'
-        assert (root / 'languages' / id / 'LICENSE').is_file(), f'{id}: missing LICENSE'
+        licenses = [definition['license']] + [q['license'] for q in definition['highlights'] if 'crate' in q and q['crate'] != crate]
+        for license in licenses:
+            path = Path(license['path'])
+            assert not path.is_absolute() and '..' not in path.parts, f'{id}: invalid license path'
+            assert re.fullmatch(r'[0-9a-f]{64}', license['sha256']), f'{id}: invalid license hash'
         for query in definition['highlights']:
-            if 'license' in query:
-                assert (root / query['license']).is_file(), f'{id}: missing query license'
             if 'local' in query:
                 relative = Path(query['local'])
                 assert not relative.is_absolute() and '..' not in relative.parts, f'{id}: invalid local query path'

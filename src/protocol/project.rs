@@ -129,6 +129,9 @@ fn stats(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> Stats {
 /// is the engine's own prose, with the numbers.
 fn fallback_code(cause: FallbackCause) -> &'static str {
     match cause {
+        FallbackCause::ParserNotInstalled => "parser_not_installed",
+        FallbackCause::ParserUnavailable => "parser_unavailable",
+        FallbackCause::ParserLoadFailed => "parser_load_failed",
         FallbackCause::Generated => "generated",
         FallbackCause::ByteLimit => "too_large",
         FallbackCause::GraphLimit => "too_complex",
@@ -1320,7 +1323,8 @@ mod tests {
     fn syntax_spans_are_per_line_sorted_and_innermost() {
         let parser = crate::parse::tree_sitter_parser::from_language(
             crate::parse::guess_language::Language::Python,
-        );
+        )
+        .unwrap();
         let spans = syntax_spans("def f(x):\n    return \"a\"\n", parser);
         for pair in spans.windows(2) {
             assert!(

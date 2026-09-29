@@ -137,7 +137,10 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 pub(crate) struct Params {
-    languages: DftHashMap<Language, OnceLock<Arc<LanguageParams>>>,
+    languages:
+        DftHashMap<Language, OnceLock<Result<Arc<LanguageParams>, crate::languages::ParserError>>>,
+    deferred: DftHashMap<Language, Vec<query::QuerySource>>,
+    order: Vec<String>,
     pub(crate) diff: DiffConfig,
 }
 
@@ -275,24 +278,32 @@ impl Config {
         let mut languages: DftHashMap<_, _> = Language::iter()
             .map(|language| (language, OnceLock::new()))
             .collect();
+        let mut deferred = DftHashMap::default();
         for (name, sources) in queries::assemble(&queries)? {
             let language = Language::iter()
                 .find(|language| format!("{language:?}").to_lowercase() == name)
                 .ok_or_else(|| ConfigError(format!("unknown language: {name}")))?;
-            let parser = tree_sitter_parser::from_language(language);
+            if !crate::languages::builtin(language) {
+                deferred.insert(language, sources);
+                continue;
+            }
+            let parser = tree_sitter_parser::from_language(language)
+                .map_err(|e| ConfigError(e.to_string()))?;
             let query = AnnotationQuery::compile(&parser.language, &sources)?;
             check_tags(&query, &self.plugins.order)?;
             languages.insert(
                 language,
-                OnceLock::from(Arc::new(LanguageParams {
+                OnceLock::from(Ok(Arc::new(LanguageParams {
                     parser,
                     query,
                     sub_languages: OnceLock::new(),
-                })),
+                }))),
             );
         }
         Ok(Params {
             languages,
+            deferred,
+            order: self.plugins.order,
             diff: self.diff,
         })
     }
@@ -322,26 +333,50 @@ fn check_tags(query: &AnnotationQuery, order: &[String]) -> Result<(), ConfigErr
 }
 
 impl Params {
-    pub(crate) fn language(&self, language: Language) -> &Arc<LanguageParams> {
-        let config = self.languages[&language].get_or_init(|| {
-            // Languages without annotation rules still support structural diffing.
-            // Keep their grammars lazy, as in the existing parser registry.
-            let parser = tree_sitter_parser::from_language(language);
-            Arc::new(LanguageParams {
-                parser,
-                query: AnnotationQuery::compile(&parser.language, &[]).expect("an empty query"),
-                sub_languages: OnceLock::new(),
+    pub(crate) fn language(
+        &self,
+        language: Language,
+    ) -> Result<&Arc<LanguageParams>, crate::languages::ParserError> {
+        let config = self.languages[&language]
+            .get_or_init(|| {
+                let parser = tree_sitter_parser::from_language(language)?;
+                let sources = self
+                    .deferred
+                    .get(&language)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                let query = AnnotationQuery::compile(&parser.language, sources)
+                    .and_then(|query| {
+                        check_tags(&query, &self.order)?;
+                        Ok(query)
+                    })
+                    .map_err(|e| {
+                        crate::languages::ParserError::new(
+                            crate::summary::FallbackCause::ParserLoadFailed,
+                            e,
+                        )
+                    })?;
+                Ok(Arc::new(LanguageParams {
+                    parser,
+                    query,
+                    sub_languages: OnceLock::new(),
+                }))
             })
-        });
+            .as_ref()
+            .map_err(Clone::clone)?;
         config.sub_languages.get_or_init(|| {
             config
                 .parser
                 .sub_languages
                 .iter()
-                .map(|sub| (sub, Arc::clone(self.language(sub.parse_as))))
+                .filter_map(|sub| {
+                    self.language(sub.parse_as)
+                        .ok()
+                        .map(|params| (sub, Arc::clone(params)))
+                })
                 .collect()
         });
-        config
+        Ok(config)
     }
 }
 

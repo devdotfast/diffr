@@ -270,7 +270,10 @@ fn syntax_spans(
     let FileFormat::SupportedLanguage(language) = &diff.file_format else {
         return (Vec::new(), Vec::new());
     };
-    let parser = params.language(*language).parser;
+    let Ok(config) = params.language(*language) else {
+        return (Vec::new(), Vec::new());
+    };
+    let parser = config.parser;
     let spans = |content: &FileContent| match content {
         FileContent::Text(src) => project::syntax_spans(src, parser),
         FileContent::Binary => Vec::new(),

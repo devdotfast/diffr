@@ -1,0 +1,16 @@
+{
+  "id": "ocaml-interface",
+  "crate": "tree-sitter-ocaml",
+  "version": "0.25.0",
+  "source": "grammars/interface/src",
+  "symbol": "tree_sitter_ocaml_interface",
+  "revision": "6902a86ab5b3b80c622030210aae2d8cb95eb775",
+  "repository": "https://github.com/tree-sitter/tree-sitter-ocaml",
+  "variant": "OCamlInterface",
+  "feature": "lang-ocaml",
+  "fixture": {
+    "prefix": "ocaml_interface",
+    "extension": "mli"
+  },
+  "smoke": "type t = { value : int }\nval f : int -> t\n"
+}

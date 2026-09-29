@@ -41,6 +41,10 @@ impl TreeSitterParser {
 }
 
 fn main() {
+    println!(
+        "cargo:rustc-env=DIFFR_TARGET={}",
+        std::env::var("TARGET").unwrap()
+    );
     native_plugins();
     let parsers = vec![
         TreeSitterParser {

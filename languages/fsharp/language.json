@@ -1,0 +1,16 @@
+{
+  "id": "fsharp",
+  "crate": "tree-sitter-fsharp",
+  "version": "0.3.0",
+  "source": "fsharp/src",
+  "symbol": "tree_sitter_fsharp",
+  "revision": "5247c1197cb290fcaea0e0a793d32829c1396831",
+  "repository": "https://github.com/ionide/tree-sitter-fsharp",
+  "variant": "FSharp",
+  "feature": "lang-fsharp",
+  "fixture": {
+    "prefix": "f_sharp",
+    "extension": "fs"
+  },
+  "smoke": "module Example\nlet f x =\n    let y = x + 1\n    y * 2\n"
+}

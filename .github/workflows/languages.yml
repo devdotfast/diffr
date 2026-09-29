@@ -1,0 +1,142 @@
+name: Extra languages
+
+on:
+  pull_request:
+    paths:
+      - 'languages/**'
+      - 'sample_files/**'
+      - 'tests/cli.rs'
+      - 'src/**'
+      - 'Cargo.*'
+      - 'build.rs'
+      - 'xtask/**'
+      - '.github/workflows/languages.yml'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the exact signed archives and produce a verified catalog
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: languages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Require protected publication environment
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          gh api "repos/$REPOSITORY/environments/languages-release" > environment.json
+          jq -e '.protection_rules | any(.type == "required_reviewers" and (.reviewers | length > 0))' environment.json
+
+  build:
+    needs: guard
+    environment: ${{ inputs.publish && 'languages-release' || 'languages-ci' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check language definitions and publication gate
+        run: |
+          cargo xtask check-languages
+          python3 languages/tests/test_definitions.py
+          python3 languages/tests/test_publish.py
+      - name: Build locked grammars
+        run: cargo xtask build-languages --target '${{ matrix.target }}'
+      - name: Import Whiteboard signing identity
+        if: inputs.publish && runner.os == 'macOS'
+        env:
+          CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          python3 -c 'import os,base64; open(os.environ["RUNNER_TEMP"]+"/certificate.p12","wb").write(base64.b64decode(os.environ["CERTIFICATE"]))'
+          password=$(openssl rand -hex 24)
+          security create-keychain -p "$password" "$RUNNER_TEMP/languages.keychain-db"
+          security set-keychain-settings -lut 21600 "$RUNNER_TEMP/languages.keychain-db"
+          security unlock-keychain -p "$password" "$RUNNER_TEMP/languages.keychain-db"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$RUNNER_TEMP/languages.keychain-db" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$password" "$RUNNER_TEMP/languages.keychain-db"
+          security list-keychains -d user -s "$RUNNER_TEMP/languages.keychain-db"
+          echo 'DIFFR_SIGN_IDENTITY=Developer ID Application: Workable Solutions Inc. (PWXY59YDAY)' >> "$GITHUB_ENV"
+      - name: Native parse and hardened runtime proof
+        run: python3 languages/tests/probe.py 'target/languages/${{ matrix.target }}/package'
+      - name: Package final bytes
+        run: cargo xtask package-languages --target '${{ matrix.target }}'
+      - name: Installer and static parser parity
+        run: python3 languages/tests/integration.py 'target/languages/${{ matrix.target }}/catalog-entry.json' --release
+      - name: Fresh Linux install without development tools or network
+        if: runner.os == 'Linux'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          filename=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["url"].rsplit("/", 1)[1])' "target/languages/$TARGET/catalog-entry.json")
+          pack="$PWD/target/languages/$TARGET/$filename"
+          docker run --rm --network none --read-only --user 65534:65534 \
+            --tmpfs /tmp:rw,exec,nosuid,size=256m \
+            --env DIFFR_PARSER_DIR=/tmp/diffr-parsers \
+            --volume "$PWD/target/languages/$TARGET/verification/diffr-native:/usr/local/bin/diffr:ro" \
+            --volume "$pack:/opt/extra.tgz:ro" \
+            --volume "$PWD/target/languages/$TARGET/test-fixtures.txt:/opt/fixtures.txt:ro" \
+            --volume "$PWD/sample_files:/fixtures:ro" \
+            --volume "$PWD/languages/tests/container-smoke.sh:/opt/container-smoke.sh:ro" \
+            debian:bookworm-slim /bin/sh /opt/container-smoke.sh
+      - name: Clean signing material
+        if: always() && runner.os == 'macOS'
+        run: |
+          security delete-keychain "$RUNNER_TEMP/languages.keychain-db" || true
+          rm -f "$RUNNER_TEMP/certificate.p12"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: languages-${{ matrix.target }}
+          path: |
+            target/languages/${{ matrix.target }}/*.tgz
+            target/languages/${{ matrix.target }}/catalog-entry.json
+          if-no-files-found: error
+
+  publish:
+    if: inputs.publish
+    needs: build
+    environment: languages-release
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: languages-*
+          path: target/languages/publish
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - name: Publish and verify exact archives
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: python3 languages/publish.py target/languages/publish --publish
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: verified-language-catalog
+          path: target/languages/publish/catalog.json
+          if-no-files-found: error

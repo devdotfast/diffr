@@ -186,6 +186,20 @@ fn main() -> Result<()> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let task = std::env::args().nth(1).unwrap_or_default();
     match task.as_str() {
+        "build-languages" | "package-languages" | "check-languages" => {
+            let action = match task.as_str() {
+                "build-languages" => "build",
+                "package-languages" => "package",
+                _ => "check",
+            };
+            run(
+                Command::new("python3")
+                    .arg(root.join("languages/build.py"))
+                    .arg(action)
+                    .args(std::env::args_os().skip(2)),
+                "Building language pack",
+            )
+        }
         "install" => install(root, true),
         "install-tui" => install(root, false),
         "build-plugins" => build_plugins(root),

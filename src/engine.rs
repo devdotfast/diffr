@@ -108,13 +108,23 @@ pub(crate) fn diff_file_content(
     };
 
     let language = guess(Path::new(display_path), guess_src, overrides);
-    let lang_config = language.map(|lang| (lang, params.language(lang)));
+    let resolved = language
+        .map(|lang| params.language(lang).map(|config| (lang, config)))
+        .transpose();
+    let fallback = resolved
+        .as_ref()
+        .err()
+        .map(|error| FileFormat::TextFallback {
+            cause: error.cause,
+            reason: error.message.clone(),
+        });
+    let lang_config = resolved.ok().flatten();
 
     if lhs_src == rhs_src {
-        let file_format = match language {
+        let file_format = fallback.clone().unwrap_or(match language {
             Some(language) => FileFormat::SupportedLanguage(language),
             None => FileFormat::PlainText,
-        };
+        });
 
         // If the two files are byte-for-byte identical, return early
         // rather than doing any more work.
@@ -141,7 +151,7 @@ pub(crate) fn diff_file_content(
             (file_format, lhs_positions, rhs_positions)
         }
         None => {
-            let file_format = FileFormat::PlainText;
+            let file_format = fallback.unwrap_or(FileFormat::PlainText);
             let (lhs_positions, rhs_positions) = line_parser::change_positions(lhs_src, rhs_src);
             (file_format, lhs_positions, rhs_positions)
         }

@@ -26,7 +26,7 @@ fn list_languages() {
 }
 
 #[test]
-fn optional_languages_follow_build_features() {
+fn optional_languages_are_recognized_without_compiled_parsers() {
     let listed = debug_command()
         .arg("--list-languages")
         .assert()
@@ -39,13 +39,37 @@ fn optional_languages_follow_build_features() {
     let config = dir.path().join("config.toml");
     std::fs::write(&config, "[plugins]\norder = []\n").unwrap();
 
-    for (name, fixture, extension, enabled) in [
-        ("Fortran", "fortran", "f90", cfg!(feature = "lang-fortran")),
-        ("Verilog", "verilog", "sv", cfg!(feature = "lang-verilog")),
-        ("F#", "f_sharp", "fs", cfg!(feature = "lang-fsharp")),
-    ] {
-        assert_eq!(listed.contains(name), enabled, "{name}");
+    let status = get_base_command()
+        .env("DIFFR_PARSER_DIR", dir.path().join("parsers"))
+        .args(["languages", "list", "--json"])
+        .output()
+        .unwrap();
+    let status: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    let missing_code = if status["revision"].is_null() {
+        "parser_unavailable"
+    } else {
+        "parser_not_installed"
+    };
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/languages")).unwrap() {
+        let path = entry.unwrap().path().join("language.json");
+        if !path.is_file() {
+            continue;
+        }
+        let definition: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let name = definition["id"].as_str().unwrap();
+        let fixture = definition["fixture"]["prefix"].as_str().unwrap();
+        let extension = definition["fixture"]["extension"].as_str().unwrap();
+        let language = status["languages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|l| l["id"] == name)
+            .unwrap();
+        let enabled = language["availability"] == "built_in";
+        assert!(listed.contains(&format!("*.{extension}")), "{name}");
         let output = get_base_command()
+            .env("DIFFR_PARSER_DIR", dir.path().join("parsers"))
             .arg("--config")
             .arg(&config)
             .args([
@@ -69,11 +93,7 @@ fn optional_languages_follow_build_features() {
         assert_eq!(file["diff"]["type"], "text", "{name}: {file}");
         assert_eq!(
             file["diff"]["stats"]["fallback"]["code"].as_str(),
-            if enabled {
-                None
-            } else {
-                Some("unsupported_language")
-            },
+            if enabled { None } else { Some(missing_code) },
             "{name}",
         );
     }

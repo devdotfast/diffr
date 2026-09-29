@@ -1,0 +1,16 @@
+{
+  "id": "vhdl",
+  "crate": "tree-sitter-vhdl",
+  "version": "1.4.0",
+  "source": "src",
+  "symbol": "tree_sitter_vhdl",
+  "revision": "889c521757471093ce5ac83502ca8a89e516404e",
+  "repository": "https://github.com/jpt13653903/tree-sitter-vhdl",
+  "variant": "Vhdl",
+  "feature": "lang-vhdl",
+  "fixture": {
+    "prefix": "vhdl",
+    "extension": "vhd"
+  },
+  "smoke": "entity example is\nend entity example;\narchitecture rtl of example is\nbegin\nend architecture rtl;\n"
+}

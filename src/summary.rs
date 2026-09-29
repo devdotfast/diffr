@@ -30,6 +30,9 @@ pub(crate) enum FileFormat {
 pub(crate) enum FallbackCause {
     /// A side is larger than the byte limit.
     ByteLimit,
+    ParserNotInstalled,
+    ParserUnavailable,
+    ParserLoadFailed,
     /// The AST matching graph grew past the graph limit.
     GraphLimit,
     /// A side has more parse errors than the parse error limit.

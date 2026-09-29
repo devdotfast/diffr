@@ -1,0 +1,16 @@
+{
+  "id": "haskell",
+  "crate": "tree-sitter-haskell",
+  "version": "0.23.1",
+  "source": "src",
+  "symbol": "tree_sitter_haskell",
+  "revision": "c30d812bc90827f1a54106a25bc9a6307f5cdcec",
+  "repository": "https://github.com/tree-sitter/tree-sitter-haskell",
+  "variant": "Haskell",
+  "feature": "lang-haskell",
+  "fixture": {
+    "prefix": "haskell",
+    "extension": "hs"
+  },
+  "smoke": "module Example where\nf x =\n  let y = x + 1\n  in y * 2\n"
+}

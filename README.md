@@ -73,6 +73,13 @@ We hope in the future that we can find some way to upstream some / all of these 
 
 `diffr` has a powerful, wasm-based plugin API which customizes how it presents changed files. For more details, read the [docs](./docs/plugin.md).
 
+## Optional languages
+
+Optional parsers can be compiled in with `--features all-languages`.
+The native pack installer and its publication status are documented in
+[languages/README.md](languages/README.md). Use `diffr languages list --json`
+to inspect availability for your executable.
+
 ## License
 
 MIT. See `LICENSE` for the terms and `NOTICE` for the third-party work

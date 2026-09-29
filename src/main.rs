@@ -47,6 +47,7 @@ mod constants;
 mod diff;
 mod engine;
 mod exit_codes;
+mod languages;
 use engine::diff_file_content;
 mod files;
 mod git;
@@ -135,6 +136,7 @@ fn main() {
     reset_sigpipe();
 
     let result = match std::env::args_os().nth(1).as_deref() {
+        Some(arg) if arg == "languages" => languages::run().map_err(Into::into),
         Some(arg) if arg == "debug" => {
             run_debug();
             return;
@@ -165,7 +167,10 @@ fn run_debug() {
             let language = guess(path, &src, &language_overrides);
             match language {
                 Some(lang) => {
-                    let ts_lang = tsp::from_language(lang);
+                    let ts_lang = tsp::from_language(lang).unwrap_or_else(|e| {
+                        eprintln!("{e}");
+                        std::process::exit(2)
+                    });
                     let tree = tsp::to_tree(&src, ts_lang);
                     tsp::print_tree(&src, &tree);
                 }
@@ -186,7 +191,10 @@ fn run_debug() {
             let language = guess(path, &src, &language_overrides);
             match language {
                 Some(lang) => {
-                    let ts_lang = params.language(lang);
+                    let ts_lang = params.language(lang).unwrap_or_else(|e| {
+                        eprintln!("{e}");
+                        std::process::exit(2)
+                    });
                     let arena = Arena::new();
                     let ast = conflict_or_die(tsp::parse(&arena, &src, ts_lang, ignore_comments));
                     init_all_info(&ast, &[]);
@@ -209,7 +217,10 @@ fn run_debug() {
             let language = guess(path, &src, &language_overrides);
             match language {
                 Some(lang) => {
-                    let ts_lang = params.language(lang);
+                    let ts_lang = params.language(lang).unwrap_or_else(|e| {
+                        eprintln!("{e}");
+                        std::process::exit(2)
+                    });
                     let arena = Arena::new();
                     let ast = conflict_or_die(tsp::parse(&arena, &src, ts_lang, ignore_comments));
                     init_all_info(&ast, &[]);

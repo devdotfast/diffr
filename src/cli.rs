@@ -87,7 +87,7 @@ pub(crate) fn run() -> Result<i32> {
                         .arg(Arg::new("value").required(true)),
                 ),
         )
-        .after_help("Examples:\n  diffr\n  diffr --cached\n  diffr main...HEAD -- src/\n  diffr --no-index -- before.rs after.rs\n  diffr main HEAD --format ndjson\n\nUnsupported Git flags are rejected; this is not a complete git diff implementation.")
+        .after_help("Examples:\n  diffr\n  diffr --cached\n  diffr main...HEAD -- src/\n  diffr --no-index -- before.rs after.rs\n  diffr main HEAD --format ndjson\n  diffr languages list\n  diffr languages install extra\n\nUnsupported Git flags are rejected; this is not a complete git diff implementation.")
         .get_matches_from(argv);
     if let Some(("config", sub)) = args.subcommand() {
         return run_config(&args, sub);

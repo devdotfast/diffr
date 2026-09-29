@@ -78,3 +78,21 @@ We hope in the future that we can find some way to upstream some / all of these 
 MIT. See `LICENSE` for the terms and `NOTICE` for the third-party work
 diffr builds on, starting with the lovely
 [difftastic](https://github.com/Wilfred/difftastic).
+
+## Language editions
+
+Default builds are lean. Build all supported parsers with
+`cargo build --release --locked --features all-languages`, or select individual
+`lang-*` Cargo features. Lean builds omit Apex, Fortran, F#, Haskell, Julia,
+OCaml, QML, Verilog, and VHDL and use text diffs for those files. LaTeX and SQL
+remain included.
+
+Releases provide `diffr-cli-<version>-<target>.tar.gz` (lean) and
+`diffr-cli-full-<version>-<target>.tar.gz` (full). The existing `diffr` archive
+contains the lean CLI and TUI. Both editions use the same executable name and wire
+protocol. Node applications can [download and select either edition](diffr-ts/README.md#choosing-languages-at-runtime).
+
+To make another bundled parser optional, mark its Cargo dependency optional, add
+its `lang-*` feature to `all-languages`, and gate its recognition/configuration
+with that feature. Keep parser rules in Rust; no separate language package or
+registry is required. Test both default and `all-languages` builds.

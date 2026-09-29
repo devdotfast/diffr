@@ -40,6 +40,18 @@ fn optional_languages_follow_build_features() {
     std::fs::write(&config, "[plugins]\norder = []\n").unwrap();
 
     for (name, fixture, extension, enabled) in [
+        ("Apex", "apex", "trigger", cfg!(feature = "lang-apex")),
+        ("Haskell", "haskell", "hs", cfg!(feature = "lang-haskell")),
+        ("Julia", "julia", "jl", cfg!(feature = "lang-julia")),
+        ("OCaml", "ocaml", "ml", cfg!(feature = "lang-ocaml")),
+        (
+            "OCaml Interface",
+            "ocaml_interface",
+            "mli",
+            cfg!(feature = "lang-ocaml"),
+        ),
+        ("QML", "qml", "qml", cfg!(feature = "lang-qml")),
+        ("VHDL", "vhdl", "vhd", cfg!(feature = "lang-vhdl")),
         ("Fortran", "fortran", "f90", cfg!(feature = "lang-fortran")),
         ("Verilog", "verilog", "sv", cfg!(feature = "lang-verilog")),
         ("F#", "f_sharp", "fs", cfg!(feature = "lang-fsharp")),

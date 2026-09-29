@@ -56,7 +56,7 @@ test("downloads, verifies, extracts, stamps, and reuses the pinned binary", () =
   );
   expect(readFileSync(join(f.into, "diffr"), "utf8")).toBe(f.content);
   expect(statSync(join(f.into, "diffr")).mode & 0o777).toBe(0o755);
-  expect(JSON.parse(readFileSync(join(f.into, "diffr.stamp.json"), "utf8"))).toEqual({ version, target });
+  expect(JSON.parse(readFileSync(join(f.into, "diffr.stamp.json"), "utf8"))).toMatchObject({ version, target, edition: "lean" });
   expect(readdirSync(f.into).sort()).toEqual(["diffr", "diffr.stamp.json"]);
   rmSync(join(f.dir, "requested"));
   expect(f.run(["--check"], true).code).toBe(0);
@@ -131,8 +131,8 @@ test("Linux ARM64 downloads and stamps the aarch64 release", () => {
     `https://github.com/devdotfast/diffr/releases/download/${version}/diffr-cli-${version}-aarch64-unknown-linux-gnu.tar.gz`,
   );
   expect(readFileSync(join(f.into, "diffr"), "utf8")).toBe(f.content);
-  expect(JSON.parse(readFileSync(join(f.into, "diffr.stamp.json"), "utf8"))).toEqual({
-    version, target: "aarch64-unknown-linux-gnu",
+  expect(JSON.parse(readFileSync(join(f.into, "diffr.stamp.json"), "utf8"))).toMatchObject({
+    version, target: "aarch64-unknown-linux-gnu", edition: "lean",
   });
   expect(f.run(["--check"], true).code).toBe(0);
 });
@@ -151,4 +151,56 @@ test("unknown pinned artifacts fail before downloading", () => {
   const f = fixture("diffr", "other");
   expect(f.run().err).toContain("unknown pinned artifact");
   expect(existsSync(join(f.dir, "requested"))).toBe(false);
+});
+
+
+test("editions select distinct pinned archives and reject unpublished full builds", () => {
+  const f = fixture("diffr", "diffr-cli");
+  expect(f.run(["--edition", "full"]).err).toContain("no full edition");
+  expect(existsSync(join(f.dir, "requested"))).toBe(false);
+  const lean = JSON.parse(readFileSync(f.pins, "utf8"));
+  writeFileSync(f.pins, JSON.stringify({ version, editions: {
+    lean, full: { ...lean, artifact: "diffr-cli-full" },
+  } }));
+  expect(f.run(["--edition", "full"]).code).toBe(0);
+  expect(readFileSync(join(f.dir, "requested"), "utf8")).toContain(`/diffr-cli-full-${version}-${target}.tar.gz`);
+  expect(f.run(["--check"]).code).toBe(1);
+  expect(f.run(["--edition", "full", "--check"], true).code).toBe(0);
+  expect(f.run(["--edition", "invalid"]).err).toContain("unknown diffr edition");
+});
+
+test("a corrupt cached executable is rejected and repaired", () => {
+  const f = fixture();
+  expect(f.run().code).toBe(0);
+  writeFileSync(join(f.into, "diffr"), "corrupt");
+  expect(f.run(["--check"], true).code).toBe(1);
+  expect(f.run().code).toBe(0);
+  expect(readFileSync(join(f.into, "diffr"), "utf8")).toBe(f.content);
+});
+
+test("runtime API keeps editions separate, supports concurrent installs and offline switching", () => {
+  const f = fixture("diffr", "diffr-cli");
+  const lean = JSON.parse(readFileSync(f.pins, "utf8"));
+  writeFileSync(f.pins, JSON.stringify({ version, editions: { lean, full: { ...lean, artifact: "diffr-cli-full" } } }));
+  const script = join(f.dir, "switch.mjs");
+  writeFileSync(script, `
+    import assert from "node:assert/strict";
+    import { ensureBinary } from ${JSON.stringify(new URL("../bin/binary.mjs", import.meta.url).href)};
+    const options = ${JSON.stringify({ directory: f.into, pins: f.pins })};
+    const lean = await ensureBinary(options);
+    const full = await Promise.all([ensureBinary({ ...options, edition: "full" }), ensureBinary({ ...options, edition: "full" })]);
+    assert.equal(full[0], full[1]);
+    assert.notEqual(lean, full[0]);
+    globalThis.fetch = () => { throw new Error("offline"); };
+    assert.equal(await ensureBinary({ ...options, check: true }), lean);
+    assert.equal(await ensureBinary({ ...options, edition: "full", check: true }), full[0]);
+    console.log(JSON.stringify([lean, full[0]]));
+  `);
+  const result = Bun.spawnSync(["node", "--import", join(f.dir, "mock.mjs"), script]);
+  expect(result.exitCode, result.stderr.toString()).toBe(0);
+  const paths = JSON.parse(result.stdout.toString());
+  for (const [i, edition] of ["lean", "full"].entries()) {
+    expect(paths[i]).toBe(join(f.into, version, target!, edition, "diffr"));
+    expect(readFileSync(paths[i], "utf8")).toBe(f.content);
+  }
 });

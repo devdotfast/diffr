@@ -14,11 +14,12 @@ def archive_name(version, target, artifact="diffr"):
     return f"{artifact}-{version}-{target}.tar.gz"
 
 
-def pack(version, target, install, output):
+def pack(version, target, install, output, edition="lean", cli_only=False):
     actual = subprocess.check_output([install / "bin/diffr", "--version"], text=True).strip()
     if actual != f"diffr {version}":
         raise ValueError(f"Release version mismatch: {actual}")
-    for artifact in ("diffr", "diffr-cli"):
+    artifacts = ("diffr-cli-full",) if edition == "full" else (("diffr-cli",) if cli_only else ("diffr", "diffr-cli"))
+    for artifact in artifacts:
         with tarfile.open(output / archive_name(version, target, artifact), "w:gz") as archive:
             binaries = ("diffr", "diffr-tui") if artifact == "diffr" else ("diffr",)
             for name in binaries:
@@ -30,7 +31,7 @@ def pack(version, target, install, output):
 def formula(version, output):
     checksums = {}
     for target in TARGETS:
-        for artifact in ("diffr", "diffr-cli"):
+        for artifact in ("diffr", "diffr-cli", "diffr-cli-full"):
             name = archive_name(version, target, artifact)
             checksums[name] = hashlib.sha256((output / name).read_bytes()).hexdigest()
     (output / "SHA256SUMS").write_text("".join(
@@ -89,6 +90,8 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--target", choices=TARGETS)
     parser.add_argument("--install", type=Path)
+    parser.add_argument("--cli-only", action="store_true")
+    parser.add_argument("--edition", choices=("lean", "full"), default="lean")
     args = parser.parse_args()
     if not re.fullmatch(r"\d+\.\d+\.\d+", args.version):
         parser.error("version must be a stable X.Y.Z release")
@@ -96,6 +99,6 @@ if __name__ == "__main__":
     if args.command == "pack":
         if not args.target or not args.install:
             parser.error("pack requires --target and --install")
-        pack(args.version, args.target, args.install.resolve(), args.output)
+        pack(args.version, args.target, args.install.resolve(), args.output, args.edition, args.cli_only)
     else:
         formula(args.version, args.output)

@@ -30,7 +30,8 @@ Keep these files in sync:
 ## Release
 
 After tagging the matching Rust release and building with `cargo build --locked`,
-run from `diffr-ts`:
+run from `diffr-ts`. New pins select the CLI-only release archives; older pins
+continue to use the full archives:
 
 ```sh
 bun install --frozen-lockfile

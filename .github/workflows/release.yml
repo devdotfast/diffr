@@ -46,11 +46,15 @@ jobs:
           fi
           cargo xtask install --root "$RUNNER_TEMP/install"
           python3 scripts/release.py pack --version "$version" --target "$TARGET" --install "$RUNNER_TEMP/install" --output dist
-      - name: Verify extracted archive without Bun or checkout assets
+      - name: Verify extracted archives without Bun or checkout assets
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
           mkdir -p "$RUNNER_TEMP/extracted/bin"
-          tar -xzf dist/*.tar.gz -C "$RUNNER_TEMP/extracted/bin"
+          tar -xzf "dist/diffr-$version-$TARGET.tar.gz" -C "$RUNNER_TEMP/extracted/bin"
           python3 xtask/tests/smoke_install.py "$RUNNER_TEMP/extracted"
+          python3 scripts/smoke_cli_archive.py "dist/diffr-cli-$version-$TARGET.tar.gz" "$version"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.target }}

@@ -10,28 +10,31 @@ TARGETS = ("aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def archive_name(version, target):
-    return f"diffr-{version}-{target}.tar.gz"
+def archive_name(version, target, artifact="diffr"):
+    return f"{artifact}-{version}-{target}.tar.gz"
 
 
 def pack(version, target, install, output):
     actual = subprocess.check_output([install / "bin/diffr", "--version"], text=True).strip()
     if actual != f"diffr {version}":
         raise ValueError(f"Release version mismatch: {actual}")
-    with tarfile.open(output / archive_name(version, target), "w:gz") as archive:
-        for name in ("diffr", "diffr-tui"):
-            archive.add(install / "bin" / name, arcname=name)
-        for name in ("LICENSE", "NOTICE", "tui/LICENSE", "tui/themes/LICENSE"):
-            archive.add(ROOT / name, arcname=name)
+    for artifact in ("diffr", "diffr-cli"):
+        with tarfile.open(output / archive_name(version, target, artifact), "w:gz") as archive:
+            binaries = ("diffr", "diffr-tui") if artifact == "diffr" else ("diffr",)
+            for name in binaries:
+                archive.add(install / "bin" / name, arcname=name)
+            for name in ("LICENSE", "NOTICE", "tui/LICENSE", "tui/themes/LICENSE"):
+                archive.add(ROOT / name, arcname=name)
 
 
 def formula(version, output):
     checksums = {}
     for target in TARGETS:
-        name = archive_name(version, target)
-        checksums[target] = hashlib.sha256((output / name).read_bytes()).hexdigest()
+        for artifact in ("diffr", "diffr-cli"):
+            name = archive_name(version, target, artifact)
+            checksums[name] = hashlib.sha256((output / name).read_bytes()).hexdigest()
     (output / "SHA256SUMS").write_text("".join(
-        f"{checksums[target]}  {archive_name(version, target)}\n" for target in TARGETS
+        f"{checksum}  {name}\n" for name, checksum in checksums.items()
     ))
     url = f"https://github.com/devdotfast/diffr/releases/download/{version}/diffr-{version}"
     (output / "diffr.rb").write_text(f'''class Diffr < Formula
@@ -43,18 +46,18 @@ def formula(version, output):
   on_macos do
     on_arm do
       url "{url}-aarch64-apple-darwin.tar.gz"
-      sha256 "{checksums['aarch64-apple-darwin']}"
+      sha256 "{checksums[archive_name(version, 'aarch64-apple-darwin')]}"
     end
     on_intel do
       url "{url}-x86_64-apple-darwin.tar.gz"
-      sha256 "{checksums['x86_64-apple-darwin']}"
+      sha256 "{checksums[archive_name(version, 'x86_64-apple-darwin')]}"
     end
   end
 
   on_linux do
     depends_on arch: :x86_64
     url "{url}-x86_64-unknown-linux-gnu.tar.gz"
-    sha256 "{checksums['x86_64-unknown-linux-gnu']}"
+    sha256 "{checksums[archive_name(version, 'x86_64-unknown-linux-gnu')]}"
   end
 
   def install

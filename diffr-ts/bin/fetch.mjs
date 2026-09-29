@@ -49,7 +49,9 @@ async function main() {
   }
   if (values.check) throw new Error(`${binary} is missing or not diffr ${version} (${target})`);
 
-  const asset = `diffr-${version}-${target}.tar.gz`;
+  const artifact = pins.artifact ?? "diffr";
+  if (!["diffr", "diffr-cli"].includes(artifact)) throw new Error(`unknown pinned artifact: ${artifact}`);
+  const asset = `${artifact}-${version}-${target}.tar.gz`;
   const url = `https://github.com/devdotfast/diffr/releases/download/${version}/${asset}`;
   let bytes;
   try {

@@ -8,8 +8,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
 const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
 const targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"];
-const editions = {};
-for (const [edition, artifact] of [["lean", "diffr-cli"], ["full", "diffr-cli-full"]]) {
+async function hashes(artifact) {
   const sha256 = {};
   for (const target of targets) {
     const url = `https://github.com/devdotfast/diffr/releases/download/${version}/${artifact}-${version}-${target}.tar.gz`;
@@ -19,9 +18,10 @@ for (const [edition, artifact] of [["lean", "diffr-cli"], ["full", "diffr-cli-fu
       process.exit(1);
     }
     sha256[target] = createHash("sha256").update(Buffer.from(await response.arrayBuffer())).digest("hex");
-    console.log(`${target} ${sha256[target]}`);
+    console.log(`${artifact} ${target} ${sha256[target]}`);
   }
-  editions[edition] = { artifact, sha256 };
+  return sha256;
 }
-writeFileSync(join(root, "pins.json"), `${JSON.stringify({ version, editions }, null, 2)}\n`);
+const pins = { version, artifact: "diffr-cli", sha256: await hashes("diffr-cli"), full: { sha256: await hashes("diffr-cli-full") } };
+writeFileSync(join(root, "pins.json"), `${JSON.stringify(pins, null, 2)}\n`);
 console.log(`wrote pins.json for ${version}`);

@@ -12,12 +12,7 @@
       "default": "./dist/index.js"
     },
     "./package.json": "./package.json",
-    "./src/*": "./src/*",
-    "./binary": {
-      "types": "./bin/binary.d.mts",
-      "import": "./bin/binary.mjs",
-      "default": "./bin/binary.mjs"
-    }
+    "./src/*": "./src/*"
   },
   "bin": {
     "diffr-fetch": "bin/fetch.mjs"

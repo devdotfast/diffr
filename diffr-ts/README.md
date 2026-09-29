@@ -9,47 +9,16 @@ const event = decodeStructuralDiffEvent(line);
 ```
 
 ```sh
-npx --package @dev.fast/diffr@0.1.7 diffr-fetch --into ./bin --required
+npx --package @dev.fast/diffr@0.1.6 diffr-fetch --into ./bin --required
 ```
 
-Supports macOS arm64, macOS x64, Linux arm64/glibc, and Linux x64/glibc. `--check` verifies an existing install without
+Supports macOS arm64, macOS x64, Linux arm64, and Linux x64. `--check` verifies an existing install without
 network access. Downloads warn on network failure unless `--required`; invalid
 hashes or archives always fail.
 
-## Choosing languages at runtime
-
-The default `lean` edition excludes Apex, Fortran, F#, Haskell, Julia, OCaml
-(including interfaces), QML, Verilog, and VHDL. It uses text diffs for those files.
-The `full` edition compiles all supported languages. Both use the same wire format.
-
-```ts
-import { ensureBinary } from "@dev.fast/diffr/binary";
-import { spawn } from "node:child_process";
-
-// Call when the user selects an edition; retain the returned path for comparisons.
-const executable = await ensureBinary({
-  directory: appDataDirectory,
-  edition: "full", // or "lean"
-});
-spawn(executable, ["--repo", repository, "--format", "ndjson", "HEAD"]);
-```
-
-The API downloads the package's exact pinned release and process architecture,
-checks the archive hash, and stores editions separately under
-`<directory>/<version>/<target>/<edition>/diffr`. Installed binaries are checked
-for corruption and reused offline. `check: true` prohibits downloads. Select a new
-path only after the promise succeeds; existing comparisons finish on their old
-executable. Clear application diff caches when switching. Do not replace files
-inside a signed application bundle.
-
-The CLI also accepts `--edition full`; `--into` still writes `diffr` directly into
-the given directory for existing build scripts. Use different directories to keep
-both editions. Neither API needs Rust, npm, or a compiler at runtime; extraction
-uses the operating system's `tar`.
-
-Full downloads require a release with full-edition pins. The existing 0.1.7 pins
-remain unchanged until matching artifacts are published; requesting an unpinned
-edition fails rather than downloading a different version.
+`--full` fetches the full edition, which adds the parsers lean builds omit (Apex,
+Fortran, F#, Haskell, Julia, OCaml, QML, Verilog, VHDL). It requires full-edition
+pins, which start with the next release.
 
 ## Wire changes
 
@@ -65,9 +34,8 @@ Keep these files in sync:
 ## Release
 
 After tagging the matching Rust release and building with `cargo build --locked`,
-run from `diffr-ts`. Pinning downloads all eight CLI archives (two editions on
-four targets) and writes the catalog only after every download succeeds. Legacy
-single-edition pins remain supported:
+run from `diffr-ts`. New pins select the lean and full CLI-only release archives;
+older pins continue to use the combined archives:
 
 ```sh
 bun install --frozen-lockfile

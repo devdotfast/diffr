@@ -26,6 +26,8 @@ jobs:
             os: macos-15-intel
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
@@ -83,7 +85,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, macos-15-intel, ubuntu-22.04]
+        os: [macos-14, macos-15-intel, ubuntu-22.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     env:

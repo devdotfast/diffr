@@ -63,8 +63,8 @@ indicative, not a performance gate.
 
 ## Outstanding release evidence
 
-macOS x64, Linux x64, Rosetta execution, public npm downloads, and behavior
-for separately quarantined artifacts have not been exercised locally. The
+Public npm downloads and behavior for separately quarantined libraries have
+not been exercised locally. The
 four-runner workflow must pass before publication. The repository currently
 has no configured signing/npm secrets or protected publication environment;
 see README.md for the exact setup. Only a catalog emitted after all four
@@ -102,3 +102,48 @@ grammar-directory symlinks. Rebuilding with the ordinary Docker context and the
 provided Dockerfile-specific ignore file fixed the test setup. No parser or
 installer fix was needed. Public npm installation remains unverified until
 publication and catalog activation.
+
+## macOS x64 / Rosetta verification
+
+The signed `x86_64-apple-darwin` probe and both signed x64 CLIs ran under Rosetta
+on the ARM64 host. All ten grammars passed native/static diff, syntax, and tree
+parity, scanner-heavy fixtures, added/deleted/unchanged files, the 120-file batch,
+concurrent installation, corruption/repair, truncated archive rejection, the
+default Application Support store, quarantined-archive installation, and an
+empty-PATH fresh install. The executable selected the x64 package.
+
+Both x64 hosts and libraries use Team ID `PWXY59YDAY` with hardened runtime;
+the full CLI retains only Whiteboard's existing executable-memory entitlement.
+An additional shared-store check installed both ARM64 and x64 revisions into
+one root and confirmed that each executable selected its own target and parsed
+QML without fallback.
+
+| x64 measurement | Bytes |
+|---|---:|
+| Compressed pack | 4,219,033 |
+| Native-pack release CLI | 96,633,808 |
+| All-languages release CLI | 152,322,048 |
+
+The new-process Apex median was 395 ms; the 120-file mixed batch took 1,800 ms.
+These are Rosetta timings with warm OS caches, not native Intel benchmarks.
+
+All four versioned npm tarball URLs returned HTTP 404 on 2026-09-29. Public
+network installation remains blocked on publication. The repository has no
+signing/npm repository secrets and no protected `languages-release` environment;
+only the unprotected test environment `languages-ci` currently exists.
+
+## Linux x64 Docker verification
+
+The `linux/amd64` Docker build passed all ten native probes and the complete
+installed/static integration suite under emulation on the ARM64 host. Its separate
+minimal runtime passed fresh offline installation, all parsers, idempotence,
+corrupt-library fallback, and atomic repair with UID/GID 65534, networking disabled,
+a read-only root, and no Rust, C compiler, Node, npm, or Python.
+
+The compressed pack was 3,759,226 bytes; native and all-languages executables
+were 100,672,240 and 156,206,248 bytes. The Apex median was 366 ms and the
+120-file mixed batch took 2,434 ms; these are warm-cache emulation measurements.
+
+The native Linux x64 GitHub runner also passed installation/parity and its
+minimal Docker runtime check in run `36609243307`, alongside both ARM64 runners.
+The macOS Intel job was still running when these local results were recorded.

@@ -28,6 +28,8 @@ concurrency:
 jobs:
   guard:
     runs-on: ubuntu-22.04
+    permissions:
+      actions: read
     steps:
       - name: Require protected publication environment
         if: inputs.publish

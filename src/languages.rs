@@ -117,7 +117,7 @@ pub(crate) fn verify_library(
         package
             .files
             .get(&library.file)
-            .context("uncatalogued library")?,
+            .context("uncataloged library")?,
     )?;
     let canonical = fs::canonicalize(&path)?;
     ensure!(

@@ -39,6 +39,12 @@ scanner, and Fortran includes its scanner. Licenses and highlights were copied
 from the pinned crate/source revisions, except Verilog highlights, which retain
 diffr's existing query. No grammar package contains JavaScript or install scripts.
 
+To exercise x64 execution under Rosetta on an ARM64 Mac, first install the Rust
+target with `rustup target add x86_64-apple-darwin`, then run the commands above
+with `x86_64-apple-darwin`. The builder and probe explicitly select the target's
+C architecture, and the integration test builds and runs the x64 CLI. This also
+checks that package selection follows the executable architecture.
+
 On macOS, set `DIFFR_SIGN_IDENTITY` to Whiteboard's Developer ID identity before
 running the probe. It signs the libraries and a hardened native host, retaining
 library validation. The integration script signs the test CLIs with that identity
@@ -70,9 +76,10 @@ bytes match. It produces no catalog if any target fails. Partial publication can
 be retried only with byte-identical artifacts, or with a new pack revision.
 Re-signing can change bytes even when source inputs are identical.
 
-Local macOS ARM64 and Docker Linux ARM64 proof do not establish the x64 targets,
-Gatekeeper behavior for separately quarantined artifacts, or a public npm install. Those remain
-release evidence to collect; no validation exemption is added to Whiteboard.
+Local signed macOS ARM64/Rosetta x64 and Docker Linux ARM64/x64 checks are
+recorded in [VALIDATION.md](VALIDATION.md). Gatekeeper behavior for separately
+quarantined libraries and public npm installation remain release evidence to
+collect; no validation exemption is added to Whiteboard.
 
 ## Clean Linux installation test
 

@@ -6,14 +6,15 @@ import { join } from "node:path";
 
 const fetchScript = join(import.meta.dir, "..", "bin", "fetch.mjs");
 const { version } = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8"));
-const targets: Record<string, string> = { "darwin-arm64": "aarch64-apple-darwin", "darwin-x64": "x86_64-apple-darwin", "linux-x64": "x86_64-unknown-linux-gnu" };
+const targets: Record<string, string> = { "darwin-arm64": "aarch64-apple-darwin", "darwin-x64": "x86_64-apple-darwin", "linux-x64": "x86_64-unknown-linux-gnu", "linux-arm64": "aarch64-unknown-linux-gnu" };
 const target = targets[`${process.platform}-${process.arch}`];
 const dirs: string[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function fixture(entry = "diffr") {
+function fixture(entry = "diffr", platform = process.platform, arch = process.arch) {
+  const target = targets[`${platform}-${arch}`];
   if (!target) throw new Error("Fetch tests require a supported release platform");
   const dir = mkdtempSync(join(tmpdir(), "diffr-fetch-test-"));
   dirs.push(dir);
@@ -25,9 +26,11 @@ function fixture(entry = "diffr") {
   const pins = join(dir, "pins.json");
   writeFileSync(pins, JSON.stringify({ version, sha256: { [target]: hash } }));
   const mock = join(dir, "mock.mjs");
-  // Intercept only the network boundary, leaving the actual CLI and tar intact.
+  // Mock the platform and network, leaving the actual CLI and tar intact.
   writeFileSync(mock, `
     import { readFileSync, writeFileSync } from "node:fs";
+    Object.defineProperty(process, "platform", { value: ${JSON.stringify(platform)} });
+    Object.defineProperty(process, "arch", { value: ${JSON.stringify(arch)} });
     globalThis.fetch = async (url) => {
       writeFileSync(${JSON.stringify(join(dir, "requested"))}, url);
       if (process.env.FETCH_FAILURE) throw new Error("offline");
@@ -118,4 +121,18 @@ test("missing option values fail clearly", () => {
   const f = fixture();
   expect(f.run(["--pins"]).code).toBe(1);
   expect(f.run(["--into"]).code).toBe(1);
+});
+
+test("Linux ARM64 downloads and stamps the aarch64 release", () => {
+  const f = fixture("diffr", "linux", "arm64");
+  const result = f.run(["--required"]);
+  expect(result.code, result.err).toBe(0);
+  expect(readFileSync(join(f.dir, "requested"), "utf8")).toBe(
+    `https://github.com/devdotfast/diffr/releases/download/${version}/diffr-${version}-aarch64-unknown-linux-gnu.tar.gz`,
+  );
+  expect(readFileSync(join(f.into, "diffr"), "utf8")).toBe(f.content);
+  expect(JSON.parse(readFileSync(join(f.into, "diffr.stamp.json"), "utf8"))).toEqual({
+    version, target: "aarch64-unknown-linux-gnu",
+  });
+  expect(f.run(["--check"], true).code).toBe(0);
 });

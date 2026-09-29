@@ -38,7 +38,9 @@ pub(crate) enum Language {
     EmacsLisp,
     Erlang,
     Fish,
+    #[cfg(feature = "lang-fsharp")]
     FSharp,
+    #[cfg(feature = "lang-fortran")]
     Fortran,
     Gleam,
     Go,
@@ -79,6 +81,7 @@ pub(crate) enum Language {
     Toml,
     TypeScript,
     TypeScriptTsx,
+    #[cfg(feature = "lang-verilog")]
     Verilog,
     Vhdl,
     Xml,
@@ -139,7 +142,9 @@ pub(crate) fn language_name(language: Language) -> &'static str {
         EmacsLisp => "Emacs Lisp",
         Erlang => "Erlang",
         Fish => "Fish",
+        #[cfg(feature = "lang-fsharp")]
         FSharp => "F#",
+        #[cfg(feature = "lang-fortran")]
         Fortran => "Fortran",
         Gleam => "Gleam",
         Go => "Go",
@@ -180,6 +185,7 @@ pub(crate) fn language_name(language: Language) -> &'static str {
         Toml => "TOML",
         TypeScript => "TypeScript",
         TypeScriptTsx => "TypeScript TSX",
+        #[cfg(feature = "lang-verilog")]
         Verilog => "Verilog",
         Vhdl => "VHDL",
         Xml => "XML",
@@ -289,7 +295,9 @@ pub(crate) fn language_globs(language: Language) -> Vec<glob::Pattern> {
             "rebar.lock",
         ],
         Fish => &["*.fish"],
+        #[cfg(feature = "lang-fsharp")]
         FSharp => &["*.fs", "*.fsx", "*.fsi"],
+        #[cfg(feature = "lang-fortran")]
         Fortran => &["*.f", "*.for", "*.f90", "*.F", "*.FOR", "*.F90"],
         Gleam => &["*.gleam"],
         Go => &["*.go"],
@@ -396,6 +404,7 @@ pub(crate) fn language_globs(language: Language) -> Vec<glob::Pattern> {
         ],
         TypeScript => &["*.ts", "*.cts", "*.mts"],
         TypeScriptTsx => &["*.tsx"],
+        #[cfg(feature = "lang-verilog")]
         Verilog => &["*.v", "*.sv", "*.vh"],
         Vhdl => &["*.vhdl", "*.vhd"],
         Xml => &[
@@ -545,7 +554,9 @@ fn from_emacs_mode_header(src: &str) -> Option<Language> {
             "elm" => Elm,
             "emacs-lisp" => EmacsLisp,
             "fish" => Fish,
+            #[cfg(feature = "lang-fsharp")]
             "fsharp" => FSharp,
+            #[cfg(feature = "lang-fortran")]
             "fortran" => Fortran,
             "gleam" => Gleam,
             "go" => Go,
@@ -572,6 +583,7 @@ fn from_emacs_mode_header(src: &str) -> Option<Language> {
             "toml" => Toml,
             "tuareg" => OCaml,
             "typescript" => TypeScript,
+            #[cfg(feature = "lang-verilog")]
             "verilog" => Verilog,
             "vhdl" => Vhdl,
             "yaml" => Yaml,

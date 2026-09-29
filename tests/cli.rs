@@ -50,13 +50,9 @@ fn optional_languages_are_recognized_without_compiled_parsers() {
     } else {
         "parser_not_installed"
     };
-    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/languages")).unwrap() {
-        let path = entry.unwrap().path().join("language.json");
-        if !path.is_file() {
-            continue;
-        }
-        let definition: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let definitions: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("../languages/extra.json")).unwrap();
+    for definition in definitions {
         let name = definition["id"].as_str().unwrap();
         let fixture = definition["fixture"]["prefix"].as_str().unwrap();
         let extension = definition["fixture"]["extension"].as_str().unwrap();

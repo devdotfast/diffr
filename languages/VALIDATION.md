@@ -3,6 +3,31 @@
 Base: diffr `58fa3b2` (includes PR #49). Host: macOS ARM64. No packages were
 published, and `catalog.json` remains empty pending verified publication.
 
+## Registry/query refactor — pack 0.3.0
+
+`extra.json` now generates the Rust configuration and drives packaging. Upstream
+highlight files are no longer copied into the repository or embedded in default
+builds. The pack contains catalog-hashed queries alongside its libraries;
+`all-languages` still reads upstream crate constants.
+
+- Full default workspace tests: 290 passed, one ignored.
+- Default and all-languages bin/CLI tests: 271 passed, one ignored, in each build.
+- Five registry checks and both publication-gate tests passed.
+- Signed macOS ARM64 native/static parity passed for all ten grammars, including
+  query corruption/fallback/repair, scanners, parallel installs/diffs, offline
+  installation, the default store, quarantine-marked archives, and old CLI reuse.
+- Linux ARM64 Docker passed the same parity suite and the minimal unprivileged,
+  read-only-root, no-network/no-development-tools runtime installation test.
+- The source package includes `extra.json` and the catalog, with no copied upstream
+  highlight files. Formatting, actionlint, typos, and whitespace checks passed.
+- Clippy reports only the six pre-existing warnings listed below.
+
+Compressed pack sizes: 3,947,947 bytes on macOS ARM64 and 3,748,052 bytes on Linux
+ARM64. The four-target workflow will rerun on the updated PR; the x64 results
+below describe the previous 0.2.0 pack, before query relocation.
+
+## Earlier 0.2.0 validation
+
 ## Passed
 
 - `cargo test --locked`: 290 tests passed, one ignored.

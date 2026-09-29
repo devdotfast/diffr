@@ -1,0 +1,436 @@
+[
+  {
+    "id": "apex",
+    "crate": "tree-sitter-sfapex",
+    "version": "2.4.0",
+    "source": "apex/src",
+    "symbol": "tree_sitter_apex",
+    "revision": "9247e2cd12490f1aac71cb212f726ef1a2b5f7f9",
+    "repository": "https://github.com/aheber/tree-sitter-sfapex",
+    "variant": "Apex",
+    "feature": "lang-apex",
+    "fixture": {
+      "prefix": "apex",
+      "extension": "trigger"
+    },
+    "smoke": "public class Example { public Integer f(Integer x) { return x + 1; } }\n",
+    "parser": "tree_sitter_sfapex::apex::LANGUAGE",
+    "atoms": [
+      "string_literal",
+      "null_literal",
+      "boolean",
+      "int",
+      "decimal_floating_point_literal",
+      "date_literal",
+      "currency_literal"
+    ],
+    "delimiters": [
+      [
+        "[",
+        "]"
+      ],
+      [
+        "(",
+        ")"
+      ],
+      [
+        "{",
+        "}"
+      ]
+    ],
+    "ignore_trailing": [],
+    "highlights": [
+      {
+        "crate": "tree-sitter-sfapex",
+        "constant": "apex::HIGHLIGHTS_QUERY",
+        "path": "apex/queries/highlights.scm"
+      }
+    ]
+  },
+  {
+    "id": "fortran",
+    "crate": "tree-sitter-fortran",
+    "version": "0.6.0",
+    "source": "src",
+    "symbol": "tree_sitter_fortran",
+    "revision": "48593829df8a929bfe58528eedcf405171921005",
+    "repository": "https://github.com/stadelmanma/tree-sitter-fortran",
+    "variant": "Fortran",
+    "feature": "lang-fortran",
+    "fixture": {
+      "prefix": "fortran",
+      "extension": "f90"
+    },
+    "smoke": "program hello\n implicit none\n print *, \"hello\"\nend program hello\n",
+    "parser": "tree_sitter_fortran::LANGUAGE",
+    "atoms": [
+      "string_literal",
+      "number_literal"
+    ],
+    "delimiters": [
+      [
+        "(",
+        ")"
+      ],
+      [
+        "(/",
+        "/)"
+      ],
+      [
+        "[",
+        "]"
+      ]
+    ],
+    "ignore_trailing": [],
+    "highlights": [
+      {
+        "crate": "tree-sitter-fortran",
+        "constant": "HIGHLIGHTS_QUERY",
+        "path": "queries/highlights.scm"
+      }
+    ]
+  },
+  {
+    "id": "fsharp",
+    "crate": "tree-sitter-fsharp",
+    "version": "0.3.0",
+    "source": "fsharp/src",
+    "symbol": "tree_sitter_fsharp",
+    "revision": "5247c1197cb290fcaea0e0a793d32829c1396831",
+    "repository": "https://github.com/ionide/tree-sitter-fsharp",
+    "variant": "FSharp",
+    "feature": "lang-fsharp",
+    "fixture": {
+      "prefix": "f_sharp",
+      "extension": "fs"
+    },
+    "smoke": "module Example\nlet f x =\n    let y = x + 1\n    y * 2\n",
+    "parser": "tree_sitter_fsharp::LANGUAGE_FSHARP",
+    "atoms": [
+      "string",
+      "triple_quoted_string"
+    ],
+    "delimiters": [
+      [
+        "(",
+        ")"
+      ],
+      [
+        "[",
+        "]"
+      ],
+      [
+        "{",
+        "}"
+      ]
+    ],
+    "ignore_trailing": [],
+    "highlights": [
+      {
+        "crate": "tree-sitter-fsharp",
+        "constant": "HIGHLIGHTS_QUERY",
+        "path": "queries/highlights.scm"
+      }
+    ]
+  },
+  {
+    "id": "haskell",
+    "crate": "tree-sitter-haskell",
+    "version": "0.23.1",
+    "source": "src",
+    "symbol": "tree_sitter_haskell",
+    "revision": "c30d812bc90827f1a54106a25bc9a6307f5cdcec",
+    "repository": "https://github.com/tree-sitter/tree-sitter-haskell",
+    "variant": "Haskell",
+    "feature": "lang-haskell",
+    "fixture": {
+      "prefix": "haskell",
+      "extension": "hs"
+    },
+    "smoke": "module Example where\nf x =\n  let y = x + 1\n  in y * 2\n",
+    "parser": "tree_sitter_haskell::LANGUAGE",
+    "atoms": [
+      "qualified_variable"
+    ],
+    "delimiters": [
+      [
+        "[",
+        "]"
+      ],
+      [
+        "(",
+        ")"
+      ]
+    ],
+    "ignore_trailing": [],
+    "highlights": [
+      {
+        "crate": "tree-sitter-haskell",
+        "constant": "HIGHLIGHTS_QUERY",
+        "path": "queries/highlights.scm"
+      }
+    ]
+  },
+  {
+    "id": "julia",
+    "crate": "tree-sitter-julia",
+    "version": "0.23.1",
+    "source": "src",
+    "symbol": "tree_sitter_julia",
+    "revision": "a8e1262997d5a45520a06cbe1b86c0737d507054",
+    "repository": "https://github.com/tree-sitter/tree-sitter-julia",
+    "variant": "Julia",
+    "feature": "lang-julia",
+    "fixture": {
+      "prefix": "julia",
+      "extension": "jl"
+    },
+    "smoke": "function f(x)\n    x + 1\nend\n",
+    "parser": "tree_sitter_julia::LANGUAGE",
+    "atoms": [
+      "string_literal",
+      "prefixed_string_literal",
+      "command_literal",
+      "character_literal"
+    ],
+    "delimiters": [
+      [
+        "{",
+        "}"
+      ],
+      [
+        "[",
+        "]"
+      ],
+      [
+        "(",
+        ")"
+      ]
+    ],
+    "ignore_trailing": [],
+    "highlights": [
+      {
+        "local": "vendored_parsers/highlights/julia.scm"
+      }
+    ]
+  },
+  {
+    "id": "ocaml",
+    "crate": "tree-sitter-ocaml",
+    "version": "0.25.0",
+    "source": "grammars/ocaml/src",
+    "symbol": "tree_sitter_ocaml",
+    "revision": "6902a86ab5b3b80c622030210aae2d8cb95eb775",
+    "repository": "https://github.com/tree-sitter/tree-sitter-ocaml",
+    "variant": "OCaml",
+    "feature": "lang-ocaml",
+    "fixture": {
+      "prefix": "ocaml",
+      "extension": "ml"
+    },
+    "smoke": "module M = struct\n let f x = x + 1\nend\n",
+    "parser": "tree_sitter_ocaml::LANGUAGE_OCAML",
+    "atoms": [
+      "character",
+      "string",
+      "quoted_string",
+      "tag",
+      "type_variable",
+      "attribute_id"
+    ],
+    "delimiters": [
+      [
+        "(",
+        ")"
+      ],
+      [
+        "[",
+        "]"
+      ],
+      [
+        "{",
+        "}"
+      ]
+    ],
+    "ignore_trailing": [],
+    "highlights": [
+      {
+        "crate": "tree-sitter-ocaml",
+        "constant": "HIGHLIGHTS_QUERY",
+        "path": "queries/highlights.scm"
+      }
+    ]
+  },
+  {
+    "id": "ocaml-interface",
+    "crate": "tree-sitter-ocaml",
+    "version": "0.25.0",
+    "source": "grammars/interface/src",
+    "symbol": "tree_sitter_ocaml_interface",
+    "revision": "6902a86ab5b3b80c622030210aae2d8cb95eb775",
+    "repository": "https://github.com/tree-sitter/tree-sitter-ocaml",
+    "variant": "OCamlInterface",
+    "feature": "lang-ocaml",
+    "fixture": {
+      "prefix": "ocaml_interface",
+      "extension": "mli"
+    },
+    "smoke": "type t = { value : int }\nval f : int -> t\n",
+    "parser": "tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE",
+    "atoms": [
+      "character",
+      "string",
+      "quoted_string",
+      "tag",
+      "type_variable",
+      "attribute_id"
+    ],
+    "delimiters": [
+      [
+        "(",
+        ")"
+      ],
+      [
+        "[",
+        "]"
+      ],
+      [
+        "{",
+        "}"
+      ]
+    ],
+    "ignore_trailing": [],
+    "highlights": []
+  },
+  {
+    "id": "qml",
+    "crate": "tree-sitter-qmljs",
+    "version": "0.3.0",
+    "source": "src",
+    "symbol": "tree_sitter_qmljs",
+    "revision": "0bec4359a7eb2f6c9220cd57372d87d236f66d59",
+    "repository": "https://github.com/yuja/tree-sitter-qmljs",
+    "variant": "Qml",
+    "feature": "lang-qml",
+    "fixture": {
+      "prefix": "qml",
+      "extension": "qml"
+    },
+    "smoke": "import QtQuick\nItem { property int count: 1; function f(x) { return x + count; } }\n",
+    "parser": "tree_sitter_qmljs::LANGUAGE",
+    "atoms": [
+      "string",
+      "template_string",
+      "regex"
+    ],
+    "delimiters": [
+      [
+        "{",
+        "}"
+      ],
+      [
+        "(",
+        ")"
+      ],
+      [
+        "[",
+        "]"
+      ],
+      [
+        "<",
+        ">"
+      ]
+    ],
+    "ignore_trailing": [],
+    "highlights": [
+      {
+        "crate": "tree-sitter-javascript",
+        "constant": "HIGHLIGHT_QUERY",
+        "path": "queries/highlights.scm"
+      },
+      {
+        "crate": "tree-sitter-typescript",
+        "constant": "HIGHLIGHTS_QUERY",
+        "path": "queries/highlights.scm",
+        "license": "languages/typescript/LICENSE"
+      },
+      {
+        "crate": "tree-sitter-qmljs",
+        "constant": "HIGHLIGHTS_QUERY",
+        "path": "queries/highlights.scm"
+      }
+    ]
+  },
+  {
+    "id": "verilog",
+    "crate": "tree-sitter-verilog",
+    "version": "1.0.3",
+    "source": "src",
+    "symbol": "tree_sitter_verilog",
+    "revision": "521b535e41a5acd2c6539a922d4649bbe8275110",
+    "repository": "https://github.com/tree-sitter/tree-sitter-verilog",
+    "variant": "Verilog",
+    "feature": "lang-verilog",
+    "fixture": {
+      "prefix": "verilog",
+      "extension": "sv"
+    },
+    "smoke": "module example(input a, output b);\nassign b = a;\nendmodule\n",
+    "parser": "tree_sitter_verilog::LANGUAGE",
+    "atoms": [
+      "integral_number"
+    ],
+    "delimiters": [
+      [
+        "(",
+        ")"
+      ],
+      [
+        "[",
+        "]"
+      ],
+      [
+        "begin",
+        "end"
+      ]
+    ],
+    "ignore_trailing": [],
+    "highlights": [
+      {
+        "local": "vendored_parsers/highlights/verilog.scm"
+      }
+    ]
+  },
+  {
+    "id": "vhdl",
+    "crate": "tree-sitter-vhdl",
+    "version": "1.4.0",
+    "source": "src",
+    "symbol": "tree_sitter_vhdl",
+    "revision": "889c521757471093ce5ac83502ca8a89e516404e",
+    "repository": "https://github.com/jpt13653903/tree-sitter-vhdl",
+    "variant": "Vhdl",
+    "feature": "lang-vhdl",
+    "fixture": {
+      "prefix": "vhdl",
+      "extension": "vhd"
+    },
+    "smoke": "entity example is\nend entity example;\narchitecture rtl of example is\nbegin\nend architecture rtl;\n",
+    "parser": "tree_sitter_vhdl::LANGUAGE",
+    "atoms": [],
+    "delimiters": [
+      [
+        "(",
+        ")"
+      ]
+    ],
+    "ignore_trailing": [],
+    "highlights": [
+      {
+        "crate": "tree-sitter-vhdl",
+        "constant": "HIGHLIGHTS_QUERY",
+        "path": "queries/Neovim/highlights.scm"
+      }
+    ]
+  }
+]

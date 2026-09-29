@@ -149,6 +149,12 @@ with tempfile.TemporaryDirectory() as temporary:
     assert all(l['availability'] == 'built_in' for l in run(static, 'languages', 'list', '--json')[0]['languages'])
     installed()
     assert library.stat().st_size == entry['files'][library.name]['size']
+    query = revision / (first_id + '.highlights.scm')
+    query.write_text('(invalid query')
+    broken_query = run(native, *compare_args(*fixtures[0]))
+    assert next(e for e in broken_query if e['type'] == 'file')['diff']['stats']['fallback']['code'] == 'parser_load_failed'
+    installed()
+    assert relevant(run(native, *compare_args(*fixtures[0]))) == relevant(run(static, *compare_args(*fixtures[0])))
     installed()  # idempotent, offline
     timings = []
     for _ in range(10):

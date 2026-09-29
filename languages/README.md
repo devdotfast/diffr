@@ -13,7 +13,8 @@ built-in parsers and take priority over packages. The pack contains Fortran, F#,
 Verilog, OCaml (implementation and interface), Julia, Haskell, VHDL, Salesforce
 Apex, and QML. LaTeX and general SQL remain bundled.
 
-See [ADDING.md](ADDING.md) for the validated pathway to move another parser.
+The single registry is [extra.json](extra.json); see [ADDING.md](ADDING.md) for
+the pathway to move another parser out of the built-in configuration.
 
 The store is `<data_local_dir>/diffr/parsers/<executable-target>/extra/<version>`.
 `DIFFR_PARSER_DIR` replaces the `parsers` root. Revisions coexist, and ordinary
@@ -34,10 +35,12 @@ python3 languages/tests/integration.py target/languages/aarch64-apple-darwin/cat
 
 Python 3 and a C compiler are build tools only. Cargo's locked metadata locates
 registry sources; definitions additionally pin versions and source revisions.
-Highlights are compiled into diffr. F# uses only `fsharp/src`, including its
-scanner, and Fortran includes its scanner. Licenses and highlights were copied
-from the pinned crate/source revisions, except Verilog highlights, which retain
-diffr's existing query. No grammar package contains JavaScript or install scripts.
+Highlight queries travel with the optional pack and are hash-verified before use.
+Built-in feature builds continue to use the upstream crate constants. F# uses
+only `fsharp/src`, including its scanner, and Fortran includes its scanner.
+Licenses come from the pinned crate/source revisions. The builder reads upstream
+queries directly from Cargo sources and preserves diffr's existing Julia and
+Verilog custom queries. No grammar package contains JavaScript or install scripts.
 
 To exercise x64 execution under Rosetta on an ARM64 Mac, first install the Rust
 target with `rustup target add x86_64-apple-darwin`, then run the commands above

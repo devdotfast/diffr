@@ -9,15 +9,16 @@ use tree_sitter_language::LanguageFn;
 
 struct Loaded {
     language: tree_sitter::Language,
+    highlights: String,
     _library: Library,
 }
 
-pub(crate) fn load(id: &'static str) -> Result<tree_sitter::Language, ParserError> {
+pub(crate) fn load(id: &'static str) -> Result<(tree_sitter::Language, String), ParserError> {
     static LOADED: LazyLock<Mutex<DftHashMap<&'static str, Loaded>>> =
         LazyLock::new(|| Mutex::new(DftHashMap::default()));
     let mut loaded = LOADED.lock().unwrap();
     if let Some(grammar) = loaded.get(id) {
-        return Ok(grammar.language.clone());
+        return Ok((grammar.language.clone(), grammar.highlights.clone()));
     }
     let package = languages::package().ok_or_else(|| {
         ParserError::new(
@@ -49,6 +50,7 @@ pub(crate) fn load(id: &'static str) -> Result<tree_sitter::Language, ParserErro
             "incompatible catalog ABI"
         );
         let path = languages::verify_library(package, entry, &directory)?;
+        let highlights = languages::highlights(package, id, &directory)?;
         // Only exact, catalog-hashed code is loaded. The handle stays in LOADED forever.
         let library = unsafe { Library::new(path)? };
         let function =
@@ -62,11 +64,12 @@ pub(crate) fn load(id: &'static str) -> Result<tree_sitter::Language, ParserErro
         tree_sitter::Parser::new().set_language(&language)?;
         Ok(Loaded {
             language,
+            highlights,
             _library: library,
         })
     })()
     .map_err(|e| ParserError::new(FallbackCause::ParserLoadFailed, format!("{id}: {e:#}")))?;
-    let language = result.language.clone();
+    let parser = (result.language.clone(), result.highlights.clone());
     loaded.insert(id, result);
-    Ok(language)
+    Ok(parser)
 }

@@ -126,6 +126,18 @@ pub(crate) fn verify_library(
     );
     Ok(canonical)
 }
+
+pub(crate) fn highlights(package: &Package, id: &str, directory: &Path) -> Result<String> {
+    let name = format!("{id}.highlights.scm");
+    let bytes = read_verified(
+        &directory.join(&name),
+        package
+            .files
+            .get(&name)
+            .context("missing catalog highlights")?,
+    )?;
+    Ok(String::from_utf8(bytes)?)
+}
 fn verify_install(package: &Package, directory: &Path) -> Result<()> {
     ensure!(
         !fs::symlink_metadata(directory)?.file_type().is_symlink(),

@@ -46,6 +46,7 @@ fn main() {
         std::env::var("TARGET").unwrap()
     );
     native_plugins();
+    extra_languages();
     let parsers = vec![
         TreeSitterParser {
             name: "tree-sitter-janet-simple",
@@ -88,6 +89,70 @@ fn main() {
     // Note that difftastic does not use jemalloc on all operating
     // systems, but it's harmless to set this unconditionally.
     println!("cargo:rustc-env=JEMALLOC_SYS_WITH_LG_PAGE=16");
+}
+
+fn extra_languages() {
+    use serde_json::Value;
+    println!("cargo:rerun-if-changed=languages/extra.json");
+    let definitions: Vec<Value> =
+        serde_json::from_str(&std::fs::read_to_string("languages/extra.json").unwrap()).unwrap();
+    let strings = |values: &Value| {
+        values
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| format!("{:?}", value.as_str().unwrap()))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let pairs = |values: &Value| {
+        values
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|pair| {
+                format!(
+                    "({:?},{:?})",
+                    pair[0].as_str().unwrap(),
+                    pair[1].as_str().unwrap()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let mut code = String::from("extra_languages! {\n");
+    for definition in definitions {
+        let text = |key| definition[key].as_str().unwrap();
+        let highlights = definition["highlights"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|query| {
+                if let Some(local) = query["local"].as_str() {
+                    println!("cargo:rerun-if-changed={local}");
+                    format!(
+                        "include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), {:?}))",
+                        format!("/{local}")
+                    )
+                } else {
+                    format!(
+                        "{}::{}",
+                        query["crate"].as_str().unwrap().replace('-', "_"),
+                        query["constant"].as_str().unwrap()
+                    )
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        code.push_str(&format!(
+            "{} => {{ id: {:?}, feature: {:?}, parser: {}, highlights: [{}], atoms: [{}], delimiters: [{}], ignore_trailing: [{}] }},\n",
+            text("variant"), text("id"), text("feature"), text("parser"), highlights,
+            strings(&definition["atoms"]), pairs(&definition["delimiters"]), pairs(&definition["ignore_trailing"]),
+        ));
+    }
+    code.push_str("}\n");
+    let output = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("extra_languages.rs");
+    std::fs::write(output, code).unwrap();
 }
 
 fn commit_info() {

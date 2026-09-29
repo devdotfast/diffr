@@ -20,8 +20,8 @@ class DefinitionChecks(unittest.TestCase):
         ocaml = [d for d in self.items if d['feature'] == 'lang-ocaml']
         self.assertEqual({d['id'] for d in ocaml}, {'ocaml', 'ocaml-interface'})
 
-    def test_missing_registry_and_feature_entries_are_rejected(self):
-        with self.assertRaisesRegex(AssertionError, 'registry'):
+    def test_missing_definitions_and_feature_entries_are_rejected(self):
+        with self.assertRaisesRegex(AssertionError, 'dependencies'):
             validate(self.items[1:], self.metadata)
         metadata = copy.deepcopy(self.metadata)
         package = next(p for p in metadata['packages'] if p['name'] == 'diffr-cli')
@@ -33,6 +33,18 @@ class DefinitionChecks(unittest.TestCase):
         items = copy.deepcopy(self.items)
         items[0]['fixture']['prefix'] = 'missing-extra-language-fixture'
         with self.assertRaisesRegex(AssertionError, 'missing fixture'):
+            validate(items, self.metadata)
+
+    def test_duplicate_builtin_config_is_rejected(self):
+        items = copy.deepcopy(self.items)
+        items[0]['variant'] = 'Ada'
+        with self.assertRaisesRegex(AssertionError, 'duplicate built-in'):
+            validate(items, self.metadata)
+
+    def test_query_path_traversal_is_rejected(self):
+        items = copy.deepcopy(self.items)
+        items[0]['highlights'][0]['path'] = '../highlights.scm'
+        with self.assertRaisesRegex(AssertionError, 'invalid query path'):
             validate(items, self.metadata)
 
 

@@ -24,8 +24,7 @@ include = [
         "/build.rs",
         "/src/",
         "/languages/catalog.json",
-        "/languages/*/language.json",
-        "/languages/*/highlights.scm",
+        "/languages/extra.json",
         "/languages/*/LICENSE",
         "/wit/",
         "/plugins/",
@@ -177,6 +176,7 @@ predicates = "3.1.3"
 pretty_assertions = "1.3.0"
 
 [build-dependencies]
+serde_json = "1"
 toml = "0.8"
 # TODO: enable parallel mode, see discussion in
 # https://github.com/rust-lang/cc-rs/pull/849

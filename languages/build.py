@@ -74,6 +74,19 @@ def main():
             subprocess.run(['strip', '-x' if system == 'darwin' else '--strip-unneeded', str(package / filename)], check=True)
             abi = int(re.search(r'#define LANGUAGE_VERSION (\d+)', (source / 'parser.c').read_text())[1])
             libraries.append(dict(id=definition['id'], file=filename, symbol=definition['symbol'], abi=abi))
+            highlights = []
+            for query in definition['highlights']:
+                if 'local' in query:
+                    path = ROOT / query['local']
+                else:
+                    dependency = next(p for p in metadata['packages'] if p['name'] == query['crate'])
+                    dependency_root = Path(dependency['manifest_path']).parent
+                    path = dependency_root / query['path']
+                    if query['crate'] != definition['crate']:
+                        license = ROOT / query['license'] if 'license' in query else dependency_root / 'LICENSE'
+                        shutil.copyfile(license, package / (query['crate'] + '.LICENSE'))
+                highlights.append(path.read_text())
+            (package / (definition['id'] + '.highlights.scm')).write_text(''.join(highlights))
             shutil.copyfile(ROOT / 'languages' / definition['id'] / 'LICENSE', package / (definition['id'] + '.LICENSE'))
         write(package / 'manifest.json', dict(schema=1, pack='extra', version=template['version'], target=args.target, libraries=libraries))
         write(package / 'package.json', dict(template, name=name, os=[system], cpu=[cpu], **({'libc': ['glibc']} if system == 'linux' else {})))
@@ -84,7 +97,8 @@ def main():
         assert {(d['id'], d['symbol']) for d in manifest['libraries']} == expected, 'stale package: rebuild the language libraries'
         expected_files = {'manifest.json', 'package.json'}
         for library in manifest['libraries']:
-            expected_files.update([library['file'], library['id'] + '.LICENSE'])
+            expected_files.update([library['file'], library['id'] + '.LICENSE', library['id'] + '.highlights.scm'])
+        expected_files.update(q['crate'] + '.LICENSE' for d in definitions for q in d['highlights'] if 'crate' in q and q['crate'] != d['crate'])
         assert {p.name for p in package.iterdir()} == expected_files, 'unexpected or missing package files'
         files = {p.name: dict(size=p.stat().st_size, sha256=digest(p.read_bytes())) for p in sorted(package.iterdir())}
         archive = output / (name.split('/')[1] + '-' + template['version'] + '.tgz')

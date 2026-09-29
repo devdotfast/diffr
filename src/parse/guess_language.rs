@@ -20,6 +20,7 @@ use strum::{EnumIter, IntoEnumIterator};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter)]
 pub(crate) enum Language {
     Ada,
+    #[cfg(feature = "lang-apex")]
     Apex,
     Asm,
     Bash,
@@ -44,6 +45,7 @@ pub(crate) enum Language {
     Fortran,
     Gleam,
     Go,
+    #[cfg(feature = "lang-haskell")]
     Haskell,
     Hcl,
     Html,
@@ -52,6 +54,7 @@ pub(crate) enum Language {
     JavaScript,
     JavascriptJsx,
     Json,
+    #[cfg(feature = "lang-julia")]
     Julia,
     Kotlin,
     LaTeX,
@@ -60,13 +63,16 @@ pub(crate) enum Language {
     Newick,
     Nix,
     ObjC,
+    #[cfg(feature = "lang-ocaml")]
     OCaml,
+    #[cfg(feature = "lang-ocaml")]
     OCamlInterface,
     Pascal,
     Perl,
     Php,
     Proto,
     Python,
+    #[cfg(feature = "lang-qml")]
     Qml,
     R,
     Racket,
@@ -83,6 +89,7 @@ pub(crate) enum Language {
     TypeScriptTsx,
     #[cfg(feature = "lang-verilog")]
     Verilog,
+    #[cfg(feature = "lang-vhdl")]
     Vhdl,
     Xml,
     Yaml,
@@ -124,6 +131,7 @@ pub(crate) fn language_override_from_name(name: &str) -> Option<LanguageOverride
 pub(crate) fn language_name(language: Language) -> &'static str {
     match language {
         Ada => "Ada",
+        #[cfg(feature = "lang-apex")]
         Apex => "Apex",
         Asm => "Assembly",
         Bash => "Bash",
@@ -148,6 +156,7 @@ pub(crate) fn language_name(language: Language) -> &'static str {
         Fortran => "Fortran",
         Gleam => "Gleam",
         Go => "Go",
+        #[cfg(feature = "lang-haskell")]
         Haskell => "Haskell",
         Hcl => "HCL",
         Html => "HTML",
@@ -156,6 +165,7 @@ pub(crate) fn language_name(language: Language) -> &'static str {
         JavaScript => "JavaScript",
         JavascriptJsx => "JavaScript JSX",
         Json => "JSON",
+        #[cfg(feature = "lang-julia")]
         Julia => "Julia",
         Kotlin => "Kotlin",
         LaTeX => "LaTeX",
@@ -164,13 +174,16 @@ pub(crate) fn language_name(language: Language) -> &'static str {
         Newick => "Newick",
         Nix => "Nix",
         ObjC => "Objective-C",
+        #[cfg(feature = "lang-ocaml")]
         OCaml => "OCaml",
+        #[cfg(feature = "lang-ocaml")]
         OCamlInterface => "OCaml Interface",
         Pascal => "Pascal",
         Perl => "Perl",
         Php => "PHP",
         Proto => "Proto",
         Python => "Python",
+        #[cfg(feature = "lang-qml")]
         Qml => "QML",
         R => "R",
         Racket => "Racket",
@@ -187,6 +200,7 @@ pub(crate) fn language_name(language: Language) -> &'static str {
         TypeScriptTsx => "TypeScript TSX",
         #[cfg(feature = "lang-verilog")]
         Verilog => "Verilog",
+        #[cfg(feature = "lang-vhdl")]
         Vhdl => "VHDL",
         Xml => "XML",
         Yaml => "YAML",
@@ -251,6 +265,7 @@ pub(crate) fn language_globs(language: Language) -> Vec<glob::Pattern> {
             "zshenv",
             "zshrc",
         ],
+        #[cfg(feature = "lang-apex")]
         Apex => &["*.apexc", "*.trigger"],
         C => &["*.c"],
         Clojure => &[
@@ -301,6 +316,7 @@ pub(crate) fn language_globs(language: Language) -> Vec<glob::Pattern> {
         Fortran => &["*.f", "*.for", "*.f90", "*.F", "*.FOR", "*.F90"],
         Gleam => &["*.gleam"],
         Go => &["*.go"],
+        #[cfg(feature = "lang-haskell")]
         Haskell => &["*.hs"],
         Hcl => &["*.hcl", "*.nomad", "*.tf", "*.tfvars", "*.workflow"],
         Html => &["*.html", "*.htm", "*.xhtml"],
@@ -338,6 +354,7 @@ pub(crate) fn language_globs(language: Language) -> Vec<glob::Pattern> {
             "flake.lock",
         ],
         JavascriptJsx => &["*.jsx"],
+        #[cfg(feature = "lang-julia")]
         Julia => &["*.jl"],
         Kotlin => &["*.kt", "*.ktm", "*.kts"],
         LaTeX => &["*.aux", "*.cls", "*.sty", "*.tex"],
@@ -366,7 +383,9 @@ pub(crate) fn language_globs(language: Language) -> Vec<glob::Pattern> {
         Newick => &["*.nhx", "*.nwk", "*.nh"],
         Nix => &["*.nix"],
         ObjC => &["*.m"],
+        #[cfg(feature = "lang-ocaml")]
         OCaml => &["*.ml"],
+        #[cfg(feature = "lang-ocaml")]
         OCamlInterface => &["*.mli"],
         Pascal => &["*.pas", "*.dfm", "*.dpr", "*.lpr", "*.pascal"],
         Perl => &["*.pm", "*.pl"],
@@ -375,6 +394,7 @@ pub(crate) fn language_globs(language: Language) -> Vec<glob::Pattern> {
         ],
         Proto => &["*.proto"],
         Python => &["*.py", "*.py3", "*.pyi", "*.bzl", "TARGETS", "BUCK", "DEPS"],
+        #[cfg(feature = "lang-qml")]
         Qml => &["*.qml"],
         R => &["*.R", "*.r", "*.rd", "*.rsx", ".Rprofile", "expr-dist"],
         Racket => &["*.rkt"],
@@ -406,6 +426,7 @@ pub(crate) fn language_globs(language: Language) -> Vec<glob::Pattern> {
         TypeScriptTsx => &["*.tsx"],
         #[cfg(feature = "lang-verilog")]
         Verilog => &["*.v", "*.sv", "*.vh"],
+        #[cfg(feature = "lang-vhdl")]
         Vhdl => &["*.vhdl", "*.vhd"],
         Xml => &[
             "*.ant",
@@ -560,6 +581,7 @@ fn from_emacs_mode_header(src: &str) -> Option<Language> {
             "fortran" => Fortran,
             "gleam" => Gleam,
             "go" => Go,
+            #[cfg(feature = "lang-haskell")]
             "haskell" => Haskell,
             "hcl" => Hcl,
             "html" => Html,
@@ -581,10 +603,12 @@ fn from_emacs_mode_header(src: &str) -> Option<Language> {
             "sql" => Sql,
             "swift" => Swift,
             "toml" => Toml,
+            #[cfg(feature = "lang-ocaml")]
             "tuareg" => OCaml,
             "typescript" => TypeScript,
             #[cfg(feature = "lang-verilog")]
             "verilog" => Verilog,
+            #[cfg(feature = "lang-vhdl")]
             "vhdl" => Vhdl,
             "yaml" => Yaml,
             "zig" => Zig,
@@ -613,9 +637,11 @@ fn from_shebang(src: &str) -> Option<Language> {
                     "elixir" => return Some(Elixir),
                     "escript" => return Some(Erlang),
                     "fish" => return Some(Fish),
+                    #[cfg(feature = "lang-haskell")]
                     "runghc" | "runhaskell" | "runhugs" => return Some(Haskell),
                     "chakra" | "d8" | "gjs" | "js" | "node" | "nodejs" | "qjs" | "rhino" | "v8"
                     | "v8-shell" => return Some(JavaScript),
+                    #[cfg(feature = "lang-ocaml")]
                     "ocaml" | "ocamlrun" | "ocamlscript" => return Some(OCaml),
                     "perl" => return Some(Perl),
                     "python" | "python2" | "python3" => return Some(Python),
@@ -725,6 +751,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-ocaml")]
     fn test_guess_by_emacs_mode_shorthand() {
         let path = Path::new("foo");
         assert_eq!(guess(path, "(* -*- tuareg -*- *)", &[]), Some(OCaml));

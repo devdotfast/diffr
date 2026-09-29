@@ -92,6 +92,7 @@ extern "C" {
 }
 
 // TODO: begin/end and object/end.
+#[cfg(feature = "lang-ocaml")]
 const OCAML_ATOM_NODES: [&str; 6] = [
     "character",
     "string",
@@ -138,6 +139,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
+        #[cfg(feature = "lang-apex")]
         Apex => {
             let language_fn = tree_sitter_sfapex::apex::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
@@ -517,6 +519,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
+        #[cfg(feature = "lang-haskell")]
         Haskell => {
             let language_fn = tree_sitter_haskell::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
@@ -689,6 +692,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
+        #[cfg(feature = "lang-julia")]
         Julia => {
             let language_fn = tree_sitter_julia::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
@@ -843,6 +847,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
+        #[cfg(feature = "lang-ocaml")]
         OCaml => {
             let language_fn = tree_sitter_ocaml::LANGUAGE_OCAML;
             let language = tree_sitter::Language::new(language_fn);
@@ -856,6 +861,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
+        #[cfg(feature = "lang-ocaml")]
         OCamlInterface => {
             let language_fn = tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE;
             let language = tree_sitter::Language::new(language_fn);
@@ -961,6 +967,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
+        #[cfg(feature = "lang-qml")]
         Qml => {
             let language_fn = tree_sitter_qmljs::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
@@ -1265,6 +1272,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
+        #[cfg(feature = "lang-vhdl")]
         Vhdl => {
             let language_fn = tree_sitter_vhdl::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);

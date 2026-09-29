@@ -19,6 +19,7 @@ try {
 async function main() {
   const { values } = parseArgs({ options: {
     into: { type: "string" },
+    full: { type: "boolean", default: false },
     check: { type: "boolean" },
     required: { type: "boolean" },
     pins: { type: "string", default: join(root, "pins.json") },
@@ -30,7 +31,9 @@ async function main() {
   if (pins.version !== version) throw new Error(`pins.json is for ${pins.version}, package is ${version}; run \`npm run pin\``);
   const target = targets[`${process.platform}-${process.arch}`];
   if (!target) throw new Error(`no diffr release for ${process.platform}-${process.arch}`);
-  const expected = pins.sha256?.[target];
+  const pin = values.full ? pins.full : pins;
+  if (!pin) throw new Error(`pins.json has no full edition for ${version}`);
+  const expected = pin.sha256?.[target];
   if (typeof expected !== "string" || !/^[a-f0-9]{64}$/.test(expected)) {
     throw new Error(`pins.json has no valid sha256 for ${target}`);
   }
@@ -41,7 +44,8 @@ async function main() {
   try {
     const stamp = JSON.parse(readFileSync(stampPath, "utf8"));
     const stat = lstatSync(binary);
-    installed = stat.isFile() && (stat.mode & 0o111) !== 0 && stamp.version === version && stamp.target === target;
+    installed = stat.isFile() && (stat.mode & 0o111) !== 0 && stamp.version === version && stamp.target === target
+      && Boolean(stamp.full) === values.full;
   } catch { /* Missing or damaged installations are fetched again. */ }
   if (installed) {
     console.log(`diffr ${version} (${target}) already at ${binary}`);
@@ -49,8 +53,8 @@ async function main() {
   }
   if (values.check) throw new Error(`${binary} is missing or not diffr ${version} (${target})`);
 
-  const artifact = pins.artifact ?? "diffr";
-  if (!["diffr", "diffr-cli"].includes(artifact)) throw new Error(`unknown pinned artifact: ${artifact}`);
+  const artifact = values.full ? "diffr-cli-full" : pins.artifact ?? "diffr";
+  if (!["diffr", "diffr-cli", "diffr-cli-full"].includes(artifact)) throw new Error(`unknown pinned artifact: ${artifact}`);
   const asset = `${artifact}-${version}-${target}.tar.gz`;
   const url = `https://github.com/devdotfast/diffr/releases/download/${version}/${asset}`;
   let bytes;
@@ -78,7 +82,7 @@ async function main() {
     }
     chmodSync(extracted, 0o755);
     const stamp = join(staging, "stamp.json");
-    writeFileSync(stamp, `${JSON.stringify({ version, target }, null, 2)}\n`);
+    writeFileSync(stamp, `${JSON.stringify({ version, target, ...(values.full && { full: true }) }, null, 2)}\n`);
     renameSync(extracted, binary);
     renameSync(stamp, stampPath);
   } finally {

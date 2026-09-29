@@ -152,3 +152,17 @@ test("unknown pinned artifacts fail before downloading", () => {
   expect(f.run().err).toContain("unknown pinned artifact");
   expect(existsSync(join(f.dir, "requested"))).toBe(false);
 });
+
+test("--full downloads the full archive, fails without full pins, and refetches when switching", () => {
+  const f = fixture("diffr", "diffr-cli");
+  expect(f.run(["--full"]).err).toContain("no full edition");
+  expect(existsSync(join(f.dir, "requested"))).toBe(false);
+  const pins = JSON.parse(readFileSync(f.pins, "utf8"));
+  writeFileSync(f.pins, JSON.stringify({ ...pins, full: { sha256: pins.sha256 } }));
+  expect(f.run(["--full"]).code).toBe(0);
+  expect(readFileSync(join(f.dir, "requested"), "utf8")).toBe(
+    `https://github.com/devdotfast/diffr/releases/download/${version}/diffr-cli-full-${version}-${target}.tar.gz`,
+  );
+  expect(f.run(["--full", "--check"]).code).toBe(0);
+  expect(f.run(["--check"]).code).toBe(1);
+});

@@ -1,9 +1,10 @@
 {
-  "version": "0.1.5",
+  "version": "0.1.6",
   "artifact": "diffr-cli",
   "sha256": {
-    "aarch64-apple-darwin": "e6ba8c73a91a24db61347d736c283265ba6ffe7f236a980aa13fd5b81afb19e5",
-    "x86_64-apple-darwin": "020814d26d1572fec136b3f0fd43e1fcc1b6fe4be284f5fc5348b8bad744025d",
-    "x86_64-unknown-linux-gnu": "e7fd08cc6350aed7c8e5bd10fc7b6f9ae249b931e74d09017879b2dcbf07fc65"
+    "aarch64-apple-darwin": "f877369dee2679c66b623d5a71edfb590d148e6162fc7ebb517dc0ce894a8d7c",
+    "x86_64-apple-darwin": "e411028dd08ee86b9eca372c6d155be2e391b9db2390e2afadf483f5f3d79f76",
+    "x86_64-unknown-linux-gnu": "0ff17c0e08b401ff079be3643edcf1fe5aa1585ca1339ec1463c69f90e7571ef",
+    "aarch64-unknown-linux-gnu": "bdc96a3b48e831f775897244eadebac20bccd31c69c777cb3c7b253ce6fa6508"
   }
 }

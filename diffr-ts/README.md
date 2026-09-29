@@ -9,10 +9,10 @@ const event = decodeStructuralDiffEvent(line);
 ```
 
 ```sh
-npx --package @dev.fast/diffr@0.1.5 diffr-fetch --into ./bin --required
+npx --package @dev.fast/diffr@0.1.6 diffr-fetch --into ./bin --required
 ```
 
-Supports macOS arm64, macOS x64, and Linux x64. `--check` verifies an existing install without
+Supports macOS arm64, macOS x64, Linux arm64, and Linux x64. `--check` verifies an existing install without
 network access. Downloads warn on network failure unless `--required`; invalid
 hashes or archives always fail.
 
@@ -28,9 +28,6 @@ Keep these files in sync:
 | Review's `packages/review-protocol/package.json` and `packages/review/package.json` | Exact package version pins |
 
 ## Release
-
-Linux ARM64 fetch support requires a release containing an `aarch64-unknown-linux-gnu`
-archive and regenerated pins; the bundled 0.1.5 pins do not include it.
 
 After tagging the matching Rust release and building with `cargo build --locked`,
 run from `diffr-ts`. New pins select the CLI-only release archives; older pins

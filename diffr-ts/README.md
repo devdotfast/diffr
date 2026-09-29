@@ -9,7 +9,7 @@ const event = decodeStructuralDiffEvent(line);
 ```
 
 ```sh
-npx --package @dev.fast/diffr@0.1.4 diffr-fetch --into ./bin --required
+npx --package @dev.fast/diffr@0.1.5 diffr-fetch --into ./bin --required
 ```
 
 Supports macOS arm64, macOS x64, and Linux x64. `--check` verifies an existing install without

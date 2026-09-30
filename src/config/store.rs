@@ -542,6 +542,37 @@ mod sparse_tests {
     }
 
     #[test]
+    fn commented_keys_and_tables_are_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "# my settings\n[plugins] # note\n[plugins.bundled.context]\n# lines = 10 later\nenabled = true\nlines = 8\n",
+        )
+        .unwrap();
+        set(&path, "diff.graph_limit", "42").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        for comment in ["# my settings", "# note", "# lines = 10 later"] {
+            assert!(text.contains(comment), "{comment} in {text}");
+        }
+    }
+
+    #[test]
+    fn tables_left_empty_by_pruning_go_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        // Earlier versions wrote every table with its own header.
+        std::fs::write(
+            &path,
+            "version = 1\n\n[plugins]\n\n[plugins.bundled]\n\n[plugins.bundled.context]\nlines = 3\n",
+        )
+        .unwrap();
+        set(&path, "diff.graph_limit", "42").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("plugins"), "{text}");
+    }
+
+    #[test]
     fn an_explicit_plugin_list_still_pins_membership() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");

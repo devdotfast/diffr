@@ -77,7 +77,7 @@ diffr config set <key> <value>   # dotted key, value as typed: true, 12, gemini
 
 Every scalar setting is listed under its `x-group` by its `title`, including each plugin's
 `enabled` switch. Keys diffr marks `"x-settings": false` (`plugins.order`,
-`plugins.bundled.hide-files.tags`, `plugins.bundled.summarize.system_prompt`, and any list or table option) are left to the file; any other key the screen cannot edit is an error
+`plugins.bundled.hide-files.tags`, and any list or table option) are left to the file; any other key the screen cannot edit is an error
 naming it, not a silently missing row.
 
 The list view: type to filter (fuzzy over titles and keys, substring over group names and

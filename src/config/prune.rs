@@ -38,19 +38,22 @@ pub(crate) fn forget_legacy(source: &str) -> Cow<'_, str> {
     }
 }
 
-/// Remove each value, then each empty table, whose removal leaves
-/// `resolve` of the document unchanged. `version` stays.
+/// Remove each value, then each table that holds no values, whose removal
+/// leaves `resolve` of the document unchanged. `version` stays, and so does
+/// anything with a comment on it: a note marks intent.
 pub(crate) fn prune(document: &mut DocumentMut, resolve: impl Fn(&str) -> Option<toml::Value>) {
-    let target = resolve(&document.to_string());
-    for empty_tables in [false, true] {
-        for path in removable(document.as_table(), empty_tables) {
+    let Some(target) = resolve(&document.to_string()) else {
+        return;
+    };
+    for hollow_tables in [false, true] {
+        for path in removable(document.as_table(), hollow_tables) {
             if path == ["version"] {
                 continue;
             }
             let path: Vec<&str> = path.iter().map(String::as_str).collect();
             let mut candidate = document.clone();
             remove(candidate.as_table_mut(), &path);
-            if resolve(&candidate.to_string()) == target {
+            if resolve(&candidate.to_string()).as_ref() == Some(&target) {
                 *document = candidate;
             }
         }
@@ -58,11 +61,11 @@ pub(crate) fn prune(document: &mut DocumentMut, resolve: impl Fn(&str) -> Option
     hide_headers(document.as_table_mut());
 }
 
-/// Leave out the header of a table that only holds tables, such as
-/// `[plugins]` above `[plugins.bundled.context]`.
+/// Leave out the uncommented header of a table that only holds tables, such
+/// as `[plugins]` above `[plugins.bundled.context]`.
 fn hide_headers(table: &mut toml_edit::Table) {
     let only_tables = table.iter().all(|(_, item)| item.is_table());
-    if only_tables && !table.is_empty() {
+    if only_tables && !table.is_empty() && !commented(table.decor()) {
         table.set_implicit(true);
     }
     for (_, item) in table.iter_mut() {
@@ -72,26 +75,54 @@ fn hide_headers(table: &mut toml_edit::Table) {
     }
 }
 
-/// The dotted paths of the table's values, or of its empty tables, deepest
+/// The dotted paths of the table's uncommented values or, with
+/// `hollow_tables`, of its outermost tables that hold no values, deepest
 /// first.
-fn removable(table: &dyn TableLike, empty_tables: bool) -> Vec<Vec<String>> {
+fn removable(table: &dyn TableLike, hollow_tables: bool) -> Vec<Vec<String>> {
     let mut paths = Vec::new();
     for (key, item) in table.iter() {
+        if has_comment(table, key, item) {
+            continue;
+        }
         match item.as_table_like() {
+            Some(child) if hollow_tables && hollow(child) => paths.push(vec![key.to_owned()]),
             Some(child) => {
-                for mut path in removable(child, empty_tables) {
+                for mut path in removable(child, hollow_tables) {
                     path.insert(0, key.to_owned());
                     paths.push(path);
                 }
-                if empty_tables && child.is_empty() {
-                    paths.push(vec![key.to_owned()]);
-                }
             }
-            None if !empty_tables => paths.push(vec![key.to_owned()]),
+            None if !hollow_tables => paths.push(vec![key.to_owned()]),
             None => {}
         }
     }
     paths
+}
+
+/// A table with no values and no comments, at any depth.
+fn hollow(table: &dyn TableLike) -> bool {
+    table.iter().all(|(key, item)| {
+        !has_comment(table, key, item) && item.as_table_like().is_some_and(hollow)
+    })
+}
+
+fn has_comment(table: &dyn TableLike, key: &str, item: &Item) -> bool {
+    let key = table
+        .key(key)
+        .is_some_and(|key| commented(key.leaf_decor()));
+    let item = match item {
+        Item::Value(value) => commented(value.decor()),
+        Item::Table(table) => commented(table.decor()),
+        _ => false,
+    };
+    key || item
+}
+
+fn commented(decor: &toml_edit::Decor) -> bool {
+    [decor.prefix(), decor.suffix()]
+        .into_iter()
+        .flatten()
+        .any(|raw| raw.as_str().is_some_and(|text| text.contains('#')))
 }
 
 fn get<'a>(table: &'a dyn TableLike, path: &[&str]) -> Option<&'a Item> {

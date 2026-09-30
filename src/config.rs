@@ -9,7 +9,8 @@
 //! dotted key. Lists are in the schema marked `"x-settings": false`: a
 //! settings screen edits scalars and leaves those to the file and `diffr
 //! config set`. The `plugins` part of the schema comes from each plugin's
-//! `plugin.toml`, with lists and multi-line values marked the same way.
+//! `plugin.toml`, with lists and tables marked the same way. `config set`
+//! keeps only what differs from the defaults (see [`prune`]).
 //!
 //! `[plugins]` configures the plugins that shape regions after diffing (see
 //! [`crate::plugin`]). Compiling assembles, per language, one query from the

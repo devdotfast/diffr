@@ -1,5 +1,6 @@
 //! Each model API's wire format: where a request goes, how it is
 //! authenticated, and where the answer's text is.
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -60,9 +61,10 @@ impl Provider {
     }
 
     /// Only Gemini constrains the answer with a schema; the others follow
-    /// the system prompt, and [`answer_json`] drops what they wrap it in.
-    /// OpenAI gets no sampling or length options: reasoning models reject
-    /// them and compatible servers name them differently.
+    /// the system prompt, and [`answers`] skips what they wrap it in. Only
+    /// Gemini gets a temperature: current reasoning models reject one.
+    /// OpenAI gets no length limit either, since compatible servers name it
+    /// differently; Anthropic's limit also covers thinking, so it has a floor.
     pub fn body(self, model: &str, system: &str, user: &str, max_tokens: usize) -> Value {
         match self {
             Self::Gemini => json!({
@@ -96,8 +98,7 @@ impl Provider {
             }),
             Self::Anthropic => json!({
                 "model": model,
-                "max_tokens": max_tokens,
-                "temperature": 0,
+                "max_tokens": max_tokens.max(4096),
                 "system": system,
                 "messages": [{"role": "user", "content": user}],
             }),
@@ -121,10 +122,18 @@ impl Provider {
     }
 }
 
-/// The JSON array in an answer, without any prose or code fence around it.
-pub fn answer_json(text: &str) -> &str {
-    match (text.find('['), text.rfind(']')) {
-        (Some(start), Some(end)) if start < end => &text[start..=end],
-        _ => text,
+/// The first JSON array in an answer that holds items, ignoring any prose,
+/// fence or reasoning around it; an empty array only when none does.
+pub fn answers<T: DeserializeOwned>(text: &str) -> Option<Vec<T>> {
+    let mut parsed = text.match_indices('[').filter_map(|(start, _)| {
+        serde_json::Deserializer::from_str(&text[start..])
+            .into_iter::<Vec<T>>()
+            .next()?
+            .ok()
+    });
+    let first = parsed.next()?;
+    if !first.is_empty() {
+        return Some(first);
     }
+    Some(parsed.find(|items| !items.is_empty()).unwrap_or(first))
 }

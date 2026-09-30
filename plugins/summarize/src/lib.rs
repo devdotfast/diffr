@@ -155,8 +155,8 @@ impl Summarize {
         let content = provider
             .text(&text)
             .ok_or_else(|| failed("no text in the response".to_owned()))?;
-        let answers: Vec<Answer> = serde_json::from_str(provider::answer_json(content))
-            .map_err(|error| failed(format!("{error}: {content}")))?;
+        let answers: Vec<Answer> = provider::answers(content)
+            .ok_or_else(|| failed(format!("no summaries in the answer: {content}")))?;
         let mut texts = BTreeMap::new();
         for answer in answers {
             if !folds.iter().any(|fold| fold.id == answer.id) {

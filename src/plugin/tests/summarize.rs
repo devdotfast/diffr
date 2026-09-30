@@ -646,9 +646,12 @@ fn answers(items: &[(u32, &str)]) -> String {
 fn each_provider_sends_its_own_request_and_reads_its_own_answer() {
     let (_, sides) = project("a.py", "", LARGE);
     let id = select(&trees(&sides), 3, None)[0].0;
-    let fenced = format!("```json\n{}\n```", answers(&[(id, "call a, b, c")]));
+    let fenced = format!(
+        "<think>maybe [a] or [b], or []</think>\n```json\n{}\n```",
+        answers(&[(id, "call a, b, c")])
+    );
     let prose = format!(
-        "Here are the summaries:\n{}",
+        "Summaries for [1] fold:\n{}\n(see [docs])",
         answers(&[(id, "call a, b, c")])
     );
     for (provider, path, response, auth) in [
@@ -701,7 +704,8 @@ fn each_provider_sends_its_own_request_and_reads_its_own_answer() {
                 assert!(request
                     .headers
                     .contains(&"anthropic-version: 2023-06-01".to_owned()));
-                assert_eq!(body["max_tokens"], 800);
+                assert_eq!(body["max_tokens"], 4096);
+                assert!(body.get("temperature").is_none());
                 assert!(body["system"]
                     .as_str()
                     .unwrap()

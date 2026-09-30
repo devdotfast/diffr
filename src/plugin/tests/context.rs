@@ -288,13 +288,86 @@ fn a_line_diff_fallback_has_unpaired_folds() {
     assert!(open.contains(&0), "{open:?}");
     assert!(!open.contains(&2), "{open:?}");
     // Nothing matched the nodes the folds belong to, so the two sides' folds
-    // are unpaired: the unchanged function below collapses on the side the
-    // stretch is shaped from, and stays open on the other.
+    // are unpaired. The unchanged function below still collapses on both
+    // sides, in one group with the blank line above it.
     let tree::Pairing::Both { lhs: before, .. } = &sides else {
         panic!("both sides");
     };
     assert!(!open_lines(&before.regions).contains(&10), "{open:?}");
-    assert!(open.contains(&10), "{open:?}");
+    assert!(!open.contains(&10), "{open:?}");
+}
+
+/// The regions of `source` that start collapsed, with their lines,
+/// label and fold state, in document order.
+fn collapsed_rows(source: &tree::Source) -> Vec<((u32, u32), String, u32)> {
+    let mut out = Vec::new();
+    walk(&source.regions, &mut |region| {
+        if region.visibility.collapsed {
+            out.push((
+                (region.range.start.line, region.range.end.line),
+                region.visibility.label.clone(),
+                region.fold_state_id,
+            ));
+        }
+    });
+    out
+}
+
+#[test]
+fn a_fallback_stretch_over_unpaired_folds_collapses_as_one_group_per_side() {
+    // As `a_stretch_over_whole_folds_collapses_as_one_group`, but past the
+    // graph limit: the line diff pairs the lines and leaves each side's
+    // folds unpaired, so the two sides do not match fold for fold.
+    let unchanged = repeated(0..3, |i| {
+        format!("def f{i}():\n    a = {i}\n    b = {i}\n    return a + b\n\n")
+    });
+    let before = format!("first = 1\n\n{unchanged}last = 1\n");
+    let after = format!("first = 2\n\n{unchanged}last = 2\n");
+    let (file, mut sides) = project_with(
+        "a.py",
+        &before,
+        &after,
+        DiffOptions {
+            graph_limit: 1,
+            ..DiffOptions::default()
+        },
+    );
+    let fold_states = |source: &tree::Source| {
+        let mut states = BTreeSet::new();
+        walk(&source.regions, &mut |region| {
+            if is_fold(region) {
+                states.insert(region.fold_state_id);
+            }
+        });
+        states
+    };
+    let unshaped = trees(&sides);
+    assert!(fold_states(lhs(&unshaped)).is_disjoint(&fold_states(rhs(&unshaped))));
+    run("context", json!({"lines": 1}), &file, &mut sides);
+    let sides = trees(&sides);
+    // One row on each side, rather than one per function and per line
+    // between them, and on both sides rather than the lhs alone.
+    let rows = [lhs(&sides), rhs(&sides)].map(collapsed_rows);
+    let [(lines, label, state)] = &rows[0][..] else {
+        panic!("one collapsed row: {rows:?}");
+    };
+    assert_eq!((*lines, label.as_str()), ((2, 16), "14 unchanged lines"));
+    assert_eq!(
+        rows[0], rows[1],
+        "the two sides' groups share fold state {state}, so they open and close together"
+    );
+    for source in [lhs(&sides), rhs(&sides)] {
+        assert_eq!(
+            open_lines(&source.regions),
+            BTreeSet::from([0, 1, 2, 16, 17])
+        );
+        // Opening the group reveals the functions, not their own folds.
+        let mut regions = source.regions.clone();
+        for region in &mut regions {
+            region.visibility.collapsed = false;
+        }
+        assert_eq!(open_lines(&regions), (0..18).collect());
+    }
 }
 
 #[test]
@@ -379,6 +452,79 @@ fn a_fold_whose_matched_partner_holds_changes_stays_open() {
     };
     assert_eq!(collapsed(lhs(&sides)), 0);
     assert_eq!(collapsed(rhs(&sides)), 0);
+}
+
+#[test]
+fn an_unpaired_fold_alone_in_a_stretch_collapses_on_each_side() {
+    // Each side's stretch is one whole fold, folds 2 and 5, in fold states
+    // no region on the other side shares, as after a line diff fallback.
+    let range = |start: u32, end: u32| types::Range {
+        start: types::Position {
+            line: start,
+            column: 0,
+        },
+        end: types::Position {
+            line: end,
+            column: 0,
+        },
+    };
+    // A leaf whose id is its alignment id, as on the lhs, or paired with the
+    // lhs leaf `alignment`, whose fold state it shares.
+    let leaf = |id: u32, alignment: u32, start: u32, end: u32, changed: bool| tree::Region {
+        id,
+        fold_state_id: alignment,
+        range: range(start, end),
+        tags: vec![],
+        visibility: types::Visibility::default(),
+        node: tree::Node::Leaf {
+            alignment_id: alignment,
+            changed: (start..end)
+                .filter(|_| changed)
+                .map(|line| types::Span {
+                    line,
+                    start_column: 0,
+                    end_column: 1,
+                })
+                .collect(),
+        },
+    };
+    let fold = |id: u32, child: tree::Region| tree::Region {
+        id,
+        fold_state_id: id,
+        range: child.range,
+        tags: vec![],
+        visibility: types::Visibility::default(),
+        node: tree::Node::Fold {
+            children: vec![child],
+        },
+    };
+    let source = |regions| tree::Source {
+        text: "x\n".repeat(7),
+        regions,
+    };
+    let mut sides = tree::Pairing::Both {
+        lhs: source(vec![
+            leaf(1, 1, 0, 1, true),
+            fold(2, leaf(3, 3, 1, 6, false)),
+            leaf(4, 4, 6, 7, true),
+        ]),
+        rhs: source(vec![
+            leaf(8, 1, 0, 1, true),
+            fold(5, leaf(6, 3, 1, 6, false)),
+            leaf(7, 4, 6, 7, true),
+        ]),
+    };
+    let (file, _) = project("a.py", "", "");
+    run_trees("context", json!({"lines": 0}), &file, &mut sides);
+    for source in [lhs(&sides), rhs(&sides)] {
+        assert_eq!(
+            collapsed_rows(source)
+                .into_iter()
+                .map(|(lines, label, _)| (lines, label))
+                .collect::<Vec<_>>(),
+            [((1, 6), "5 unchanged lines".to_owned())]
+        );
+    }
 }
 
 #[test]

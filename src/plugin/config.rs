@@ -530,6 +530,39 @@ mod tests {
     use crate::config::Config;
 
     #[test]
+    fn the_prompt_description_links_to_its_default_in_the_source() {
+        let source = include_str!("../../plugins/summarize/plugin.toml");
+        let lines: Vec<&str> = source.lines().collect();
+        let table = lines
+            .iter()
+            .position(|line| *line == "[options.system_prompt]")
+            .unwrap();
+        let start = table
+            + lines[table..]
+                .iter()
+                .position(|line| line.starts_with("default = \"\"\""))
+                .unwrap();
+        let end = start
+            + lines[start..]
+                .iter()
+                .position(|line| line.ends_with("\"\"\""))
+                .unwrap();
+        let manifest = super::builtin::manifest("summarize").unwrap();
+        let description = manifest.options["system_prompt"]["description"]
+            .as_str()
+            .unwrap();
+        let link = format!(
+            "https://github.com/devdotfast/diffr/blob/main/plugins/summarize/plugin.toml#L{}-L{}",
+            start + 1,
+            end + 1
+        );
+        assert!(
+            description.contains(&link),
+            "{description}\nexpected {link}"
+        );
+    }
+
+    #[test]
     fn the_embedded_defaults_agree_with_each_plugin_toml() {
         for (name, entry) in super::default_tables().bundled {
             let defaults = super::builtin::manifest(&name)
@@ -648,7 +681,8 @@ mod tests {
             false
         );
         let summarize = &plugins["bundled"]["properties"]["summarize"]["properties"];
-        assert_eq!(summarize["system_prompt"]["x-settings"], false);
+        // A text setting, so settings screens let users edit the prompt.
+        assert!(summarize["system_prompt"].get("x-settings").is_none());
         assert!(summarize["system_prompt"]["default"]
             .as_str()
             .unwrap()

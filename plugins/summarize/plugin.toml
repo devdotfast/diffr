@@ -64,8 +64,7 @@ default = 3
 [options.system_prompt]
 type = "string"
 title = "System prompt"
-description = "The system instruction sent with every request. Each request's own message, the file's numbered lines and the folds to summarize, is built by diffr."
-"x-settings" = false
+description = "The system instruction sent with every request; diffr builds each request's message from the file's numbered lines and the folds to summarize. Unset uses the default: https://github.com/devdotfast/diffr/blob/main/plugins/summarize/plugin.toml#L68-L74"
 default = """\
 For each listed fold, rewrite that function body as short \
 pseudocode. Keep the names. No prose, no comments, no code fences. Use as few lines as \

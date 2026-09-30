@@ -60,8 +60,7 @@ impl Provider {
         headers
     }
 
-    /// Every provider constrains the answer with a schema. OpenAI and
-    /// Anthropic need an object at its root, so theirs wraps the array.
+    /// Every provider constrains the answer with the same schema.
     /// Only Gemini gets a temperature: current reasoning models reject one.
     /// OpenAI gets no length limit either, since compatible servers name it
     /// differently; Anthropic's limit also covers thinking, so it has a floor.
@@ -75,18 +74,7 @@ impl Provider {
                     "maxOutputTokens": max_tokens,
                     "thinkingConfig": {"thinkingBudget": 0},
                     "responseMimeType": "application/json",
-                    "responseSchema": {
-                        "type": "ARRAY",
-                        "items": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "id": {"type": "INTEGER"},
-                                "summary": {"type": "STRING"},
-                                "pseudocode": {"type": "STRING"},
-                            },
-                            "required": ["id", "pseudocode"],
-                        },
-                    },
+                    "responseJsonSchema": summaries_schema(),
                 },
             }),
             Self::OpenAi => json!({
@@ -127,8 +115,8 @@ impl Provider {
     }
 }
 
-/// `{"summaries": [{id, summary, pseudocode}]}`, every field required, for
-/// the providers whose structured outputs take only an object at the root.
+/// `{"summaries": [{id, summary, pseudocode}]}`, every field required: OpenAI
+/// and Anthropic take only an object at the root.
 fn summaries_schema() -> Value {
     json!({
         "type": "object",

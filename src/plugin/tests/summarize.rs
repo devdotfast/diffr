@@ -112,8 +112,8 @@ fn gemini_answer(items: &[(u32, &str)]) -> String {
         .iter()
         .map(|(id, text)| json!({"id": id, "pseudocode": text}))
         .collect();
-    json!({"candidates": [{"content": {"parts": [{"text": serde_json::to_string(&answers).unwrap()}]}}]})
-        .to_string()
+    let text = json!({"summaries": answers}).to_string();
+    json!({"candidates": [{"content": {"parts": [{"text": text}]}}]}).to_string()
 }
 
 fn summarizer(endpoint: &str, retries: u32) -> Pipeline {
@@ -628,6 +628,11 @@ fn gemini_requests_keep_their_path_and_key_header() {
     assert!(request
         .headers
         .contains(&"x-goog-api-key: test-key".to_owned()));
+    let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+    let config = &body["generationConfig"];
+    assert!(config.get("responseSchema").is_none());
+    assert_eq!(config["responseMimeType"], "application/json");
+    assert_summaries_schema(&config["responseJsonSchema"]);
     assert!(!request
         .headers
         .iter()

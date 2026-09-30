@@ -642,18 +642,24 @@ fn answers(items: &[(u32, &str)]) -> String {
     serde_json::to_string(&answers).unwrap()
 }
 
+/// An object root with every field required and nothing else allowed, as
+/// OpenAI's strict mode and Anthropic's structured outputs require.
+fn assert_summaries_schema(schema: &serde_json::Value) {
+    assert_eq!(schema["type"], "object");
+    assert_eq!(schema["required"], json!(["summaries"]));
+    assert_eq!(schema["additionalProperties"], false);
+    let item = &schema["properties"]["summaries"]["items"];
+    assert_eq!(item["required"], json!(["id", "summary", "pseudocode"]));
+    assert_eq!(item["additionalProperties"], false);
+}
+
 #[test]
 fn each_provider_sends_its_own_request_and_reads_its_own_answer() {
     let (_, sides) = project("a.py", "", LARGE);
     let id = select(&trees(&sides), 3, None)[0].0;
-    let fenced = format!(
-        "<think>maybe [a] or [b], or []</think>\n```json\n{}\n```",
-        answers(&[(id, "call a, b, c")])
-    );
-    let prose = format!(
-        "Summaries for [1] fold:\n{}\n(see [docs])",
-        answers(&[(id, "call a, b, c")])
-    );
+    let wrapped = format!("{{\"summaries\": {}}}", answers(&[(id, "call a, b, c")]));
+    // A compatible server that ignores the schema may wrap its answer.
+    let fenced = format!("<think>maybe [a] or [b], or []</think>\n```json\n{wrapped}\n```");
     for (provider, path, response, auth) in [
         (
             "openai",
@@ -664,7 +670,7 @@ fn each_provider_sends_its_own_request_and_reads_its_own_answer() {
         (
             "anthropic",
             "",
-            json!({"content": [{"type": "thinking", "thinking": "[1]"}, {"type": "text", "text": prose}]}),
+            json!({"content": [{"type": "thinking", "thinking": "[1]"}, {"type": "text", "text": wrapped}]}),
             "x-api-key: test-key",
         ),
     ] {
@@ -698,6 +704,10 @@ fn each_provider_sends_its_own_request_and_reads_its_own_answer() {
                     .unwrap()
                     .contains(&format!("fold {id}: lines 2-4")));
                 assert!(body.get("temperature").is_none());
+                let format = &body["response_format"];
+                assert_eq!(format["type"], "json_schema");
+                assert_eq!(format["json_schema"]["strict"], true);
+                assert_summaries_schema(&format["json_schema"]["schema"]);
             }
             _ => {
                 assert_eq!(request.line, "POST /v1/messages HTTP/1.1");
@@ -706,6 +716,9 @@ fn each_provider_sends_its_own_request_and_reads_its_own_answer() {
                     .contains(&"anthropic-version: 2023-06-01".to_owned()));
                 assert_eq!(body["max_tokens"], 4096);
                 assert!(body.get("temperature").is_none());
+                let format = &body["output_config"]["format"];
+                assert_eq!(format["type"], "json_schema");
+                assert_summaries_schema(&format["schema"]);
                 assert!(body["system"]
                     .as_str()
                     .unwrap()

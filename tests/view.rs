@@ -278,3 +278,34 @@ fn git_binary_files_stream_as_diff_records_with_side_sizes() {
         serde_json::json!({"type": "binary", "lhs": {"size": 8}, "rhs": {"size": 4}})
     );
 }
+
+#[test]
+fn working_tree_files_go_through_git_clean_filters() {
+    let fixture = Fixture::new();
+    fixture
+        .repo
+        .config()
+        .unwrap()
+        .set_bool("core.autocrlf", true)
+        .unwrap();
+    let lines: Vec<String> = (1..=20).map(|i| format!("doc line {i}")).collect();
+    fixture.write("notes.md", &(lines.join("\n") + "\n"));
+    let base = fixture.commit();
+    let mut edited = lines.clone();
+    edited[9] = "doc line 10 CHANGED".into();
+    fixture.write("notes.md", &(edited.join("\r\n") + "\r\n"));
+    let output = fixture.diffr(&[&base, "--format", "ndjson"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let records = records(&output);
+    let notes = record(&records, "notes.md");
+    assert_eq!(notes["diff"]["rhs"]["text"], edited.join("\n") + "\n");
+    let changed: Vec<Value> = regions(notes, "rhs")
+        .iter()
+        .flat_map(|region| region["changed"].as_array().cloned().unwrap_or_default())
+        .collect();
+    assert!(changed.iter().all(|span| span["line"] == 9), "{changed:?}");
+}

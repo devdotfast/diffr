@@ -357,7 +357,12 @@ impl Source {
                 .context(FileError::ReadFailed)?
                 .content()
                 .to_vec(),
-            Self::WorkingFile { path, .. } => std::fs::read(path).context(FileError::ReadFailed)?,
+            Self::WorkingFile { path, .. } => {
+                // Apply Git's clean filters (autocrlf, eol, ident) like `git diff`.
+                let id = repo.blob_path(path).context(FileError::ReadFailed)?;
+                let blob = repo.find_blob(id).context(FileError::ReadFailed)?;
+                blob.content().to_vec()
+            }
             Self::Absent => unreachable!(),
         };
         Ok(bytes)
@@ -419,6 +424,8 @@ impl DiffSession {
         pipeline: &Pipeline,
     ) -> Result<Self> {
         let repo = Repository::open(workspace)?;
+        // Takes the blobs `Source::read` writes, keeping them out of .git.
+        repo.odb()?.add_new_mempack_backend(1000)?;
         let comparison = comparison.resolve(&repo)?;
         let pending = {
             let diff = comparison.diff(&repo, files)?;

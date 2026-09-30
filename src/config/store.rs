@@ -29,8 +29,8 @@ pub(crate) fn redacted(config: &Config, reveal: bool) -> Config {
     shown
 }
 
-/// Materialize resolved defaults on edit, then write `key = value` while
-/// preserving existing values and comments. `value` is read as the type the schema gives the key (see
+/// Write `key = value`, preserving comments, then drop every key that only
+/// restates a default (see [`prune`]). `value` is read as the type the schema gives the key (see
 /// [`typed_value`]), then the whole file is validated, before anything
 /// touches the disk: unknown keys, text that is not the key's type, and
 /// values the configuration rejects are errors.
@@ -44,8 +44,8 @@ pub(crate) fn set(path: &Path, key: &str, value: &str) -> Result<(), ConfigError
     let mut document: toml_edit::DocumentMut = existing
         .parse()
         .map_err(|error| ConfigError(format!("{}: {error}", path.display())))?;
-    materialize(&mut document, directory)?;
     assign(&mut document, key, &typed)?;
+    prune(&mut document, directory)?;
     write(path, document)
 }
 
@@ -57,40 +57,24 @@ fn read(path: &Path) -> Result<String, ConfigError> {
     }
 }
 
-/// Fill missing fields from the resolved configuration, without replacing
-/// existing values, comments, formatting, or explicit plugin membership.
-fn materialize(document: &mut toml_edit::DocumentMut, directory: &Path) -> Result<(), ConfigError> {
-    let resolved = Config::from_toml_in(&document.to_string(), directory)?;
-    let values = toml::Value::try_from(resolved).map_err(|error| ConfigError(error.to_string()))?;
-    fill_missing(
-        document.as_table_mut(),
-        values.as_table().expect("config is a table"),
-    )
-}
-
-fn fill_missing(
-    target: &mut dyn toml_edit::TableLike,
-    values: &toml::Table,
-) -> Result<(), ConfigError> {
-    for (key, value) in values {
-        if let toml::Value::Table(children) = value {
-            if !target.contains_key(key) {
-                target.insert(key, toml_edit::Item::Table(toml_edit::Table::new()));
-            }
-            let nested = target
-                .get_mut(key)
-                .and_then(toml_edit::Item::as_table_like_mut)
-                .ok_or_else(|| ConfigError(format!("{key}: expected a table")))?;
-            fill_missing(nested, children)?;
-        } else if !target.contains_key(key) {
-            target.insert(key, toml_edit::Item::Value(edit_value(value)?));
-        }
+/// Validate the document, then keep only what differs from the defaults,
+/// and the file's `version`.
+fn prune(document: &mut toml_edit::DocumentMut, directory: &Path) -> Result<(), ConfigError> {
+    if !document.contains_key("version") {
+        document.insert(
+            "version",
+            toml_edit::value(i64::from(super::CONFIG_VERSION)),
+        );
     }
+    Config::from_toml_in(&document.to_string(), directory)?;
+    super::prune::prune(document, |text| {
+        let config = Config::from_toml_in(text, directory).ok()?;
+        toml::Value::try_from(config).ok()
+    });
     Ok(())
 }
 
-fn write(path: &Path, mut document: toml_edit::DocumentMut) -> Result<(), ConfigError> {
-    materialize(&mut document, directory_of(path))?;
+fn write(path: &Path, document: toml_edit::DocumentMut) -> Result<(), ConfigError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|error| ConfigError(format!("{}: {error}", parent.display())))?;
@@ -465,37 +449,100 @@ mod tests {
 }
 
 #[cfg(test)]
-mod materialization_tests {
+mod sparse_tests {
     use super::*;
 
+    fn read_toml(path: &Path) -> toml::Value {
+        toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
     #[test]
-    fn first_edit_pins_defaults_and_later_edits_preserve_comments() {
+    fn set_writes_only_what_differs_from_the_defaults_and_keeps_comments() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         set(&path, "diff.graph_limit", "42").unwrap();
-        let text = std::fs::read_to_string(&path).unwrap();
-        let raw: toml::Value = toml::from_str(&text).unwrap();
+        let raw = read_toml(&path);
         assert_eq!(raw["version"].as_integer(), Some(1));
-        assert_eq!(
-            raw["plugins"]["order"].as_array().unwrap().len(),
-            Config::default().plugins.order.len()
-        );
-        assert_eq!(
-            raw["plugins"]["bundled"]["context"]["lines"].as_integer(),
-            Some(3)
-        );
-        assert!(raw["plugins"]["bundled"]["summarize"]["system_prompt"]
-            .as_str()
-            .is_some());
+        assert_eq!(raw["diff"]["graph_limit"].as_integer(), Some(42));
+        assert!(raw.get("plugins").is_none(), "{raw}");
+        let text = std::fs::read_to_string(&path).unwrap();
         std::fs::write(&path, format!("# personal config\n{text}")).unwrap();
         set(&path, "plugins.bundled.context.lines", "8").unwrap();
+        set(&path, "plugins.bundled.summarize.api_key", "").unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.starts_with("# personal config\n"));
+        assert!(text.starts_with("# personal config\n"), "{text}");
+        let raw = read_toml(&path);
+        assert_eq!(
+            raw["plugins"]["bundled"]["context"]["lines"].as_integer(),
+            Some(8)
+        );
+        // An empty key is not the same as no key, so it stays.
+        assert_eq!(
+            raw["plugins"]["bundled"]["summarize"]["api_key"].as_str(),
+            Some("")
+        );
+        // Setting a default removes the key.
+        set(&path, "plugins.bundled.context.lines", "3").unwrap();
+        let raw = read_toml(&path);
+        assert!(raw["plugins"]["bundled"].get("context").is_none(), "{raw}");
         assert_eq!(Config::from_toml(&text).unwrap().diff.graph_limit, 42);
     }
 
     #[test]
-    fn materializing_an_explicit_list_does_not_restore_omitted_plugins() {
+    fn a_materialized_file_becomes_sparse_and_forgets_an_old_default_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        // What earlier versions wrote on the first edit: every default, and
+        // the default prompt of the time.
+        let mut old = toml::Value::try_from(Config::default()).unwrap();
+        let summarize = old["plugins"]["bundled"]["summarize"]
+            .as_table_mut()
+            .unwrap();
+        summarize.insert("system_prompt".into(), LEGACY.into());
+        summarize.insert("api_key".into(), "secret".into());
+        old["plugins"]["bundled"]["context"]
+            .as_table_mut()
+            .unwrap()
+            .insert("lines".into(), 8.into());
+        std::fs::write(&path, toml::to_string(&old).unwrap()).unwrap();
+        let loaded = Config::from_toml(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            loaded.plugins.entries["bundled.summarize"].options["system_prompt"],
+            Config::default().plugins.entries["bundled.summarize"].options["system_prompt"],
+            "an old default prompt reads as the current default"
+        );
+        set(&path, "diff.graph_limit", "42").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.contains("[plugins]\n") && !text.contains("[plugins.bundled]\n"),
+            "{text}"
+        );
+        let raw = read_toml(&path);
+        let mut keys = Vec::new();
+        fn walk(value: &toml::Value, prefix: String, keys: &mut Vec<String>) {
+            match value.as_table() {
+                Some(table) => {
+                    for (key, child) in table {
+                        walk(child, format!("{prefix}{key}."), keys);
+                    }
+                }
+                None => keys.push(prefix.trim_end_matches('.').to_owned()),
+            }
+        }
+        walk(&raw, String::new(), &mut keys);
+        assert_eq!(
+            keys,
+            [
+                "diff.graph_limit",
+                "plugins.bundled.context.lines",
+                "plugins.bundled.summarize.api_key",
+                "version",
+            ]
+        );
+    }
+
+    #[test]
+    fn an_explicit_plugin_list_still_pins_membership() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(
@@ -510,4 +557,6 @@ mod materialization_tests {
         assert!(text.contains("# just grouping\n[plugins]"), "{text}");
         assert!(!text.contains("bundled.context"));
     }
+
+    const LEGACY: &str = "For each listed fold, rewrite that function body as short pseudocode. Keep the names. No prose, no comments, no code fences. Use as few lines as possible: about one pseudocode line per five source lines, and never more than a third of the body's lines. When a fold lists a doc, also set \"summary\" to one sentence copied verbatim from that doc; otherwise leave it empty. Answer with a JSON array of {\"id\", \"summary\", \"pseudocode\"} objects, one per fold.";
 }

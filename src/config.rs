@@ -16,6 +16,7 @@
 //! query files of every enabled plugin (see [`crate::plugin::queries`]): its
 //! `@fold` captures decide which folds exist, and its tags what they are.
 //! Every tag a query sets must be written `<plugin>:<name>`.
+pub(crate) mod prune;
 pub(crate) mod query;
 pub(crate) mod store;
 use crate::hash::DftHashMap;
@@ -210,15 +211,16 @@ impl Config {
     /// Parse the text of a file in `directory`. Errors lead with the dotted
     /// path of the key they concern, such as `diff.typo`.
     pub(crate) fn from_toml_in(source: &str, directory: &Path) -> Result<Self, ConfigError> {
-        let mut config: Self = serde_path_to_error::deserialize(toml::Deserializer::new(source))
+        let source = prune::forget_legacy(source);
+        let mut config: Self = serde_path_to_error::deserialize(toml::Deserializer::new(&source))
             .map_err(|error| {
-                let path = error.path().to_string();
-                let message = error.inner().to_string();
-                ConfigError(match path.as_str() {
-                    "." => message,
-                    _ => format!("{path}: {message}"),
-                })
-            })?;
+            let path = error.path().to_string();
+            let message = error.inner().to_string();
+            ConfigError(match path.as_str() {
+                "." => message,
+                _ => format!("{path}: {message}"),
+            })
+        })?;
         if config.version != CONFIG_VERSION {
             return Err(ConfigError(format!(
                 "unsupported config version {}; expected {CONFIG_VERSION}",

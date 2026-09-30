@@ -60,12 +60,12 @@ We hope in the future that we can find some way to upstream some / all of these 
 
 ## Known Limitations
 
-1. Semantic diff summarization is only supported for the Gemini class of models right now. Turn it on via:
+1. Semantic diff summarization calls Gemini, OpenAI (or any OpenAI-compatible server, such as Ollama, via `endpoint`), or Anthropic. It is off by default. Turn it on via:
   a. Through the TUI:
     - Run `diffr config`
     - Search for 'summarization'
     - Enable in the dropdown
-    - Add your API key for Gemini if you don't already have on your path
+    - Pick a provider and model, and add its API key unless `GEMINI_API_KEY`, `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` is already in your environment
   b. Through the [Whiteboard app](https://github.com/devdotfast/whiteboard).
 2. The plugin API is a bit awkward and will be simplified radically in the coming releases.
 

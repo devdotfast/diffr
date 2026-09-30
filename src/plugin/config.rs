@@ -758,7 +758,7 @@ mod tests {
             zero.starts_with("plugins.bundled.summarize: max_concurrency: "),
             "{zero}"
         );
-        assert!(error("[plugins.bundled.summarize]\nprovider = 'openai'\n")
+        assert!(error("[plugins.bundled.summarize]\nprovider = 'mistral'\n")
             .starts_with("plugins.bundled.summarize: provider: "));
     }
 }

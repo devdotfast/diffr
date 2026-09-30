@@ -146,3 +146,6 @@ fn remove(table: &mut dyn TableLike, path: &[&str]) {
         [] => {}
     }
 }
+
+#[cfg(test)]
+mod tests;

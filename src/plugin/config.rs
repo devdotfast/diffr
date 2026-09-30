@@ -442,6 +442,7 @@ impl PluginsConfig {
             if !(1..=64).contains(&instances) || (!manifest.parallel && instances != 1) {
                 return Err(ConfigError(format!("plugins.{reference}.instances: expected 1..=64 for a parallel plugin, or 1 for a serial plugin")));
             }
+            entry.instances = Some(instances);
             manifest
                 .validate(&entry.options)
                 .map_err(|error| ConfigError(format!("plugins.{reference}: {error}")))?;

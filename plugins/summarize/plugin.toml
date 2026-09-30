@@ -7,13 +7,13 @@ description = "Pseudocode summaries for large new function bodies and tests."
 # startup when a plugin that is on cannot be made.
 [enabled]
 title = "Summarize functions and tests"
-description = "Summarize large new function bodies and right-side tests as pseudocode. Needs an API key: `api_key`, or `GEMINI_API_KEY` or `GOOGLE_API_KEY` in the environment."
+description = "Summarize large new function bodies and right-side tests as pseudocode. Needs an API key: `api_key`, or the provider's variable in the environment: `GEMINI_API_KEY` or `GOOGLE_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`."
 default = false
 
 [options.provider]
-enum = ["gemini"]
+enum = ["gemini", "openai", "anthropic"]
 title = "Provider"
-description = "Which model API to call."
+description = "Which model API to call. `openai` also reaches any OpenAI-compatible server through `endpoint`. Set `model` to one of the provider's models when you change this."
 default = "gemini"
 
 [options.model]
@@ -32,12 +32,12 @@ default = 20
 [options.api_key]
 type = "string"
 title = "API key"
-description = "The provider's API key. `GEMINI_API_KEY` or `GOOGLE_API_KEY` in the environment is used when this is unset."
+description = "Sent to the selected provider. The provider's variable in the environment is used when this is unset. Optional for `openai` with a custom `endpoint`."
 
 [options.endpoint]
 type = "string"
 title = "Endpoint URL"
-description = "Override the provider's base URL, for proxies and tests."
+description = "Override the provider's base URL, for proxies, OpenAI-compatible servers (for example `http://localhost:11434/v1`) and tests. Empty uses the provider's default."
 
 [options.request_timeout_ms]
 type = "integer"

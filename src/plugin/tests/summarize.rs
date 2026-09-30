@@ -27,29 +27,47 @@ fn project_with(
 
 const LARGE: &str = "def f():\n    a()\n    b()\n    c()\n\ndef g(): d()\n";
 
+/// One request the test server received.
+struct Received {
+    line: String,
+    headers: Vec<String>,
+    body: String,
+}
+
 /// Answer each request with the next canned response.
-fn serve(responses: Vec<(u16, String)>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+fn serve_requests(
+    responses: Vec<(u16, String)>,
+) -> (String, std::thread::JoinHandle<Vec<Received>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let handle = std::thread::spawn(move || {
-        let mut bodies = Vec::new();
+        let mut received = Vec::new();
         for (status, body) in responses {
             let (stream, _) = listener.accept().unwrap();
             let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let mut headers = Vec::new();
             let mut length = 0;
             loop {
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                if line == "\r\n" {
+                let mut header = String::new();
+                reader.read_line(&mut header).unwrap();
+                if header == "\r\n" {
                     break;
                 }
-                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                let header = header.trim_end().to_ascii_lowercase();
+                if let Some(value) = header.strip_prefix("content-length:") {
                     length = value.trim().parse().unwrap();
                 }
+                headers.push(header);
             }
             let mut request = vec![0; length];
             reader.read_exact(&mut request).unwrap();
-            bodies.push(String::from_utf8(request).unwrap());
+            received.push(Received {
+                line: line.trim_end().to_owned(),
+                headers,
+                body: String::from_utf8(request).unwrap(),
+            });
             let reason = if status == 200 { "OK" } else { "Error" };
             let response = format!(
                 "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -57,9 +75,23 @@ fn serve(responses: Vec<(u16, String)>) -> (String, std::thread::JoinHandle<Vec<
             );
             reader.get_mut().write_all(response.as_bytes()).unwrap();
         }
-        bodies
+        received
     });
     (endpoint, handle)
+}
+
+/// Answer each request with the next canned response; the request bodies.
+fn serve(responses: Vec<(u16, String)>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+    let (endpoint, handle) = serve_requests(responses);
+    let bodies = std::thread::spawn(move || {
+        handle
+            .join()
+            .unwrap()
+            .into_iter()
+            .map(|request| request.body)
+            .collect()
+    });
+    (endpoint, bodies)
 }
 
 /// The label of the only function body on the after side. The scope fold
@@ -580,4 +612,24 @@ fn deferred_summary_preserves_user_fold_state_and_region_identity() {
     .unwrap();
     assert_eq!(sides, before);
     server.join().unwrap();
+}
+
+#[test]
+fn gemini_requests_keep_their_path_and_key_header() {
+    let (file, mut sides) = project("a.py", "", LARGE);
+    let id = select(&trees(&sides), 3, None)[0].0;
+    let (endpoint, server) = serve_requests(vec![(200, gemini_answer(&[(id, "call a, b, c")]))]);
+    summarizer(&endpoint, 0).run(&file, &mut sides).unwrap();
+    let request = server.join().unwrap().remove(0);
+    assert_eq!(
+        request.line,
+        "POST /v1beta/models/gemini-3.8-flash:generateContent HTTP/1.1"
+    );
+    assert!(request
+        .headers
+        .contains(&"x-goog-api-key: test-key".to_owned()));
+    assert!(!request
+        .headers
+        .iter()
+        .any(|header| header.starts_with("authorization")));
 }

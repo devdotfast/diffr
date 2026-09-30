@@ -528,6 +528,20 @@ impl PluginsConfig {
 #[cfg(test)]
 mod tests {
     use crate::config::Config;
+
+    #[test]
+    fn the_embedded_defaults_agree_with_each_plugin_toml() {
+        for (name, entry) in super::default_tables().bundled {
+            let defaults = super::builtin::manifest(&name)
+                .expect("a bundled plugin")
+                .defaults();
+            for (key, value) in &entry.options {
+                if let Some(default) = defaults.get(key) {
+                    assert_eq!(value, default, "{name}.{key}");
+                }
+            }
+        }
+    }
     use serde_json::Value;
 
     /// Every setting the schema lists, as a settings screen flattens it:

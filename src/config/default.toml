@@ -39,7 +39,6 @@ min_lines = 5
 [plugins.bundled.summarize]
 enabled = false
 provider = "gemini"
-model = "gemini-3.8-flash"
 min_lines = 20
 tests = true
 test_min_lines = 20

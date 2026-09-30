@@ -137,13 +137,12 @@ pub(crate) fn rhs(sides: &tree::Pairing<tree::Source>) -> &tree::Source {
 /// A pipeline of the bundled plugin `name` alone, made with its defaults and
 /// `overrides`.
 pub(crate) fn bundled(name: &str, overrides: serde_json::Value) -> Pipeline {
-    let mut options = builtin::manifest(name)
-        .expect("a bundled plugin")
-        .defaults();
-    let serde_json::Value::Object(overrides) = overrides else {
+    let serde_json::Value::Object(mut options) = overrides else {
         panic!("overrides are an object");
     };
-    options.extend(overrides);
+    builtin::manifest(name)
+        .expect("a bundled plugin")
+        .fill_defaults(&mut options);
     let mut pipeline = Pipeline::default();
     pipeline
         .push(

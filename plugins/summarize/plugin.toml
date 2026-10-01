@@ -19,6 +19,7 @@ default = "gemini"
 
 [options.model]
 type = "string"
+"x-reset-by" = "provider"
 title = "Model"
 description = "The model name sent to the provider. Unset uses the provider's default."
 
@@ -35,11 +36,13 @@ default = 20
 
 [options.api_key]
 type = "string"
+"x-reset-by" = "provider"
 title = "API key"
 description = "Sent to the selected provider. The provider's variable in the environment is used when this is unset. Optional for `openai` with a custom `endpoint`."
 
 [options.endpoint]
 type = "string"
+"x-reset-by" = "provider"
 title = "Endpoint URL"
 description = "Override the provider's base URL, for proxies, OpenAI-compatible servers (for example `https://openrouter.ai/api/v1` or `http://localhost:11434/v1`) and tests. Empty uses the provider's default."
 
@@ -68,7 +71,7 @@ default = 3
 [options.system_prompt]
 type = "string"
 title = "System prompt"
-description = "The system instruction sent with every request; diffr builds each request's message from the file's numbered lines and the folds to summarize. Unset uses the default: https://github.com/devdotfast/diffr/blob/main/plugins/summarize/plugin.toml#L72-L78"
+description = "The system instruction sent with every request; diffr builds each request's message from the file's numbered lines and the folds to summarize. Unset uses the default: https://github.com/devdotfast/diffr/blob/main/plugins/summarize/plugin.toml#L75-L81"
 default = """\
 For each listed fold, rewrite that function body as short \
 pseudocode. Keep the names. No prose, no comments, no code fences. Use as few lines as \
@@ -94,6 +97,7 @@ default = 20
 # screens do not edit an object option, so this is a file-only override.
 [options.provider_details]
 type = "object"
+"x-reset-by" = "provider"
 title = "Provider details"
 description = "The provider's default endpoint, the environment variables that hold its key, and whether a custom endpoint may go without a key."
 required = ["endpoint", "key_variables", "keyless_custom_endpoint"]

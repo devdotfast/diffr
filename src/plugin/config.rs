@@ -29,6 +29,8 @@ pub(crate) const MANIFEST_FILE: &str = "plugin.toml";
 /// An option's default that depends on another option's value:
 /// `{ key = "<option>", values = { <value> = <default>, ... } }`.
 const DEFAULT_BY: &str = "x-default-by";
+/// The option whose change clears this one, such as a provider's key.
+const RESET_BY: &str = "x-reset-by";
 pub(crate) const COMPONENT_FILE: &str = "plugin.wasm";
 
 /// A plugin's `plugin.toml`.
@@ -114,7 +116,28 @@ impl Manifest {
 
     /// Every `x-default-by` names an option with choices, gives a default
     /// for each choice, and every choice's defaults satisfy the schema.
+    /// The options a change of `key` clears.
+    pub(crate) fn reset_by<'a>(&'a self, key: &'a str) -> impl Iterator<Item = &'a String> + 'a {
+        self.options
+            .iter()
+            .filter(move |(_, option)| option.get(RESET_BY).and_then(Value::as_str) == Some(key))
+            .map(|(name, _)| name)
+    }
+
     fn check_defaults_by(&self) -> Result<(), String> {
+        for (name, option) in &self.options {
+            if let Some(by) = option.get(RESET_BY) {
+                if !by
+                    .as_str()
+                    .is_some_and(|key| key != name && self.options.contains_key(key))
+                {
+                    return Err(format!(
+                        "{}: option {name:?}: {RESET_BY} must name another option",
+                        self.name
+                    ));
+                }
+            }
+        }
         for (name, option) in &self.options {
             let Some(by) = option.get(DEFAULT_BY) else {
                 continue;
@@ -712,6 +735,14 @@ mod tests {
         )
         .unwrap_err();
         assert!(cycle.contains("cycle"), "{cycle}");
+        let reset = super::Manifest::parse(
+            "name = 'p'\ntitle = 'P'\n[options.key]\ntitle = 'Key'\ntype = 'string'\n\"x-reset-by\" = 'provder'\n",
+        )
+        .unwrap_err();
+        assert!(
+            reset.contains("x-reset-by must name another option"),
+            "{reset}"
+        );
     }
 
     #[test]

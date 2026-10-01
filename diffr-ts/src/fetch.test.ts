@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 const fetchScript = join(import.meta.dir, "..", "bin", "fetch.mjs");
 const { version } = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8"));
-const targets: Record<string, string> = { "darwin-arm64": "aarch64-apple-darwin", "darwin-x64": "x86_64-apple-darwin", "linux-x64": "x86_64-unknown-linux-gnu", "linux-arm64": "aarch64-unknown-linux-gnu", "win32-x64": "x86_64-pc-windows-msvc", "win32-arm64": "aarch64-pc-windows-msvc" };
+const targets: Record<string, string> = { "darwin-arm64": "aarch64-apple-darwin", "darwin-x64": "x86_64-apple-darwin", "linux-x64": "x86_64-unknown-linux-gnu", "linux-arm64": "aarch64-unknown-linux-gnu", "win32-x64": "x86_64-pc-windows-msvc" };
 const target = targets[`${process.platform}-${process.arch}`];
 const dirs: string[] = [];
 afterEach(() => {

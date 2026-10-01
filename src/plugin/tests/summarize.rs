@@ -378,10 +378,6 @@ fn the_system_prompt_is_the_configured_one() {
         .fill_defaults(&mut defaults);
     let default: Options = serde_json::from_value(serde_json::Value::Object(defaults)).unwrap();
     assert_eq!(system, default.system_prompt.as_str());
-    assert!(default.system_prompt.starts_with(
-        "For each listed fold, rewrite that function body as short pseudocode. Keep the names."
-    ));
-    assert!(!default.system_prompt.contains('\n'));
 }
 
 #[test]

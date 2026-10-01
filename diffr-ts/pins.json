@@ -1,18 +1,18 @@
 {
-  "version": "0.1.8",
+  "version": "0.1.9",
   "artifact": "diffr-cli",
   "sha256": {
-    "aarch64-apple-darwin": "d2a7968a71651bc4644da3d0b2e4f47bbf24aa916ccf07ea44612429d08e3961",
-    "x86_64-apple-darwin": "43a77b8268d8131d1d11ab7bd5677d472978d0600490450f3b676038aae390c7",
-    "x86_64-unknown-linux-gnu": "a1a86e03f94fa55b501bdc1c8e8cd8f437067a95fe63e9c4491ac3b470fde41c",
-    "aarch64-unknown-linux-gnu": "9624581fdbb4c1a4109fa1ce634c7b9c8cb999086d377209763b804ecdeeb8d3"
+    "aarch64-apple-darwin": "6a7073252550b22217c588215b99c5642eabedfadcb545e087f1bf0a76a9cfa0",
+    "x86_64-apple-darwin": "3c4ccef4daa952a9bd3cf0d4ac380c24595bca93f454e29b19ecf07fe16071dd",
+    "x86_64-unknown-linux-gnu": "cda36ae600cdb4172952b295c16b2e47ab26bf93eb6c3301e9a0ad6b1472ebf6",
+    "aarch64-unknown-linux-gnu": "33ed933688b4bca8f9e3f0177f5bc4520eef65077a39045a6aaab12629e3cc32"
   },
   "full": {
     "sha256": {
-      "aarch64-apple-darwin": "3bf4bcd0dd646613f33c31ff2ddc945999767c6eace9f497c9c01930d8cb2330",
-      "x86_64-apple-darwin": "ef9ad4ee256b24673464f41ec6a1aad90441d23287cbccfebaa71f0dd4f6f755",
-      "x86_64-unknown-linux-gnu": "48906683b71f827c888ac6755e9c60c5497dd4e93ee720ab8902ed3691abb614",
-      "aarch64-unknown-linux-gnu": "d8546d68293716ac83d022e09af4f0189f9215b63c314e3dc46929652002c4c8"
+      "aarch64-apple-darwin": "7a2b743175f879fca2d7394391dde41cfa05e7149ddd600072ba59b63f1f7354",
+      "x86_64-apple-darwin": "9e0a4705097e7abfb0cabfbc48fcaf53b59cf41894fb99b60a35aa02f3cf1c9e",
+      "x86_64-unknown-linux-gnu": "604536dfaee9ccd3fceae4bfa7d2e7e834330572d86d8d8a3c8b300c2ef22739",
+      "aarch64-unknown-linux-gnu": "4858dfa3f53c377b6859769c1661e399e6615a633918953021bf37b4da048d5f"
     }
   }
 }

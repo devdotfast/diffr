@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 mod http;
 mod provider;
-pub use provider::Provider;
+pub use provider::{Details, Provider};
 
 /// The plugin's name, and the tags its queries set: a function body, and a
 /// test body, which can be summarized independently of whether it is new.
@@ -28,6 +28,7 @@ const TEST: &str = "summarize:test";
 #[serde(deny_unknown_fields)]
 pub struct Options {
     pub provider: Provider,
+    pub provider_details: Details,
     pub model: String,
     pub min_lines: usize,
     pub tests: bool,
@@ -305,7 +306,7 @@ fn resolve_key(config: &Options, custom_endpoint: bool) -> anyhow::Result<Option
     if let Some(key) = config.api_key.clone().filter(set) {
         return Ok(Some(key));
     }
-    let variables = config.provider.key_variables();
+    let variables = &config.provider_details.key_variables;
     for variable in variables {
         if let Some(key) = std::env::var_os(variable) {
             let key = key
@@ -316,7 +317,7 @@ fn resolve_key(config: &Options, custom_endpoint: bool) -> anyhow::Result<Option
             }
         }
     }
-    if config.provider.key_optional(custom_endpoint) {
+    if config.provider_details.keyless_custom_endpoint && custom_endpoint {
         return Ok(None);
     }
     anyhow::bail!(
@@ -336,7 +337,7 @@ impl Plugin for Summarize {
         let api_key = resolve_key(&options, endpoint.is_some())?;
         Ok(Self {
             api_key,
-            endpoint: endpoint.unwrap_or_else(|| options.provider.default_endpoint().to_owned()),
+            endpoint: endpoint.unwrap_or_else(|| options.provider_details.endpoint.clone()),
             options,
         })
     }

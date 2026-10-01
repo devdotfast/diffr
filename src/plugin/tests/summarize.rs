@@ -372,10 +372,11 @@ fn the_system_prompt_is_the_configured_one() {
 
     let (_, mut sides) = project("a.py", "", LARGE);
     let (system, _) = request(json!({}), &mut sides);
-    let default: Options = serde_json::from_value(serde_json::Value::Object(
-        builtin::manifest("summarize").unwrap().defaults(),
-    ))
-    .unwrap();
+    let mut defaults = serde_json::Map::new();
+    builtin::manifest("summarize")
+        .unwrap()
+        .fill_defaults(&mut defaults);
+    let default: Options = serde_json::from_value(serde_json::Value::Object(defaults)).unwrap();
     assert_eq!(system, default.system_prompt.as_str());
     assert!(default.system_prompt.starts_with(
         "For each listed fold, rewrite that function body as short pseudocode. Keep the names."
@@ -451,13 +452,14 @@ fn external_component_summarizes_over_http() {
         ),
     )
     .unwrap();
-    let mut options = builtin::manifest("summarize").unwrap().defaults();
-    options.extend(
+    let mut options =
         json!({"api_key": "test-key", "endpoint": endpoint, "min_lines": 3, "retries": 1})
             .as_object()
             .unwrap()
-            .clone(),
-    );
+            .clone();
+    builtin::manifest("summarize")
+        .unwrap()
+        .fill_defaults(&mut options);
     let mut pipeline = Pipeline::default();
     pipeline
         .push(
@@ -756,4 +758,23 @@ fn an_openai_compatible_server_needs_no_key() {
         .headers
         .iter()
         .any(|header| header.starts_with("authorization")));
+}
+
+#[test]
+fn an_unset_model_is_the_providers_default() {
+    let (file, mut sides) = project("a.py", "", LARGE);
+    let id = select(&trees(&sides), 3, None)[0].0;
+    let text = json!({"summaries": [{"id": id, "summary": "", "pseudocode": "call a, b, c"}]});
+    let response = json!({"content": [{"type": "text", "text": text.to_string()}]});
+    let (endpoint, server) = serve_requests(vec![(200, response.to_string())]);
+    summarizer_with(json!({
+        "provider": "anthropic",
+        "api_key": "test-key",
+        "endpoint": endpoint,
+        "min_lines": 3,
+    }))
+    .run(&file, &mut sides)
+    .unwrap();
+    let body: serde_json::Value = serde_json::from_str(&server.join().unwrap()[0].body).unwrap();
+    assert_eq!(body["model"], "claude-haiku-4-5");
 }

@@ -589,6 +589,27 @@ mod sparse_tests {
     }
 
     #[test]
+    fn a_model_equal_to_its_providers_default_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        set(&path, "plugins.bundled.summarize.provider", "openai").unwrap();
+        set(&path, "plugins.bundled.summarize.model", "gpt-6-luna").unwrap();
+        let raw = read_toml(&path);
+        assert!(
+            raw["plugins"]["bundled"]["summarize"]
+                .get("model")
+                .is_none(),
+            "{raw}"
+        );
+        set(&path, "plugins.bundled.summarize.model", "gemini-3.8-flash").unwrap();
+        let raw = read_toml(&path);
+        assert_eq!(
+            raw["plugins"]["bundled"]["summarize"]["model"].as_str(),
+            Some("gemini-3.8-flash")
+        );
+    }
+
+    #[test]
     fn an_explicit_plugin_list_still_pins_membership() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");

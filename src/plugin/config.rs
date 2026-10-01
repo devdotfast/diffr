@@ -26,6 +26,9 @@ pub(crate) const RESERVED: [&str; 3] = [ENABLED, PATH, "instances"];
 
 /// A plugin folder's description, and its component when it has one.
 pub(crate) const MANIFEST_FILE: &str = "plugin.toml";
+/// An option's default that depends on another option's value:
+/// `{ key = "<option>", values = { <value> = <default>, ... } }`.
+const DEFAULT_BY: &str = "x-default-by";
 pub(crate) const COMPONENT_FILE: &str = "plugin.wasm";
 
 /// A plugin's `plugin.toml`.
@@ -105,7 +108,70 @@ impl Manifest {
             ));
         }
         self.validate(&self.defaults())
-            .map_err(|error| format!("{}: the defaults: {error}", self.name))
+            .map_err(|error| format!("{}: the defaults: {error}", self.name))?;
+        self.check_defaults_by()
+    }
+
+    /// Every `x-default-by` names an option with choices, gives a default
+    /// for each choice, and every choice's defaults satisfy the schema.
+    fn check_defaults_by(&self) -> Result<(), String> {
+        for (name, option) in &self.options {
+            let Some(by) = option.get(DEFAULT_BY) else {
+                continue;
+            };
+            let invalid =
+                |problem: &str| format!("{}: option {name:?}: {DEFAULT_BY} {problem}", self.name);
+            let key = by
+                .get("key")
+                .and_then(Value::as_str)
+                .ok_or_else(|| invalid("needs a key"))?;
+            let mut chain = vec![name.as_str()];
+            let mut next = key;
+            while let Some(by) = self
+                .options
+                .get(next)
+                .and_then(|option| option.get(DEFAULT_BY))
+            {
+                if chain.contains(&next) {
+                    return Err(invalid(&format!("forms a cycle through {chain:?}")));
+                }
+                chain.push(next);
+                next = by.get("key").and_then(Value::as_str).unwrap_or_default();
+            }
+            let values = by
+                .get("values")
+                .and_then(Value::as_object)
+                .ok_or_else(|| invalid("needs values"))?;
+            let choices: Vec<&str> = self
+                .options
+                .get(key)
+                .and_then(|option| option.get("enum"))
+                .and_then(Value::as_array)
+                .ok_or_else(|| invalid(&format!("key {key:?} is not an option with choices")))?
+                .iter()
+                .filter_map(Value::as_str)
+                .collect();
+            let mut given: Vec<&str> = values.keys().map(String::as_str).collect();
+            let mut expected = choices.clone();
+            given.sort_unstable();
+            expected.sort_unstable();
+            if given != expected {
+                return Err(invalid(&format!(
+                    "must give a default for each of {choices:?}"
+                )));
+            }
+            for choice in choices {
+                let mut options = Map::from_iter([(key.to_owned(), Value::from(choice))]);
+                self.fill_defaults(&mut options);
+                self.validate(&options).map_err(|error| {
+                    format!(
+                        "{}: the defaults for {key} = {choice:?}: {error}",
+                        self.name
+                    )
+                })?;
+            }
+        }
+        Ok(())
     }
 
     /// The JSON Schema of the plugin's options as an object: unknown keys
@@ -155,6 +221,41 @@ impl Manifest {
                     .map(|default| (key.clone(), default.clone()))
             })
             .collect()
+    }
+
+    /// Fill every option `options` leaves unset: from its `default`, or from
+    /// its `x-default-by` for the value its key has.
+    pub(crate) fn fill_defaults(&self, options: &mut Map<String, Value>) {
+        for (key, default) in self.defaults() {
+            options.entry(key).or_insert(default);
+        }
+        // A default may follow one that follows another, declared in any
+        // order: fill until a round fills nothing.
+        loop {
+            let mut filled = false;
+            for (name, option) in &self.options {
+                let Some(by) = option
+                    .get(DEFAULT_BY)
+                    .filter(|_| !options.contains_key(name))
+                else {
+                    continue;
+                };
+                let default = by
+                    .get("key")
+                    .and_then(Value::as_str)
+                    .and_then(|key| options.get(key))
+                    .and_then(Value::as_str)
+                    .and_then(|choice| by["values"].get(choice))
+                    .cloned();
+                if let Some(default) = default {
+                    options.insert(name.clone(), default);
+                    filled = true;
+                }
+            }
+            if !filled {
+                break;
+            }
+        }
     }
 
     /// The entry this plugin adds to `diffr config schema` under `plugins`.
@@ -449,9 +550,7 @@ impl PluginsConfig {
             manifest
                 .validate(&entry.options)
                 .map_err(|error| ConfigError(format!("plugins.{reference}: {error}")))?;
-            for (key, default) in manifest.defaults() {
-                entry.options.entry(key).or_insert(default);
-            }
+            manifest.fill_defaults(&mut entry.options);
             entry.folder = Some(folder);
         }
         let mut identities = BTreeSet::new();
@@ -564,6 +663,69 @@ mod tests {
             description.contains(&link),
             "{description}\nexpected {link}"
         );
+    }
+
+    #[test]
+    fn defaults_can_follow_another_option() {
+        let summarize = |toml: &str| {
+            Config::from_toml(toml).unwrap().plugins.entries["bundled.summarize"]
+                .options
+                .clone()
+        };
+        let openai = summarize("[plugins.bundled.summarize]\nprovider = 'openai'\n");
+        assert_eq!(openai["model"], "gpt-6-luna");
+        assert_eq!(
+            openai["provider_details"]["key_variables"],
+            serde_json::json!(["OPENAI_API_KEY"])
+        );
+        assert_eq!(summarize("")["model"], "gemini-3.8-flash");
+        let pinned = summarize("[plugins.bundled.summarize]\nprovider = 'openai'\nmodel = 'o9'\n");
+        assert_eq!(pinned["model"], "o9");
+    }
+
+    #[test]
+    fn a_default_can_follow_a_default_that_follows_another() {
+        // Declared so that `size` comes before the `kind` it follows, and
+        // `kind` before the `mode` it follows.
+        let manifest = super::Manifest::parse(
+            "name = 'p'\ntitle = 'P'\n\
+             [options.size]\ntitle = 'Size'\ntype = 'integer'\n\
+             [options.size.\"x-default-by\"]\nkey = 'kind'\nvalues = { small = 1, large = 2 }\n\
+             [options.kind]\ntitle = 'Kind'\nenum = ['small', 'large']\n\
+             [options.kind.\"x-default-by\"]\nkey = 'mode'\nvalues = { a = 'small', b = 'large' }\n\
+             [options.mode]\ntitle = 'Mode'\nenum = ['a', 'b']\ndefault = 'a'\n",
+        )
+        .unwrap();
+        let mut options = serde_json::Map::new();
+        manifest.fill_defaults(&mut options);
+        assert_eq!(options["kind"], "small");
+        assert_eq!(options["size"], 1);
+        let mut options = serde_json::Map::from_iter([("mode".to_owned(), "b".into())]);
+        manifest.fill_defaults(&mut options);
+        assert_eq!(options["size"], 2);
+        let cycle = super::Manifest::parse(
+            "name = 'p'\ntitle = 'P'\n\
+             [options.x]\ntitle = 'X'\nenum = ['a', 'b']\n\
+             [options.x.\"x-default-by\"]\nkey = 'y'\nvalues = { a = 'a', b = 'b' }\n\
+             [options.y]\ntitle = 'Y'\nenum = ['a', 'b']\n\
+             [options.y.\"x-default-by\"]\nkey = 'x'\nvalues = { a = 'a', b = 'b' }\n",
+        )
+        .unwrap_err();
+        assert!(cycle.contains("cycle"), "{cycle}");
+    }
+
+    #[test]
+    fn a_default_by_must_cover_every_choice_and_fit_the_option() {
+        let manifest = |values: &str| {
+            super::Manifest::parse(&format!(
+                "name = 'p'\ntitle = 'P'\n[options.kind]\ntitle = 'Kind'\nenum = ['a', 'b']\ndefault = 'a'\n[options.size]\ntitle = 'Size'\ntype = 'integer'\n[options.size.\"x-default-by\"]\nkey = 'kind'\nvalues = {{ {values} }}\n"
+            ))
+        };
+        assert!(manifest("a = 1, b = 2").is_ok());
+        let missing = manifest("a = 1").unwrap_err();
+        assert!(missing.contains("\"b\""), "{missing}");
+        let mistyped = manifest("a = 1, b = 'big'").unwrap_err();
+        assert!(mistyped.contains("kind = \"b\""), "{mistyped}");
     }
 
     #[test]

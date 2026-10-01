@@ -4,6 +4,19 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+/// What `plugin.toml` records per provider, filled in by the host.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Details {
+    /// The base URL used when `endpoint` is unset.
+    pub endpoint: String,
+    /// The environment variables read, in order, when `api_key` is unset.
+    pub key_variables: Vec<String>,
+    /// Whether a custom endpoint may go without a key, as OpenAI-compatible
+    /// servers such as Ollama often do.
+    pub keyless_custom_endpoint: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
@@ -13,29 +26,6 @@ pub enum Provider {
 }
 
 impl Provider {
-    pub fn default_endpoint(self) -> &'static str {
-        match self {
-            Self::Gemini => "https://generativelanguage.googleapis.com",
-            Self::OpenAi => "https://api.openai.com/v1",
-            Self::Anthropic => "https://api.anthropic.com",
-        }
-    }
-
-    /// The environment variables read, in order, when `api_key` is unset.
-    pub fn key_variables(self) -> &'static [&'static str] {
-        match self {
-            Self::Gemini => &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-            Self::OpenAi => &["OPENAI_API_KEY"],
-            Self::Anthropic => &["ANTHROPIC_API_KEY"],
-        }
-    }
-
-    /// OpenAI-compatible servers at a custom endpoint, such as Ollama,
-    /// often take no key.
-    pub fn key_optional(self, custom_endpoint: bool) -> bool {
-        self == Self::OpenAi && custom_endpoint
-    }
-
     pub fn url(self, endpoint: &str, model: &str) -> String {
         let endpoint = endpoint.trim_end_matches('/');
         match self {

@@ -12,15 +12,19 @@ default = false
 
 [options.provider]
 enum = ["gemini", "openai", "anthropic"]
+"x-enum-titles" = ["Gemini", "OpenAI", "Anthropic"]
 title = "Provider"
-description = "Which model API to call. `openai` also reaches OpenRouter and any other OpenAI-compatible server through `endpoint`. Set `model` to one of the provider's models when you change this."
+description = "Which model API to call. `openai` also reaches OpenRouter and any other OpenAI-compatible server through `endpoint`."
 default = "gemini"
 
 [options.model]
 type = "string"
 title = "Model"
-description = "The model name sent to the provider."
-default = "gemini-3.8-flash"
+description = "The model name sent to the provider. Unset uses the provider's default."
+
+[options.model."x-default-by"]
+key = "provider"
+values = { gemini = "gemini-3.8-flash", openai = "gpt-6-luna", anthropic = "claude-haiku-4-5" }
 
 [options.min_lines]
 type = "integer"
@@ -64,7 +68,7 @@ default = 3
 [options.system_prompt]
 type = "string"
 title = "System prompt"
-description = "The system instruction sent with every request; diffr builds each request's message from the file's numbered lines and the folds to summarize. Unset uses the default: https://github.com/devdotfast/diffr/blob/main/plugins/summarize/plugin.toml#L68-L74"
+description = "The system instruction sent with every request; diffr builds each request's message from the file's numbered lines and the folds to summarize. Unset uses the default: https://github.com/devdotfast/diffr/blob/main/plugins/summarize/plugin.toml#L72-L78"
 default = """\
 For each listed fold, rewrite that function body as short \
 pseudocode. Keep the names. No prose, no comments, no code fences. Use as few lines as \
@@ -85,3 +89,35 @@ minimum = 0
 title = "Shortest test body to summarize (lines)"
 description = "Test bodies shorter than this keep their ordinary fold labels."
 default = 20
+
+# Per-provider facts the summarizer and settings screens share. Settings
+# screens do not edit an object option, so this is a file-only override.
+[options.provider_details]
+type = "object"
+title = "Provider details"
+description = "The provider's default endpoint, the environment variables that hold its key, and whether a custom endpoint may go without a key."
+required = ["endpoint", "key_variables", "keyless_custom_endpoint"]
+additionalProperties = false
+
+[options.provider_details.properties]
+endpoint = { type = "string" }
+key_variables = { type = "array", items = { type = "string" } }
+keyless_custom_endpoint = { type = "boolean" }
+
+[options.provider_details."x-default-by"]
+key = "provider"
+
+[options.provider_details."x-default-by".values.gemini]
+endpoint = "https://generativelanguage.googleapis.com"
+key_variables = ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+keyless_custom_endpoint = false
+
+[options.provider_details."x-default-by".values.openai]
+endpoint = "https://api.openai.com/v1"
+key_variables = ["OPENAI_API_KEY"]
+keyless_custom_endpoint = true
+
+[options.provider_details."x-default-by".values.anthropic]
+endpoint = "https://api.anthropic.com"
+key_variables = ["ANTHROPIC_API_KEY"]
+keyless_custom_endpoint = false

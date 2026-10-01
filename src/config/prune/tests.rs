@@ -17,6 +17,8 @@ fn settings() -> Vec<(String, Value)> {
             None => node,
         };
         match node.get("properties").and_then(Value::as_object) {
+            // An object option is set whole, from the file, never by field.
+            Some(_) if node.get("x-settings") == Some(&Value::Bool(false)) => {}
             Some(properties) => {
                 for (name, child) in properties {
                     let key = match key {

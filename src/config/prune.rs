@@ -38,15 +38,15 @@ pub(crate) fn forget_legacy(source: &str) -> Cow<'_, str> {
     }
 }
 
-/// Remove each value, then each table that holds no values, whose removal
-/// leaves `resolve` of the document unchanged. `version` stays, and so does
+/// Remove each value, then each table, whose removal leaves `resolve` of
+/// the document unchanged: an object option is only valid whole. `version` stays, and so does
 /// anything with a comment on it: a note marks intent.
 pub(crate) fn prune(document: &mut DocumentMut, resolve: impl Fn(&str) -> Option<toml::Value>) {
     let Some(target) = resolve(&document.to_string()) else {
         return;
     };
-    for hollow_tables in [false, true] {
-        for path in removable(document.as_table(), hollow_tables) {
+    for tables in [false, true] {
+        for path in removable(document.as_table(), tables) {
             if path == ["version"] {
                 continue;
             }
@@ -75,34 +75,36 @@ fn hide_headers(table: &mut toml_edit::Table) {
     }
 }
 
-/// The dotted paths of the table's uncommented values or, with
-/// `hollow_tables`, of its outermost tables that hold no values, deepest
-/// first.
-fn removable(table: &dyn TableLike, hollow_tables: bool) -> Vec<Vec<String>> {
+/// The dotted paths of the table's uncommented values or, with `tables`,
+/// of its uncommented tables, deepest first. A table holding a comment at
+/// any depth stays.
+fn removable(table: &dyn TableLike, tables: bool) -> Vec<Vec<String>> {
     let mut paths = Vec::new();
     for (key, item) in table.iter() {
         if has_comment(table, key, item) {
             continue;
         }
         match item.as_table_like() {
-            Some(child) if hollow_tables && hollow(child) => paths.push(vec![key.to_owned()]),
             Some(child) => {
-                for mut path in removable(child, hollow_tables) {
+                for mut path in removable(child, tables) {
                     path.insert(0, key.to_owned());
                     paths.push(path);
                 }
+                if tables && !annotated(child) {
+                    paths.push(vec![key.to_owned()]);
+                }
             }
-            None if !hollow_tables => paths.push(vec![key.to_owned()]),
+            None if !tables => paths.push(vec![key.to_owned()]),
             None => {}
         }
     }
     paths
 }
 
-/// A table with no values and no comments, at any depth.
-fn hollow(table: &dyn TableLike) -> bool {
-    table.iter().all(|(key, item)| {
-        !has_comment(table, key, item) && item.as_table_like().is_some_and(hollow)
+/// Whether anything in the table, at any depth, has a comment.
+fn annotated(table: &dyn TableLike) -> bool {
+    table.iter().any(|(key, item)| {
+        has_comment(table, key, item) || item.as_table_like().is_some_and(annotated)
     })
 }
 

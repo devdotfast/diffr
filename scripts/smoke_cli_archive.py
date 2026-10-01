@@ -1,5 +1,6 @@
 """Verify a CLI-only release archive without Bun, Git, or user configuration."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -8,18 +9,21 @@ import tempfile
 
 
 def check(archive_path, version):
+    exe = ".exe" if os.name == "nt" else ""
     with tempfile.TemporaryDirectory(prefix="diffr-cli-smoke-") as directory:
         root = Path(directory)
         with tarfile.open(archive_path) as archive:
             assert set(archive.getnames()) == {
-                "diffr", "LICENSE", "NOTICE", "tui/LICENSE", "tui/themes/LICENSE",
+                f"diffr{exe}", "LICENSE", "NOTICE", "tui/LICENSE", "tui/themes/LICENSE",
             }
             archive.extractall(root, filter="data")
         env = {"PATH": "", "HOME": str(root), "XDG_CONFIG_HOME": str(root / "config")}
+        if os.name == "nt":
+            env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
 
         def run(*args):
             return subprocess.check_output(
-                [root / "diffr", *args], cwd=root, env=env, text=True, timeout=30,
+                [root / f"diffr{exe}", *args], cwd=root, env=env, text=True, timeout=30,
             )
 
         assert run("--version").strip() == f"diffr {version}"

@@ -6,7 +6,10 @@ import re
 import subprocess
 import tarfile
 
-TARGETS = ("aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu")
+TARGETS = (
+    "aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc",
+)
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -15,14 +18,15 @@ def archive_name(version, target, artifact="diffr"):
 
 
 def pack(version, target, install, output, edition="lean"):
-    actual = subprocess.check_output([install / "bin/diffr", "--version"], text=True).strip()
+    exe = ".exe" if "windows" in target else ""
+    actual = subprocess.check_output([install / "bin" / f"diffr{exe}", "--version"], text=True).strip()
     if actual != f"diffr {version}":
         raise ValueError(f"Release version mismatch: {actual}")
     for artifact in ("diffr-cli-full",) if edition == "full" else ("diffr", "diffr-cli"):
         with tarfile.open(output / archive_name(version, target, artifact), "w:gz") as archive:
             binaries = ("diffr", "diffr-tui") if artifact == "diffr" else ("diffr",)
             for name in binaries:
-                archive.add(install / "bin" / name, arcname=name)
+                archive.add(install / "bin" / f"{name}{exe}", arcname=f"{name}{exe}")
             for name in ("LICENSE", "NOTICE", "tui/LICENSE", "tui/themes/LICENSE"):
                 archive.add(ROOT / name, arcname=name)
 

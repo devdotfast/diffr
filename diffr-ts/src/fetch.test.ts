@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 const fetchScript = join(import.meta.dir, "..", "bin", "fetch.mjs");
 const { version } = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8"));
-const targets: Record<string, string> = { "darwin-arm64": "aarch64-apple-darwin", "darwin-x64": "x86_64-apple-darwin", "linux-x64": "x86_64-unknown-linux-gnu", "linux-arm64": "aarch64-unknown-linux-gnu" };
+const targets: Record<string, string> = { "darwin-arm64": "aarch64-apple-darwin", "darwin-x64": "x86_64-apple-darwin", "linux-x64": "x86_64-unknown-linux-gnu", "linux-arm64": "aarch64-unknown-linux-gnu", "win32-x64": "x86_64-pc-windows-msvc", "win32-arm64": "aarch64-pc-windows-msvc" };
 const target = targets[`${process.platform}-${process.arch}`];
 const dirs: string[] = [];
 afterEach(() => {
@@ -134,6 +134,18 @@ test("Linux ARM64 downloads and stamps the aarch64 release", () => {
   expect(JSON.parse(readFileSync(join(f.into, "diffr.stamp.json"), "utf8"))).toEqual({
     version, target: "aarch64-unknown-linux-gnu",
   });
+  expect(f.run(["--check"], true).code).toBe(0);
+});
+
+test("Windows x64 downloads and stamps diffr.exe", () => {
+  const f = fixture("diffr.exe", "diffr-cli", "win32", "x64");
+  const result = f.run(["--required"]);
+  expect(result.code, result.err).toBe(0);
+  expect(readFileSync(join(f.dir, "requested"), "utf8")).toBe(
+    `https://github.com/devdotfast/diffr/releases/download/${version}/diffr-cli-${version}-x86_64-pc-windows-msvc.tar.gz`,
+  );
+  expect(readdirSync(f.into).sort()).toEqual(["diffr.exe", "diffr.stamp.json"]);
+  chmodSync(join(f.into, "diffr.exe"), 0o644);
   expect(f.run(["--check"], true).code).toBe(0);
 });
 

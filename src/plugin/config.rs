@@ -125,6 +125,19 @@ impl Manifest {
                 .get("key")
                 .and_then(Value::as_str)
                 .ok_or_else(|| invalid("needs a key"))?;
+            let mut chain = vec![name.as_str()];
+            let mut next = key;
+            while let Some(by) = self
+                .options
+                .get(next)
+                .and_then(|option| option.get(DEFAULT_BY))
+            {
+                if chain.contains(&next) {
+                    return Err(invalid(&format!("forms a cycle through {chain:?}")));
+                }
+                chain.push(next);
+                next = by.get("key").and_then(Value::as_str).unwrap_or_default();
+            }
             let values = by
                 .get("values")
                 .and_then(Value::as_object)
@@ -216,22 +229,31 @@ impl Manifest {
         for (key, default) in self.defaults() {
             options.entry(key).or_insert(default);
         }
-        for (name, option) in &self.options {
-            let Some(by) = option
-                .get(DEFAULT_BY)
-                .filter(|_| !options.contains_key(name))
-            else {
-                continue;
-            };
-            let default = by
-                .get("key")
-                .and_then(Value::as_str)
-                .and_then(|key| options.get(key))
-                .and_then(Value::as_str)
-                .and_then(|choice| by["values"].get(choice))
-                .cloned();
-            if let Some(default) = default {
-                options.insert(name.clone(), default);
+        // A default may follow one that follows another, declared in any
+        // order: fill until a round fills nothing.
+        loop {
+            let mut filled = false;
+            for (name, option) in &self.options {
+                let Some(by) = option
+                    .get(DEFAULT_BY)
+                    .filter(|_| !options.contains_key(name))
+                else {
+                    continue;
+                };
+                let default = by
+                    .get("key")
+                    .and_then(Value::as_str)
+                    .and_then(|key| options.get(key))
+                    .and_then(Value::as_str)
+                    .and_then(|choice| by["values"].get(choice))
+                    .cloned();
+                if let Some(default) = default {
+                    options.insert(name.clone(), default);
+                    filled = true;
+                }
+            }
+            if !filled {
+                break;
             }
         }
     }
@@ -659,6 +681,37 @@ mod tests {
         assert_eq!(summarize("")["model"], "gemini-3.8-flash");
         let pinned = summarize("[plugins.bundled.summarize]\nprovider = 'openai'\nmodel = 'o9'\n");
         assert_eq!(pinned["model"], "o9");
+    }
+
+    #[test]
+    fn a_default_can_follow_a_default_that_follows_another() {
+        // Declared so that `size` comes before the `kind` it follows, and
+        // `kind` before the `mode` it follows.
+        let manifest = super::Manifest::parse(
+            "name = 'p'\ntitle = 'P'\n\
+             [options.size]\ntitle = 'Size'\ntype = 'integer'\n\
+             [options.size.\"x-default-by\"]\nkey = 'kind'\nvalues = { small = 1, large = 2 }\n\
+             [options.kind]\ntitle = 'Kind'\nenum = ['small', 'large']\n\
+             [options.kind.\"x-default-by\"]\nkey = 'mode'\nvalues = { a = 'small', b = 'large' }\n\
+             [options.mode]\ntitle = 'Mode'\nenum = ['a', 'b']\ndefault = 'a'\n",
+        )
+        .unwrap();
+        let mut options = serde_json::Map::new();
+        manifest.fill_defaults(&mut options);
+        assert_eq!(options["kind"], "small");
+        assert_eq!(options["size"], 1);
+        let mut options = serde_json::Map::from_iter([("mode".to_owned(), "b".into())]);
+        manifest.fill_defaults(&mut options);
+        assert_eq!(options["size"], 2);
+        let cycle = super::Manifest::parse(
+            "name = 'p'\ntitle = 'P'\n\
+             [options.x]\ntitle = 'X'\nenum = ['a', 'b']\n\
+             [options.x.\"x-default-by\"]\nkey = 'y'\nvalues = { a = 'a', b = 'b' }\n\
+             [options.y]\ntitle = 'Y'\nenum = ['a', 'b']\n\
+             [options.y.\"x-default-by\"]\nkey = 'x'\nvalues = { a = 'a', b = 'b' }\n",
+        )
+        .unwrap_err();
+        assert!(cycle.contains("cycle"), "{cycle}");
     }
 
     #[test]

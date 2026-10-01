@@ -1,8 +1,9 @@
 //! The summarizer: large new function bodies become short pseudocode, shown
 //! in place of the collapsed body.
 //!
-//! It needs an API key: `new` fails without one, naming how to set it or
-//! turn the plugin off, which is why the bundled configuration ships it off.
+//! It needs an API key for most providers: `new` fails without one, naming
+//! how to set it or turn the plugin off, which is why the bundled
+//! configuration ships it off.
 //! Requests use WASI HTTP. The host calls one file at a time per instance.
 use diffr_plugin_sdk::anyhow::{self, anyhow, Context as _};
 use diffr_plugin_sdk::{
@@ -10,10 +11,11 @@ use diffr_plugin_sdk::{
     FileEntry, Move, Node, OtherSide, Pairing, Plugin, Region, Source,
 };
 use serde::Deserialize;
-use serde_json::json;
 use std::collections::BTreeMap;
 use std::time::Duration;
 mod http;
+mod provider;
+pub use provider::Provider;
 
 /// The plugin's name, and the tags its queries set: a function body, and a
 /// test body, which can be summarized independently of whether it is new.
@@ -40,18 +42,10 @@ pub struct Options {
     pub system_prompt: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Provider {
-    Gemini,
-}
-
-const DEFAULT_ENDPOINT: &str = "https://generativelanguage.googleapis.com";
-
 /// The summarizer's options, API key and endpoint.
 pub struct Summarize {
     options: Options,
-    api_key: String,
+    api_key: Option<String>,
     endpoint: String,
 }
 
@@ -80,16 +74,6 @@ struct Summary {
 }
 
 impl Summarize {
-    fn url(&self) -> String {
-        match self.options.provider {
-            Provider::Gemini => format!(
-                "{}/v1beta/models/{}:generateContent",
-                self.endpoint.trim_end_matches('/'),
-                self.options.model
-            ),
-        }
-    }
-
     fn prompt(&self, path: &str, src: &str, folds: &[Request]) -> String {
         let numbered: Vec<String> = src
             .split_terminator('\n')
@@ -125,36 +109,22 @@ impl Summarize {
         src: &str,
         folds: &[Request],
     ) -> anyhow::Result<BTreeMap<u32, Summary>> {
-        let body = json!({
-            "systemInstruction": {"parts": [{"text": self.options.system_prompt}]},
-            "contents": [{"role": "user", "parts": [{"text": self.prompt(path, src, folds)}]}],
-            "generationConfig": {
-                "temperature": 0,
-                "maxOutputTokens": 600 * folds.len() + 200,
-                "thinkingConfig": {"thinkingBudget": 0},
-                "responseMimeType": "application/json",
-                "responseSchema": {
-                    "type": "ARRAY",
-                    "items": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "id": {"type": "INTEGER"},
-                            "summary": {"type": "STRING"},
-                            "pseudocode": {"type": "STRING"},
-                        },
-                        "required": ["id", "pseudocode"],
-                    },
-                },
-            },
-        });
-        let url = self.url();
+        let provider = self.options.provider;
+        let body = provider.body(
+            &self.options.model,
+            &self.options.system_prompt,
+            &self.prompt(path, src, folds),
+            600 * folds.len() + 200,
+        );
+        let url = provider.url(&self.endpoint, &self.options.model);
+        let headers = provider.headers(self.api_key.as_deref());
         let failed = |message: String| anyhow!("{}: {message}", self.options.model);
         let text: serde_json::Value = {
             let mut attempt = 0;
             loop {
                 let result = http::post(
                     &url,
-                    &self.api_key,
+                    &headers,
                     &body.to_string(),
                     self.options.request_timeout_ms,
                 );
@@ -182,13 +152,11 @@ impl Summarize {
                 std::thread::sleep(Duration::from_millis(250 * (1 << attempt.min(6))));
             }
         };
-        let content = text["candidates"][0]["content"]["parts"]
-            .as_array()
-            .and_then(|parts| parts.last())
-            .and_then(|part| part["text"].as_str())
+        let content = provider
+            .text(&text)
             .ok_or_else(|| failed("no text in the response".to_owned()))?;
-        let answers: Vec<Answer> =
-            serde_json::from_str(content).map_err(|error| failed(format!("{error}: {content}")))?;
+        let answers: Vec<Answer> = provider::answers(content)
+            .ok_or_else(|| failed(format!("no summaries in the answer: {content}")))?;
         let mut texts = BTreeMap::new();
         for answer in answers {
             if !folds.iter().any(|fold| fold.id == answer.id) {
@@ -329,25 +297,31 @@ fn compresses(summary: &str, body: &[&str]) -> bool {
     summary_lines * 2 <= body_lines
 }
 
-/// The API key: the `api_key` option, or else `GEMINI_API_KEY`, or else
-/// `GOOGLE_API_KEY`, the first that is set and not empty.
-fn resolve_key(config: &Options) -> anyhow::Result<String> {
+/// The API key: the `api_key` option, or else the first of the provider's
+/// environment variables that is set and not empty. `None` only where the
+/// provider can go without one.
+fn resolve_key(config: &Options, custom_endpoint: bool) -> anyhow::Result<Option<String>> {
     let set = |key: &String| !key.is_empty();
     if let Some(key) = config.api_key.clone().filter(set) {
-        return Ok(key);
+        return Ok(Some(key));
     }
-    for variable in ["GEMINI_API_KEY", "GOOGLE_API_KEY"] {
+    let variables = config.provider.key_variables();
+    for variable in variables {
         if let Some(key) = std::env::var_os(variable) {
             let key = key
                 .into_string()
                 .map_err(|_| anyhow!("{variable} is not valid UTF-8"))?;
             if set(&key) {
-                return Ok(key);
+                return Ok(Some(key));
             }
         }
     }
+    if config.provider.key_optional(custom_endpoint) {
+        return Ok(None);
+    }
     anyhow::bail!(
-        "no API key: set plugins.bundled.summarize.api_key, or GEMINI_API_KEY or GOOGLE_API_KEY in the environment, or turn the summarizer off with plugins.bundled.summarize.enabled = false"
+        "no API key: set plugins.bundled.summarize.api_key, or {} in the environment, or turn the summarizer off with plugins.bundled.summarize.enabled = false",
+        variables.join(" or ")
     )
 }
 
@@ -355,13 +329,14 @@ impl Plugin for Summarize {
     type Options = Options;
 
     fn new(options: Options) -> anyhow::Result<Self> {
-        let api_key = resolve_key(&options)?;
+        let endpoint = options
+            .endpoint
+            .clone()
+            .filter(|endpoint| !endpoint.is_empty());
+        let api_key = resolve_key(&options, endpoint.is_some())?;
         Ok(Self {
             api_key,
-            endpoint: options
-                .endpoint
-                .clone()
-                .unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned()),
+            endpoint: endpoint.unwrap_or_else(|| options.provider.default_endpoint().to_owned()),
             options,
         })
     }

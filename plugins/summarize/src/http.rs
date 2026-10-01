@@ -4,7 +4,12 @@ use diffr_plugin_sdk::anyhow::{self, anyhow};
 use wasi::http::{outgoing_handler, types::*};
 use wasi::io::streams::StreamError;
 
-pub fn post(url: &str, key: &str, body: &str, timeout_ms: u64) -> anyhow::Result<(u16, Vec<u8>)> {
+pub fn post(
+    url: &str,
+    headers: &[(&'static str, String)],
+    body: &str,
+    timeout_ms: u64,
+) -> anyhow::Result<(u16, Vec<u8>)> {
     let (scheme, rest) = url
         .split_once("://")
         .ok_or_else(|| anyhow!("invalid endpoint URL"))?;
@@ -14,12 +19,19 @@ pub fn post(url: &str, key: &str, body: &str, timeout_ms: u64) -> anyhow::Result
         _ => anyhow::bail!("endpoint must use http or https"),
     };
     let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
-    let headers = Fields::from_list(&[
-        ("content-type".into(), b"application/json".to_vec()),
-        ("content-length".into(), body.len().to_string().into_bytes()),
-        ("x-goog-api-key".into(), key.as_bytes().to_vec()),
-    ])
-    .map_err(|e| anyhow!("HTTP headers: {e:?}"))?;
+    let mut fields = vec![
+        ("content-type".to_owned(), b"application/json".to_vec()),
+        (
+            "content-length".to_owned(),
+            body.len().to_string().into_bytes(),
+        ),
+    ];
+    fields.extend(
+        headers
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), value.as_bytes().to_vec())),
+    );
+    let headers = Fields::from_list(&fields).map_err(|e| anyhow!("HTTP headers: {e:?}"))?;
     let request = OutgoingRequest::new(headers);
     request
         .set_method(&Method::Post)

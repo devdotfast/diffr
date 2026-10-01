@@ -27,29 +27,47 @@ fn project_with(
 
 const LARGE: &str = "def f():\n    a()\n    b()\n    c()\n\ndef g(): d()\n";
 
+/// One request the test server received.
+struct Received {
+    line: String,
+    headers: Vec<String>,
+    body: String,
+}
+
 /// Answer each request with the next canned response.
-fn serve(responses: Vec<(u16, String)>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+fn serve_requests(
+    responses: Vec<(u16, String)>,
+) -> (String, std::thread::JoinHandle<Vec<Received>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let handle = std::thread::spawn(move || {
-        let mut bodies = Vec::new();
+        let mut received = Vec::new();
         for (status, body) in responses {
             let (stream, _) = listener.accept().unwrap();
             let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let mut headers = Vec::new();
             let mut length = 0;
             loop {
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                if line == "\r\n" {
+                let mut header = String::new();
+                reader.read_line(&mut header).unwrap();
+                if header == "\r\n" {
                     break;
                 }
-                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                let header = header.trim_end().to_ascii_lowercase();
+                if let Some(value) = header.strip_prefix("content-length:") {
                     length = value.trim().parse().unwrap();
                 }
+                headers.push(header);
             }
             let mut request = vec![0; length];
             reader.read_exact(&mut request).unwrap();
-            bodies.push(String::from_utf8(request).unwrap());
+            received.push(Received {
+                line: line.trim_end().to_owned(),
+                headers,
+                body: String::from_utf8(request).unwrap(),
+            });
             let reason = if status == 200 { "OK" } else { "Error" };
             let response = format!(
                 "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -57,9 +75,23 @@ fn serve(responses: Vec<(u16, String)>) -> (String, std::thread::JoinHandle<Vec<
             );
             reader.get_mut().write_all(response.as_bytes()).unwrap();
         }
-        bodies
+        received
     });
     (endpoint, handle)
+}
+
+/// Answer each request with the next canned response; the request bodies.
+fn serve(responses: Vec<(u16, String)>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+    let (endpoint, handle) = serve_requests(responses);
+    let bodies = std::thread::spawn(move || {
+        handle
+            .join()
+            .unwrap()
+            .into_iter()
+            .map(|request| request.body)
+            .collect()
+    });
+    (endpoint, bodies)
 }
 
 /// The label of the only function body on the after side. The scope fold
@@ -80,8 +112,8 @@ fn gemini_answer(items: &[(u32, &str)]) -> String {
         .iter()
         .map(|(id, text)| json!({"id": id, "pseudocode": text}))
         .collect();
-    json!({"candidates": [{"content": {"parts": [{"text": serde_json::to_string(&answers).unwrap()}]}}]})
-        .to_string()
+    let text = json!({"summaries": answers}).to_string();
+    json!({"candidates": [{"content": {"parts": [{"text": text}]}}]}).to_string()
 }
 
 fn summarizer(endpoint: &str, retries: u32) -> Pipeline {
@@ -580,4 +612,148 @@ fn deferred_summary_preserves_user_fold_state_and_region_identity() {
     .unwrap();
     assert_eq!(sides, before);
     server.join().unwrap();
+}
+
+#[test]
+fn gemini_requests_keep_their_path_and_key_header() {
+    let (file, mut sides) = project("a.py", "", LARGE);
+    let id = select(&trees(&sides), 3, None)[0].0;
+    let (endpoint, server) = serve_requests(vec![(200, gemini_answer(&[(id, "call a, b, c")]))]);
+    summarizer(&endpoint, 0).run(&file, &mut sides).unwrap();
+    let request = server.join().unwrap().remove(0);
+    assert_eq!(
+        request.line,
+        "POST /v1beta/models/gemini-3.8-flash:generateContent HTTP/1.1"
+    );
+    assert!(request
+        .headers
+        .contains(&"x-goog-api-key: test-key".to_owned()));
+    let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+    let config = &body["generationConfig"];
+    assert!(config.get("responseSchema").is_none());
+    assert_eq!(config["responseMimeType"], "application/json");
+    assert_summaries_schema(&config["responseJsonSchema"]);
+    assert!(!request
+        .headers
+        .iter()
+        .any(|header| header.starts_with("authorization")));
+}
+
+fn answers(items: &[(u32, &str)]) -> String {
+    let answers: Vec<_> = items
+        .iter()
+        .map(|(id, text)| json!({"id": id, "pseudocode": text}))
+        .collect();
+    serde_json::to_string(&answers).unwrap()
+}
+
+/// An object root with every field required and nothing else allowed, as
+/// OpenAI's strict mode and Anthropic's structured outputs require.
+fn assert_summaries_schema(schema: &serde_json::Value) {
+    assert_eq!(schema["type"], "object");
+    assert_eq!(schema["required"], json!(["summaries"]));
+    assert_eq!(schema["additionalProperties"], false);
+    let item = &schema["properties"]["summaries"]["items"];
+    assert_eq!(item["required"], json!(["id", "summary", "pseudocode"]));
+    assert_eq!(item["additionalProperties"], false);
+}
+
+#[test]
+fn each_provider_sends_its_own_request_and_reads_its_own_answer() {
+    let (_, sides) = project("a.py", "", LARGE);
+    let id = select(&trees(&sides), 3, None)[0].0;
+    let wrapped = format!("{{\"summaries\": {}}}", answers(&[(id, "call a, b, c")]));
+    // A compatible server that ignores the schema may wrap its answer.
+    let fenced = format!("<think>maybe [a] or [b], or []</think>\n```json\n{wrapped}\n```");
+    for (provider, path, response, auth) in [
+        (
+            "openai",
+            "/v1",
+            json!({"choices": [{"message": {"role": "assistant", "content": fenced}}]}),
+            "authorization: bearer test-key",
+        ),
+        (
+            "anthropic",
+            "",
+            json!({"content": [{"type": "thinking", "thinking": "[1]"}, {"type": "text", "text": wrapped}]}),
+            "x-api-key: test-key",
+        ),
+    ] {
+        let (file, mut sides) = project("a.py", "", LARGE);
+        let (endpoint, server) = serve_requests(vec![(200, response.to_string())]);
+        summarizer_with(json!({
+            "provider": provider,
+            "model": "test-model",
+            "api_key": "test-key",
+            "endpoint": format!("{endpoint}{path}"),
+            "min_lines": 3,
+            "retries": 0,
+        }))
+        .run(&file, &mut sides)
+        .unwrap();
+        assert_eq!(fold_label(&trees(&sides)), "call a, b, c", "{provider}");
+        let request = server.join().unwrap().remove(0);
+        let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+        assert!(
+            request.headers.contains(&auth.to_owned()),
+            "{provider}: {:?}",
+            request.headers
+        );
+        assert_eq!(body["model"], "test-model");
+        match provider {
+            "openai" => {
+                assert_eq!(request.line, "POST /v1/chat/completions HTTP/1.1");
+                assert_eq!(body["messages"][0]["role"], "system");
+                assert!(body["messages"][1]["content"]
+                    .as_str()
+                    .unwrap()
+                    .contains(&format!("fold {id}: lines 2-4")));
+                assert!(body.get("temperature").is_none());
+                let format = &body["response_format"];
+                assert_eq!(format["type"], "json_schema");
+                assert_eq!(format["json_schema"]["strict"], true);
+                assert_summaries_schema(&format["json_schema"]["schema"]);
+            }
+            _ => {
+                assert_eq!(request.line, "POST /v1/messages HTTP/1.1");
+                assert!(request
+                    .headers
+                    .contains(&"anthropic-version: 2023-06-01".to_owned()));
+                assert_eq!(body["max_tokens"], 4096);
+                assert!(body.get("temperature").is_none());
+                let format = &body["output_config"]["format"];
+                assert_eq!(format["type"], "json_schema");
+                assert_summaries_schema(&format["schema"]);
+                assert!(body["system"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("For each listed fold"));
+            }
+        }
+    }
+}
+
+#[test]
+fn an_openai_compatible_server_needs_no_key() {
+    if std::env::var_os("OPENAI_API_KEY").is_some() {
+        return;
+    }
+    let (file, mut sides) = project("a.py", "", LARGE);
+    let id = select(&trees(&sides), 3, None)[0].0;
+    let response = json!({"choices": [{"message": {"content": answers(&[(id, "call a, b, c")])}}]});
+    let (endpoint, server) = serve_requests(vec![(200, response.to_string())]);
+    summarizer_with(json!({
+        "provider": "openai",
+        "model": "llama",
+        "endpoint": format!("{endpoint}/v1"),
+        "min_lines": 3,
+    }))
+    .run(&file, &mut sides)
+    .unwrap();
+    assert_eq!(fold_label(&trees(&sides)), "call a, b, c");
+    let request = server.join().unwrap().remove(0);
+    assert!(!request
+        .headers
+        .iter()
+        .any(|header| header.starts_with("authorization")));
 }

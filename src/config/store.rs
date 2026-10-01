@@ -309,8 +309,8 @@ mod tests {
             "plugins.bundled.context.lines: expected an integer, got \"many\""
         );
         assert_eq!(
-            error("plugins.bundled.summarize.provider", "openai"),
-            "plugins.bundled.summarize.provider: expected one of \"gemini\", got \"openai\""
+            error("plugins.bundled.summarize.provider", "mistral"),
+            "plugins.bundled.summarize.provider: expected one of \"gemini\", \"openai\", \"anthropic\", got \"mistral\""
         );
         assert_eq!(
             error("plugins.external.mine.enabled", "true"),

@@ -736,7 +736,7 @@ mod tests {
         .unwrap_err();
         assert!(cycle.contains("cycle"), "{cycle}");
         let reset = super::Manifest::parse(
-            "name = 'p'\ntitle = 'P'\n[options.key]\ntitle = 'Key'\ntype = 'string'\n\"x-reset-by\" = 'provder'\n",
+            "name = 'p'\ntitle = 'P'\n[options.key]\ntitle = 'Key'\ntype = 'string'\n\"x-reset-by\" = 'missing'\n",
         )
         .unwrap_err();
         assert!(

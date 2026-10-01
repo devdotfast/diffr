@@ -234,7 +234,15 @@ fn generate(rng: &mut Rng, settings: &[(String, Value)]) -> (DocumentMut, Vec<St
             table = table[segment].as_table_mut().unwrap();
         }
         let leaf = path[path.len() - 1];
-        table.insert(leaf, toml_edit::value(edit_value(&value)));
+        let mut value = edit_value(&value);
+        if let Some(first) = value.as_array_mut().and_then(|array| array.get_mut(0)) {
+            if rng.chance(20) {
+                let comment = format!("# in list {}", comments.len());
+                first.decor_mut().set_prefix(format!("\n  {comment}\n  "));
+                comments.push(comment);
+            }
+        }
+        table.insert(leaf, toml_edit::value(value));
         if rng.chance(10) {
             let comment = format!("# note {}", comments.len());
             table

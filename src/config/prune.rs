@@ -111,11 +111,30 @@ fn has_comment(table: &dyn TableLike, key: &str, item: &Item) -> bool {
         .key(key)
         .is_some_and(|key| commented(key.leaf_decor()));
     let item = match item {
-        Item::Value(value) => commented(value.decor()),
+        Item::Value(value) => value_has_comment(value),
         Item::Table(table) => commented(table.decor()),
         _ => false,
     };
     key || item
+}
+
+/// A comment on the value or anywhere inside it: between an array's
+/// elements, after its last one, or on an inline table's entries.
+fn value_has_comment(value: &toml_edit::Value) -> bool {
+    let note = |raw: &toml_edit::RawString| raw.as_str().is_some_and(|text| text.contains('#'));
+    commented(value.decor())
+        || match value {
+            toml_edit::Value::Array(array) => {
+                note(array.trailing()) || array.iter().any(value_has_comment)
+            }
+            toml_edit::Value::InlineTable(table) => table.iter().any(|(key, value)| {
+                table
+                    .key(key)
+                    .is_some_and(|key| commented(key.leaf_decor()))
+                    || value_has_comment(value)
+            }),
+            _ => false,
+        }
 }
 
 fn commented(decor: &toml_edit::Decor) -> bool {

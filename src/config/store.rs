@@ -558,6 +558,22 @@ mod sparse_tests {
     }
 
     #[test]
+    fn a_comment_inside_a_default_list_keeps_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[plugins.bundled.hide-files]\ntags = [\n  # keep generated code out\n  \"generated\",\n  \"vendored\",\n  \"test\", # tests too\n]\n",
+        )
+        .unwrap();
+        set(&path, "diff.graph_limit", "42").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        for comment in ["# keep generated code out", "# tests too"] {
+            assert!(text.contains(comment), "{comment} in {text}");
+        }
+    }
+
+    #[test]
     fn tables_left_empty_by_pruning_go_too() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");

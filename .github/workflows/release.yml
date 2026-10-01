@@ -28,8 +28,16 @@ jobs:
             os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-22.04-arm
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ matrix.target }}
+      PYTHON: ${{ startsWith(matrix.os, 'windows') && 'python' || 'python3' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -38,28 +46,28 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Build and package
         env:
-          TARGET: ${{ matrix.target }}
           RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: |
-          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "diffr-cli") | .version')
+          version=$(cargo metadata --no-deps --format-version 1 | "$PYTHON" -c 'import json, sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "diffr-cli"), end="")')
           if [ -n "$RELEASE_TAG" ] && [ "$RELEASE_TAG" != "$version" ]; then
             echo "Tag $RELEASE_TAG does not match Cargo version $version" >&2
             exit 1
           fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
           cargo xtask install --root "$RUNNER_TEMP/install"
           cargo install --path . --locked --features all-languages --root "$RUNNER_TEMP/full"
-          python3 scripts/release.py pack --version "$version" --target "$TARGET" --install "$RUNNER_TEMP/install" --output dist
-          python3 scripts/release.py pack --version "$version" --target "$TARGET" --install "$RUNNER_TEMP/full" --edition full --output dist
+          "$PYTHON" scripts/release.py pack --version "$version" --target "$TARGET" --install "$RUNNER_TEMP/install" --output dist
+          "$PYTHON" scripts/release.py pack --version "$version" --target "$TARGET" --install "$RUNNER_TEMP/full" --edition full --output dist
       - name: Verify extracted archives without Bun or checkout assets
-        env:
-          TARGET: ${{ matrix.target }}
         run: |
-          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
-          mkdir -p "$RUNNER_TEMP/extracted/bin"
-          tar -xzf "dist/diffr-$version-$TARGET.tar.gz" -C "$RUNNER_TEMP/extracted/bin"
-          python3 xtask/tests/smoke_install.py "$RUNNER_TEMP/extracted"
-          python3 scripts/smoke_cli_archive.py "dist/diffr-cli-$version-$TARGET.tar.gz" "$version"
-          python3 scripts/smoke_cli_archive.py "dist/diffr-cli-full-$version-$TARGET.tar.gz" "$version"
+          # The TUI smoke test drives a Unix PTY.
+          if [ "$RUNNER_OS" != Windows ]; then
+            mkdir -p "$RUNNER_TEMP/extracted/bin"
+            tar -xzf "dist/diffr-$VERSION-$TARGET.tar.gz" -C "$RUNNER_TEMP/extracted/bin"
+            "$PYTHON" xtask/tests/smoke_install.py "$RUNNER_TEMP/extracted"
+          fi
+          "$PYTHON" scripts/smoke_cli_archive.py "dist/diffr-cli-$VERSION-$TARGET.tar.gz" "$VERSION"
+          "$PYTHON" scripts/smoke_cli_archive.py "dist/diffr-cli-full-$VERSION-$TARGET.tar.gz" "$VERSION"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.target }}

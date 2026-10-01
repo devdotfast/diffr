@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const targets = { "darwin-arm64": "aarch64-apple-darwin", "darwin-x64": "x86_64-apple-darwin", "linux-x64": "x86_64-unknown-linux-gnu", "linux-arm64": "aarch64-unknown-linux-gnu" };
+const targets = { "darwin-arm64": "aarch64-apple-darwin", "darwin-x64": "x86_64-apple-darwin", "linux-x64": "x86_64-unknown-linux-gnu", "linux-arm64": "aarch64-unknown-linux-gnu", "win32-x64": "x86_64-pc-windows-msvc" };
 
 try {
   await main();
@@ -38,13 +38,14 @@ async function main() {
     throw new Error(`pins.json has no valid sha256 for ${target}`);
   }
 
-  const binary = join(into, "diffr");
+  const name = process.platform === "win32" ? "diffr.exe" : "diffr";
+  const binary = join(into, name);
   const stampPath = join(into, "diffr.stamp.json");
   let installed = false;
   try {
     const stamp = JSON.parse(readFileSync(stampPath, "utf8"));
     const stat = lstatSync(binary);
-    installed = stat.isFile() && (stat.mode & 0o111) !== 0 && stamp.version === version && stamp.target === target
+    installed = stat.isFile() && (process.platform === "win32" || (stat.mode & 0o111) !== 0) && stamp.version === version && stamp.target === target
       && Boolean(stamp.full) === values.full;
   } catch { /* Missing or damaged installations are fetched again. */ }
   if (installed) {
@@ -73,12 +74,12 @@ async function main() {
   mkdirSync(into, { recursive: true });
   const staging = mkdtempSync(join(into, ".diffr-"));
   try {
-    const archive = join(staging, "archive.tar.gz");
-    writeFileSync(archive, bytes);
-    const tar = spawnSync("tar", ["-xzf", archive, "-C", staging, "diffr"], { encoding: "utf8" });
-    const extracted = join(staging, "diffr");
+    writeFileSync(join(staging, "archive.tar.gz"), bytes);
+    // Relative paths: GNU tar on Windows reads "C:" in an archive path as a remote host.
+    const tar = spawnSync("tar", ["-xzf", "archive.tar.gz", name], { cwd: staging, encoding: "utf8" });
+    const extracted = join(staging, name);
     if (tar.status !== 0 || !lstatSync(extracted).isFile()) {
-      throw new Error(`${asset} does not contain a regular diffr file at its root`);
+      throw new Error(`${asset} does not contain a regular ${name} file at its root`);
     }
     chmodSync(extracted, 0o755);
     const stamp = join(staging, "stamp.json");

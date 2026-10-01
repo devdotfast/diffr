@@ -96,6 +96,15 @@ export function flattenSchema(rawSchema: unknown, rawValues: unknown): Setting[]
   walk(root, rawValues, "");
   return settings;
 }
+/** Each setting's value as `values`, the output of `config show`, has it. */
+export function withValues(settings: Setting[], values: unknown): Setting[] {
+  return settings.map((setting) => ({
+    ...setting,
+    value: setting.key
+      .split(".")
+      .reduce<unknown>((value, part) => (value && typeof value === "object" ? (value as Record<string, unknown>)[part] : undefined), values),
+  }));
+}
 /** Subsequence match: every query character in order, scored by tightness and word starts. */
 export function fuzzyScore(query: string, text: string): number | null {
   const q = query.toLowerCase(), t = text.toLowerCase();

@@ -1,4 +1,4 @@
-# Bundled defaults. First settings edits write a resolved copy to the user config.
+# Bundled defaults. The user config keeps only what differs from these.
 version = 1
 
 [plugins]

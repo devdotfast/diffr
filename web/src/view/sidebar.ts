@@ -1,6 +1,6 @@
 /**
  * The left column: the changed files as a tree (@pierre/trees, Apache-2.0), then the diff stats and
- * engine panels, then the credit to the components the page is built on.
+ * engine panels.
  */
 import { FileTree, type GitStatus } from "@pierre/trees";
 import { activeWorkers, engineStats } from "../engine";
@@ -70,9 +70,7 @@ export class Sidebar {
       <section class="panel" data-panel="engine">
         <button class="panel-head" data-toggle="engine">${icons.engine}<span>Engine <span class="key">(F3)</span></span></button>
         <div class="panel-rows" data-rows></div>
-      </section>
-      <footer class="powered">Rendered with <a href="https://diffs.com" target="_blank" rel="noreferrer">Diffs</a>
-        and <a href="https://trees.software" target="_blank" rel="noreferrer">Trees</a></footer>`;
+      </section>`;
     this.treeHost = this.element.querySelector(".tree")!;
     this.statsRows = this.element.querySelector("[data-panel=stats] [data-rows]")!;
     this.engineRows = this.element.querySelector("[data-panel=engine] [data-rows]")!;

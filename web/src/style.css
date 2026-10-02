@@ -173,12 +173,6 @@ svg { flex: none; display: block; }
 .panel-row .value { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .panel-row .value.added { color: var(--added); }
 .panel-row .value.removed { color: var(--removed); }
-.powered {
-  border-top: 1px solid var(--line); padding: 8px 8px 8px 20px; font-size: 14px; line-height: 20px; color: var(--muted);
-  opacity: 0.75; flex: none;
-}
-.powered a { color: var(--fg); text-decoration: none; }
-.powered a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 .viewer {
   overflow: auto; scrollbar-gutter: stable; position: relative; min-width: 0; background: var(--bg);

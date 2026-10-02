@@ -1,7 +1,7 @@
 /** diffr in the browser: a GitHub PR or comparison, diffed by the wasm engine on this machine. */
 import "./fonts";
 import "./style.css";
-import { diff, engineStats, onEngineChange, release } from "./engine";
+import { diff, engineStats, highlight, onEngineChange, release } from "./engine";
 import { fileText, loadChange, parseTarget, setToken, targetPath, token, type Change, type Preview, type Target } from "./github";
 import { icons, logo, mountSprite } from "./icons";
 import type { Layout } from "./model";
@@ -230,6 +230,7 @@ class ChangePage {
         layout: effectiveLayout(), theme: theme(),
         changed: (view) => this.changed(view),
         request: (view) => this.want([view, ...this.wanted]),
+        highlight,
       };
       this.viewer.onNear = (views) => this.want(views);
     }

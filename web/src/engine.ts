@@ -4,6 +4,7 @@
  */
 import wasmUrl from "./wasm/diffr_web_bg.wasm?url";
 import type { Status } from "./github";
+import type { Syntax } from "./syntax";
 import type { Diffed, Request, Response } from "./worker";
 
 export interface Side {
@@ -73,7 +74,7 @@ function spawn(): Slot {
     pending.delete(data.id);
     owner.delete(data.id);
     if ("error" in data) return call.reject(new Error(data.error));
-    call.resolve(data);
+    if ("lines" in data) call.resolve(data);
   };
   slot.worker.onerror = (event) => {
     for (const [id, call] of pending)
@@ -104,6 +105,36 @@ export function release() {
 
 /** Workers running now. */
 export const activeWorkers = () => slots.length;
+
+/**
+ * Patches are highlighted on a worker of their own, so colour for the screen never waits behind
+ * the diffs the pool is busy with. It holds only patch text, so its memory stays small.
+ */
+let highlighter: Worker | undefined;
+const highlights = new Map<number, (syntax: Syntax | undefined) => void>();
+
+/** Highlight spans for `text`, a fragment of the file at `path`; none when the language is unknown or it fails. */
+export function highlight(path: string, text: string): Promise<Syntax | undefined> {
+  if (!highlighter) {
+    const worker = (highlighter = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" }));
+    void module.then((compiled) => worker.postMessage({ module: compiled } satisfies Request));
+    worker.onmessage = ({ data }: MessageEvent<Response>) => {
+      if ("ready" in data) return;
+      const done = highlights.get(data.id);
+      highlights.delete(data.id);
+      done?.("highlighted" in data ? data.highlighted : undefined);
+    };
+    worker.onerror = () => {
+      for (const done of highlights.values()) done(undefined);
+      highlights.clear();
+    };
+  }
+  const worker = highlighter, id = next++;
+  return new Promise((resolve) => {
+    highlights.set(id, resolve);
+    void module.then(() => worker.postMessage({ id, highlight: { path, text } } satisfies Request), () => resolve(undefined));
+  });
+}
 
 /** Diff one file on the least busy worker. Resolves with diffr's record and the time it took. */
 export function diff(status: Status, lhs: Side | undefined, rhs: Side | undefined): Promise<Result> {

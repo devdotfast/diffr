@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 /** Runs diffr off the main thread: one engine, one file at a time, in request order. */
-import { eventSchema, type FileEvent, type Region } from "../../tui/packages/hunk/src/diffr/wire";
+import { eventSchema, type FileEvent, type Region, type SyntaxSpan } from "../../tui/packages/hunk/src/diffr/wire";
 import { lineCount, splitLines, type Lines } from "./lines";
 import { packSyntax, type Syntax } from "./syntax";
 import init, { Differ } from "./wasm/diffr_web.js";
@@ -13,10 +13,14 @@ export interface Diffed {
 }
 
 /** The first message carries the compiled module; every later one is a file to diff. */
-export type Request = { module: WebAssembly.Module } | { id: number; request: string };
+export type Request =
+  | { module: WebAssembly.Module }
+  | { id: number; request: string }
+  | { id: number; highlight: { path: string; text: string } };
 export type Response =
   | { ready: number }
   | ({ id: number; ms: number; memory: number } & Diffed)
+  | { id: number; highlighted: Syntax | undefined; ms: number; memory: number }
   | { id: number; error: string; ms: number; memory: number };
 
 /**
@@ -55,6 +59,18 @@ self.onmessage = async ({ data }: MessageEvent<Request>) => {
   const engine = await differ!;
   const start = performance.now();
   let reply: Response;
+  if ("highlight" in data) {
+    try {
+      const { path, text } = data.highlight;
+      const spans = JSON.parse(engine.highlight(path, text)) as SyntaxSpan[];
+      const highlighted = spans.length ? packSyntax(spans, lineCount(splitLines(text))) : undefined;
+      reply = { id: data.id, highlighted, ms: performance.now() - start, memory: memory?.buffer.byteLength ?? 0 };
+    } catch (error) {
+      reply = { id: data.id, error: error instanceof Error ? error.message : String(error), ms: performance.now() - start, memory: memory?.buffer.byteLength ?? 0 };
+    }
+    self.postMessage(reply, "highlighted" in reply && reply.highlighted ? [reply.highlighted.spans.buffer, reply.highlighted.index.buffer] : []);
+    return;
+  }
   try {
     // diffr omits defaults on the wire; the schema puts them back. Parsing here keeps it off the page's thread.
     const event = eventSchema.parse(JSON.parse(engine.diff(data.request)).event);
@@ -76,7 +92,7 @@ self.onmessage = async ({ data }: MessageEvent<Request>) => {
     const message = error instanceof Error ? error.message : String(error);
     reply = { id: data.id, error: message, ms: performance.now() - start, memory: memory?.buffer.byteLength ?? 0 };
   }
-  const transfer = "syntax" in reply
+  const transfer = "syntax" in reply && "lines" in reply
     ? [...reply.syntax.flatMap((s) => (s ? [s.spans.buffer, s.index.buffer] : [])), ...reply.lines.map((l) => l.starts.buffer)]
     : [];
   self.postMessage(reply, transfer);

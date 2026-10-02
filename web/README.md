@@ -29,7 +29,8 @@ pairing, syntax colour and folds are diffr's. Files are windowed: every file kee
 the scrollbar is true, but only those near the viewport hold rows.
 
 Every file shows GitHub's own patch, from the file listing, as soon as the first page of the
-listing arrives. diffr takes over lazily: files on or near the screen are fetched in full and
+listing arrives, coloured by diffr's own highlighter on a worker of its own, which reads the
+patch's lines as a fragment of the file. diffr takes over lazily: files on or near the screen are fetched in full and
 diffed, nearest first, and each one replaces its patch in place; scrolling keeps the file being
 read where it is while the ones around it change height. Files GitHub lists without a patch (too
 large) hold space for their changed lines until they come into view.

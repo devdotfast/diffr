@@ -11,7 +11,8 @@ import type { FileEvent } from "../../../tui/packages/hunk/src/diffr/wire";
 import type { ChangedFile } from "../github";
 import type { Diffed } from "../worker";
 import { buildRows, PATCH_GAP, patchRows, prepare, type Cell, type Layout, type Prepared, type Row } from "../model";
-import { lastLine, parsePatch, type Hunk } from "../patch";
+import { lastLine, parsePatch, patchTexts, type Hunk } from "../patch";
+import type { Syntax } from "../syntax";
 import { lineAt, lineCount } from "../lines";
 import { lineHtml, tokenCss } from "../tokens";
 
@@ -155,6 +156,8 @@ export interface FileHost {
   changed(view: FileView): void;
   /** The reader wants this file diffed now. */
   request(view: FileView): void;
+  /** Highlight spans for a fragment of the file at `path`. */
+  highlight(path: string, text: string): Promise<Syntax | undefined>;
 }
 
 /** Height of each row and where it starts, for windowing. */
@@ -187,6 +190,8 @@ export class FileView {
   /** Milliseconds diffr spent on this file, for the engine panel. */
   diffMs = 0;
   private parsed?: Hunk[];
+  /** Colour for the patch's before and after lines, asked for the first time the patch is drawn. */
+  private patchSyntax?: [Syntax | undefined, Syntax | undefined];
 
   constructor(readonly file: ChangedFile, readonly index: number, private host: FileHost) {
     this.element = document.createElement("diffr-file");
@@ -218,6 +223,7 @@ export class FileView {
 
   setResult(result: Diffed | undefined, error?: string) {
     this.parsed = undefined;
+    this.patchSyntax = undefined;
     const event = result?.event;
     this.event = event;
     this.error = error;
@@ -291,8 +297,22 @@ export class FileView {
     return HEADER + this.bodyHeight!.height;
   }
 
+  /** Colour the patch on the highlight worker; until it answers, the lines are drawn plain. */
+  private highlightPatch() {
+    this.patchSyntax = [undefined, undefined];
+    const texts = patchTexts(this.hunks);
+    const paths = [this.file.previousPath ?? this.file.path, this.file.path];
+    void Promise.all(texts.map((text, side) => (text ? this.host.highlight(paths[side]!, text) : undefined))).then((syntax) => {
+      if (!this.patchSyntax || !this.showingPatch || (!syntax[0] && !syntax[1])) return;
+      this.patchSyntax = [syntax[0], syntax[1]];
+      this.renderedKey = "";
+      this.host.changed(this);
+    });
+  }
+
   /** Draw the rows between `top` and `bottom`, in this file's own coordinates. */
   render(top: number, bottom: number) {
+    if (!this.patchSyntax && this.showingPatch && this.hunks.length && !this.closed) this.highlightPatch();
     const layout = this.ensureLayout();
     let window: [number, number] = [0, 0];
     if (layout && layout.rows.length) {
@@ -396,7 +416,10 @@ export class FileView {
     const p = this.prepared;
     const text = cell.text ?? lineAt(p!.texts[cell.side], cell.line);
     return `<div data-line="${number}"${alt !== undefined ? ` data-alt-line="${alt}"` : ""} data-line-type="${cell.kind}">`
-      + `${lineHtml(text, cell.text === undefined ? p?.syntax[cell.side] : undefined, cell.line, cell.changed)}</div>`;
+      + (cell.text === undefined
+        ? lineHtml(text, p?.syntax[cell.side], cell.line, cell.changed)
+        : lineHtml(text, this.patchSyntax?.[cell.side], cell.at!, cell.changed))
+      + `</div>`;
   }
 
   private splitCode(side: 0 | 1, rows: Row[], from: number, last: number, before: number, after: number) {

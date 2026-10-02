@@ -29,6 +29,8 @@ export interface Cell {
   alt?: number;
   /** The line's text, for a row from GitHub's patch; diffr's rows read it from the file. */
   text?: string;
+  /** Its line in the patch's highlighted text for its side. */
+  at?: number;
 }
 
 export type Row =
@@ -191,6 +193,7 @@ export function patchRows(hunks: Hunk[], layout: Layout): Row[] {
     kind: line.kind === "context" ? "context" : side ? "change-addition" : "change-deletion",
     changed: [],
     text: line.text,
+    at: line.at[side],
     alt: layout === "unified" && line.kind === "context" ? line.old! - 1 : undefined,
   });
   const gap = (key: string, lines: number) => {

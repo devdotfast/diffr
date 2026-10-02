@@ -72,13 +72,6 @@ impl Differ {
         })
     }
 
-    /// How large the structural matching may grow before a file falls back
-    /// to a line diff, in place of the configured `diff.graph_limit`.
-    #[wasm_bindgen(js_name = setGraphLimit)]
-    pub fn set_graph_limit(&mut self, limit: usize) {
-        self.limits.graph_limit = limit;
-    }
-
     /// Diff one changed file. `request` is JSON:
     /// `{"status": "modified", "lhs": {"path", "text"}, "rhs": {"path", "text"}}`,
     /// with `lhs` absent for an added file and `rhs` for a deleted one, and
@@ -161,8 +154,8 @@ mod tests {
 
     #[test]
     fn a_file_past_the_graph_limit_is_a_coloured_line_diff() {
-        let mut differ = Differ::new(None).unwrap_or_else(|_| panic!("the bundled defaults load"));
-        differ.set_graph_limit(1);
+        let differ = Differ::new(Some("[diff]\ngraph_limit = 1\n".to_owned()))
+            .unwrap_or_else(|_| panic!("a config with a tiny graph limit loads"));
         let request = serde_json::json!({
             "status": "modified",
             "lhs": {"path": "src/a.ts", "text": "const a = 1;\nconst b = 2;\n"},

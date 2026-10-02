@@ -31,6 +31,7 @@ export const icons = {
   arrow: svg(`<path d="M3 8h10M9 4l4 4-4 4"/>`),
   key: svg(`<circle cx="5" cy="11" r="2.5"/><path d="m7 9 6.5-6.5M11 4.5l1.75 1.75"/>`),
   check: svg(`<path d="m3.5 8.5 3 3 6-7"/>`),
+  warning: svg(`<path d="M8 2.25 14.25 13.5H1.75z"/><path d="M8 6.5v3M8 11.5v.01"/>`),
   split: sprite("diff-split"),
   unified: sprite("diff-unified"),
   github: sprite("brand-github"),

@@ -2,7 +2,7 @@
 import "./fonts";
 import "./style.css";
 import { diff, engineStats, onEngineChange, release } from "./engine";
-import { fileText, loadChange, parseTarget, setToken, targetPath, token, type Change, type ChangedFile, type Preview, type Target } from "./github";
+import { fileText, loadChange, parseTarget, setToken, targetPath, token, type Change, type Preview, type Target } from "./github";
 import { icons, logo, mountSprite } from "./icons";
 import type { Layout } from "./model";
 import { escape, FileView, type FileHost } from "./view/file";
@@ -134,18 +134,6 @@ function go(input: string) {
 }
 
 /** A pull request or comparison: the top bar, the file tree, and the files. */
-/**
- * A rewrite whose structural match may run to the graph limit: diffr's matching grows with the
- * removed lines times the added ones, and a file GitHub would not patch has no counts to go by.
- */
-function mayRunLarge(file: ChangedFile) {
-  if (file.status !== "modified" && file.status !== "renamed") return false;
-  return file.additions * file.deletions >= LARGE_REWRITE || !file.patch;
-}
-
-/** Changed lines, removed times added, past which a file is diffed on its own; 137 × 195 reached 6 million. */
-const LARGE_REWRITE = 5000;
-
 class ChangePage {
   readonly run = ++generation;
   views: FileView[] = [];
@@ -331,7 +319,7 @@ class ChangePage {
       file.status === "added" ? undefined : fileText(change.target, change.base, lhsPath).then((text) => ({ path: lhsPath, text })),
       file.status === "deleted" ? undefined : fileText(change.target, change.head, file.path).then((text) => ({ path: file.path, text })),
     ]);
-    return diff(file.status, lhs, rhs, mayRunLarge(file));
+    return diff(file.status, lhs, rhs);
   }
 
   private status(title: string, detail: string, error = false) {

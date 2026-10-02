@@ -14,6 +14,7 @@ import { buildRows, prepare, type Cell, type Layout, type Prepared, type Row } f
 import { patchSize } from "../patch";
 import { lineAt, lineCount } from "../lines";
 import { lineHtml, tokenCss } from "../tokens";
+import { icons } from "../icons";
 
 export const LINE = 20;
 export const HEADER = 44;
@@ -33,6 +34,7 @@ const extraCss = `
   --diffs-dark-addition-color: #60d199; --diffs-dark-deletion-color: #ff6762; --diffs-dark-modified-color: #69b1ff;
   --diffs-light: #404040; --diffs-light-bg: #ffffff;
   --diffs-light-addition-color: #07c480; --diffs-light-deletion-color: #ff2e3f; --diffs-light-modified-color: #009fff;
+  --diffr-warning: light-dark(#d5901c, #ffbc56);
   contain: layout paint style;
 }
 :host([data-theme="dark"]) { color-scheme: dark; }
@@ -52,7 +54,12 @@ const extraCss = `
   font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 999px; flex: none;
   color: var(--diffs-fg-number); box-shadow: inset 0 0 0 1px color-mix(in lab, var(--diffs-fg-number) 35%, transparent);
 }
-[data-tag="fallback"] { color: var(--diffs-modified-base); box-shadow: inset 0 0 0 1px color-mix(in lab, var(--diffs-modified-base) 45%, transparent); }
+[data-tag="fallback"] {
+  display: inline-flex; align-items: center; gap: 4px; cursor: help;
+  color: var(--diffr-warning); background: color-mix(in lab, var(--diffr-warning) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in lab, var(--diffr-warning) 40%, transparent);
+}
+[data-tag="fallback"] svg { width: 12px; height: 12px; flex: none; }
 [data-spacer] { grid-column: auto; }
 [data-gutter] [data-spacer], [data-content] [data-spacer] { background: var(--diffs-bg); }
 [data-separator-content][data-fold], [data-expand-button][data-fold] { cursor: pointer; }
@@ -135,6 +142,19 @@ const icon = (id: string, attrs = "") => `<svg ${attrs} viewBox="0 0 16 16" widt
 
 const escapes: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
 export const escape = (text: string) => text.replace(/[&<>"]/g, (c) => escapes[c]!);
+
+/** The header's warning when diffr fell back to a line diff, by the reason's code. */
+const fallbackLabel: Record<string, string> = {
+  too_complex: "Line diff · too complex",
+  parse_error: "Line diff · parse errors",
+  too_large: "Line diff · too large",
+  generated: "Line diff · generated",
+};
+
+/** The warning's tooltip: what happened, without the CLI's advice to edit a config the page has none of. */
+function fallbackTitle(problem: { message: string }) {
+  return `diffr compared this file line by line instead of by its syntax: ${problem.message.replace(/; raise it in diffr config$/, "")}.`;
+}
 
 const changeType: Record<ChangedFile["status"], string> = {
   added: "new", deleted: "deleted", modified: "change", renamed: "rename-changed", copied: "rename-changed",
@@ -327,7 +347,7 @@ export class FileView {
     const diff = this.event?.diff;
     const empty = !!this.prepared && !this.prepared.texts[0].text && !this.prepared.texts[1].text;
     if (diff?.type === "text" && diff.stats.fallback && !empty)
-      tags.push(`<span data-tag="fallback" title="${escape(diff.stats.fallback.message)}">line diff</span>`);
+      tags.push(`<span data-tag="fallback" title="${escape(fallbackTitle(diff.stats.fallback))}">${icons.warning}${fallbackLabel[diff.stats.fallback.code] ?? "Line diff"}</span>`);
     if (diff?.type === "binary") tags.push(`<span data-tag>binary</span>`);
     const stats = this.stats;
     const counts = stats

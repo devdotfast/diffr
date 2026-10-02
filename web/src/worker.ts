@@ -38,12 +38,6 @@ function trimUnpaired(sides: [Region[], Region[]]) {
   });
 }
 
-/**
- * diffr's default graph limit, 3 million, sends heavy rewrites of ordinary source files to a line
- * diff. Ten million matches them; the engine keeps such files to one worker at a time.
- */
-const GRAPH_LIMIT = 10_000_000;
-
 let differ: Promise<Differ> | undefined;
 let memory: WebAssembly.Memory | undefined;
 
@@ -52,9 +46,7 @@ self.onmessage = async ({ data }: MessageEvent<Request>) => {
     const start = performance.now();
     differ = init({ module_or_path: data.module }).then((wasm) => {
       memory = wasm.memory;
-      const engine = new Differ();
-      engine.setGraphLimit(GRAPH_LIMIT);
-      return engine;
+      return new Differ();
     });
     await differ;
     self.postMessage({ ready: performance.now() - start } satisfies Response);

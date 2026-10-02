@@ -158,7 +158,7 @@ export class Sidebar {
     this.statsRows.innerHTML = row("Files", number(views.length))
       + row("Additions", number(added), "added")
       + row("Deletions", number(removed), "removed")
-      + row("Diffed by diffr", `${number(diffed)} / ${number(views.length)}`, "", "Files diffr has diffed; the rest show GitHub's patch until they come into view");
+      + row("Diffed by diffr", `${number(diffed)} / ${number(views.length)}`, "", "Files diffr has diffed; the rest are diffed as they come into view");
   }
 
   updateEngine(timing: Timing, views: FileView[]) {
@@ -170,7 +170,7 @@ export class Sidebar {
     this.engineRows.innerHTML = row("Engine", `diffr wasm × ${activeWorkers()}`)
       + row("Engine ready", engineStats.ready ? seconds(engineStats.ready) : "loading…")
       + row("Files listed", since(timing.listed))
-      + row("Patches shown", since(timing.firstPaint))
+      + row("Files shown", since(timing.firstPaint))
       + row("First diff", since(timing.firstDiff))
       + row("Screen diffed", since(timing.done))
       + row("Diffing now", number(busy))

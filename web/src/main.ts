@@ -1,7 +1,7 @@
 /** diffr in the browser: a GitHub PR or comparison, diffed by the wasm engine on this machine. */
 import "./fonts";
 import "./style.css";
-import { diff, engineStats, highlight, onEngineChange, release } from "./engine";
+import { diff, engineStats, onEngineChange, release } from "./engine";
 import { fileText, loadChange, parseTarget, setToken, targetPath, token, type Change, type Preview, type Target } from "./github";
 import { icons, logo, mountSprite } from "./icons";
 import type { Layout } from "./model";
@@ -213,7 +213,7 @@ class ChangePage {
   listing?: Preview;
 
   /**
-   * Show the listed files, each as GitHub's patch until diffr takes it over. A later, longer listing
+   * Show the listed files, each holding room for its diff until diffr has it. A later, longer listing
    * appends to the files already shown.
    */
   private show(listing: Preview) {
@@ -229,8 +229,6 @@ class ChangePage {
       this.host = {
         layout: effectiveLayout(), theme: theme(),
         changed: (view) => this.changed(view),
-        request: (view) => this.want([view, ...this.wanted]),
-        highlight,
       };
       this.viewer.onNear = (views) => this.want(views);
     }

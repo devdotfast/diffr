@@ -28,12 +28,11 @@ The page is laid out after [DiffsHub](https://diffshub.com): the file tree is
 pairing, syntax colour and folds are diffr's. Files are windowed: every file keeps its height so
 the scrollbar is true, but only those near the viewport hold rows.
 
-Every file shows GitHub's own patch, from the file listing, as soon as the first page of the
-listing arrives, coloured by diffr's own highlighter on a worker of its own, which reads the
-patch's lines as a fragment of the file. diffr takes over lazily: files on or near the screen are fetched in full and
-diffed, nearest first, and each one replaces its patch in place; scrolling keeps the file being
-read where it is while the ones around it change height. Files GitHub lists without a patch (too
-large) hold space for their changed lines until they come into view.
+Every file is listed as soon as the first page of the listing arrives, holding room for its diff:
+the rows of GitHub's patch, or its changed lines when GitHub has no patch for it (too large).
+diffr diffs lazily: files on or near the screen are fetched in full and diffed, nearest first, and
+each one fills its place; scrolling keeps the file being read where it is while the ones around it
+change height.
 
 The engine runs in a pool of workers that share one compiled module. They start at two and grow to
 eight while files queue, and all but one are let go after ten idle seconds, since wasm memory

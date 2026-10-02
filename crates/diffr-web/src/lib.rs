@@ -6,9 +6,7 @@
 use diffr_cli::config::{Config, DiffConfig};
 use diffr_cli::pairing::Pairing;
 use diffr_cli::params::Params;
-use diffr_cli::parse::guess_language::guess;
 use diffr_cli::plugin::Pipeline;
-use diffr_cli::protocol::project::syntax_spans;
 use diffr_cli::protocol::stream::{self, Options};
 use diffr_cli::protocol::{Event, FileChange, FileRef, FileStatus};
 use serde::{Deserialize, Serialize};
@@ -115,17 +113,6 @@ impl Differ {
         serde_json::to_string(&Response { entry, event })
             .map_err(|error| JsError::new(&error.to_string()))
     }
-
-    /// Highlight spans for `text`, a file at `path` or a fragment of one,
-    /// such as the lines a patch shows. Returns a JSON array of syntax spans,
-    /// empty when the language is unknown.
-    pub fn highlight(&self, path: &str, text: &str) -> Result<String, JsError> {
-        let spans = match guess(Path::new(path), text, &[]) {
-            Some(language) => syntax_spans(text, self.params.language(language).parser),
-            None => Vec::new(),
-        };
-        serde_json::to_string(&spans).map_err(|error| JsError::new(&error.to_string()))
-    }
 }
 
 #[cfg(test)]
@@ -154,32 +141,8 @@ mod tests {
         let event = &response["event"];
         assert_eq!(event["type"], "file");
         assert_eq!(event["diff"]["type"], "text", "{event}");
-        assert!(!event["diff"]["rhs"]["regions"]
-            .as_array()
-            .unwrap()
-            .is_empty());
-        assert!(!event["diff"]["rhs"]["syntax"]
-            .as_array()
-            .unwrap()
-            .is_empty());
+        assert!(!event["diff"]["rhs"]["regions"].as_array().unwrap().is_empty());
+        assert!(!event["diff"]["rhs"]["syntax"].as_array().unwrap().is_empty());
         assert_eq!(event["diff"]["stats"]["textual"]["added"], 2);
-    }
-
-    #[test]
-    fn a_fragment_gets_highlights() {
-        let differ = Differ::new(None).unwrap_or_else(|_| panic!("the bundled defaults load"));
-        let spans: serde_json::Value = serde_json::from_str(
-            &differ
-                .highlight("src/a.ts", "  const x = a + 1;\n  return x * 2;\n}\n")
-                .unwrap_or_else(|_| panic!("the fragment highlights")),
-        )
-        .unwrap();
-        assert!(spans
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|span| span["line"] == 1));
-        let none = differ.highlight("notes.unknown-ext", "plain words").ok();
-        assert_eq!(none.as_deref(), Some("[]"));
     }
 }

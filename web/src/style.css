@@ -232,7 +232,7 @@ diffr-file[hidden] { display: none; }
 }
 .token p { margin: 4px 0 8px; font-size: 13px; line-height: 19.5px; color: var(--lede); }
 .token.compact p { margin-right: 24px; }
-.token p a, .examples a, .note a, .credit a { color: var(--strong); text-decoration: underline; text-decoration-color: var(--lede); text-underline-offset: 3px; }
+.token p a, .examples a, .note a { color: var(--strong); text-decoration: underline; text-decoration-color: var(--lede); text-underline-offset: 3px; }
 .token-row { display: flex; gap: 6px; }
 .token-row input {
   flex: 1; min-width: 0; height: 32px; padding: 0 8px; border: 1px solid var(--field-border); border-radius: 8px;
@@ -246,8 +246,6 @@ diffr-file[hidden] { display: none; }
 .examples li svg { width: 12px; height: 12px; color: var(--lede); margin-left: 2px; }
 .landing .note { margin: 20px 0 0; font-size: 14px; line-height: 20px; color: var(--lede); }
 .landing .note code { font-size: 13px; color: var(--strong); }
-.landing hr { width: 80px; margin: 24px 0; border: 0; border-top: 1px solid var(--card-border); }
-.credit { margin: 0; font-size: 14px; line-height: 20px; color: var(--lede); }
 
 @media (max-width: 760px) {
   #app.change { grid-template-columns: minmax(0, 1fr); }

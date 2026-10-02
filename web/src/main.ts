@@ -115,10 +115,6 @@ function home(error?: string) {
       <p class="note">Nothing leaves this page except requests to GitHub. The diff engine is diffr itself, compiled to
         WebAssembly, running on your machine in up to ${engineStats.workers} workers.
         Comparisons work too, as <code>owner/repo/compare/base...head</code>.</p>
-      <hr>
-      <p class="credit">Built on <a href="https://github.com/devdotfast/diffr" target="_blank" rel="noreferrer">diffr</a>,
-        with <a href="https://trees.software" target="_blank" rel="noreferrer">Trees</a> and
-        <a href="https://diffs.com" target="_blank" rel="noreferrer">Diffs</a> from The Pierre Computer Company.</p>
     </section>`;
   app.querySelector<HTMLFormElement>("[data-go]")!.addEventListener("submit", (event) => {
     event.preventDefault();

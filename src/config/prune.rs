@@ -154,7 +154,7 @@ fn get<'a>(table: &'a dyn TableLike, path: &[&str]) -> Option<&'a Item> {
     }
 }
 
-fn remove(table: &mut dyn TableLike, path: &[&str]) {
+pub(crate) fn remove(table: &mut dyn TableLike, path: &[&str]) {
     match path {
         [key] => {
             table.remove(key);

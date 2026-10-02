@@ -44,6 +44,7 @@ pub(crate) fn set(path: &Path, key: &str, value: &str) -> Result<(), ConfigError
     let mut document: toml_edit::DocumentMut = existing
         .parse()
         .map_err(|error| ConfigError(format!("{}: {error}", path.display())))?;
+    reset(&mut document, key, &typed, &existing, directory)?;
     assign(&mut document, key, &typed)?;
     prune(&mut document, directory)?;
     write(path, document)
@@ -55,6 +56,34 @@ fn read(path: &Path) -> Result<String, ConfigError> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
         Err(error) => Err(ConfigError(format!("{}: {error}", path.display()))),
     }
+}
+
+/// When `key` takes a new value, clear the options of its plugin that
+/// belong to it: a provider's key, endpoint and model go with the provider.
+fn reset(
+    document: &mut toml_edit::DocumentMut,
+    key: &str,
+    value: &toml::Value,
+    existing: &str,
+    directory: &Path,
+) -> Result<(), ConfigError> {
+    let ["plugins", namespace, name, field] = key.split('.').collect::<Vec<_>>()[..] else {
+        return Ok(());
+    };
+    let config = Config::from_toml_in(existing, directory)?;
+    let Some(entry) = config.plugins.entries.get(&format!("{namespace}.{name}")) else {
+        return Ok(());
+    };
+    if entry.options.get(field) == serde_json::to_value(value).ok().as_ref() {
+        return Ok(());
+    }
+    for option in entry.folder().manifest.reset_by(field) {
+        super::prune::remove(
+            document.as_table_mut(),
+            &["plugins", namespace, name, option],
+        );
+    }
+    Ok(())
 }
 
 /// Validate the document, then keep only what differs from the defaults,
@@ -607,6 +636,35 @@ mod sparse_tests {
             raw["plugins"]["bundled"]["summarize"]["model"].as_str(),
             Some("gemini-3.8-flash")
         );
+    }
+
+    #[test]
+    fn a_new_provider_clears_the_old_ones_settings_but_keeps_the_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let summarize = |key: &str, value: &str| {
+            set(&path, &format!("plugins.bundled.summarize.{key}"), value).unwrap()
+        };
+        summarize("provider", "anthropic");
+        summarize("api_key", "anthropic-key");
+        summarize("endpoint", "https://proxy.example/anthropic");
+        summarize("model", "claude-sonnet-5-5");
+        summarize("system_prompt", "Be terse.");
+        summarize("min_lines", "7");
+        // The same provider again changes nothing.
+        summarize("provider", "anthropic");
+        let raw = read_toml(&path);
+        assert_eq!(
+            raw["plugins"]["bundled"]["summarize"]["api_key"].as_str(),
+            Some("anthropic-key")
+        );
+        summarize("provider", "gemini");
+        let raw = read_toml(&path);
+        let entry = raw["plugins"]["bundled"]["summarize"].as_table().unwrap();
+        let mut keys: Vec<&str> = entry.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        // Gemini is the default provider, so it is pruned too.
+        assert_eq!(keys, ["min_lines", "system_prompt"], "{raw}");
     }
 
     #[test]

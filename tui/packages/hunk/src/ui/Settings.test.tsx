@@ -3,7 +3,7 @@ import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 import { Settings, displayValue, isSecret, nextValue } from "./Settings";
 import { schemaFixture, valuesFixture } from "../diffr/config.test";
-import { flattenSchema, type ConfigClient } from "../diffr/config";
+import { flattenSchema, parseValue, type ConfigClient } from "../diffr/config";
 
 test("values show as not set, secrets only as stored, and toggles flip or cycle", () => {
   const [minLines, collapse, , provider, apiKey] = flattenSchema(schemaFixture, valuesFixture);
@@ -20,11 +20,17 @@ test("values show as not set, secrets only as stored, and toggles flip or cycle"
 
 test("rows lead with titles under group headings; toggles change in place and typed values open a prompt", async () => {
   const writes: [string, string][] = [];
+  const values = structuredClone(valuesFixture);
+  const settings = flattenSchema(schemaFixture, valuesFixture);
   const client: ConfigClient = {
     schema: () => schemaFixture,
-    show: () => structuredClone(valuesFixture),
+    show: () => structuredClone(values),
     set: (key, value) => {
       writes.push([key, value]);
+      // Store it as diffr would, typed by the setting.
+      const parts = key.split(".");
+      const parent = parts.slice(0, -1).reduce<Record<string, unknown>>((object, part) => object[part] as Record<string, unknown>, values);
+      parent[parts.at(-1)!] = parseValue(settings.find((setting) => setting.key === key)!, value);
     },
   };
   let quit = false;
@@ -133,5 +139,39 @@ test("rows lead with titles under group headings; toggles change in place and ty
     expect(quit).toBe(true);
   } finally {
     await act(async () => { t.renderer.destroy(); });
+  }
+});
+
+test("a change shows every value it moves, such as a default that follows the provider", async () => {
+  const values = structuredClone(valuesFixture);
+  const client: ConfigClient = {
+    schema: () => schemaFixture,
+    show: () => structuredClone(values),
+    set: (key, value) => {
+      if (key === "plugins.bundled.summarize.provider") {
+        values.plugins.bundled.summarize.provider = value;
+        values.plugins.bundled.summarize.model = `${value}-model`;
+      }
+    },
+  };
+  const t = await testRender(
+    <Settings client={client} initial={flattenSchema(schemaFixture, values)} onQuit={() => {}} />,
+    { width: 100, height: 24 },
+  );
+  const press = async (key: string) => {
+    await act(async () => { t.mockInput.pressKey(key); });
+    await act(async () => { await t.renderOnce(); });
+  };
+  const line = (text: string) => t.captureCharFrame().split("\n").find((l) => l.includes(text)) ?? "";
+  try {
+    await act(async () => { await t.renderOnce(); });
+    const query = "provider";
+    for (const char of query) await press(char);
+    await press("RETURN");
+    for (const _ of query) await press("BACKSPACE");
+    expect(line("Provider")).toContain("none");
+    expect(line("Model")).toContain("none-model");
+  } finally {
+    t.renderer.destroy();
   }
 });

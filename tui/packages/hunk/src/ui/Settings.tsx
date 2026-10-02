@@ -7,6 +7,7 @@ import {
   formatValue,
   isDefault,
   parseValue,
+  withValues,
   type ConfigClient,
   type Setting,
 } from "../diffr/config";
@@ -99,12 +100,13 @@ export function Settings({
   const current = visible[selected];
   const theme = dark;
 
-  /** Write through the CLI first; the row changes only once the write succeeded. */
+  /** Write through the CLI first, then reread every value: a change can move
+   *  others, such as a default that follows the provider. */
   const save = (setting: Setting, text: string) => {
     const value = parseValue(setting, text);
     client.set(setting.key, text);
     update({
-      settings: state.current.settings.map((s) => (s.key === setting.key ? { ...s, value } : s)),
+      settings: withValues(state.current.settings, client.show()),
       status: { text: `${setting.title}: ${displayValue({ ...setting, value })}`, error: false },
     });
   };

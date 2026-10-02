@@ -23,3 +23,16 @@ tree-sitter grammars (crates/diffr-core/vendored_parsers/)
   without a license file in their source tree are listed here:
   - tree-sitter-janet-simple: https://github.com/sogaiu/tree-sitter-janet-simple
     CC0 1.0 Universal (see crates/diffr-core/vendored_parsers/tree-sitter-janet-simple/LICENSE).
+
+Pierre components (web/, bundled into the browser build)
+  @pierre/diffs (stylesheet and icons), @pierre/trees (file tree), and
+  @pierre/theme (syntax colours), by The Pierre Computer Company.
+  https://diffs.com  https://trees.software
+  Apache License 2.0 (see each package's LICENSE). diffr-web reproduces
+  the @pierre/diffs DOM so its stylesheet applies; the rendering code is
+  diffr's own. @pierre/trees carries its own NOTICE for code derived from
+  @headless-tree/core (MIT).
+
+Geist and Geist Mono fonts (web/, via the geist package)
+  Copyright (c) 2023 Vercel, in collaboration with basement.studio.
+  SIL Open Font License 1.1.

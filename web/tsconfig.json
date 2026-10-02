@@ -18,12 +18,6 @@
     "paths": {
       "zod": [
         "./node_modules/zod"
-      ],
-      "string-width": [
-        "./node_modules/string-width"
-      ],
-      "get-east-asian-width": [
-        "./node_modules/get-east-asian-width"
       ]
     }
   },

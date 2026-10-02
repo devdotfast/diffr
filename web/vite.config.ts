@@ -1,36 +1,21 @@
 import { fileURLToPath } from "node:url";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig } from "vite";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
-const hunk = fileURLToPath(new URL("../tui/packages/hunk/src/", import.meta.url));
-const textWidth = fileURLToPath(new URL("src/textWidth.ts", import.meta.url));
-
-/**
- * The TUI's diff model (regions, rows, themes) runs here unchanged, bar what Bun gives it:
- * TOML themes imported as text and parsed by Bun.TOML, and terminal text measurement.
- */
-function tuiModel(): Plugin {
-  return {
-    name: "diffr-tui-model",
-    enforce: "pre",
-    resolveId(source, importer) {
-      if (importer?.startsWith(hunk) && source === "../ui/lib/text") return textWidth;
-    },
-    transform(code, id) {
-      if (id !== `${hunk}diffr/theme.ts`) return;
-      return `import { parse as __parseToml } from "smol-toml";\n${code}`
-        .replace(`import { readFileSync } from "node:fs";`,
-          `const readFileSync = (_path: string, _encoding: string): string => { throw new Error("theme files need the native diffr"); };`)
-        .replaceAll(`.toml" with { type: "text" }`, `.toml?raw"`)
-        .replaceAll("Bun.TOML.parse", "__parseToml");
-    },
-  };
-}
+// @pierre/diffs exports neither its stylesheet nor its icon sprite; the diff view draws its own
+// rows in that DOM, so it reaches into the package for both.
+const diffsDist = fileURLToPath(new URL("node_modules/@pierre/diffs/dist/", import.meta.url));
 
 export default defineConfig({
-  plugins: [tuiModel()],
-  // The TUI's sources resolve their packages from here.
-  resolve: { dedupe: ["zod", "string-width", "smol-toml"] },
+  // The TUI's diff model (tui/packages/hunk/src/diffr) resolves its packages from here.
+  resolve: {
+    dedupe: ["zod"],
+    alias: {
+      "pierre-diffs-style": `${diffsDist}style.js`,
+      "pierre-diffs-sprite": `${diffsDist}sprite.js`,
+      "geist-fonts": fileURLToPath(new URL("node_modules/geist/dist/fonts", import.meta.url)),
+    },
+  },
   server: { fs: { allow: [repo] } },
   worker: { format: "es" },
   build: { target: "es2022" },

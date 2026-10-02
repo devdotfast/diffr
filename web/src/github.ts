@@ -78,8 +78,10 @@ async function api<T>(path: string): Promise<T> {
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { message?: string };
     const limited = response.headers.get("x-ratelimit-remaining") === "0";
+    const reset = Number(response.headers.get("x-ratelimit-reset")) * 1000;
+    const until = reset ? ` until ${new Date(reset).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "";
     const message = limited
-      ? `GitHub's rate limit is spent${auth ? "" : " (60 requests an hour without a token)"}; add a token or try later`
+      ? `GitHub's rate limit is spent${auth ? "" : " (60 requests an hour without a token)"}${until}. Add a token or try again then.`
       : response.status === 404 && !auth
         ? "Not found. A private repository needs a token"
         : body.message ?? response.statusText;
@@ -119,12 +121,20 @@ async function pages<T>(path: (page: number) => string, items: (response: unknow
 export async function loadChange(target: Target): Promise<Change> {
   const repo = `/repos/${target.owner}/${target.repo}`;
   if (target.kind === "pull") {
-    const pr = await api<{ title: string; html_url: string; base: { sha: string }; head: { sha: string } }>(
-      `${repo}/pulls/${target.number}`);
-    const [compare, files] = await Promise.all([
-      api<{ merge_base_commit: { sha: string } }>(`${repo}/compare/${pr.base.sha}...${pr.head.sha}?per_page=1`),
-      pages((page) => `${repo}/pulls/${target.number}/files?per_page=100&page=${page}`, (r) => r as ApiFile[]),
+    const page = (n: number) => api<ApiFile[]>(`${repo}/pulls/${target.number}/files?per_page=100&page=${n}`);
+    // The first page of files needs nothing from the PR, so it is asked for alongside it.
+    const [pr, first] = await Promise.all([
+      api<{ title: string; html_url: string; base: { sha: string }; head: { sha: string }; changed_files: number }>(
+        `${repo}/pulls/${target.number}`),
+      page(1),
     ]);
+    // The PR says how many files it changed, so every other page can be asked for at once.
+    const count = Math.min(30, Math.max(1, Math.ceil(pr.changed_files / 100)));
+    const [compare, ...rest] = await Promise.all([
+      api<{ merge_base_commit: { sha: string } }>(`${repo}/compare/${pr.base.sha}...${pr.head.sha}?per_page=1`),
+      ...Array.from({ length: count - 1 }, (_, i) => page(i + 2)),
+    ]);
+    const files = [first, ...rest].flat();
     return { target, title: pr.title, url: pr.html_url, base: compare.merge_base_commit.sha, head: pr.head.sha,
       files: files.map(changedFile) };
   }

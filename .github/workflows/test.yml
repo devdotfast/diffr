@@ -65,6 +65,20 @@ jobs:
       # rather than on every target the matrix above cross-compiles for.
       - run: cargo xtask test-plugins
 
+  build_core_wasm:
+    name: Build diffr-core for wasm32-unknown-unknown
+    runs-on: ubuntu-22.04
+    steps:
+      # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: dtolnay/rust-toolchain@1.99.0
+        with:
+          # The engine must keep building for the browser target; the
+          # grammars' archives need llvm-ar.
+          targets: wasm32-unknown-unknown
+          components: llvm-tools
+      - run: cargo xtask build-core-wasm
+
   test_mime_db:
     name: Test with MIME database
     runs-on: ubuntu-22.04

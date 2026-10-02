@@ -18,8 +18,8 @@ GitHub Linguist language data (src/tags/linguist/)
   https://github.com/github-linguist/linguist
   MIT License (see src/tags/linguist/LICENSE).
 
-tree-sitter grammars (vendored_parsers/)
+tree-sitter grammars (crates/diffr-core/vendored_parsers/)
   Each grammar directory carries its upstream license file. Grammars
   without a license file in their source tree are listed here:
   - tree-sitter-janet-simple: https://github.com/sogaiu/tree-sitter-janet-simple
-    CC0 1.0 Universal (see vendored_parsers/tree-sitter-janet-simple/LICENSE).
+    CC0 1.0 Universal (see crates/diffr-core/vendored_parsers/tree-sitter-janet-simple/LICENSE).

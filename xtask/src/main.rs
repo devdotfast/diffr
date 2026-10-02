@@ -182,6 +182,109 @@ fn wasm_artifact(output: &[u8], package_id: &Value) -> Result<PathBuf> {
     bail!("Cargo did not report a WASM artifact for {package_id}")
 }
 
+/// Build diffr-core for `wasm32-unknown-unknown`, the target a browser runs.
+///
+/// tree-sitter ships the C library its parser needs there, and
+/// tree-sitter-language the headers grammars compile against; grammar crates
+/// that do not add those headers get them from `CFLAGS`. Grammars generated
+/// for tree-sitter 0.26 also compile tree-sitter-language's copy of that
+/// library, which is now a stub that fails on purpose, so its `wasm-src`
+/// points at empty files instead. `crates/diffr-core/wasm` fills what a few
+/// scanners use beyond it. macOS's `ar` writes no index a wasm linker
+/// reads, so the archives are made with rustup's `llvm-ar`.
+fn build_core_wasm(root: &Path) -> Result<()> {
+    let target = "wasm32-unknown-unknown";
+    let output = cargo()
+        .current_dir(root)
+        .args(["metadata", "--format-version", "1", "--locked"])
+        .output()?;
+    anyhow::ensure!(
+        output.status.success(),
+        "cargo metadata failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metadata: Value = serde_json::from_slice(&output.stdout)?;
+    let language = metadata["packages"]
+        .as_array()
+        .context("packages")?
+        .iter()
+        .find(|package| package["name"] == "tree-sitter-language")
+        .context("tree-sitter-language is not a dependency")?;
+    let headers = Path::new(
+        language["manifest_path"]
+            .as_str()
+            .context("manifest path")?,
+    )
+    .parent()
+    .context("tree-sitter-language directory")?
+    .join("wasm/include");
+    let empty = root.join("target/wasm-core/empty-libc");
+    std::fs::create_dir_all(&empty)?;
+    for file in ["stdio.c", "stdlib.c", "string.c"] {
+        std::fs::write(empty.join(file), "")?;
+    }
+    let compat = root.join("crates/diffr-core/wasm");
+    let cflags = format!(
+        "-I{} -I{} -include {}",
+        headers.display(),
+        compat.join("include").display(),
+        compat.join("compat.h").display()
+    );
+    run(
+        cargo()
+            .current_dir(root)
+            .args([
+                "build",
+                "--locked",
+                "--release",
+                "--package",
+                "diffr-core",
+                "--features",
+                "all-languages",
+                "--target",
+                target,
+                "--config",
+            ])
+            .arg(format!(
+                "target.{target}.tree-sitter-language.wasm-headers={:?}",
+                headers.display().to_string()
+            ))
+            .arg("--config")
+            .arg(format!(
+                "target.{target}.tree-sitter-language.wasm-src={:?}",
+                empty.display().to_string()
+            ))
+            .env("AR_wasm32_unknown_unknown", llvm_ar()?)
+            .env("CFLAGS_wasm32_unknown_unknown", cflags),
+        "Building diffr-core for wasm32-unknown-unknown (needs `rustup target add wasm32-unknown-unknown` and clang)",
+    )
+}
+
+/// rustup's `llvm-ar`, from the `llvm-tools` component.
+fn llvm_ar() -> Result<PathBuf> {
+    let rustc = |args: &[&str]| -> Result<String> {
+        let output = Command::new("rustc").args(args).output()?;
+        anyhow::ensure!(output.status.success(), "rustc {args:?} failed");
+        Ok(String::from_utf8(output.stdout)?.trim().to_owned())
+    };
+    let sysroot = rustc(&["--print", "sysroot"])?;
+    let host = rustc(&["-vV"])?
+        .lines()
+        .find_map(|line| line.strip_prefix("host: ").map(str::to_owned))
+        .context("rustc -vV names no host")?;
+    let ar = Path::new(&sysroot)
+        .join("lib/rustlib")
+        .join(host)
+        .join("bin")
+        .join(format!("llvm-ar{}", std::env::consts::EXE_SUFFIX));
+    anyhow::ensure!(
+        ar.is_file(),
+        "{} not found; install it with `rustup component add llvm-tools`",
+        ar.display()
+    );
+    Ok(ar)
+}
+
 fn main() -> Result<()> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let task = std::env::args().nth(1).unwrap_or_default();
@@ -189,6 +292,7 @@ fn main() -> Result<()> {
         "install" => install(root, true),
         "install-tui" => install(root, false),
         "build-plugins" => build_plugins(root),
+        "build-core-wasm" => build_core_wasm(root),
         "test-plugins" => {
             build_plugins(root)?;
             let status = cargo()
@@ -208,7 +312,9 @@ fn main() -> Result<()> {
             anyhow::ensure!(status.success(), "plugin tests failed");
             Ok(())
         }
-        _ => bail!("usage: cargo xtask <install|install-tui|build-plugins|test-plugins>"),
+        _ => bail!(
+            "usage: cargo xtask <install|install-tui|build-plugins|test-plugins|build-core-wasm>"
+        ),
     }
 }
 

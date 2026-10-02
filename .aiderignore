@@ -1,2 +1,2 @@
-vendored_parsers/
+crates/diffr-core/vendored_parsers/
 sample_files/

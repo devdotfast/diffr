@@ -425,6 +425,12 @@ mod tests {
     }
 }
 
+/// The diff of two sources with [`body_params`].
+#[cfg(test)]
+pub(crate) fn diff_sources(path: &str, lhs: &str, rhs: &str) -> crate::summary::DiffResult {
+    crate::summary::DiffResult::from_sources_with_params(path, lhs, rhs, &body_params())
+}
+
 /// Params whose only fold query per listed language is the given text,
 /// returned as source text the removed-runs plugin owns; no other plugin
 /// contributes queries.

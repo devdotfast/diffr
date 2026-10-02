@@ -2,7 +2,8 @@
  * The main thread's handle on diffr: the wasm module is fetched and compiled once here, then handed
  * to a few workers, so files diff in parallel without each worker paying for its own compile.
  */
-import wasmUrl from "./wasm/diffr_web_bg.wasm?url";
+// Gzipped by the build (vite.config.ts): static hosts cap a file at 25 MiB, and the engine is 64.
+import wasmUrl from "./wasm/diffr_web_bg.wasm.gz?url";
 import type { Status } from "./github";
 import type { Diffed, Request, Response } from "./worker";
 
@@ -43,10 +44,25 @@ export function onEngineChange(listener: () => void) {
   listeners.push(listener);
 }
 
+/**
+ * The engine's bytes, unpacked as they arrive so compiling still streams. A server that sent the
+ * file with `Content-Encoding: gzip` has unpacked it already, so the first bytes decide.
+ */
+async function unpacked(response: globalThis.Response): Promise<globalThis.Response> {
+  const [peek, body] = response.body!.tee();
+  const reader = peek.getReader();
+  const { value } = await reader.read();
+  void reader.cancel();
+  const gzipped = !!value && value[0] === 0x1f && value[1] === 0x8b;
+  const stream = gzipped ? body.pipeThrough(new DecompressionStream("gzip")) : body;
+  return new globalThis.Response(stream, { headers: { "content-type": "application/wasm" } });
+}
+
 const module = (async () => {
   const response = await fetch(wasmUrl);
+  if (!response.ok) throw new Error(`the diffr engine failed to load (${response.status})`);
   engineStats.bytes = Number(response.headers.get("content-length")) || 0;
-  const compiled = await WebAssembly.compileStreaming(response);
+  const compiled = await WebAssembly.compileStreaming(await unpacked(response));
   engineStats.compiled = performance.now();
   return compiled;
 })();

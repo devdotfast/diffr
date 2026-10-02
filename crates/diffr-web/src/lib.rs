@@ -72,6 +72,13 @@ impl Differ {
         })
     }
 
+    /// How large the structural matching may grow before a file falls back
+    /// to a line diff, in place of the configured `diff.graph_limit`.
+    #[wasm_bindgen(js_name = setGraphLimit)]
+    pub fn set_graph_limit(&mut self, limit: usize) {
+        self.limits.graph_limit = limit;
+    }
+
     /// Diff one changed file. `request` is JSON:
     /// `{"status": "modified", "lhs": {"path", "text"}, "rhs": {"path", "text"}}`,
     /// with `lhs` absent for an added file and `rhs` for a deleted one, and
@@ -141,8 +148,40 @@ mod tests {
         let event = &response["event"];
         assert_eq!(event["type"], "file");
         assert_eq!(event["diff"]["type"], "text", "{event}");
-        assert!(!event["diff"]["rhs"]["regions"].as_array().unwrap().is_empty());
-        assert!(!event["diff"]["rhs"]["syntax"].as_array().unwrap().is_empty());
+        assert!(!event["diff"]["rhs"]["regions"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(!event["diff"]["rhs"]["syntax"]
+            .as_array()
+            .unwrap()
+            .is_empty());
         assert_eq!(event["diff"]["stats"]["textual"]["added"], 2);
+    }
+
+    #[test]
+    fn a_file_past_the_graph_limit_is_a_coloured_line_diff() {
+        let mut differ = Differ::new(None).unwrap_or_else(|_| panic!("the bundled defaults load"));
+        differ.set_graph_limit(1);
+        let request = serde_json::json!({
+            "status": "modified",
+            "lhs": {"path": "src/a.ts", "text": "const a = 1;\nconst b = 2;\n"},
+            "rhs": {"path": "src/a.ts", "text": "let c = 3;\nconst b = 4;\n"},
+            "syntax": true,
+        });
+        let response: serde_json::Value = serde_json::from_str(
+            &differ
+                .diff(&request.to_string())
+                .unwrap_or_else(|_| panic!("the file diffs")),
+        )
+        .unwrap();
+        let diff = &response["event"]["diff"];
+        assert_eq!(diff["stats"]["fallback"]["code"], "too_complex", "{diff}");
+        for side in ["lhs", "rhs"] {
+            assert!(
+                !diff[side]["syntax"].as_array().unwrap().is_empty(),
+                "{side}: {diff}"
+            );
+        }
     }
 }

@@ -105,8 +105,21 @@ export function release() {
 /** Workers running now. */
 export const activeWorkers = () => slots.length;
 
-/** Diff one file on the least busy worker. Resolves with diffr's record and the time it took. */
-export function diff(status: Status, lhs: Side | undefined, rhs: Side | undefined): Promise<Result> {
+/** The last large file asked for: each one waits for the one before it. */
+let large: Promise<unknown> = Promise.resolve();
+
+/**
+ * Diff one file on the least busy worker. Resolves with diffr's record and the time it took.
+ * `mayRunLarge`: the match may take a gigabyte or more, so such files go one at a time.
+ */
+export function diff(status: Status, lhs: Side | undefined, rhs: Side | undefined, mayRunLarge = false): Promise<Result> {
+  if (!mayRunLarge) return dispatch(status, lhs, rhs);
+  const result = large.then(() => dispatch(status, lhs, rhs));
+  large = result.catch(() => undefined);
+  return result;
+}
+
+function dispatch(status: Status, lhs: Side | undefined, rhs: Side | undefined): Promise<Result> {
   const id = next++;
   // A retiring worker takes nothing new, so it drains and goes.
   let slot = slots.reduce((a, b) => (Number(b.retire) * 1e9 + b.busy < Number(a.retire) * 1e9 + a.busy ? b : a));

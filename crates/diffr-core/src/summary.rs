@@ -21,6 +21,8 @@ pub enum FileFormat {
     TextFallback {
         cause: FallbackCause,
         reason: String,
+        /// The file's language, when it has one: highlighting still applies.
+        language: Option<guess_language::Language>,
     },
     Binary,
 }

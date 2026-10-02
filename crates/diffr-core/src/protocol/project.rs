@@ -110,7 +110,7 @@ fn stats(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> Stats {
             code: "unsupported_language".to_owned(),
             message: "no tree-sitter grammar for this file".to_owned(),
         }),
-        FileFormat::TextFallback { cause, reason } => Some(Problem {
+        FileFormat::TextFallback { cause, reason, .. } => Some(Problem {
             code: fallback_code(*cause).to_owned(),
             message: reason.clone(),
         }),

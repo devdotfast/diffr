@@ -120,6 +120,7 @@ pub fn diff_file_content(
             let file_format = FileFormat::TextFallback {
                 cause: FallbackCause::Generated,
                 reason: GENERATED_FALLBACK.to_owned(),
+                language,
             };
             let (lhs_positions, rhs_positions) = line_parser::change_positions(lhs_src, rhs_src);
             (file_format, lhs_positions, rhs_positions)
@@ -185,6 +186,7 @@ pub fn diff_file_content(
                                             "structural diff exceeded diff.graph_limit ({}); raise it in diffr config",
                                             diff_options.graph_limit
                                         ),
+                                        language: Some(language),
                                     },
                                     lhs_positions,
                                     rhs_positions,
@@ -253,6 +255,7 @@ pub fn diff_file_content(
                                     location,
                                     diff_options.parse_error_limit
                                 ),
+                                language: Some(language),
                             };
 
                             // The trees parsed, only with too many errors to
@@ -301,6 +304,7 @@ pub fn diff_file_content(
                             format_size(num_bytes, format_options),
                             diff_options.byte_limit
                         ),
+                        language: Some(language),
                     };
 
                     let (lhs_positions, rhs_positions) =

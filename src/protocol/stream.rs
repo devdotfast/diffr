@@ -16,7 +16,7 @@ use crate::hash::DftHashSet;
 use crate::pairing::Pairing;
 use crate::params::{DiffOptions, Params};
 use crate::plugin::{MutationFailed, Pipeline};
-use crate::summary::{DiffResult, FileContent, FileFormat};
+use crate::summary::{DiffResult, FallbackCause, FileContent, FileFormat};
 use crate::tags::{self, Prefix};
 #[cfg(not(target_family = "wasm"))]
 use anyhow::anyhow;
@@ -283,16 +283,24 @@ fn diffed(loaded: &LoadedFile, options: Options) -> anyhow::Result<(FileChange, 
     Ok((loaded.file.manifest_entry(), project::diff(&result, inputs)))
 }
 
-/// Highlight spans for both sides of a structurally parsed file. A file that
-/// fell back to a line diff has none.
+/// Highlight spans for both sides of a file in a known language. A line diff
+/// that fell back because matching grew too large or the parse had too many
+/// errors is still coloured; one over the byte limit, or generated, is not,
+/// since highlighting it would cost what the limit was there to avoid.
 fn syntax_spans(
     diff: &DiffResult,
     params: &crate::params::Params,
 ) -> (Vec<SyntaxSpan>, Vec<SyntaxSpan>) {
-    let FileFormat::SupportedLanguage(language) = &diff.file_format else {
-        return (Vec::new(), Vec::new());
+    let language = match &diff.file_format {
+        FileFormat::SupportedLanguage(language) => *language,
+        FileFormat::TextFallback {
+            cause: FallbackCause::GraphLimit | FallbackCause::ParseErrorLimit,
+            language: Some(language),
+            ..
+        } => *language,
+        _ => return (Vec::new(), Vec::new()),
     };
-    let parser = params.language(*language).parser;
+    let parser = params.language(language).parser;
     let spans = |content: &FileContent| match content {
         FileContent::Text(src) => project::syntax_spans(src, parser),
         FileContent::Binary => Vec::new(),

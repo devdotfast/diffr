@@ -19,7 +19,7 @@ test("release pins match the package version and cover all supported targets", (
   expect(pins.version).toBe(pkg.version);
   for (const { sha256 } of pins.full ? [pins, pins.full] : [pins]) {
     expect(Object.keys(sha256).sort()).toEqual([
-      "aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu",
+      "aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu",
     ]);
     for (const hash of Object.values(sha256)) expect(hash).toMatch(/^[a-f0-9]{64}$/);
   }

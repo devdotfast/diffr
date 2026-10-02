@@ -198,7 +198,9 @@ diffr-file[hidden] { display: none; }
 }
 .dialog::backdrop { background: rgb(0 0 0 / 0.5); }
 .dialog .token { border-top: 0; }
-.dialog-close { position: absolute; top: 8px; right: 8px; }
+/* Centred on the title row, which leaves it room so the pill sits to its left. */
+.dialog-close { position: absolute; top: 6px; right: 8px; }
+.dialog .token-title { padding-right: 32px; }
 
 /* The landing page. */
 #app.home { min-height: 100vh; }
@@ -231,7 +233,6 @@ diffr-file[hidden] { display: none; }
   font-size: 10px; line-height: 10px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--lede);
 }
 .token p { margin: 4px 0 8px; font-size: 13px; line-height: 19.5px; color: var(--lede); }
-.token.compact p { margin-right: 24px; }
 .token p a, .examples a, .note a { color: var(--strong); text-decoration: underline; text-decoration-color: var(--lede); text-underline-offset: 3px; }
 .token-row { display: flex; gap: 6px; }
 .token-row input {

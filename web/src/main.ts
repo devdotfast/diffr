@@ -405,6 +405,8 @@ class ChangePage {
       if (event.target === dialog) dialog.close();
     });
     dialog.showModal();
+    // The browser would focus the first link; the token field is what the dialog is for.
+    dialog.querySelector<HTMLInputElement>("input[name=token]")?.focus();
   }
 
   private onKey(event: KeyboardEvent) {

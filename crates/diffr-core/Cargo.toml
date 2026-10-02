@@ -1,6 +1,6 @@
 [package]
 name = "diffr-core"
-description = "diffr's structural diff engine: tree-sitter parsing, AST diffing, folds and the projection to the wire records."
+description = "diffr's structural diff engine and diff session: tree-sitter parsing, AST diffing, folds, configuration, the plugin pipeline, file tags and the wire records."
 repository = "https://github.com/devdotfast/diffr"
 license = "MIT"
 version = "0.1.9"
@@ -37,6 +37,26 @@ log = "0.4.34"
 glob = "0.3.4"
 humansize = "2.1.3"
 anyhow = "1.0"
+
+# Configuration: the TOML file, its JSON Schema, and each plugin's options
+# checked against the schema in its plugin.toml.
+toml = { version = "1.1", default-features = false, features = ["display", "parse", "serde", "std"] }
+toml_edit = "0.25.15"
+serde_path_to_error = "0.1.20"
+schemars = { version = "1.2.2", features = ["preserve_order"] }
+jsonschema = { version = "0.58.4", default-features = false }
+# Linguist's path lists, for file tags.
+serde_yaml_ng = "0.10.0"
+# The plugin contract, and the bundled plugins: each a crate the native
+# registry calls, which also builds as a WASM component.
+diffr-plugin-sdk = { path = "../diffr-plugin-sdk", version = "0.1.1" }
+diffr-plugin-context = { path = "../../plugins/context", version = "0.1.1" }
+diffr-plugin-deleted-bodies = { path = "../../plugins/deleted-bodies", version = "0.1.1" }
+diffr-plugin-group = { path = "../../plugins/group", version = "0.1.1" }
+diffr-plugin-hide-files = { path = "../../plugins/hide-files", version = "0.1.1" }
+diffr-plugin-removed-runs = { path = "../../plugins/removed-runs", version = "0.1.1" }
+diffr-plugin-summarize = { path = "../../plugins/summarize", version = "0.1.1" }
+diffr-plugin-test-bodies = { path = "../../plugins/test-bodies", version = "0.1.1" }
 
 # tree-sitter itself, and the parsers that are available on crates.io.
 tree-sitter = "0.27.0"
@@ -103,6 +123,7 @@ ts-parser-perl = "2.0.0"
 [build-dependencies]
 cc = "1.2"
 rayon = "1.12.0"
+toml = "1.1"
 
 [features]
 all-languages = ["lang-fortran", "lang-fsharp", "lang-verilog", "lang-ocaml", "lang-julia", "lang-haskell", "lang-vhdl", "lang-apex", "lang-qml"]
@@ -115,8 +136,10 @@ lang-haskell = ["dep:tree-sitter-haskell"]
 lang-vhdl = ["dep:tree-sitter-vhdl"]
 lang-apex = ["dep:tree-sitter-sfapex"]
 lang-qml = ["dep:tree-sitter-qmljs"]
-# Test helpers for crates that test against the engine.
+# Test helpers for crates that test against the engine and the plugin
+# pipeline.
 test-support = []
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
+tempfile = "3.27.0"

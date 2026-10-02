@@ -224,7 +224,7 @@ pub(crate) fn run() -> Result<i32> {
         }
         return Ok(i32::from(changed && (args.exit_code || args.quiet)));
     }
-    let mut config = Config::load()?;
+    let mut config = config::load()?;
     apply_unified(&args, &mut config);
     let components = Wasmtime::default();
     let pipeline = Pipeline::from_config(&config.plugins, environment(workspace, &components))
@@ -500,7 +500,7 @@ fn no_index(
     if args.quiet {
         return Ok(i32::from(changed));
     }
-    let mut config = Config::load()?;
+    let mut config = config::load()?;
     apply_unified(args, &mut config);
     let workdir = std::env::current_dir()?;
     let components = Wasmtime::default();
@@ -577,7 +577,7 @@ fn run_config(config: &ConfigArgs) -> Result<i32> {
             stdout.write_all(b"\n")?;
         }
         Some(ConfigCommand::Show { json, reveal }) => {
-            let config = Config::load()?;
+            let config = config::load()?;
             if *json {
                 serde_json::to_writer_pretty(&mut stdout, &config::store::show(&config, *reveal))?;
                 stdout.write_all(b"\n")?;

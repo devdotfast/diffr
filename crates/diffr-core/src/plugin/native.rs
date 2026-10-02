@@ -4,7 +4,7 @@
 //! same records it hands a component.
 use super::host::Host;
 use super::Runner;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use super::{builtin, config::ComponentSource, Components, Environment, Instantiate};
 use diffr_plugin_sdk::native as sdk;
 use diffr_plugin_sdk::types::{FileEntry, Move, SourceSides};
@@ -50,10 +50,10 @@ pub fn registered(
 
 /// Runs each bundled component plugin's own code natively, for tests that
 /// need the plugin but not a component runtime.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub struct BundledNatively;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Components for BundledNatively {
     fn load(&self, source: &ComponentSource) -> anyhow::Result<Instantiate> {
         let ComponentSource::Bundled(bytes) = source else {
@@ -73,7 +73,7 @@ impl Components for BundledNatively {
 
 /// The environment tests make pipelines in: no git, and bundled components
 /// run natively.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn test_environment() -> Environment<'static> {
     Environment {
         components: Some(&BundledNatively),

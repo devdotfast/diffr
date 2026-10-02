@@ -634,7 +634,7 @@ mod tests {
 
     #[test]
     fn the_prompt_description_links_to_its_default_in_the_source() {
-        let source = include_str!("../../plugins/summarize/plugin.toml");
+        let source = include_str!("../../../../plugins/summarize/plugin.toml");
         let lines: Vec<&str> = source.lines().collect();
         let table = lines
             .iter()

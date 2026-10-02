@@ -1,7 +1,8 @@
-//! What the diffr CLI and the browser build share: configuration, the
-//! plugin pipeline, file tags and the NDJSON stream, over the engine in
-//! [`diffr_core`]. Reading a git repository and running WASM component
-//! plugins are native-only; the rest builds for `wasm32-unknown-unknown`.
+//! What the diffr CLI adds to the diff session in [`diffr_core`]: reading
+//! a git repository ([`git`]), the configuration file on disk
+//! ([`config`]), WASM component plugins and the system git and clock
+//! plugins reach ([`plugin`]), and the threaded NDJSON stream
+//! ([`protocol::stream`]).
 
 // I frequently develop difftastic on a newer rustc than the MSRV, so
 // these two aren't relevant.
@@ -41,14 +42,8 @@
 #![warn(clippy::dbg_macro)]
 
 pub mod config;
-#[cfg(test)]
-mod core_tests;
-#[cfg(not(target_family = "wasm"))]
 pub mod git;
 pub mod plugin;
 pub mod protocol;
-pub mod tags;
 
-pub use diffr_core::{engine, hash, pairing, params, parse, summary};
-#[cfg(test)]
-use diffr_core::{line_layout, line_parser, lines};
+pub use diffr_core::{engine, hash, pairing, params, parse, summary, tags};

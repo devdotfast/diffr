@@ -55,7 +55,7 @@ mod tests {
 
     #[test]
     fn every_plugin_folder_is_embedded_and_described() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins");
         let mut on_disk = BTreeSet::new();
         let mut folders = BTreeSet::new();
         for folder in std::fs::read_dir(&root).unwrap() {

@@ -628,3 +628,6 @@ mod sparse_tests {
 
     const LEGACY: &str = "For each listed fold, rewrite that function body as short pseudocode. Keep the names. No prose, no comments, no code fences. Use as few lines as possible: about one pseudocode line per five source lines, and never more than a third of the body's lines. When a fold lists a doc, also set \"summary\" to one sentence copied verbatim from that doc; otherwise leave it empty. Answer with a JSON array of {\"id\", \"summary\", \"pseudocode\"} objects, one per fold.";
 }
+
+#[cfg(test)]
+mod every_setting;

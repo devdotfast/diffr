@@ -24,13 +24,11 @@ include = [
         "/build.rs",
         "/src/",
         "/wit/",
-        "/plugins/",
         "/LICENSE",
         "/README.md",
 ]
 
 [dependencies]
-regex = "1.13.1"
 typed-arena = "2.0.2"
 log = "0.4.34"
 
@@ -42,27 +40,13 @@ anyhow = "1.0"
 encoding_rs = "0.8.42"
 
 toml = { version = "1.1", default-features = false, features = ["display", "parse", "serde", "std"] }
-serde_path_to_error = "0.1.20"
-schemars = { version = "1.2.2", features = ["preserve_order"] }
 toml_edit = "0.25.15"
-serde_yaml_ng = "0.10.0"
-jsonschema = { version = "0.58.4", default-features = false }
-# The structural diff engine.
+# The structural diff engine and the diff session: configuration, plugins,
+# tags and one file's record.
 diffr-core = { path = "crates/diffr-core", version = "0.1.9" }
-# The plugin contract, and the bundled plugins: each a crate the native
-# registry calls, which also builds as a WASM component.
+# The plugin contract, which WASM component plugins are called through.
 diffr-plugin-sdk = { path = "crates/diffr-plugin-sdk", version = "0.1.1" }
-diffr-plugin-context = { path = "plugins/context", version = "0.1.1" }
-diffr-plugin-deleted-bodies = { path = "plugins/deleted-bodies", version = "0.1.1" }
-diffr-plugin-group = { path = "plugins/group", version = "0.1.1" }
-diffr-plugin-hide-files = { path = "plugins/hide-files", version = "0.1.1" }
-diffr-plugin-removed-runs = { path = "plugins/removed-runs", version = "0.1.1" }
-diffr-plugin-summarize = { path = "plugins/summarize", version = "0.1.1" }
-diffr-plugin-test-bodies = { path = "plugins/test-bodies", version = "0.1.1" }
-
-# What only the native CLI needs: git, the WASM component runtime, threads
-# and the terminal. The library builds for wasm32-unknown-unknown without them.
-[target.'cfg(not(target_family = "wasm"))'.dependencies]
+# Git, the WASM component runtime, threads and the terminal.
 git2 = { version = "0.21", default-features = false }
 clap = { version = "4.6.7", features = ["cargo", "derive", "env", "wrap_help", "string"] }
 libc = "0.2.189"
@@ -79,11 +63,13 @@ wasmtime-wasi = { version = "49.0.1", default-features = false, features = ["p2"
 bytes = "1.12"
 wasmtime-wasi-http = { version = "49.0.1", default-features = false, features = ["p2", "default-send-request"] }
 
-[target.'cfg(not(any(windows, target_os = "illumos", target_os = "freebsd", target_family = "wasm")))'.dependencies]
+[target.'cfg(not(any(windows, target_os = "illumos", target_os = "freebsd")))'.dependencies]
 tikv-jemallocator = "0.7"
 
 [dev-dependencies]
 diffr-core = { path = "crates/diffr-core", version = "0.1.9", features = ["test-support"] }
+# The summarizer's own selection, which its component tests check against.
+diffr-plugin-summarize = { path = "plugins/summarize", version = "0.1.1" }
 assert_cmd = "2.2.2"
 predicates = "3.1.4"
 
@@ -91,7 +77,6 @@ pretty_assertions = "1.4.1"
 tempfile = "3.27.0"
 
 [build-dependencies]
-toml = "1.1"
 version_check = "0.9.5"
 
 [workspace]
@@ -129,8 +114,8 @@ wasm-test-exclude = []
 [profile.release]
 lto = "thin"
 
-# The diff session, config, plugins and stream, shared by the CLI and the
-# browser build (crates/diffr-web).
+# Reading git repositories, running component plugins and the stream; the
+# diff session itself is diffr-core's.
 [lib]
 path = "src/lib.rs"
 doctest = false

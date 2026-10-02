@@ -1,8 +1,12 @@
-//! diffr's structural diff engine: parse both sides of a file with
-//! tree-sitter, match their syntax trees, find folds with the plugins' fold
-//! queries, and project the result into the wire records of
-//! [`protocol`]. Nothing here reads files, runs git or spawns threads, so
-//! the engine also builds for `wasm32-unknown-unknown`.
+//! diffr's structural diff engine and the diff session around it: parse both
+//! sides of a file with tree-sitter, match their syntax trees, find folds
+//! with the plugins' fold queries, project the result into the wire records
+//! of [`protocol`], and shape each file's record with the plugin pipeline
+//! ([`plugin`]) under the configuration ([`config`]) and the file's tags
+//! ([`tags`]). Nothing here runs git, spawns threads or runs WASM
+//! components: those come from the caller (see [`plugin::Environment`]),
+//! so this crate also builds for `wasm32-unknown-unknown`. Files are read
+//! only for plugin folders and query files a configuration names on disk.
 
 // I frequently develop difftastic on a newer rustc than the MSRV, so
 // these two aren't relevant.
@@ -41,7 +45,10 @@
 #![warn(clippy::todo)]
 #![warn(clippy::dbg_macro)]
 
+pub mod config;
 pub mod constants;
+#[cfg(test)]
+mod core_tests;
 pub mod diff;
 pub mod engine;
 pub mod hash;
@@ -51,8 +58,10 @@ pub mod lines;
 pub mod pairing;
 pub mod params;
 pub mod parse;
+pub mod plugin;
 pub mod protocol;
 pub mod summary;
+pub mod tags;
 pub mod words;
 
 #[cfg(test)]

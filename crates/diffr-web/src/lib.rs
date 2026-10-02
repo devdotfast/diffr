@@ -3,12 +3,12 @@
 //! queries); [`Differ::diff`] turns the two sides of one changed file into
 //! its `file` record of the wire protocol, shaped by the plugins exactly as
 //! the CLI shapes it. Fetching the sources is the page's job.
-use diffr_cli::config::{Config, DiffConfig};
-use diffr_cli::pairing::Pairing;
-use diffr_cli::params::Params;
-use diffr_cli::plugin::{Environment, Pipeline};
-use diffr_cli::protocol::record::{self, Options};
-use diffr_cli::protocol::{Event, FileChange, FileRef, FileStatus};
+use diffr_core::config::{Config, DiffConfig};
+use diffr_core::pairing::Pairing;
+use diffr_core::params::Params;
+use diffr_core::plugin::{Environment, Pipeline};
+use diffr_core::protocol::record::{self, Options};
+use diffr_core::protocol::{Event, FileChange, FileRef, FileStatus};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use wasm_bindgen::prelude::*;

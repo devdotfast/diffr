@@ -77,6 +77,17 @@ jobs:
           # grammars' archives need llvm-ar.
           targets: wasm32-unknown-unknown
           components: llvm-tools
+      # The engine and the diff session are one code path on every target:
+      # only loading a grammar differs in the browser. What a target lacks
+      # (git, threads, Wasmtime, a clock) comes from the caller instead.
+      - name: Check that only the grammar loader is gated by target
+        run: |
+          gated=$(git grep -l target_family -- crates/diffr-core/src ':!crates/diffr-core/src/parse/tree_sitter_parser.rs' || true)
+          if [ -n "$gated" ]; then
+            echo "target_family gates outside parse/tree_sitter_parser.rs:"
+            echo "$gated"
+            exit 1
+          fi
       - run: cargo xtask build-core-wasm
 
   test_mime_db:

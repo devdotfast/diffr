@@ -3,7 +3,7 @@
 The caller parses TOML with `Config::from_toml`, builds the plugin pipeline, then calls `compile_with(&pipeline)` once.
 The resulting `Params` owns one compiled query per language, holding the enabled plugins' fold
 patterns, and is borrowed by each diff.
-`Config::load` reads the global file (`$XDG_CONFIG_HOME/diffr/config.toml`).
+The CLI's `config::load` reads the global file (`$XDG_CONFIG_HOME/diffr/config.toml`).
 File selection and ordering belong to the caller, not this configuration.
 
 ```rust
@@ -17,8 +17,8 @@ Fold query sources are owned by plugin code. `Plugin::queries()` returns
 `QuerySource { language, name, text }` records, typically embedding `.scm`
 files with `include_str!`. `compile_with()` collects the enabled instances'
 sources and concatenates them into one validated query per language,
-remembering which source each pattern came from (see `src/plugin/queries.rs`
-and [docs/config.md](../../docs/config.md#queries)). Shared `inherits`
+remembering which source each pattern came from (see `crates/diffr-core/src/plugin/queries.rs`
+and [docs/config.md](../../../../docs/config.md#queries)). Shared `inherits`
 imports remain supported; `plugin.toml` contains only metadata and options.
 
 ```scheme
@@ -106,7 +106,7 @@ There are two inputs to language configuration:
 - **What syntax to expose in a diff:** [`Config`](../config.rs) supplies
   the enabled plugins' queries, which identify foldable AST regions and
   their tags. The bundled queries live
-  in [`plugins/<name>/queries/`](../../plugins/).
+  in [`plugins/<name>/queries/`](../../../../plugins/).
 
 [`Params::language`](../config.rs) resolves both into one `LanguageParams`:
 the parser configuration plus the assembled query compiled against its grammar.

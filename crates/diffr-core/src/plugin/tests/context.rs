@@ -503,8 +503,8 @@ fn a_multiline_python_signature_keeps_the_line_it_starts_on() {
 
 #[test]
 fn a_signature_keeps_its_header_without_neighbouring_statements() {
-    let before = include_str!("../../../examples/review/real/02-review-175/before.ts");
-    let after = include_str!("../../../examples/review/real/02-review-175/after.ts");
+    let before = include_str!("../../../../../examples/review/real/02-review-175/before.ts");
+    let after = include_str!("../../../../../examples/review/real/02-review-175/after.ts");
     let sides = shaped("a.ts", before, after, 3);
     let open = open_text(after, &open_leaf_lines(&rhs(&sides).regions));
     let shows = |text: &str| open.iter().any(|line| line.contains(text));
@@ -516,8 +516,8 @@ fn a_signature_keeps_its_header_without_neighbouring_statements() {
 
 #[test]
 fn an_unrelated_tail_return_is_not_context() {
-    let before = include_str!("../../../examples/review/real/07-ripgrep-3487/before.rs");
-    let after = include_str!("../../../examples/review/real/07-ripgrep-3487/after.rs");
+    let before = include_str!("../../../../../examples/review/real/07-ripgrep-3487/before.rs");
+    let after = include_str!("../../../../../examples/review/real/07-ripgrep-3487/after.rs");
     let shows = |lines: u32, text: &str| {
         let sides = shaped("a.rs", before, after, lines);
         let open = open_leaf_lines(&rhs(&sides).regions);

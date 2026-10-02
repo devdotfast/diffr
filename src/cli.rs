@@ -32,6 +32,9 @@ const METADATA: [&str; 5] = ["name_only", "name_status", "stat", "numstat", "sho
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
+    /// Print machine-readable optional-language capabilities
+    #[arg(long)]
+    capabilities: bool,
     /// Directory in the repository to diff from; paths are relative to it
     #[arg(long, default_value = ".")]
     repo: PathBuf,
@@ -176,6 +179,13 @@ pub(crate) fn run() -> Result<i32> {
     let matches = Cli::command().get_matches();
     reject_diff_arguments_before_subcommand(&matches);
     let args = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    if args.capabilities {
+        println!(
+            "{}",
+            serde_json::json!({ "version": env!("CARGO_PKG_VERSION"), "optionalLanguages": crate::parse::guess_language::optional_languages() })
+        );
+        return Ok(0);
+    }
     match &args.command {
         Some(Command::Config(config)) => return run_config(config),
         Some(Command::Debug(debug)) => {

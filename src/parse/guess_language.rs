@@ -29,6 +29,7 @@ pub(crate) enum Language {
     CMake,
     CommonLisp,
     CPlusPlus,
+    #[cfg(feature = "lang-csharp")]
     CSharp,
     Css,
     Dart,
@@ -62,6 +63,7 @@ pub(crate) enum Language {
     Make,
     Newick,
     Nix,
+    #[cfg(feature = "lang-objc")]
     ObjC,
     #[cfg(feature = "lang-ocaml")]
     OCaml,
@@ -140,6 +142,7 @@ pub(crate) fn language_name(language: Language) -> &'static str {
         CMake => "CMake",
         CommonLisp => "Common Lisp",
         CPlusPlus => "C++",
+        #[cfg(feature = "lang-csharp")]
         CSharp => "C#",
         Css => "CSS",
         Dart => "Dart",
@@ -173,6 +176,7 @@ pub(crate) fn language_name(language: Language) -> &'static str {
         Make => "Make",
         Newick => "Newick",
         Nix => "Nix",
+        #[cfg(feature = "lang-objc")]
         ObjC => "Objective-C",
         #[cfg(feature = "lang-ocaml")]
         OCaml => "OCaml",
@@ -282,6 +286,7 @@ pub(crate) fn language_globs(language: Language) -> Vec<glob::Pattern> {
             "*.cc", "*.cpp", "*.c++", "*.cxx", "*.cu", "*.h", "*.hh", "*.hpp", "*.hxx", "*.inl",
             "*.ino", "*.ipp", "*.ixx", "*.tcc",
         ],
+        #[cfg(feature = "lang-csharp")]
         CSharp => &["*.cs"],
         Css => &["*.css"],
         Dart => &["*.dart"],
@@ -382,6 +387,7 @@ pub(crate) fn language_globs(language: Language) -> Vec<glob::Pattern> {
         ],
         Newick => &["*.nhx", "*.nwk", "*.nh"],
         Nix => &["*.nix"],
+        #[cfg(feature = "lang-objc")]
         ObjC => &["*.m"],
         #[cfg(feature = "lang-ocaml")]
         OCaml => &["*.ml"],
@@ -531,7 +537,10 @@ pub(crate) fn guess(
         return None;
     }
     if looks_like_objc(path, src) {
+        #[cfg(feature = "lang-objc")]
         return Some(Language::ObjC);
+        #[cfg(not(feature = "lang-objc"))]
+        return None;
     }
 
     if let Some(lang) = from_glob(path) {
@@ -567,6 +576,7 @@ fn from_emacs_mode_header(src: &str) -> Option<Language> {
             "ada" => Ada,
             "c" => C,
             "clojure" => Clojure,
+            #[cfg(feature = "lang-csharp")]
             "csharp" => CSharp,
             "css" => Css,
             "dart" => Dart,
@@ -590,6 +600,7 @@ fn from_emacs_mode_header(src: &str) -> Option<Language> {
             "js" | "js2" => JavaScript,
             "lisp" => CommonLisp,
             "nxml" => Xml,
+            #[cfg(feature = "lang-objc")]
             "objc" => ObjC,
             "perl" => Perl,
             "python" => Python,
@@ -793,4 +804,39 @@ mod tests {
             Some(Css)
         );
     }
+}
+
+pub(crate) fn optional_languages() -> serde_json::Value {
+    serde_json::json!([
+        { "name": "C#", "extensions": ["cs"], "available": cfg!(feature = "lang-csharp") },
+        { "name": "Objective-C", "extensions": ["m"], "available": cfg!(feature = "lang-objc") },
+        { "name": "Fortran", "extensions": ["f", "f90", "for"], "available": cfg!(feature = "lang-fortran") },
+        { "name": "F#", "extensions": ["fs", "fsx", "fsi"], "available": cfg!(feature = "lang-fsharp") },
+        { "name": "Verilog", "extensions": ["v", "sv", "vh"], "available": cfg!(feature = "lang-verilog") },
+        { "name": "OCaml", "extensions": ["ml", "mli"], "available": cfg!(feature = "lang-ocaml") },
+        { "name": "Julia", "extensions": ["jl"], "available": cfg!(feature = "lang-julia") },
+        { "name": "Haskell", "extensions": ["hs"], "available": cfg!(feature = "lang-haskell") },
+        { "name": "VHDL", "extensions": ["vhd", "vhdl"], "available": cfg!(feature = "lang-vhdl") },
+        { "name": "Apex", "extensions": ["apexc", "trigger"], "available": cfg!(feature = "lang-apex") },
+        { "name": "QML", "extensions": ["qml"], "available": cfg!(feature = "lang-qml") }
+    ])
+}
+
+pub(crate) fn missing_optional_language(path: &Path, source: &str) -> Option<String> {
+    if !cfg!(feature = "lang-objc") && looks_like_objc(path, source) {
+        return Some("Objective-C".to_owned());
+    }
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    optional_languages()
+        .as_array()?
+        .iter()
+        .find_map(|language| {
+            (!language["available"].as_bool().unwrap_or(false)
+                && language["extensions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|value| value.as_str() == Some(&extension)))
+            .then(|| language["name"].as_str().unwrap().to_owned())
+        })
 }

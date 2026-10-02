@@ -109,11 +109,35 @@ pub(crate) fn diff_file_content(
 
     let language = guess(Path::new(display_path), guess_src, overrides);
     let lang_config = language.map(|lang| (lang, params.language(lang)));
+    let plain_format = || {
+        let explicitly_overridden = overrides.iter().any(|(_, globs)| {
+            globs.iter().any(|glob| {
+                Path::new(display_path)
+                    .file_name()
+                    .is_some_and(|name| glob.matches(&name.to_string_lossy()))
+            })
+        });
+        let missing = (!explicitly_overridden)
+            .then(|| {
+                crate::parse::guess_language::missing_optional_language(
+                    Path::new(display_path),
+                    guess_src,
+                )
+            })
+            .flatten();
+        match missing {
+            Some(name) => FileFormat::TextFallback {
+                cause: FallbackCause::MissingExtraLanguage,
+                reason: name,
+            },
+            None => FileFormat::PlainText,
+        }
+    };
 
     if lhs_src == rhs_src {
         let file_format = match language {
             Some(language) => FileFormat::SupportedLanguage(language),
-            None => FileFormat::PlainText,
+            None => plain_format(),
         };
 
         // If the two files are byte-for-byte identical, return early
@@ -141,7 +165,7 @@ pub(crate) fn diff_file_content(
             (file_format, lhs_positions, rhs_positions)
         }
         None => {
-            let file_format = FileFormat::PlainText;
+            let file_format = plain_format();
             let (lhs_positions, rhs_positions) = line_parser::change_positions(lhs_src, rhs_src);
             (file_format, lhs_positions, rhs_positions)
         }

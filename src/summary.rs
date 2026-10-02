@@ -28,6 +28,7 @@ pub(crate) enum FileFormat {
 /// Why a file in a supported language was diffed by line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FallbackCause {
+    MissingExtraLanguage,
     /// A side is larger than the byte limit.
     ByteLimit,
     /// The AST matching graph grew past the graph limit.

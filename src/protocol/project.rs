@@ -129,6 +129,7 @@ fn stats(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> Stats {
 /// is the engine's own prose, with the numbers.
 fn fallback_code(cause: FallbackCause) -> &'static str {
     match cause {
+        FallbackCause::MissingExtraLanguage => "missing_extra_language",
         FallbackCause::Generated => "generated",
         FallbackCause::ByteLimit => "too_large",
         FallbackCause::GraphLimit => "too_complex",
@@ -1274,6 +1275,46 @@ mod tests {
             stats.fallback.as_ref().unwrap().code,
             "unsupported_language"
         );
+    }
+
+    #[test]
+    fn optional_grammars_keep_readable_sources_and_report_recoverable_fallbacks() {
+        for (path, lhs, rhs, available) in [
+            (
+                "a.cs",
+                "class A { int x = 1; }\n",
+                "class A { int x = 2; }\n",
+                cfg!(feature = "lang-csharp"),
+            ),
+            (
+                "a.m",
+                "@interface A\n@end\n",
+                "@interface B\n@end\n",
+                cfg!(feature = "lang-objc"),
+            ),
+            (
+                "a.h",
+                "@interface A\n@end\n",
+                "@interface B\n@end\n",
+                cfg!(feature = "lang-objc"),
+            ),
+        ] {
+            let diff = project(path, lhs, rhs);
+            let Diff::Text { stats, .. } = &diff else {
+                panic!("text")
+            };
+            let (left, right) = sources(&diff);
+            assert_eq!(left.unwrap().text, lhs);
+            assert_eq!(right.unwrap().text, rhs);
+            if available {
+                assert!(stats.fallback.is_none());
+            } else {
+                assert_eq!(
+                    stats.fallback.as_ref().unwrap().code,
+                    "missing_extra_language"
+                );
+            }
+        }
     }
 
     #[test]

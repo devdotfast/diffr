@@ -1,0 +1,23 @@
+{
+  "name": "@diffr/web",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@pierre/diffs": "1.5.1",
+    "@pierre/theme": "2.0.0",
+    "@pierre/trees": "1.0.0-beta.6",
+    "geist": "^1.7.2",
+    "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vite": "8.3.2"
+  }
+}

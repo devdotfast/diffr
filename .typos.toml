@@ -1,7 +1,7 @@
 [files]
 extend-exclude = [
-  "vendored_parsers/", "sample_files/",
-  "src/tags/linguist/",
+  "crates/diffr-core/vendored_parsers/", "sample_files/",
+  "crates/diffr-core/src/tags/linguist/",
   "demo_files/",
   # Git index lines carry blob hashes that can spell words.
   "examples/review/real/*/change.patch",

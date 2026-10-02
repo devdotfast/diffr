@@ -18,66 +18,89 @@
 //! and a plugin has no logging call of its own, it just prints.
 use super::config::ComponentSource;
 use super::host::Host;
-use super::Runner;
+use super::{Components, Instantiate, Runner};
 use anyhow::Context as _;
 use bytes::Bytes;
 use diffr_plugin_sdk::types as contract;
 use std::io::Write as _;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::pin::Pin;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::task::{Context, Poll};
 use std::time::Instant;
 use wasmtime::component::{Component, HasSelf, Linker, ResourceAny, ResourceTable};
 use wasmtime::{Cache, CacheConfig, Config, Engine, Store};
-use wasmtime_wasi::p2::{
-    IoView, OutputStream, Pollable, StdoutStream, StreamError, StreamResult, WasiCtx,
-    WasiCtxBuilder, WasiView,
-};
-use wasmtime_wasi::{DirPerms, FilePerms};
+use wasmtime_wasi::cli::{IsTerminal, StdoutStream};
+use wasmtime_wasi::p2::{OutputStream, Pollable, StreamError, StreamResult};
+use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 
 mod bindings {
     wasmtime::component::bindgen!({
         path: "wit/plugin.wit",
         world: "plugin",
-        trappable_imports: true,
+        imports: { default: trappable },
     });
 }
 
 use bindings::diffr::plugin::{host, types};
 
+/// Loads component plugins for a pipeline ([`super::Components`]). Every
+/// component compiles with one engine, made with the first.
+#[derive(Default)]
+pub struct Wasmtime {
+    engine: OnceLock<Engine>,
+}
+
+impl Components for Wasmtime {
+    fn load(&self, source: &ComponentSource) -> anyhow::Result<Instantiate> {
+        let engine = match self.engine.get() {
+            Some(engine) => engine,
+            None => {
+                let engine = engine()?;
+                self.engine.get_or_init(|| engine)
+            }
+        };
+        let plugin = WasmPlugin::load(engine, source)?;
+        Ok(Box::new(move |host, options| plugin.create(host, options)))
+    }
+}
+
 /// The engine every component of one pipeline compiles with.
-pub(crate) fn engine() -> anyhow::Result<Engine> {
+pub fn engine() -> anyhow::Result<Engine> {
     let mut config = Config::new();
     config.wasm_component_model(true);
     // The disk cache is an optimization; read-only homes must still run plugins.
     if let Ok(cache) = Cache::new(CacheConfig::new()) {
         config.cache(Some(cache));
     }
-    Engine::new(&config)
+    Ok(Engine::new(&config)?)
 }
 
 /// What a plugin instance's store holds. `host` is the host of the call in
 /// progress, set before each call.
 struct State {
     wasi: WasiCtx,
-    http: wasmtime_wasi_http::WasiHttpCtx,
+    http: WasiHttpCtx,
     table: ResourceTable,
     host: Host,
 }
 
-impl IoView for State {
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
-    }
-}
-
 impl WasiView for State {
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.wasi
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
     }
 }
 
-impl wasmtime_wasi_http::WasiHttpView for State {
-    fn ctx(&mut self) -> &mut wasmtime_wasi_http::WasiHttpCtx {
-        &mut self.http
+impl WasiHttpView for State {
+    fn http(&mut self) -> WasiHttpCtxView<'_> {
+        WasiHttpCtxView {
+            ctx: &mut self.http,
+            table: &mut self.table,
+            hooks: Default::default(),
+        }
     }
 }
 
@@ -134,15 +157,35 @@ impl Prefixed {
             line: Vec::new(),
         })))
     }
+
+    /// Add `bytes` to the unfinished line and write every line they end.
+    fn push(&self, bytes: &[u8]) -> std::io::Result<()> {
+        let mut pending = self
+            .0
+            .lock()
+            .expect("no write panics while it holds a guest's output");
+        pending.line.extend_from_slice(bytes);
+        while let Some(end) = pending.line.iter().position(|byte| *byte == b'\n') {
+            let line: Vec<u8> = pending.line.drain(..=end).take(end).collect();
+            pending.write_line(&line)?;
+        }
+        Ok(())
+    }
+}
+
+impl IsTerminal for Prefixed {
+    fn is_terminal(&self) -> bool {
+        false
+    }
 }
 
 impl StdoutStream for Prefixed {
-    fn stream(&self) -> Box<dyn OutputStream> {
+    fn async_stream(&self) -> Box<dyn tokio::io::AsyncWrite + Send + Sync> {
         Box::new(self.clone())
     }
 
-    fn isatty(&self) -> bool {
-        false
+    fn p2_stream(&self) -> Box<dyn OutputStream> {
+        Box::new(self.clone())
     }
 }
 
@@ -153,18 +196,8 @@ impl Pollable for Prefixed {
 
 impl OutputStream for Prefixed {
     fn write(&mut self, bytes: Bytes) -> StreamResult<()> {
-        let mut pending = self
-            .0
-            .lock()
-            .expect("no write panics while it holds a guest's output");
-        pending.line.extend_from_slice(&bytes);
-        while let Some(end) = pending.line.iter().position(|byte| *byte == b'\n') {
-            let line: Vec<u8> = pending.line.drain(..=end).take(end).collect();
-            pending
-                .write_line(&line)
-                .map_err(|error| StreamError::LastOperationFailed(error.into()))?;
-        }
-        Ok(())
+        self.push(&bytes)
+            .map_err(|error| StreamError::LastOperationFailed(error.into()))
     }
 
     fn flush(&mut self) -> StreamResult<()> {
@@ -178,15 +211,34 @@ impl OutputStream for Prefixed {
     }
 }
 
+/// The same stream for WASIp3 guests, which write through tokio.
+impl tokio::io::AsyncWrite for Prefixed {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Poll::Ready(self.push(bytes).map(|()| bytes.len()))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(std::io::stderr().flush())
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
 /// A compiled, linked component.
-pub(crate) struct WasmPlugin {
+pub struct WasmPlugin {
     engine: Engine,
     pre: bindings::PluginPre<State>,
 }
 
 impl WasmPlugin {
     /// Compile and link an external or bundled component.
-    pub(crate) fn load(engine: &Engine, source: &ComponentSource) -> anyhow::Result<Self> {
+    pub fn load(engine: &Engine, source: &ComponentSource) -> anyhow::Result<Self> {
         let started = Instant::now();
         let (component, label) = match source {
             ComponentSource::File(path) => (
@@ -197,14 +249,17 @@ impl WasmPlugin {
                 (Component::new(engine, bytes), "bundled component".into())
             }
         };
-        let component = component.with_context(|| format!("compiling {label}"))?;
+        let component = component
+            .map_err(anyhow::Error::from)
+            .with_context(|| format!("compiling {label}"))?;
         let mut linker = Linker::<State>::new(engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
-        wasmtime_wasi_http::add_only_http_to_linker_sync(&mut linker)?;
+        wasmtime_wasi_http::p2::add_only_http_to_linker_sync(&mut linker)?;
         bindings::Plugin::add_to_linker::<State, HasSelf<State>>(&mut linker, |state| state)?;
         let pre = bindings::PluginPre::new(
             linker
                 .instantiate_pre(&component)
+                .map_err(anyhow::Error::from)
                 .with_context(|| format!("linking {label}"))?,
         )?;
         log::debug!("compiled and linked {} in {:?}", label, started.elapsed());
@@ -216,7 +271,7 @@ impl WasmPlugin {
 
     /// Instantiate the component in a store of its own and make the plugin
     /// with its `new`, from `options`.
-    pub(crate) fn create(&self, host: Host, options: &str) -> anyhow::Result<Box<dyn Runner>> {
+    pub fn create(&self, host: Host, options: &str) -> anyhow::Result<Box<dyn Runner>> {
         let started = Instant::now();
         let mut wasi = WasiCtxBuilder::new();
         wasi.inherit_env()
@@ -224,14 +279,15 @@ impl WasmPlugin {
             .stderr(Prefixed::new(Arc::clone(&host.name)))
             .inherit_network()
             .allow_ip_name_lookup(true)
-            .preopened_dir(&*host.workdir, ".", DirPerms::all(), FilePerms::all())
+            .preopened_dir(&*host.workdir, ".", FsPerms::ReadWrite)
+            .map_err(anyhow::Error::from)
             .with_context(|| format!("preopening {}", host.workdir.display()))?;
         let name = host.name.clone();
         let mut store = Store::new(
             &self.engine,
             State {
                 wasi: wasi.build(),
-                http: wasmtime_wasi_http::WasiHttpCtx::new(),
+                http: WasiHttpCtx::new(),
                 table: ResourceTable::new(),
                 host,
             },

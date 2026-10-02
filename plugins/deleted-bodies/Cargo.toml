@@ -3,7 +3,7 @@ name = "diffr-plugin-deleted-bodies"
 description = "The deleted-bodies plugin: collapse deleted function bodies."
 version = "0.1.1"
 edition = "2021"
-rust-version = "1.85.0"
+rust-version = "1.99.0"
 license = "MIT"
 links = "diffr-plugin-deleted-bodies"
 

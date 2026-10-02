@@ -3,7 +3,7 @@ name = "fixtures-plugin"
 description = "An example diffr plugin: tag fixtures and hide them."
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.85.0"
+rust-version = "1.99.0"
 license = "MIT"
 publish = false
 

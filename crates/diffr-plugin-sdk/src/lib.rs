@@ -29,7 +29,7 @@
 pub mod apply;
 pub mod draft;
 pub mod host;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_os = "wasi"))]
 pub mod native;
 pub mod tree;
 pub mod types;
@@ -97,25 +97,25 @@ pub mod bindings {
     });
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(target_os = "wasi")]
 #[doc(hidden)]
 pub mod guest;
 
 /// Export a [`Plugin`] as the component's `plugin` resource when the crate
-/// is built for `wasm32`: the resource's `new` deserializes the options
+/// is built for `wasm32-wasip2`: the resource's `new` deserializes the options
 /// string into [`Plugin::Options`] and calls [`Plugin::new`], and its
 /// `classify` and `mutate` call the instance. Built for anything else it
 /// exposes its name and constructor as `DIFFR_PLUGIN` for the host registry.
 #[macro_export]
 macro_rules! export {
     ($name:literal, $plugin:ty) => {
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(target_os = "wasi"))]
         #[doc(hidden)]
         pub static DIFFR_PLUGIN: $crate::native::Registration = $crate::native::Registration {
             name: $name,
             create: $crate::native::create::<$plugin>,
         };
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(target_os = "wasi")]
         const _: () = {
             struct DiffrPluginExport;
 

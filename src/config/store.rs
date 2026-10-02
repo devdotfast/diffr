@@ -7,13 +7,13 @@ use std::path::Path;
 
 /// The resolved configuration as JSON, with the same nesting as the TOML.
 /// The summarizer's API key is redacted unless `reveal` is set.
-pub(crate) fn show(config: &Config, reveal: bool) -> serde_json::Value {
+pub fn show(config: &Config, reveal: bool) -> serde_json::Value {
     serde_json::to_value(redacted(config, reveal)).expect("config serializes")
 }
 
 /// The configuration to print: the summarizer's API key replaced by
 /// `<redacted>` unless `reveal` is set.
-pub(crate) fn redacted(config: &Config, reveal: bool) -> Config {
+pub fn redacted(config: &Config, reveal: bool) -> Config {
     let mut shown = config.clone();
     if !reveal {
         for entry in shown.plugins.entries.values_mut() {
@@ -34,7 +34,7 @@ pub(crate) fn redacted(config: &Config, reveal: bool) -> Config {
 /// [`typed_value`]), then the whole file is validated, before anything
 /// touches the disk: unknown keys, text that is not the key's type, and
 /// values the configuration rejects are errors.
-pub(crate) fn set(path: &Path, key: &str, value: &str) -> Result<(), ConfigError> {
+pub fn set(path: &Path, key: &str, value: &str) -> Result<(), ConfigError> {
     if key.is_empty() || key.split('.').any(str::is_empty) {
         return Err(ConfigError(format!("invalid key {key:?}")));
     }
@@ -628,3 +628,6 @@ mod sparse_tests {
 
     const LEGACY: &str = "For each listed fold, rewrite that function body as short pseudocode. Keep the names. No prose, no comments, no code fences. Use as few lines as possible: about one pseudocode line per five source lines, and never more than a third of the body's lines. When a fold lists a doc, also set \"summary\" to one sentence copied verbatim from that doc; otherwise leave it empty. Answer with a JSON array of {\"id\", \"summary\", \"pseudocode\"} objects, one per fold.";
 }
+
+#[cfg(test)]
+mod every_setting;

@@ -13,7 +13,7 @@ pub fn git(args: &[String]) -> Result<String, String> {
     imp::git(args)
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(target_os = "wasi")]
 mod imp {
     use crate::bindings::diffr::plugin::host;
 
@@ -24,19 +24,19 @@ mod imp {
 
 /// diffr's implementation of the host functions for one call of a native
 /// plugin.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_os = "wasi"))]
 pub trait Host {
     fn git(&self, args: &[String]) -> Result<String, String>;
 }
 
 /// Run `call`, one call of a native plugin, with `host` behind the host
 /// function on this thread.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_os = "wasi"))]
 pub fn scope<R>(host: std::rc::Rc<dyn Host>, call: impl FnOnce() -> R) -> R {
     imp::scope(host, call)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_os = "wasi"))]
 mod imp {
     use super::Host;
     use std::cell::RefCell;

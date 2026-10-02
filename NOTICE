@@ -14,12 +14,25 @@ Helix editor themes (tui/themes/)
   https://github.com/helix-editor/helix/tree/master/runtime/themes
   Mozilla Public License 2.0 (see tui/themes/LICENSE).
 
-GitHub Linguist language data (src/tags/linguist/)
+GitHub Linguist language data (crates/diffr-core/src/tags/linguist/)
   https://github.com/github-linguist/linguist
-  MIT License (see src/tags/linguist/LICENSE).
+  MIT License (see crates/diffr-core/src/tags/linguist/LICENSE).
 
-tree-sitter grammars (vendored_parsers/)
+tree-sitter grammars (crates/diffr-core/vendored_parsers/)
   Each grammar directory carries its upstream license file. Grammars
   without a license file in their source tree are listed here:
   - tree-sitter-janet-simple: https://github.com/sogaiu/tree-sitter-janet-simple
-    CC0 1.0 Universal (see vendored_parsers/tree-sitter-janet-simple/LICENSE).
+    CC0 1.0 Universal (see crates/diffr-core/vendored_parsers/tree-sitter-janet-simple/LICENSE).
+
+Pierre components (web/, bundled into the browser build)
+  @pierre/diffs (stylesheet and icons), @pierre/trees (file tree), and
+  @pierre/theme (syntax colours), by The Pierre Computer Company.
+  https://diffs.com  https://trees.software
+  Apache License 2.0 (see each package's LICENSE). diffr-web reproduces
+  the @pierre/diffs DOM so its stylesheet applies; the rendering code is
+  diffr's own. @pierre/trees carries its own NOTICE for code derived from
+  @headless-tree/core (MIT).
+
+Geist and Geist Mono fonts (web/, via the geist package)
+  Copyright (c) 2023 Vercel, in collaboration with basement.studio.
+  SIL Open Font License 1.1.

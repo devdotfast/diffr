@@ -1,0 +1,999 @@
+//! `[plugins]`: the order plugins run in, and one entry per plugin with its
+//! switch and options. Also `plugin.toml`, the static description every
+//! plugin folder carries: the plugin's name, title and options schema.
+//!
+//! The embedded default config selects bundled plugins. An explicit `order`
+//! is authoritative; every declared entry must appear exactly once. Bundled
+//! entries use embedded assets and implementations; external entries require
+//! a folder containing `plugin.toml` and `plugin.wasm`. No external entry
+//! falls back to a native implementation. Options come from each manifest.
+use super::builtin;
+use crate::config::ConfigError;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Map, Value};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+
+/// The key in a plugin entry that turns the plugin on and off.
+pub const ENABLED: &str = "enabled";
+
+/// The key in a plugin entry that points at a plugin folder on disk.
+pub const PATH: &str = "path";
+
+/// The keys in a plugin entry that diffr owns: a plugin's options may not
+/// use them.
+pub const RESERVED: [&str; 3] = [ENABLED, PATH, "instances"];
+
+/// A plugin folder's description, and its component when it has one.
+pub const MANIFEST_FILE: &str = "plugin.toml";
+/// An option's default that depends on another option's value:
+/// `{ key = "<option>", values = { <value> = <default>, ... } }`.
+const DEFAULT_BY: &str = "x-default-by";
+pub const COMPONENT_FILE: &str = "plugin.wasm";
+
+/// A plugin's `plugin.toml`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Manifest {
+    /// The plugin's entry name in `[plugins]`, and the prefix of every tag
+    /// its queries set: `<name>:<tag>`.
+    pub name: String,
+    /// Opt in only when independent instances can process different files.
+    /// No cross-call state, ordering, or unique external side effects may be required.
+    #[serde(default)]
+    pub parallel: bool,
+    /// The human name settings screens group the plugin's settings under.
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    /// How settings screens show the `enabled` switch, and whether the
+    /// plugin is on by default. Without it the switch is titled
+    /// `Run <title>` and the plugin is on.
+    #[serde(default)]
+    pub enabled: Option<Switch>,
+    /// Each option's JSON Schema, in the order settings screens list them.
+    /// Every option has a `title`; one with a `default` is pre-filled.
+    #[serde(default)]
+    pub options: Map<String, Value>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Switch {
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    /// Whether an entry that does not set `enabled` runs the plugin.
+    #[serde(default = "on")]
+    pub default: bool,
+}
+
+fn on() -> bool {
+    true
+}
+
+impl Manifest {
+    /// Parse and check a `plugin.toml`.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let manifest: Self = toml::from_str(text).map_err(|error| error.to_string())?;
+        manifest.check()?;
+        Ok(manifest)
+    }
+
+    /// The manifest has a name and a title, every option has a title and
+    /// is not a key diffr owns, the options schema is valid, and every
+    /// default satisfies it.
+    fn check(&self) -> Result<(), String> {
+        if self.name.trim().is_empty() {
+            return Err("the plugin has no name".to_owned());
+        }
+        if self.title.trim().is_empty() {
+            return Err(format!("{}: the plugin has no title", self.name));
+        }
+        if let Some(reserved) = RESERVED.iter().find(|key| self.options.contains_key(**key)) {
+            return Err(format!(
+                "{}: the options declare {reserved:?}, which diffr owns",
+                self.name
+            ));
+        }
+        if let Some((key, _)) = self.options.iter().find(|(_, option)| {
+            option
+                .get("title")
+                .and_then(Value::as_str)
+                .is_none_or(|title| title.trim().is_empty())
+        }) {
+            return Err(format!(
+                "{}: option {key:?} has no title for settings screens",
+                self.name
+            ));
+        }
+        self.validate(&self.defaults())
+            .map_err(|error| format!("{}: the defaults: {error}", self.name))?;
+        self.check_defaults_by()
+    }
+
+    /// Every `x-default-by` names an option with choices, gives a default
+    /// for each choice, and every choice's defaults satisfy the schema.
+    fn check_defaults_by(&self) -> Result<(), String> {
+        for (name, option) in &self.options {
+            let Some(by) = option.get(DEFAULT_BY) else {
+                continue;
+            };
+            let invalid =
+                |problem: &str| format!("{}: option {name:?}: {DEFAULT_BY} {problem}", self.name);
+            let key = by
+                .get("key")
+                .and_then(Value::as_str)
+                .ok_or_else(|| invalid("needs a key"))?;
+            let mut chain = vec![name.as_str()];
+            let mut next = key;
+            while let Some(by) = self
+                .options
+                .get(next)
+                .and_then(|option| option.get(DEFAULT_BY))
+            {
+                if chain.contains(&next) {
+                    return Err(invalid(&format!("forms a cycle through {chain:?}")));
+                }
+                chain.push(next);
+                next = by.get("key").and_then(Value::as_str).unwrap_or_default();
+            }
+            let values = by
+                .get("values")
+                .and_then(Value::as_object)
+                .ok_or_else(|| invalid("needs values"))?;
+            let choices: Vec<&str> = self
+                .options
+                .get(key)
+                .and_then(|option| option.get("enum"))
+                .and_then(Value::as_array)
+                .ok_or_else(|| invalid(&format!("key {key:?} is not an option with choices")))?
+                .iter()
+                .filter_map(Value::as_str)
+                .collect();
+            let mut given: Vec<&str> = values.keys().map(String::as_str).collect();
+            let mut expected = choices.clone();
+            given.sort_unstable();
+            expected.sort_unstable();
+            if given != expected {
+                return Err(invalid(&format!(
+                    "must give a default for each of {choices:?}"
+                )));
+            }
+            for choice in choices {
+                let mut options = Map::from_iter([(key.to_owned(), Value::from(choice))]);
+                self.fill_defaults(&mut options);
+                self.validate(&options).map_err(|error| {
+                    format!(
+                        "{}: the defaults for {key} = {choice:?}: {error}",
+                        self.name
+                    )
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The JSON Schema of the plugin's options as an object: unknown keys
+    /// are errors.
+    fn options_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": self.options,
+            "additionalProperties": false,
+        })
+    }
+
+    /// Check `options` against the options schema. The message leads with
+    /// the dotted path of the key it concerns, when there is one.
+    pub fn validate(&self, options: &Map<String, Value>) -> Result<(), String> {
+        let validator = jsonschema::validator_for(&self.options_schema())
+            .map_err(|error| format!("the options schema is invalid: {error}"))?;
+        let instance = Value::Object(options.clone());
+        let errors: Vec<String> = validator
+            .iter_errors(&instance)
+            .map(|error| match error.instance_path().as_str() {
+                "" => error.to_string(),
+                path => format!(
+                    "{}: {error}",
+                    path.trim_start_matches('/').replace('/', ".")
+                ),
+            })
+            .collect();
+        match errors.is_empty() {
+            true => Ok(()),
+            false => Err(errors.join("; ")),
+        }
+    }
+
+    /// Whether an entry that does not set `enabled` runs the plugin.
+    pub fn enabled_by_default(&self) -> bool {
+        self.enabled.as_ref().is_none_or(|switch| switch.default)
+    }
+
+    /// Every option that declares a default, with it.
+    pub fn defaults(&self) -> Map<String, Value> {
+        self.options
+            .iter()
+            .filter_map(|(key, option)| {
+                option
+                    .get("default")
+                    .map(|default| (key.clone(), default.clone()))
+            })
+            .collect()
+    }
+
+    /// Fill every option `options` leaves unset: from its `default`, or from
+    /// its `x-default-by` for the value its key has.
+    pub fn fill_defaults(&self, options: &mut Map<String, Value>) {
+        for (key, default) in self.defaults() {
+            options.entry(key).or_insert(default);
+        }
+        // A default may follow one that follows another, declared in any
+        // order: fill until a round fills nothing.
+        loop {
+            let mut filled = false;
+            for (name, option) in &self.options {
+                let Some(by) = option
+                    .get(DEFAULT_BY)
+                    .filter(|_| !options.contains_key(name))
+                else {
+                    continue;
+                };
+                let default = by
+                    .get("key")
+                    .and_then(Value::as_str)
+                    .and_then(|key| options.get(key))
+                    .and_then(Value::as_str)
+                    .and_then(|choice| by["values"].get(choice))
+                    .cloned();
+                if let Some(default) = default {
+                    options.insert(name.clone(), default);
+                    filled = true;
+                }
+            }
+            if !filled {
+                break;
+            }
+        }
+    }
+
+    /// The entry this plugin adds to `diffr config schema` under `plugins`.
+    /// Each option keeps its own schema, with the plugin's title as its
+    /// `x-group` unless it sets one. An option whose type is an array or an
+    /// object is marked `"x-settings": false`: settings screens edit
+    /// scalars.
+    pub fn settings_schema(&self) -> Value {
+        let group = &self.title;
+        let (title, description) = match &self.enabled {
+            Some(switch) => (switch.title.clone(), switch.description.clone()),
+            None => (format!("Run {group}"), self.description.clone()),
+        };
+        let enabled = self.enabled_by_default();
+        let mut properties = Map::new();
+        properties.insert(
+            ENABLED.to_owned(),
+            json!({
+                "type": "boolean",
+                "title": title,
+                "description": description,
+                "default": enabled,
+                "x-group": group,
+            }),
+        );
+        if self.parallel {
+            properties.insert("instances".into(), json!({
+                "type": "integer", "minimum": 1, "maximum": 64, "default": 4,
+                "title": "Parallel instances", "description": "Maximum simultaneous deferred plugin calls across all files.",
+                "x-group": group,
+            }));
+        }
+        for (key, option) in &self.options {
+            let mut option = option.clone();
+            if let Some(option) = option.as_object_mut() {
+                option
+                    .entry("x-group")
+                    .or_insert_with(|| Value::String(group.clone()));
+                let structured = |kind: &Value| matches!(kind.as_str(), Some("array" | "object"));
+                let structured = match option.get("type") {
+                    Some(Value::Array(kinds)) => kinds.iter().any(structured),
+                    Some(kind) => structured(kind),
+                    None => false,
+                };
+                if structured {
+                    option.insert("x-settings".to_owned(), Value::Bool(false));
+                }
+            }
+            properties.insert(key.clone(), option);
+        }
+        json!({
+            "type": "object",
+            "title": group,
+            "description": self.description,
+            "properties": properties,
+        })
+    }
+}
+
+/// `[plugins]`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(from = "PluginTables", into = "PluginTables")]
+pub struct PluginsConfig {
+    /// The plugins in the order they run; each sees the region trees the
+    /// ones before it left. Every entry is listed exactly once.
+    pub order: Vec<String>,
+    /// Every entry, by plugin name.
+    pub entries: BTreeMap<String, Entry>,
+}
+
+/// The on-disk namespaces. An explicit order makes the listed entries
+/// authoritative; a partial settings file without order inherits the defaults.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct PluginTables {
+    order: Option<Vec<String>>,
+    bundled: BTreeMap<String, Entry>,
+    external: BTreeMap<String, Entry>,
+}
+
+fn default_tables() -> PluginTables {
+    #[derive(Deserialize)]
+    struct Defaults {
+        plugins: PluginTables,
+    }
+    toml::from_str::<Defaults>(crate::config::DEFAULT_CONFIG)
+        .expect("embedded plugin defaults")
+        .plugins
+}
+
+impl From<PluginTables> for PluginsConfig {
+    fn from(tables: PluginTables) -> Self {
+        let mut bundled = tables.bundled;
+        let order = tables.order.unwrap_or_else(|| {
+            let defaults = default_tables();
+            for (name, default) in defaults.bundled {
+                let entry = bundled.entry(name).or_default();
+                if entry.enabled.is_none() {
+                    entry.enabled = default.enabled;
+                }
+                for (key, value) in default.options {
+                    entry.options.entry(key).or_insert(value);
+                }
+            }
+            defaults.order.expect("embedded default order")
+        });
+        for reference in &order {
+            if let Some(name) = reference.strip_prefix("bundled.") {
+                bundled.entry(name.into()).or_default();
+            }
+        }
+        let entries = bundled
+            .into_iter()
+            .map(|(name, entry)| (format!("bundled.{name}"), entry))
+            .chain(
+                tables
+                    .external
+                    .into_iter()
+                    .map(|(name, entry)| (format!("external.{name}"), entry)),
+            )
+            .collect();
+        Self { order, entries }
+    }
+}
+
+impl From<PluginsConfig> for PluginTables {
+    fn from(config: PluginsConfig) -> Self {
+        let mut tables = Self {
+            order: Some(config.order),
+            ..Self::default()
+        };
+        for (reference, entry) in config.entries {
+            let (source, name) = reference
+                .split_once('.')
+                .expect("resolved plugin reference");
+            match source {
+                "bundled" => {
+                    tables.bundled.insert(name.into(), entry);
+                }
+                "external" => {
+                    tables.external.insert(name.into(), entry);
+                }
+                _ => unreachable!("resolved plugin namespace"),
+            }
+        }
+        tables
+    }
+}
+
+/// One plugin's entry: diffr's keys, and the plugin's options.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Entry {
+    /// Whether the plugin runs; once resolved, set, from the file or the
+    /// plugin's default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Host-owned deferred-work bound, shared by all files of this plugin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instances: Option<usize>,
+    /// The plugin's folder on disk, as written: relative to the
+    /// configuration file's directory, or absolute.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+    /// The folder, loaded when the configuration resolves: `path`'s, or the
+    /// bundled plugin's.
+    #[serde(skip)]
+    pub folder: Option<Folder>,
+    #[serde(flatten)]
+    pub options: Map<String, Value>,
+}
+
+/// Where a plugin folder is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Location {
+    /// Embedded in diffr: `plugins/<name>/`.
+    Bundled,
+    /// On disk. Canonical.
+    Disk(PathBuf),
+}
+
+/// A component loaded from disk or embedded with the executable.
+pub enum ComponentSource {
+    File(PathBuf),
+    Bundled(&'static [u8]),
+}
+
+/// A plugin folder and the `plugin.toml` in it.
+#[derive(Clone, Debug)]
+pub struct Folder {
+    pub location: Location,
+    pub manifest: Manifest,
+}
+
+impl Folder {
+    /// The bundled plugin `name`'s embedded folder.
+    fn bundled(name: &str) -> Option<Self> {
+        builtin::manifest(name).map(|manifest| Self {
+            location: Location::Bundled,
+            manifest: manifest.clone(),
+        })
+    }
+
+    /// External entries always name plugin.wasm, even when it is missing.
+    /// A bundled native plugin has no component; other bundles embed one.
+    pub fn component(&self) -> Option<ComponentSource> {
+        match &self.location {
+            Location::Bundled => {
+                builtin::component(&self.manifest.name).map(ComponentSource::Bundled)
+            }
+            Location::Disk(dir) => Some(ComponentSource::File(dir.join(COMPONENT_FILE))),
+        }
+    }
+
+    /// Load the folder at `dir` for the entry `name`: its `plugin.toml` must
+    /// name the entry.
+    fn load(name: &str, dir: &Path) -> Result<Self, ConfigError> {
+        let dir = std::fs::canonicalize(dir)
+            .map_err(|error| ConfigError(format!("{}: {error}", dir.display())))?;
+        let manifest_path = dir.join(MANIFEST_FILE);
+        let text = std::fs::read_to_string(&manifest_path)
+            .map_err(|error| ConfigError(format!("{}: {error}", manifest_path.display())))?;
+        let manifest = Manifest::parse(&text)
+            .map_err(|error| ConfigError(format!("{}: {error}", manifest_path.display())))?;
+        if manifest.name != name {
+            return Err(ConfigError(format!(
+                "{}: the plugin is named {:?}, not {name:?}",
+                manifest_path.display(),
+                manifest.name
+            )));
+        }
+        Ok(Self {
+            location: Location::Disk(dir),
+            manifest,
+        })
+    }
+}
+
+impl Entry {
+    /// The entry's folder. Every entry has one once the configuration
+    /// resolves.
+    pub fn folder(&self) -> &Folder {
+        self.folder
+            .as_ref()
+            .expect("a resolved entry has its plugin folder")
+    }
+
+    /// Whether the plugin runs.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.expect("a resolved entry is enabled or not")
+    }
+}
+
+impl Default for PluginsConfig {
+    fn default() -> Self {
+        let mut config = Self::from(default_tables());
+        config
+            .resolve(Path::new(""))
+            .expect("the bundled plugins' defaults are valid");
+        config
+    }
+}
+
+impl PluginsConfig {
+    /// Resolve each selected entry, validate its options, fill their defaults,
+    /// and require every entry to appear in the explicit order exactly once.
+    pub fn resolve(&mut self, base: &Path) -> Result<(), ConfigError> {
+        for (reference, entry) in &mut self.entries {
+            let (source, name) = reference
+                .split_once('.')
+                .ok_or_else(|| ConfigError(format!("invalid plugin reference {reference:?}")))?;
+            let folder = match (source, &entry.path) {
+                ("external", Some(path)) => Folder::load(name, &base.join(path))
+                    .map_err(|error| ConfigError(format!("plugins.{reference}: {error}")))?,
+                ("external", None) => return Err(ConfigError(format!("plugins.{reference}: external plugins require path"))),
+                ("bundled", None) => Folder::bundled(name).ok_or_else(|| ConfigError(format!("plugins.{reference}: unknown bundled plugin")))?,
+                ("bundled", Some(_)) => return Err(ConfigError(format!("plugins.{reference}: bundled plugins cannot set path; use plugins.external.{name}"))),
+                _ => return Err(ConfigError(format!("unknown plugin namespace {source:?}"))),
+            };
+            let manifest = &folder.manifest;
+            entry.enabled.get_or_insert(manifest.enabled_by_default());
+            let instances = entry
+                .instances
+                .unwrap_or(if manifest.parallel { 4 } else { 1 });
+            if !(1..=64).contains(&instances) || (!manifest.parallel && instances != 1) {
+                return Err(ConfigError(format!("plugins.{reference}.instances: expected 1..=64 for a parallel plugin, or 1 for a serial plugin")));
+            }
+            // Only parallel plugins offer the setting.
+            if manifest.parallel {
+                entry.instances = Some(instances);
+            }
+            manifest
+                .validate(&entry.options)
+                .map_err(|error| ConfigError(format!("plugins.{reference}: {error}")))?;
+            manifest.fill_defaults(&mut entry.options);
+            entry.folder = Some(folder);
+        }
+        let mut identities = BTreeSet::new();
+        for entry in self.entries.values().filter(|entry| entry.is_enabled()) {
+            let name = &entry.folder().manifest.name;
+            if !identities.insert(name) {
+                return Err(ConfigError(format!(
+                    "plugin {name:?} is enabled in both bundled and external namespaces"
+                )));
+            }
+        }
+        let mut seen = BTreeSet::new();
+        for name in &self.order {
+            if !self.entries.contains_key(name) {
+                return Err(ConfigError(format!(
+                    "plugins.order: no plugin entry named {name:?}"
+                )));
+            }
+            if !seen.insert(name.as_str()) {
+                return Err(ConfigError(format!(
+                    "plugins.order: {name:?} is listed twice"
+                )));
+            }
+        }
+        if let Some(missing) = self
+            .entries
+            .keys()
+            .find(|name| !seen.contains(name.as_str()))
+        {
+            return Err(ConfigError(format!(
+                "plugins.order: the plugin entry {missing:?} is not listed"
+            )));
+        }
+        Ok(())
+    }
+
+    /// The enabled entries, in `order`.
+    pub fn enabled(&self) -> impl Iterator<Item = (&str, &Entry)> {
+        self.order.iter().filter_map(|name| {
+            self.entries
+                .get(name)
+                .filter(|entry| entry.is_enabled())
+                .map(|entry| (name.as_str(), entry))
+        })
+    }
+
+    /// The `plugins` property of `diffr config schema`: `order`, and every
+    /// bundled plugin's entry.
+    pub fn schema() -> Value {
+        let mut properties = Map::new();
+        properties.insert(
+            "order".to_owned(),
+            json!({
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "The plugins in the order they run; each sees the region trees the ones before it left. Every entry is listed exactly once.",
+                "default": Self::default().order,
+                "x-settings": false,
+            }),
+        );
+        let bundled: Map<String, Value> = builtin::manifests()
+            .iter()
+            .map(|manifest| (manifest.name.clone(), manifest.settings_schema()))
+            .collect();
+        properties.insert(
+            "bundled".into(),
+            json!({"type": "object", "properties": bundled}),
+        );
+        properties.insert("external".into(), json!({"type": "object", "x-settings": false, "additionalProperties": {"type": "object"}}));
+        json!({
+            "type": "object",
+            "description": "The plugins that decide what starts collapsed, hidden, linked or grouped, and the fold queries they own.",
+            "properties": properties,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::Config;
+
+    #[test]
+    fn the_prompt_description_links_to_its_default_in_the_source() {
+        let source = include_str!("../../../../plugins/summarize/plugin.toml");
+        let lines: Vec<&str> = source.lines().collect();
+        let table = lines
+            .iter()
+            .position(|line| *line == "[options.system_prompt]")
+            .unwrap();
+        let start = table
+            + lines[table..]
+                .iter()
+                .position(|line| line.starts_with("default = \"\"\""))
+                .unwrap();
+        let end = start
+            + lines[start..]
+                .iter()
+                .position(|line| line.ends_with("\"\"\""))
+                .unwrap();
+        let manifest = super::builtin::manifest("summarize").unwrap();
+        let description = manifest.options["system_prompt"]["description"]
+            .as_str()
+            .unwrap();
+        let link = format!(
+            "https://github.com/devdotfast/diffr/blob/main/plugins/summarize/plugin.toml#L{}-L{}",
+            start + 1,
+            end + 1
+        );
+        assert!(
+            description.contains(&link),
+            "{description}\nexpected {link}"
+        );
+    }
+
+    #[test]
+    fn defaults_can_follow_another_option() {
+        let summarize = |toml: &str| {
+            Config::from_toml(toml).unwrap().plugins.entries["bundled.summarize"]
+                .options
+                .clone()
+        };
+        let openai = summarize("[plugins.bundled.summarize]\nprovider = 'openai'\n");
+        assert_eq!(openai["model"], "gpt-6-luna");
+        assert_eq!(
+            openai["provider_details"]["key_variables"],
+            serde_json::json!(["OPENAI_API_KEY"])
+        );
+        assert_eq!(summarize("")["model"], "gemini-3.8-flash");
+        let pinned = summarize("[plugins.bundled.summarize]\nprovider = 'openai'\nmodel = 'o9'\n");
+        assert_eq!(pinned["model"], "o9");
+    }
+
+    #[test]
+    fn a_default_can_follow_a_default_that_follows_another() {
+        // Declared so that `size` comes before the `kind` it follows, and
+        // `kind` before the `mode` it follows.
+        let manifest = super::Manifest::parse(
+            "name = 'p'\ntitle = 'P'\n\
+             [options.size]\ntitle = 'Size'\ntype = 'integer'\n\
+             [options.size.\"x-default-by\"]\nkey = 'kind'\nvalues = { small = 1, large = 2 }\n\
+             [options.kind]\ntitle = 'Kind'\nenum = ['small', 'large']\n\
+             [options.kind.\"x-default-by\"]\nkey = 'mode'\nvalues = { a = 'small', b = 'large' }\n\
+             [options.mode]\ntitle = 'Mode'\nenum = ['a', 'b']\ndefault = 'a'\n",
+        )
+        .unwrap();
+        let mut options = serde_json::Map::new();
+        manifest.fill_defaults(&mut options);
+        assert_eq!(options["kind"], "small");
+        assert_eq!(options["size"], 1);
+        let mut options = serde_json::Map::from_iter([("mode".to_owned(), "b".into())]);
+        manifest.fill_defaults(&mut options);
+        assert_eq!(options["size"], 2);
+        let cycle = super::Manifest::parse(
+            "name = 'p'\ntitle = 'P'\n\
+             [options.x]\ntitle = 'X'\nenum = ['a', 'b']\n\
+             [options.x.\"x-default-by\"]\nkey = 'y'\nvalues = { a = 'a', b = 'b' }\n\
+             [options.y]\ntitle = 'Y'\nenum = ['a', 'b']\n\
+             [options.y.\"x-default-by\"]\nkey = 'x'\nvalues = { a = 'a', b = 'b' }\n",
+        )
+        .unwrap_err();
+        assert!(cycle.contains("cycle"), "{cycle}");
+    }
+
+    #[test]
+    fn a_default_by_must_cover_every_choice_and_fit_the_option() {
+        let manifest = |values: &str| {
+            super::Manifest::parse(&format!(
+                "name = 'p'\ntitle = 'P'\n[options.kind]\ntitle = 'Kind'\nenum = ['a', 'b']\ndefault = 'a'\n[options.size]\ntitle = 'Size'\ntype = 'integer'\n[options.size.\"x-default-by\"]\nkey = 'kind'\nvalues = {{ {values} }}\n"
+            ))
+        };
+        assert!(manifest("a = 1, b = 2").is_ok());
+        let missing = manifest("a = 1").unwrap_err();
+        assert!(missing.contains("\"b\""), "{missing}");
+        let mistyped = manifest("a = 1, b = 'big'").unwrap_err();
+        assert!(mistyped.contains("kind = \"b\""), "{mistyped}");
+    }
+
+    #[test]
+    fn the_embedded_defaults_agree_with_each_plugin_toml() {
+        for (name, entry) in super::default_tables().bundled {
+            let defaults = super::builtin::manifest(&name)
+                .expect("a bundled plugin")
+                .defaults();
+            for (key, value) in &entry.options {
+                if let Some(default) = defaults.get(key) {
+                    assert_eq!(value, default, "{name}.{key}");
+                }
+            }
+        }
+    }
+    use serde_json::Value;
+
+    /// Every setting the schema lists, as a settings screen flattens it:
+    /// `(dotted key, title, group, type)`. A key marked `"x-settings": false`
+    /// is not a setting.
+    fn settings(schema: &Value) -> Vec<(String, String, String, String)> {
+        fn resolve<'a>(node: &'a Value, root: &'a Value) -> &'a Value {
+            match node.get("$ref").and_then(Value::as_str) {
+                Some(reference) => {
+                    let name = reference.rsplit('/').next().unwrap();
+                    &root["$defs"][name]
+                }
+                None => node,
+            }
+        }
+        fn walk(
+            node: &Value,
+            root: &Value,
+            key: &str,
+            out: &mut Vec<(String, String, String, String)>,
+        ) {
+            let resolved = resolve(node, root);
+            if node.get("x-settings") == Some(&Value::Bool(false)) {
+                return;
+            }
+            if let Some(properties) = resolved.get("properties").and_then(Value::as_object) {
+                for (name, child) in properties {
+                    let key = if key.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{key}.{name}")
+                    };
+                    walk(child, root, &key, out);
+                }
+                return;
+            }
+            let text = |field: &str| {
+                node.get(field)
+                    .or_else(|| resolved.get(field))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            let kind = resolved
+                .get("type")
+                .map(|kind| kind.to_string())
+                .or_else(|| resolved.get("enum").map(|_| "enum".to_owned()))
+                .or_else(|| resolved.get("anyOf").map(|_| "optional".to_owned()))
+                .expect("a typed setting");
+            out.push((key.to_owned(), text("title"), text("x-group"), kind));
+        }
+        let mut out = Vec::new();
+        walk(schema, schema, "", &mut out);
+        out
+    }
+
+    #[test]
+    fn every_plugin_setting_has_a_title_and_a_group_and_is_a_scalar() {
+        let schema = Config::schema();
+        let settings = settings(&schema);
+        let plugins: Vec<_> = settings
+            .iter()
+            .filter(|(key, ..)| key.starts_with("plugins."))
+            .collect();
+        assert!(plugins.len() > 10, "{plugins:?}");
+        for (key, title, group, kind) in &settings {
+            assert!(
+                !title.is_empty() && !group.is_empty(),
+                "{key} has no title or group"
+            );
+            assert!(
+                !kind.contains("array") && !kind.contains("object"),
+                "{key} is {kind}"
+            );
+        }
+        let group = |key: &str| {
+            plugins
+                .iter()
+                .find(|(own, ..)| own == key)
+                .map(|(_, title, group, _)| (title.as_str(), group.as_str()))
+                .unwrap_or_else(|| panic!("no setting {key}"))
+        };
+        assert_eq!(
+            group("plugins.bundled.deleted-bodies.enabled"),
+            (
+                "Collapse deleted function bodies",
+                "Deleted function bodies"
+            )
+        );
+        assert_eq!(
+            group("plugins.bundled.summarize.model"),
+            ("Model", "Summaries")
+        );
+        assert_eq!(
+            group("plugins.bundled.summarize.provider"),
+            ("Provider", "Summaries")
+        );
+        assert!(schema["properties"].get("languages").is_none());
+        let plugins = &schema["properties"]["plugins"]["properties"];
+        assert_eq!(plugins["order"]["x-settings"], false);
+        assert_eq!(plugins["order"]["type"], "array");
+        assert_eq!(
+            plugins["bundled"]["properties"]["hide-files"]["properties"]["tags"]["x-settings"],
+            false
+        );
+        let summarize = &plugins["bundled"]["properties"]["summarize"]["properties"];
+        // A text setting, so settings screens let users edit the prompt.
+        assert!(summarize["system_prompt"].get("x-settings").is_none());
+        assert!(summarize["system_prompt"]["default"]
+            .as_str()
+            .unwrap()
+            .starts_with("For each listed fold, rewrite that function body"));
+        let keys: Vec<&String> = plugins.as_object().unwrap().keys().collect();
+        assert_eq!(keys, ["order", "bundled", "external"]);
+    }
+
+    #[test]
+    fn explicit_order_is_authoritative_and_names_every_entry_once() {
+        let config = Config::from_toml("[plugins]\norder = ['bundled.context']\n").unwrap();
+        assert_eq!(config.plugins.entries.len(), 1);
+        for (text, message) in [
+            (
+                "[plugins]\norder = ['bundled.context', 'bundled.context']",
+                "listed twice",
+            ),
+            ("[plugins]\norder = ['external.mine']", "no plugin entry"),
+            (
+                "[plugins]\norder = []\n[plugins.bundled.context]",
+                "is not listed",
+            ),
+            ("[plugins.external.mine]", "external plugins require path"),
+            ("[plugins.bundled.unknown]", "unknown bundled plugin"),
+            (
+                "[plugins.bundled.context]\npath = 'context'",
+                "bundled plugins cannot set path",
+            ),
+            ("[plugins.context]", "unknown field"),
+        ] {
+            let error = Config::from_toml(text).err().unwrap().to_string();
+            assert!(error.contains(message), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_path_entry_loads_its_folder_relative_to_the_config_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("plugins/mine");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("plugin.toml"),
+            "name = 'mine'\ntitle = 'Mine'\n[options.depth]\ntype = 'integer'\ntitle = 'Depth'\ndefault = 2\n",
+        )
+        .unwrap();
+        let order = "order = ['bundled.context', 'bundled.hide-files', 'bundled.deleted-bodies', 'bundled.test-bodies', 'bundled.removed-runs', 'bundled.summarize', 'bundled.group', 'external.mine']";
+        let config = Config::from_toml_in(
+            &format!("[plugins]\n{order}\n[plugins.external.mine]\npath = 'plugins/mine'\n"),
+            dir.path(),
+        )
+        .unwrap();
+        let entry = &config.plugins.entries["external.mine"];
+        assert_eq!(entry.options["depth"], 2);
+        assert!(entry.options.get("path").is_none());
+
+        let error = |toml: &str| {
+            Config::from_toml_in(toml, dir.path())
+                .err()
+                .unwrap()
+                .to_string()
+        };
+        let renamed = error(&format!(
+            "[plugins]\n{}\n[plugins.external.other]\npath = 'plugins/mine'\n",
+            order.replace("'external.mine'", "'external.other'")
+        ));
+        assert!(
+            renamed.starts_with("plugins.external.other: ")
+                && renamed.ends_with("the plugin is named \"mine\", not \"other\""),
+            "{renamed}"
+        );
+        let missing = error("[plugins.bundled.group]\npath = 'plugins/absent'\n");
+        assert!(missing.starts_with("plugins.bundled.group: "), "{missing}");
+        std::fs::write(
+            folder.join("plugin.toml"),
+            "name = 'mine'\ntitle = 'Mine'\n[options.path]\ntype = 'string'\ntitle = 'Path'\n",
+        )
+        .unwrap();
+        let reserved = error(&format!(
+            "[plugins]\n{order}\n[plugins.external.mine]\npath = 'plugins/mine'\n"
+        ));
+        assert!(reserved.contains("which diffr owns"), "{reserved}");
+    }
+
+    #[test]
+    fn options_are_checked_against_the_plugin_toml_and_filled_with_its_defaults() {
+        let config = Config::from_toml(
+            "[plugins.bundled.deleted-bodies]\nmin_lines = 30\n[plugins.bundled.hide-files]\nenabled = false\n",
+        )
+        .unwrap();
+        let deleted = &config.plugins.entries["bundled.deleted-bodies"];
+        assert_eq!(deleted.enabled, Some(true));
+        assert_eq!(deleted.options["min_lines"], 30);
+        let hide = &config.plugins.entries["bundled.hide-files"];
+        assert_eq!(hide.enabled, Some(false));
+        assert_eq!(hide.options["deleted"], true);
+        assert_eq!(
+            hide.options["tags"],
+            serde_json::json!(["generated", "vendored", "test"])
+        );
+        let summarize = &config.plugins.entries["bundled.summarize"];
+        assert_eq!(
+            summarize.enabled,
+            Some(false),
+            "the summarizer needs a key, so it is off unless turned on"
+        );
+        assert!(summarize.options.get("api_key").is_none());
+        assert_eq!(summarize.options["request_timeout_ms"], 60_000);
+        let error = |toml: &str| Config::from_toml(toml).err().unwrap().to_string();
+        let typo = error("[plugins.bundled.deleted-bodies]\ntypo = 1\n");
+        assert!(
+            typo.starts_with("plugins.bundled.deleted-bodies: ") && typo.contains("typo"),
+            "{typo}"
+        );
+        let mistyped = error("[plugins.bundled.deleted-bodies]\nmin_lines = 'many'\n");
+        assert!(
+            mistyped.starts_with("plugins.bundled.deleted-bodies: min_lines: "),
+            "{mistyped}"
+        );
+        let zero = error("[plugins.bundled.summarize]\nmax_concurrency = 0\n");
+        assert!(
+            zero.starts_with("plugins.bundled.summarize: max_concurrency: "),
+            "{zero}"
+        );
+        assert!(error("[plugins.bundled.summarize]\nprovider = 'mistral'\n")
+            .starts_with("plugins.bundled.summarize: provider: "));
+    }
+}
+
+#[cfg(test)]
+mod concurrency_tests {
+    use crate::config::Config;
+
+    #[test]
+    fn concurrency_requires_plugin_opt_in_and_a_bounded_positive_count() {
+        for count in [0, 65] {
+            assert!(Config::from_toml(&format!(
+                "[plugins.bundled.summarize]\ninstances = {count}\n"
+            ))
+            .is_err());
+        }
+        assert!(Config::from_toml("[plugins.bundled.context]\ninstances = 2\n").is_err());
+        let config = Config::from_toml("[plugins.bundled.summarize]\ninstances = 3\n").unwrap();
+        assert_eq!(
+            config.plugins.entries["bundled.summarize"].instances,
+            Some(3)
+        );
+    }
+}

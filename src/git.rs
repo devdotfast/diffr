@@ -1,25 +1,24 @@
 //! Git comparison selection and lazy source loading used by the CLI and its stdout stream.
-use crate::config::Params;
 use crate::pairing::Pairing;
+use crate::params::Params;
 use crate::plugin::Pipeline;
-use crate::protocol;
+use crate::protocol::{self, record::FileError};
 use crate::summary::{DiffResult, FileContent, FileFormat};
-use crate::tags::{self, Attributes, Prefix, PREFIX_BYTES};
+use crate::tags::{self, AttrValue, Attributes, Prefix, PREFIX_BYTES};
 use anyhow::Context as _;
-use git2::{Delta, Diff, DiffFindOptions, DiffOptions, Oid, Repository};
+use git2::{AttrCheckFlags, Delta, Diff, DiffFindOptions, DiffOptions, Oid, Repository};
 use serde::Deserialize;
 use std::{
-    fmt,
     io::Read as _,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-pub(crate) type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum Operand {
+pub enum Operand {
     Revision { r#ref: String },
     Index,
     WorkingTree,
@@ -27,7 +26,7 @@ pub(crate) enum Operand {
 }
 
 impl Operand {
-    pub(crate) fn revision(reference: impl Into<String>) -> Self {
+    pub fn revision(reference: impl Into<String>) -> Self {
         Self::Revision {
             r#ref: reference.into(),
         }
@@ -58,24 +57,24 @@ impl Operand {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct Comparison {
-    pub(crate) before: Operand,
-    pub(crate) after: Operand,
+pub struct Comparison {
+    pub before: Operand,
+    pub after: Operand,
 }
 
 impl Comparison {
-    pub(crate) fn resolve(&self, repo: &Repository) -> Result<Self> {
+    pub fn resolve(&self, repo: &Repository) -> Result<Self> {
         Ok(Self {
             before: self.before.resolve(repo)?,
             after: self.after.resolve(repo)?,
         })
     }
 
-    pub(crate) fn reverse(&mut self) {
+    pub fn reverse(&mut self) {
         std::mem::swap(&mut self.before, &mut self.after);
     }
 
-    pub(crate) fn diff<'a>(&self, repo: &'a Repository, files: &FileParams) -> Result<Diff<'a>> {
+    pub fn diff<'a>(&self, repo: &'a Repository, files: &FileParams) -> Result<Diff<'a>> {
         use Operand::*;
         let (before, after, reverse) = match (&self.before, &self.after) {
             (WorkingTree, _) | (Index, Revision { .. } | EmptyTree) => {
@@ -121,7 +120,7 @@ impl Comparison {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum FileStatus {
+pub enum FileStatus {
     Added,
     Deleted,
     Modified,
@@ -131,18 +130,18 @@ pub(crate) enum FileStatus {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct FileChange {
-    pub(crate) old_path: Option<String>,
-    pub(crate) new_path: Option<String>,
-    pub(crate) status: FileStatus,
+pub struct FileChange {
+    pub old_path: Option<String>,
+    pub new_path: Option<String>,
+    pub status: FileStatus,
     /// Sorted and deduplicated; see [`crate::tags`].
-    pub(crate) tags: Vec<String>,
+    pub tags: Vec<String>,
     /// Git's delta sides.
-    pub(crate) sides: Pairing<protocol::FileRef>,
+    pub sides: Pairing<protocol::FileRef>,
 }
 
 impl FileChange {
-    pub(crate) fn path(&self) -> &str {
+    pub fn path(&self) -> &str {
         self.new_path
             .as_deref()
             .or(self.old_path.as_deref())
@@ -150,7 +149,7 @@ impl FileChange {
     }
 
     /// A standalone comparison of two paths, outside any repository.
-    pub(crate) fn standalone(before: &str, after: &str) -> Self {
+    pub fn standalone(before: &str, after: &str) -> Self {
         let file_ref = |path: &str| protocol::FileRef {
             path: path.to_owned(),
             oid: String::new(),
@@ -184,7 +183,7 @@ impl FileChange {
         }
     }
 
-    pub(crate) fn manifest_entry(&self) -> protocol::FileChange {
+    pub fn manifest_entry(&self) -> protocol::FileChange {
         protocol::FileChange {
             file: self.sides.clone(),
             status: match self.status {
@@ -201,44 +200,6 @@ impl FileChange {
     }
 }
 
-/// Why one file could not be diffed. Loading attaches it to the error, and
-/// the stream turns it into the record's `code`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FileError {
-    UnsupportedFileType,
-    ReadFailed,
-    NotUtf8,
-    Unmerged,
-}
-
-impl FileError {
-    pub(crate) fn code(self) -> &'static str {
-        match self {
-            Self::UnsupportedFileType => "unsupported_file_type",
-            Self::ReadFailed => "read_failed",
-            Self::NotUtf8 => "not_utf8",
-            Self::Unmerged => "unmerged",
-        }
-    }
-}
-
-impl fmt::Display for FileError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::UnsupportedFileType => {
-                "structural diffs currently require regular text files (not symlinks or submodules)"
-            }
-            Self::ReadFailed => "could not read the source",
-            Self::NotUtf8 => "the source is not valid UTF-8",
-            Self::Unmerged => {
-                "unmerged index entry: resolve the conflict before requesting a structural diff"
-            }
-        })
-    }
-}
-
-impl std::error::Error for FileError {}
-
 impl From<&Operand> for protocol::Snapshot {
     fn from(operand: &Operand) -> Self {
         match operand {
@@ -252,11 +213,11 @@ impl From<&Operand> for protocol::Snapshot {
 
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct FileParams {
-    pub(crate) order: Vec<String>,
+pub struct FileParams {
+    pub order: Vec<String>,
     /// Repository-relative paths or wildcard patterns; empty selects all changed files.
-    pub(crate) paths: Vec<String>,
-    pub(crate) renames: bool,
+    pub paths: Vec<String>,
+    pub renames: bool,
 }
 
 impl Default for FileParams {
@@ -378,6 +339,41 @@ struct PendingFile {
     prefix_error: Option<anyhow::Error>,
 }
 
+/// Look up the file's tag attributes with git's precedence: the repository's
+/// `$GIT_DIR/info/attributes`, then `.gitattributes` files (deeper first,
+/// working tree then index), then the user-wide file
+/// (`core.attributesFile`, default `$XDG_CONFIG_HOME/git/attributes`),
+/// then the system file.
+fn attributes(repo: &Repository, path: &str) -> Result<Attributes> {
+    let bytes =
+        |name: &str| repo.get_attr_bytes(Path::new(path), name, AttrCheckFlags::FILE_THEN_INDEX);
+    let (generated, vendored, docs, tags) = (
+        bytes("linguist-generated")?,
+        bytes("linguist-vendored")?,
+        bytes("linguist-documentation")?,
+        bytes("diffr-tags")?,
+    );
+    Ok(Attributes::from_values(
+        path,
+        attr_value(generated),
+        attr_value(vendored),
+        attr_value(docs),
+        attr_value(tags),
+    )?)
+}
+
+/// libgit2 marks set and unset attributes by pointer identity, so each value
+/// is classified before it is copied anywhere.
+fn attr_value(bytes: Option<&[u8]>) -> AttrValue<'_> {
+    match git2::AttrValue::from_bytes(bytes) {
+        git2::AttrValue::True => AttrValue::True,
+        git2::AttrValue::False => AttrValue::False,
+        git2::AttrValue::Unspecified => AttrValue::Unspecified,
+        git2::AttrValue::String(value) => AttrValue::String(value),
+        git2::AttrValue::Bytes(value) => AttrValue::Bytes(value),
+    }
+}
+
 /// Whether Linguist's content rules call these bytes generated. A prefix cut
 /// inside a UTF-8 sequence drops the partial character; bytes that are not
 /// UTF-8 otherwise are not text, and no content rule applies.
@@ -392,16 +388,16 @@ fn generated_by_content(path: &str, bytes: &[u8], complete: bool) -> bool {
     tags::generated_by_content(path, &Prefix { text, complete })
 }
 
-pub(crate) struct DiffSession {
+pub struct DiffSession {
     repo: Repository,
-    pub(crate) comparison: Comparison,
+    pub comparison: Comparison,
     params: Arc<Params>,
     files: std::vec::IntoIter<PendingFile>,
-    pub(crate) diff_options: crate::options::DiffOptions,
+    pub diff_options: crate::params::DiffOptions,
 }
 
 impl DiffSession {
-    pub(crate) fn file_manifest(&self) -> Vec<FileChange> {
+    pub fn file_manifest(&self) -> Vec<FileChange> {
         self.files
             .as_slice()
             .iter()
@@ -409,14 +405,14 @@ impl DiffSession {
             .collect()
     }
 
-    pub(crate) fn remaining(&self) -> usize {
+    pub fn remaining(&self) -> usize {
         self.files.len()
     }
 
     /// List the comparison's files and their tags: the bundled rules, git
     /// attributes, then each plugin's `classify` in `pipeline`, whose
     /// failure fails the session.
-    pub(crate) fn open(
+    pub fn open(
         workspace: &Path,
         comparison: Comparison,
         params: Arc<Params>,
@@ -495,7 +491,7 @@ impl DiffSession {
                     file.new_path.is_none(),
                 )?;
                 let path = file.path();
-                let attributes = Attributes::lookup(&repo, path)?;
+                let attributes = attributes(&repo, path)?;
                 let mut bundled = tags::from_path(path);
                 let mut prefix_error = None;
                 // Content is read only when it could change the answer.
@@ -548,27 +544,27 @@ impl DiffSession {
             comparison,
             params,
             files: pending.into_iter(),
-            diff_options: crate::options::DiffOptions::default(),
+            diff_options: crate::params::DiffOptions::default(),
         })
     }
 }
 
 /// Sources read on the session thread; diffing needs no repository access.
-pub(crate) struct LoadedFile {
-    pub(crate) file: FileChange,
+pub struct LoadedFile {
+    pub file: FileChange,
     before: Vec<u8>,
     after: Vec<u8>,
-    pub(crate) params: Arc<Params>,
-    diff_options: crate::options::DiffOptions,
+    pub params: Arc<Params>,
+    diff_options: crate::params::DiffOptions,
 }
 
 impl LoadedFile {
-    pub(crate) fn sizes(&self) -> (u64, u64) {
+    pub fn sizes(&self) -> (u64, u64) {
         (self.before.len() as u64, self.after.len() as u64)
     }
 
     /// A fold query conflict fails this file alone.
-    pub(crate) fn diff(&self) -> anyhow::Result<DiffResult> {
+    pub fn diff(&self) -> anyhow::Result<DiffResult> {
         // Preserve binary files as successful, size-only records. Rejecting
         // them while loading bypasses the protocol and TUI's binary support.
         if self.before.contains(&0) || self.after.contains(&0) {
@@ -584,7 +580,7 @@ impl LoadedFile {
         }
         let before = std::str::from_utf8(&self.before).context(FileError::NotUtf8)?;
         let after = std::str::from_utf8(&self.after).context(FileError::NotUtf8)?;
-        let options = crate::options::DiffOptions {
+        let options = crate::params::DiffOptions {
             generated: self.file.tags.iter().any(|tag| tag == tags::GENERATED),
             ..self.diff_options.clone()
         };
@@ -600,7 +596,7 @@ impl LoadedFile {
 
 impl DiffSession {
     /// Read the next file's sources without diffing them.
-    pub(crate) fn load(&mut self) -> Option<(FileChange, anyhow::Result<LoadedFile>)> {
+    pub fn load(&mut self) -> Option<(FileChange, anyhow::Result<LoadedFile>)> {
         let mut pending = self.files.next()?;
         let prefix_error = pending.prefix_error.take();
         let result = (|| {
@@ -619,5 +615,39 @@ impl DiffSession {
             })
         })();
         Some((pending.file, result))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tags::{from_path, GENERATED};
+    use std::fs;
+
+    /// A repository whose user-wide attributes file is `core.attributesFile`.
+    #[test]
+    fn the_user_wide_attributes_file_is_honoured_below_the_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path().join("repo")).unwrap();
+        let user = dir.path().join("attributes");
+        fs::write(
+            &user,
+            "*.json linguist-generated diffr-tags=user\nCargo.lock -linguist-generated\n",
+        )
+        .unwrap();
+        repo.config()
+            .unwrap()
+            .set_str("core.attributesFile", user.to_str().unwrap())
+            .unwrap();
+        fs::write(
+            dir.path().join("repo/.gitattributes"),
+            "local.json diffr-tags=repo -linguist-generated\n",
+        )
+        .unwrap();
+        let lookup = |path: &str| attributes(&repo, path).unwrap().resolve(from_path(path));
+        assert_eq!(lookup("web/schema.json"), vec![GENERATED, "user"]);
+        assert_eq!(lookup("sub/Cargo.lock"), Vec::<String>::new());
+        assert_eq!(lookup("Cargo.toml"), Vec::<String>::new());
+        assert_eq!(lookup("local.json"), vec!["repo"]);
     }
 }

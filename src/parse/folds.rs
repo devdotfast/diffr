@@ -80,7 +80,7 @@ pub(crate) fn classify(
         let pattern = &compiled.patterns[matched.pattern_index];
         let named = |name: &'static str| {
             matched
-                .captures
+                .captures()
                 .iter()
                 .filter(move |capture| query.capture_names()[capture.index as usize] == name)
         };

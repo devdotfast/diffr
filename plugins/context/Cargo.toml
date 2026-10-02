@@ -3,7 +3,7 @@ name = "diffr-plugin-context"
 description = "The context plugin: collapse unchanged stretches far from any change."
 version = "0.1.1"
 edition = "2021"
-rust-version = "1.85.0"
+rust-version = "1.99.0"
 license = "MIT"
 links = "diffr-plugin-context"
 

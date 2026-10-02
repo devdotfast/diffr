@@ -10,8 +10,8 @@
 
 use std::borrow::Borrow;
 use std::path::Path;
+use std::sync::LazyLock;
 
-use lazy_static::lazy_static;
 use regex::Regex;
 use strum::{EnumIter, IntoEnumIterator};
 
@@ -551,10 +551,9 @@ pub(crate) fn guess(
 /// <https://www.gnu.org/software/emacs/manual/html_node/emacs/Choosing-Modes.html>
 /// <https://www.gnu.org/software/emacs/manual/html_node/emacs/Specifying-File-Variables.html>
 fn from_emacs_mode_header(src: &str) -> Option<Language> {
-    lazy_static! {
-        static ref MODE_RE: Regex = Regex::new(r"-\*- *mode: *([a-zA-Z0-9_+-]+).*-\*-").unwrap();
-        static ref SHORTHAND_RE: Regex = Regex::new(r"-\*-(.+)-\*-").unwrap();
-    }
+    static MODE_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"-\*- *mode: *([a-zA-Z0-9_+-]+).*-\*-").unwrap());
+    static SHORTHAND_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"-\*-(.+)-\*-").unwrap());
 
     // Emacs allows the mode header to occur on the second line if the
     // first line is a shebang.
@@ -621,9 +620,8 @@ fn from_emacs_mode_header(src: &str) -> Option<Language> {
 
 /// Try to guess the language based on a shebang present in the source.
 fn from_shebang(src: &str) -> Option<Language> {
-    lazy_static! {
-        static ref RE: Regex = Regex::new(r"^#! *(?:/usr/bin/env )?([^ ]+)").unwrap();
-    }
+    static RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^#! *(?:/usr/bin/env )?([^ ]+)").unwrap());
     if let Some(first_line) = split_on_newlines(src).next() {
         if let Some(cap) = RE.captures(first_line) {
             let interpreter_path = Path::new(&cap[1]);

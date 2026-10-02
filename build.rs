@@ -113,7 +113,7 @@ fn commit_info() {
 fn native_plugins() {
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     println!("cargo:rerun-if-changed=Cargo.toml");
-    let manifest: toml::Value = std::fs::read_to_string(root.join("Cargo.toml"))
+    let manifest: toml::Table = std::fs::read_to_string(root.join("Cargo.toml"))
         .unwrap()
         .parse()
         .unwrap();
@@ -137,7 +137,7 @@ fn native_plugins() {
         );
         let file = folder.join("Cargo.toml");
         println!("cargo:rerun-if-changed={}", file.display());
-        let package: toml::Value = std::fs::read_to_string(file).unwrap().parse().unwrap();
+        let package: toml::Table = std::fs::read_to_string(file).unwrap().parse().unwrap();
         let Some(plugin) = package
             .get("package")
             .and_then(|p| p.get("metadata"))
@@ -150,7 +150,7 @@ fn native_plugins() {
             .and_then(toml::Value::as_bool)
             .unwrap_or(false);
         let plugin_manifest = folder.join("plugin.toml");
-        let description: toml::Value = std::fs::read_to_string(&plugin_manifest)
+        let description: toml::Table = std::fs::read_to_string(&plugin_manifest)
             .expect("a plugin has plugin.toml")
             .parse()
             .unwrap();

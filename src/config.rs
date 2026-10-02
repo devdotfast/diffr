@@ -213,8 +213,9 @@ impl Config {
     /// path of the key they concern, such as `diff.typo`.
     pub(crate) fn from_toml_in(source: &str, directory: &Path) -> Result<Self, ConfigError> {
         let source = prune::forget_legacy(source);
-        let mut config: Self = serde_path_to_error::deserialize(toml::Deserializer::new(&source))
-            .map_err(|error| {
+        let document =
+            toml::Deserializer::parse(&source).map_err(|error| ConfigError(error.to_string()))?;
+        let mut config: Self = serde_path_to_error::deserialize(document).map_err(|error| {
             let path = error.path().to_string();
             let message = error.inner().to_string();
             ConfigError(match path.as_str() {

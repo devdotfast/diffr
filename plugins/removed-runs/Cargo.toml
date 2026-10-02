@@ -3,7 +3,7 @@ name = "diffr-plugin-removed-runs"
 description = "The removed-runs plugin: collapse the middle of long removed stretches."
 version = "0.1.1"
 edition = "2021"
-rust-version = "1.85.0"
+rust-version = "1.99.0"
 license = "MIT"
 links = "diffr-plugin-removed-runs"
 

@@ -1,8 +1,8 @@
 //! A fallback "parser" for plain text.
 
-use lazy_static::lazy_static;
 use line_numbers::{LinePositions, SingleLineSpan};
 use regex::Regex;
+use std::sync::LazyLock;
 
 use crate::diff::lcs_diff;
 use crate::parse::syntax::{AtomKind, MatchKind, MatchedPos, TokenKind};
@@ -11,9 +11,7 @@ use crate::words::split_words;
 const MAX_WORDS_IN_LINE: usize = 1000;
 
 fn split_lines_keep_newline(s: &str) -> Vec<&str> {
-    lazy_static! {
-        static ref NEWLINE_RE: Regex = Regex::new("\n").unwrap();
-    }
+    static NEWLINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new("\n").unwrap());
 
     let mut offset = 0;
     let mut lines = vec![];

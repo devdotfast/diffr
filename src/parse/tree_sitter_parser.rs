@@ -1131,8 +1131,10 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                     .collect(),
                 delimiter_tokens: vec![("[", "]"), ("(", ")"), ("{", "}")],
                 ignore_trailing_tokens: vec![],
-                highlight_query: ts::Query::new(&language, tree_sitter_solidity::HIGHLIGHT_QUERY)
-                    .unwrap(),
+                // The bundled highlights query no longer compiles with
+                // tree-sitter 0.26.11+:
+                // https://github.com/JoranHonig/tree-sitter-solidity/pull/80
+                highlight_query: ts::Query::new(&language, "").unwrap(),
                 sub_languages: vec![],
             }
         }
@@ -1459,7 +1461,7 @@ fn tree_highlights(
     let mut type_ids = DftHashSet::default();
 
     while let Some(m) = q_matches.next() {
-        for c in m.captures {
+        for c in m.captures() {
             if comment_capture_ids.contains(&c.index) {
                 comment_ids.insert(c.node.id());
             } else if keyword_ish_capture_ids.contains(&c.index) {
@@ -1494,7 +1496,7 @@ pub(crate) fn highlight_captures(
     let mut matches = cursor.matches(&config.highlight_query, tree.root_node(), src.as_bytes());
     let mut captures = Vec::new();
     while let Some(matched) = matches.next() {
-        for capture in matched.captures {
+        for capture in matched.captures() {
             let node = capture.node;
             if node.start_byte() < node.end_byte() {
                 captures.push((

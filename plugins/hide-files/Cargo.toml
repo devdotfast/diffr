@@ -3,7 +3,7 @@ name = "diffr-plugin-hide-files"
 description = "The hide-files plugin: hide whole files by their tags or status."
 version = "0.1.1"
 edition = "2021"
-rust-version = "1.85.0"
+rust-version = "1.99.0"
 license = "MIT"
 links = "diffr-plugin-hide-files"
 

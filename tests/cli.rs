@@ -40,7 +40,23 @@ fn optional_languages_follow_build_features() {
     std::fs::create_dir_all(config.parent().unwrap()).unwrap();
     std::fs::write(&config, "[plugins]\norder = []\n").unwrap();
 
+    std::fs::write(dir.path().join("csharp_1.cs"), "class A { int x = 1; }\n").unwrap();
+    std::fs::write(dir.path().join("csharp_2.cs"), "class A { int x = 2; }\n").unwrap();
+
     for (name, fixture, extension, enabled) in [
+        ("C#", "csharp", "cs", cfg!(feature = "lang-csharp")),
+        (
+            "Objective-C",
+            "objc_module",
+            "m",
+            cfg!(feature = "lang-objc"),
+        ),
+        (
+            "Objective-C",
+            "objc_header",
+            "h",
+            cfg!(feature = "lang-objc"),
+        ),
         ("Apex", "apex", "trigger", cfg!(feature = "lang-apex")),
         ("Haskell", "haskell", "hs", cfg!(feature = "lang-haskell")),
         ("Julia", "julia", "jl", cfg!(feature = "lang-julia")),
@@ -58,13 +74,20 @@ fn optional_languages_follow_build_features() {
         ("F#", "f_sharp", "fs", cfg!(feature = "lang-fsharp")),
     ] {
         assert_eq!(listed.contains(name), enabled, "{name}");
+        let root = if fixture == "csharp" {
+            dir.path()
+        } else {
+            std::path::Path::new("sample_files")
+        };
+        let lhs = root.join(format!("{fixture}_1.{extension}"));
+        let rhs = root.join(format!("{fixture}_2.{extension}"));
         let output = get_base_command()
             .args([
                 "--format",
                 "ndjson",
                 "--no-index",
-                &format!("sample_files/{fixture}_1.{extension}"),
-                &format!("sample_files/{fixture}_2.{extension}"),
+                lhs.to_str().unwrap(),
+                rhs.to_str().unwrap(),
             ])
             .env("XDG_CONFIG_HOME", dir.path())
             .assert()
@@ -79,6 +102,22 @@ fn optional_languages_follow_build_features() {
             .collect();
         let file = events.iter().find(|event| event["type"] == "file").unwrap();
         assert_eq!(file["diff"]["type"], "text", "{name}: {file}");
+        assert_eq!(
+            file["diff"]["lhs"]["text"]
+                .as_str()
+                .unwrap()
+                .trim_end_matches('\n'),
+            std::fs::read_to_string(lhs).unwrap().trim_end_matches('\n'),
+            "{name}"
+        );
+        assert_eq!(
+            file["diff"]["rhs"]["text"]
+                .as_str()
+                .unwrap()
+                .trim_end_matches('\n'),
+            std::fs::read_to_string(rhs).unwrap().trim_end_matches('\n'),
+            "{name}"
+        );
         assert_eq!(
             file["diff"]["stats"]["fallback"]["code"].as_str(),
             if enabled {

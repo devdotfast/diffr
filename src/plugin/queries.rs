@@ -247,7 +247,9 @@ mod tests {
     #[test]
     fn every_bundled_query_resolves_and_compiles() {
         let config = Config::default();
-        let pipeline = Pipeline::from_config(&config.plugins, Path::new(".")).unwrap();
+        let pipeline =
+            Pipeline::from_config(&config.plugins, crate::plugin::native::test_environment())
+                .unwrap();
         let assembled = assemble(&pipeline.queries().unwrap()).unwrap();
         assert_eq!(
             assembled.keys().map(String::as_str).collect::<Vec<_>>(),
@@ -282,7 +284,9 @@ mod tests {
     fn disabled_plugins_contribute_no_queries() {
         let config =
             Config::from_toml("[plugins.bundled.deleted-bodies]\nenabled = false\n").unwrap();
-        let pipeline = Pipeline::from_config(&config.plugins, Path::new(".")).unwrap();
+        let pipeline =
+            Pipeline::from_config(&config.plugins, crate::plugin::native::test_environment())
+                .unwrap();
         let assembled = assemble(&pipeline.queries().unwrap()).unwrap();
         assert!(!assembled["rust"]
             .iter()

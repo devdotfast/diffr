@@ -60,6 +60,10 @@ fn native_plugins() {
         .parse()
         .unwrap();
     let mut code = String::from("const PLUGINS: &[&sdk::Registration] = &[\n");
+    // The bundled components' own code, which every plugin crate also builds
+    // natively: tests run it without a component runtime.
+    let mut component_code =
+        String::from("#[cfg(test)]\nconst COMPONENT_CODE: &[&sdk::Registration] = &[\n");
     let mut files = String::from("const FILES: &[(&str, &str)] = &[\n");
     let mut components = String::from("const COMPONENTS: &[(&str, &[u8])] = &[\n");
     embed_queries(
@@ -112,6 +116,10 @@ fn native_plugins() {
             let wasm = folder.join("plugin.wasm");
             println!("cargo:rerun-if-changed={}", wasm.display());
             components.push_str(&format!("    ({name:?}, include_bytes!({wasm:?})),\n"));
+            component_code.push_str(&format!(
+                "    &{}::DIFFR_PLUGIN,\n",
+                dependency.replace('-', "_")
+            ));
         }
         if native {
             code.push_str(&format!(
@@ -121,6 +129,8 @@ fn native_plugins() {
         }
     }
     code.push_str("];\n");
+    component_code.push_str("];\n");
+    code.push_str(&component_code);
     files.push_str("];\n");
     components.push_str("];\n");
     files.push_str(&components);

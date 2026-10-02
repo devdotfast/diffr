@@ -2,14 +2,13 @@
 use crate::pairing::Pairing;
 use crate::params::Params;
 use crate::plugin::Pipeline;
-use crate::protocol;
+use crate::protocol::{self, record::FileError};
 use crate::summary::{DiffResult, FileContent, FileFormat};
-use crate::tags::{self, Attributes, Prefix, PREFIX_BYTES};
+use crate::tags::{self, AttrValue, Attributes, Prefix, PREFIX_BYTES};
 use anyhow::Context as _;
-use git2::{Delta, Diff, DiffFindOptions, DiffOptions, Oid, Repository};
+use git2::{AttrCheckFlags, Delta, Diff, DiffFindOptions, DiffOptions, Oid, Repository};
 use serde::Deserialize;
 use std::{
-    fmt,
     io::Read as _,
     path::{Path, PathBuf},
     sync::Arc,
@@ -201,44 +200,6 @@ impl FileChange {
     }
 }
 
-/// Why one file could not be diffed. Loading attaches it to the error, and
-/// the stream turns it into the record's `code`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FileError {
-    UnsupportedFileType,
-    ReadFailed,
-    NotUtf8,
-    Unmerged,
-}
-
-impl FileError {
-    pub fn code(self) -> &'static str {
-        match self {
-            Self::UnsupportedFileType => "unsupported_file_type",
-            Self::ReadFailed => "read_failed",
-            Self::NotUtf8 => "not_utf8",
-            Self::Unmerged => "unmerged",
-        }
-    }
-}
-
-impl fmt::Display for FileError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::UnsupportedFileType => {
-                "structural diffs currently require regular text files (not symlinks or submodules)"
-            }
-            Self::ReadFailed => "could not read the source",
-            Self::NotUtf8 => "the source is not valid UTF-8",
-            Self::Unmerged => {
-                "unmerged index entry: resolve the conflict before requesting a structural diff"
-            }
-        })
-    }
-}
-
-impl std::error::Error for FileError {}
-
 impl From<&Operand> for protocol::Snapshot {
     fn from(operand: &Operand) -> Self {
         match operand {
@@ -378,6 +339,41 @@ struct PendingFile {
     prefix_error: Option<anyhow::Error>,
 }
 
+/// Look up the file's tag attributes with git's precedence: the repository's
+/// `$GIT_DIR/info/attributes`, then `.gitattributes` files (deeper first,
+/// working tree then index), then the user-wide file
+/// (`core.attributesFile`, default `$XDG_CONFIG_HOME/git/attributes`),
+/// then the system file.
+fn attributes(repo: &Repository, path: &str) -> Result<Attributes> {
+    let bytes =
+        |name: &str| repo.get_attr_bytes(Path::new(path), name, AttrCheckFlags::FILE_THEN_INDEX);
+    let (generated, vendored, docs, tags) = (
+        bytes("linguist-generated")?,
+        bytes("linguist-vendored")?,
+        bytes("linguist-documentation")?,
+        bytes("diffr-tags")?,
+    );
+    Ok(Attributes::from_values(
+        path,
+        attr_value(generated),
+        attr_value(vendored),
+        attr_value(docs),
+        attr_value(tags),
+    )?)
+}
+
+/// libgit2 marks set and unset attributes by pointer identity, so each value
+/// is classified before it is copied anywhere.
+fn attr_value(bytes: Option<&[u8]>) -> AttrValue<'_> {
+    match git2::AttrValue::from_bytes(bytes) {
+        git2::AttrValue::True => AttrValue::True,
+        git2::AttrValue::False => AttrValue::False,
+        git2::AttrValue::Unspecified => AttrValue::Unspecified,
+        git2::AttrValue::String(value) => AttrValue::String(value),
+        git2::AttrValue::Bytes(value) => AttrValue::Bytes(value),
+    }
+}
+
 /// Whether Linguist's content rules call these bytes generated. A prefix cut
 /// inside a UTF-8 sequence drops the partial character; bytes that are not
 /// UTF-8 otherwise are not text, and no content rule applies.
@@ -495,7 +491,7 @@ impl DiffSession {
                     file.new_path.is_none(),
                 )?;
                 let path = file.path();
-                let attributes = Attributes::lookup(&repo, path)?;
+                let attributes = attributes(&repo, path)?;
                 let mut bundled = tags::from_path(path);
                 let mut prefix_error = None;
                 // Content is read only when it could change the answer.
@@ -619,5 +615,39 @@ impl DiffSession {
             })
         })();
         Some((pending.file, result))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tags::{from_path, GENERATED};
+    use std::fs;
+
+    /// A repository whose user-wide attributes file is `core.attributesFile`.
+    #[test]
+    fn the_user_wide_attributes_file_is_honoured_below_the_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path().join("repo")).unwrap();
+        let user = dir.path().join("attributes");
+        fs::write(
+            &user,
+            "*.json linguist-generated diffr-tags=user\nCargo.lock -linguist-generated\n",
+        )
+        .unwrap();
+        repo.config()
+            .unwrap()
+            .set_str("core.attributesFile", user.to_str().unwrap())
+            .unwrap();
+        fs::write(
+            dir.path().join("repo/.gitattributes"),
+            "local.json diffr-tags=repo -linguist-generated\n",
+        )
+        .unwrap();
+        let lookup = |path: &str| attributes(&repo, path).unwrap().resolve(from_path(path));
+        assert_eq!(lookup("web/schema.json"), vec![GENERATED, "user"]);
+        assert_eq!(lookup("sub/Cargo.lock"), Vec::<String>::new());
+        assert_eq!(lookup("Cargo.toml"), Vec::<String>::new());
+        assert_eq!(lookup("local.json"), vec!["repo"]);
     }
 }

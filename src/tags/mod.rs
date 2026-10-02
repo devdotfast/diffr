@@ -13,13 +13,9 @@ mod generated;
 
 pub use generated::Prefix;
 
-#[cfg(not(target_family = "wasm"))]
-use git2::{AttrCheckFlags, AttrValue, Repository};
 use regex::Regex;
 use std::collections::BTreeSet;
 use std::fmt;
-#[cfg(not(target_family = "wasm"))]
-use std::path::Path;
 use std::sync::LazyLock;
 
 pub const GENERATED: &str = "generated";
@@ -106,6 +102,21 @@ impl fmt::Display for TagError {
 
 impl std::error::Error for TagError {}
 
+/// The value of one git attribute for a file, as git reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttrValue<'a> {
+    /// `name`: set.
+    True,
+    /// `-name`: unset.
+    False,
+    /// No pattern mentions the attribute.
+    Unspecified,
+    /// `name=value`.
+    String(&'a str),
+    /// `name=value` where the value is not UTF-8.
+    Bytes(&'a [u8]),
+}
+
 /// What git attributes say about one file. `None` leaves the bundled rules
 /// in charge of that tag.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -117,36 +128,9 @@ pub struct Attributes {
 }
 
 impl Attributes {
-    #[cfg(not(target_family = "wasm"))]
-    /// Look up the file's attributes with git's precedence: the repository's
-    /// `$GIT_DIR/info/attributes`, then `.gitattributes` files (deeper first,
-    /// working tree then index), then the user-wide file
-    /// (`core.attributesFile`, default `$XDG_CONFIG_HOME/git/attributes`),
-    /// then the system file.
-    pub fn lookup(
-        repo: &Repository,
-        path: &str,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        // libgit2 marks set and unset attributes by pointer identity, so
-        // each value is classified before it is copied anywhere.
-        let attr = |name: &str| -> Result<AttrValue<'_>, git2::Error> {
-            Ok(AttrValue::from_bytes(repo.get_attr_bytes(
-                Path::new(path),
-                name,
-                AttrCheckFlags::FILE_THEN_INDEX,
-            )?))
-        };
-        Ok(Self::from_values(
-            path,
-            attr("linguist-generated")?,
-            attr("linguist-vendored")?,
-            attr("linguist-documentation")?,
-            attr("diffr-tags")?,
-        )?)
-    }
-
-    #[cfg(not(target_family = "wasm"))]
-    fn from_values(
+    /// The attributes from the values git gave for one file. Looking them
+    /// up needs the repository, which is the caller's.
+    pub fn from_values(
         path: &str,
         generated: AttrValue<'_>,
         vendored: AttrValue<'_>,
@@ -200,7 +184,6 @@ impl Attributes {
     }
 }
 
-#[cfg(not(target_family = "wasm"))]
 /// Linguist's reading of a boolean attribute: unspecified has no opinion,
 /// unset or the string `false` is false, and anything else is true.
 fn linguist_flag(value: AttrValue<'_>) -> Option<bool> {
@@ -223,7 +206,6 @@ pub fn is_tag(tag: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
-#[cfg(not(target_family = "wasm"))]
 /// `a,b`: each one a tag.
 fn parse_tags(value: &str) -> Result<Vec<String>, String> {
     value
@@ -240,11 +222,9 @@ fn parse_tags(value: &str) -> Result<Vec<String>, String> {
         .collect()
 }
 
-#[cfg(all(test, not(target_family = "wasm")))]
+#[cfg(test)]
 mod tests {
     use super::*;
-    use git2::Repository;
-    use std::fs;
 
     fn tags(path: &str) -> Vec<&'static str> {
         from_path(path).into_iter().collect()
@@ -391,36 +371,5 @@ mod tests {
             let error = resolve("web/a.json", none, bad).unwrap_err().to_string();
             assert!(error.starts_with("web/a.json: diffr-tags"), "{error}");
         }
-    }
-
-    /// A repository whose user-wide attributes file is `core.attributesFile`.
-    #[test]
-    fn the_user_wide_attributes_file_is_honoured_below_the_repository() {
-        let dir = tempfile::tempdir().unwrap();
-        let repo = Repository::init(dir.path().join("repo")).unwrap();
-        let user = dir.path().join("attributes");
-        fs::write(
-            &user,
-            "*.json linguist-generated diffr-tags=user\nCargo.lock -linguist-generated\n",
-        )
-        .unwrap();
-        repo.config()
-            .unwrap()
-            .set_str("core.attributesFile", user.to_str().unwrap())
-            .unwrap();
-        fs::write(
-            dir.path().join("repo/.gitattributes"),
-            "local.json diffr-tags=repo -linguist-generated\n",
-        )
-        .unwrap();
-        let lookup = |path: &str| {
-            Attributes::lookup(&repo, path)
-                .unwrap()
-                .resolve(from_path(path))
-        };
-        assert_eq!(lookup("web/schema.json"), vec![GENERATED, "user"]);
-        assert_eq!(lookup("sub/Cargo.lock"), Vec::<String>::new());
-        assert_eq!(lookup("Cargo.toml"), Vec::<String>::new());
-        assert_eq!(lookup("local.json"), vec!["repo"]);
     }
 }

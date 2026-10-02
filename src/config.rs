@@ -248,8 +248,11 @@ impl Config {
 
     #[cfg(test)]
     pub fn compile(self) -> Result<Params, ConfigError> {
-        let pipeline = crate::plugin::Pipeline::from_config(&self.plugins, Path::new("."))
-            .map_err(|error| ConfigError(format!("{error:#}")))?;
+        let pipeline = crate::plugin::Pipeline::from_config(
+            &self.plugins,
+            crate::plugin::native::test_environment(),
+        )
+        .map_err(|error| ConfigError(format!("{error:#}")))?;
         self.compile_with(&pipeline)
     }
 
@@ -297,7 +300,7 @@ fn check_tags(query: &AnnotationQuery, order: &[String]) -> Result<(), ConfigErr
 /// configuration.
 pub fn default_params() -> Params {
     let config = Config::default();
-    let pipeline = crate::plugin::Pipeline::from_config(&config.plugins, Path::new("."))
+    let pipeline = crate::plugin::Pipeline::from_config(&config.plugins, Default::default())
         .expect("invalid bundled plugin configuration");
     config
         .compile_with(&pipeline)

@@ -6,9 +6,9 @@
 //! SDK's `Plugin` trait, and diffr loads and runs every plugin the same way.
 //! [`config`] reads each enabled entry's folder, embedded or on disk: its
 //! `plugin.toml` (name, title, options schema) and, when it has
-//! one, its component. [`Pipeline::from_config`] then takes the component
-//! ([`wasm`]) or the bundled native implementation registered under
-//! the plugin's name ([`native`]), and makes the plugin's instance pool for
+//! one, its component. [`Pipeline::from_config`] then takes the component,
+//! loaded by the caller's [`Components`], or the bundled native
+//! implementation registered under the plugin's name ([`native`]), and makes the plugin's instance pool for
 //! the run from its options. From there a [`Runner`] is a [`Runner`]: each
 //! call gets the contract's records, built once per call from the file's
 //! manifest entry and its current trees, and the host functions of [`host`].
@@ -35,6 +35,8 @@ pub mod native;
 mod pool;
 pub mod queries;
 #[cfg(not(target_family = "wasm"))]
+pub mod system;
+#[cfg(not(target_family = "wasm"))]
 pub mod wasm;
 
 #[cfg(test)]
@@ -43,16 +45,15 @@ mod tests;
 use crate::pairing::Pairing;
 use crate::protocol::{self, FileChange, FileStatus, SourcePos, SourceRange};
 use anyhow::{anyhow, Context as _};
-use config::PluginsConfig;
+use config::{ComponentSource, PluginsConfig};
 use diffr_plugin_sdk::{apply, tree, types};
-use host::Host;
+use host::{Git, Host, NoGit};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
-#[cfg(not(target_family = "wasm"))]
-use std::time::Instant;
+use std::time::Duration;
 
 /// One plugin instance: its native code or its component, made once from
 /// its options, behind the contract's two calls on a file. Each call gets
@@ -96,25 +97,61 @@ impl std::error::Error for MutationFailed {}
 /// with defaults filled in, with the host of that call.
 pub type Create<'a> = &'a dyn Fn(Host, &str) -> anyhow::Result<Box<dyn Runner>>;
 
+/// Makes a component plugin's instances, as [`Create`] does.
+pub type Instantiate = Box<dyn Fn(Host, &str) -> anyhow::Result<Box<dyn Runner>>>;
+
+/// Loads WASM component plugins: compiles and links a component once, for
+/// all of its instances. The CLI's runs them in Wasmtime.
+pub trait Components {
+    fn load(&self, source: &ComponentSource) -> anyhow::Result<Instantiate>;
+}
+
+/// Starts timing a plugin call; calling what it returns says how long the
+/// call took. Only the caller knows whether there is a clock.
+pub type Stopwatch = fn() -> Box<dyn FnOnce() -> Duration>;
+
+/// What a pipeline's plugins reach outside diffr through. The default has
+/// no git, no component runtime and no clock, which is what a caller with
+/// no repository, such as the browser build, has.
+pub struct Environment<'a> {
+    /// The directory a plugin's `git` runs in, and a component's files.
+    pub workdir: &'a Path,
+    pub git: Arc<dyn Git>,
+    /// `None` makes an enabled component plugin a setup error.
+    pub components: Option<&'a dyn Components>,
+    /// Times each `mutate` for the debug log.
+    pub stopwatch: Option<Stopwatch>,
+}
+
+impl Default for Environment<'_> {
+    fn default() -> Self {
+        Self {
+            workdir: Path::new("."),
+            git: Arc::new(NoGit),
+            components: None,
+            stopwatch: None,
+        }
+    }
+}
+
 /// A plugin in the pipeline.
 struct Loaded {
     name: Arc<str>,
     runner: Box<dyn Runner>,
 }
 
-/// The enabled plugins, in the order they run, and the directory their
-/// `git` runs in.
+/// The enabled plugins, in the order they run, and what their calls reach
+/// outside diffr through ([`Environment`]).
 pub struct Pipeline {
     plugins: Vec<Loaded>,
     workdir: Arc<Path>,
+    git: Arc<dyn Git>,
+    stopwatch: Option<Stopwatch>,
 }
 
 impl Default for Pipeline {
     fn default() -> Self {
-        Self {
-            plugins: Vec::new(),
-            workdir: Path::new(".").into(),
-        }
+        Self::empty(Environment::default())
     }
 }
 
@@ -125,28 +162,24 @@ impl Pipeline {
     /// (a component that does not compile or link, options that do not
     /// deserialize, a summarizer without an API key), which is a setup error
     /// naming the plugin.
-    pub fn from_config(config: &PluginsConfig, workdir: &Path) -> anyhow::Result<Self> {
-        let mut pipeline = Self {
-            plugins: Vec::new(),
-            workdir: workdir.into(),
-        };
-        #[cfg(not(target_family = "wasm"))]
-        let mut engine = None;
+    pub fn from_config(
+        config: &PluginsConfig,
+        environment: Environment<'_>,
+    ) -> anyhow::Result<Self> {
+        let components = environment.components;
+        let mut pipeline = Self::empty(environment);
         for (name, entry) in config.enabled() {
             let folder = entry.folder();
             let options = Value::Object(entry.options.clone());
             match folder.component() {
-                #[cfg(target_family = "wasm")]
-                Some(_) => anyhow::bail!(
-                    "plugins.{name}: WASM component plugins need the native diffr; only bundled native plugins run here"
-                ),
-                #[cfg(not(target_family = "wasm"))]
-                Some(path) => {
-                    let engine = match &engine {
-                        Some(engine) => engine,
-                        None => engine.insert(wasm::engine()?),
-                    };
-                    let plugin = wasm::WasmPlugin::load(engine, &path)
+                Some(source) => {
+                    let components = components.ok_or_else(|| {
+                        anyhow!(
+                            "plugins.{name}: WASM component plugins need the native diffr; only bundled native plugins run here"
+                        )
+                    })?;
+                    let create = components
+                        .load(&source)
                         .with_context(|| format!("plugins.{name}"))?;
                     pipeline.push_instances(
                         name,
@@ -154,7 +187,7 @@ impl Pipeline {
                         entry
                             .instances
                             .unwrap_or(if folder.manifest.parallel { 4 } else { 1 }),
-                        &|host, options| plugin.create(host, options),
+                        &*create,
                     )?
                 }
                 None => {
@@ -175,6 +208,15 @@ impl Pipeline {
             }
         }
         Ok(pipeline)
+    }
+
+    fn empty(environment: Environment<'_>) -> Self {
+        Self {
+            plugins: Vec::new(),
+            workdir: environment.workdir.into(),
+            git: environment.git,
+            stopwatch: environment.stopwatch,
+        }
     }
 
     /// Make the plugin `name` with `create` from `options` and add it to the
@@ -230,6 +272,7 @@ impl Pipeline {
         Host {
             name: Arc::clone(name),
             workdir: Arc::clone(&self.workdir),
+            git: Arc::clone(&self.git),
         }
     }
 
@@ -352,21 +395,20 @@ impl Pipeline {
         };
         let mut visibility = types::Visibility::default();
         for plugin in &self.plugins {
-            // wasm32-unknown-unknown has no clock to time the call with.
-            #[cfg(not(target_family = "wasm"))]
-            let started = Instant::now();
+            let stop = self.stopwatch.map(|start| start());
             let records = source_sides(&trees);
             let moves = plugin
                 .runner
                 .mutate(self.host(&plugin.name), &entry, &records)
                 .with_context(|| MutationFailed(plugin.name.to_string()))?;
-            #[cfg(not(target_family = "wasm"))]
-            log::debug!(
-                "plugin {}: mutate {} took {:?}",
-                plugin.name,
-                entry.path(),
-                started.elapsed()
-            );
+            if let Some(stop) = stop {
+                log::debug!(
+                    "plugin {}: mutate {} took {:?}",
+                    plugin.name,
+                    entry.path(),
+                    stop()
+                );
+            }
             apply::apply(moves, &mut trees, &mut visibility)
                 .with_context(|| MutationFailed(plugin.name.to_string()))?;
         }

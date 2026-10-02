@@ -6,8 +6,8 @@
 use diffr_cli::config::{Config, DiffConfig};
 use diffr_cli::pairing::Pairing;
 use diffr_cli::params::Params;
-use diffr_cli::plugin::Pipeline;
-use diffr_cli::protocol::stream::{self, Options};
+use diffr_cli::plugin::{Environment, Pipeline};
+use diffr_cli::protocol::record::{self, Options};
 use diffr_cli::protocol::{Event, FileChange, FileRef, FileStatus};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -59,7 +59,7 @@ impl Differ {
             None => Ok(Config::default()),
         }
         .map_err(|error| JsError::new(&error.to_string()))?;
-        let pipeline = Pipeline::from_config(&config.plugins, Path::new("."))
+        let pipeline = Pipeline::from_config(&config.plugins, Environment::default())
             .map_err(|error| JsError::new(&format!("{error:#}")))?;
         let limits = config.diff;
         let params = config
@@ -97,7 +97,7 @@ impl Differ {
         fn text(side: &Option<Side>) -> Option<&str> {
             side.as_ref().and_then(|side| side.text.as_deref())
         }
-        let (entry, event) = stream::file_from_sources(
+        let (entry, event) = record::file_from_sources(
             file,
             request.status,
             text(&request.lhs),

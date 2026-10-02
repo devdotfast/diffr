@@ -1,38 +1,44 @@
 //! diffr's side of the host function every plugin calls: `git`. A component
-//! reaches it through its import ([`super::wasm`]); a native plugin through
-//! the SDK's host function, which calls [`Host`] itself ([`super::native`]).
-//! Both run this code.
+//! reaches it through its import; a native plugin through the SDK's host
+//! function, which calls [`Host`] itself ([`super::native`]). Both run this
+//! code. Running git is the caller's: the CLI spawns it, and a caller with
+//! no repository passes [`NoGit`].
 use anyhow::Context as _;
 use diffr_plugin_sdk::host::Host as SdkHost;
 use std::path::Path;
-use std::process::Command;
 use std::sync::Arc;
+
+/// Runs git for plugins.
+pub trait Git: Send + Sync {
+    /// `git`'s stdout when it exits successfully, its stderr otherwise.
+    /// `Err` is the host failing: git could not be started, or wrote
+    /// something that is not UTF-8.
+    fn run(&self, workdir: &Path, args: &[String]) -> anyhow::Result<Result<String, String>>;
+}
+
+/// No git: every call is the host failing.
+pub struct NoGit;
+
+impl Git for NoGit {
+    fn run(&self, _: &Path, _: &[String]) -> anyhow::Result<Result<String, String>> {
+        anyhow::bail!("git is not available here")
+    }
+}
 
 /// What one call of a plugin reads and runs things in.
 #[derive(Clone)]
 pub struct Host {
     pub name: Arc<str>,
     pub workdir: Arc<Path>,
+    pub git: Arc<dyn Git>,
 }
 
 impl Host {
-    /// `git`'s stdout when it exits successfully, its stderr otherwise.
-    /// `Err` is the host failing: git could not be started, or wrote
-    /// something that is not UTF-8.
+    /// [`Git::run`] in the workdir, with errors naming the plugin.
     pub fn git(&self, args: &[String]) -> anyhow::Result<Result<String, String>> {
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(&*self.workdir)
-            .output()
-            .with_context(|| format!("plugin {}: running git {args:?}", self.name))?;
-        let text = |bytes: Vec<u8>| {
-            String::from_utf8(bytes)
-                .with_context(|| format!("plugin {}: git {args:?} wrote non-UTF-8", self.name))
-        };
-        Ok(match output.status.success() {
-            true => Ok(text(output.stdout)?),
-            false => Err(text(output.stderr)?),
-        })
+        self.git
+            .run(&self.workdir, args)
+            .with_context(|| format!("plugin {}: running git {args:?}", self.name))
     }
 }
 

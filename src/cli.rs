@@ -3,6 +3,8 @@ use crate::config::{self, Config};
 use crate::git::{Comparison, DiffSession, FileParams, Operand, Result};
 use crate::options::DebugArgs;
 use crate::params::DiffOptions;
+use crate::plugin::system::environment;
+use crate::plugin::wasm::Wasmtime;
 use crate::plugin::Pipeline;
 use clap::{
     error::ErrorKind, parser::ValueSource, ArgGroup, ArgMatches, Args, CommandFactory,
@@ -190,7 +192,7 @@ pub(crate) fn run() -> Result<i32> {
     if !streaming && !metadata_or_quiet {
         return launch_tui(&frontend_args, true);
     }
-    let stream_options = crate::protocol::stream::Options {
+    let stream_options = crate::protocol::record::Options {
         syntax: args.syntax,
         updates: args.stream_annotations,
     };
@@ -224,8 +226,9 @@ pub(crate) fn run() -> Result<i32> {
     }
     let mut config = Config::load()?;
     apply_unified(&args, &mut config);
-    let pipeline =
-        Pipeline::from_config(&config.plugins, workspace).map_err(|error| format!("{error:#}"))?;
+    let components = Wasmtime::default();
+    let pipeline = Pipeline::from_config(&config.plugins, environment(workspace, &components))
+        .map_err(|error| format!("{error:#}"))?;
     let limits = config.diff;
     let params = Arc::new(config.compile_with(&pipeline)?);
     let diff_options = diff_options(&args, &limits);
@@ -476,7 +479,7 @@ fn print_metadata(diff: &git2::Diff<'_>, args: &Cli, width: usize) -> Result<()>
 fn no_index(
     args: &Cli,
     paths: Vec<OsString>,
-    stream_options: crate::protocol::stream::Options,
+    stream_options: crate::protocol::record::Options,
 ) -> Result<i32> {
     if paths.len() != 2 {
         return Err("--no-index requires two file paths".into());
@@ -499,7 +502,9 @@ fn no_index(
     }
     let mut config = Config::load()?;
     apply_unified(args, &mut config);
-    let pipeline = Pipeline::from_config(&config.plugins, &std::env::current_dir()?)
+    let workdir = std::env::current_dir()?;
+    let components = Wasmtime::default();
+    let pipeline = Pipeline::from_config(&config.plugins, environment(&workdir, &components))
         .map_err(|error| format!("{error:#}"))?;
     let limits = config.diff;
     let config = config.compile_with(&pipeline)?;

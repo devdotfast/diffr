@@ -18,13 +18,13 @@
 //! and a plugin has no logging call of its own, it just prints.
 use super::config::ComponentSource;
 use super::host::Host;
-use super::Runner;
+use super::{Components, Instantiate, Runner};
 use anyhow::Context as _;
 use bytes::Bytes;
 use diffr_plugin_sdk::types as contract;
 use std::io::Write as _;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::task::{Context, Poll};
 use std::time::Instant;
 use wasmtime::component::{Component, HasSelf, Linker, ResourceAny, ResourceTable};
@@ -43,6 +43,27 @@ mod bindings {
 }
 
 use bindings::diffr::plugin::{host, types};
+
+/// Loads component plugins for a pipeline ([`super::Components`]). Every
+/// component compiles with one engine, made with the first.
+#[derive(Default)]
+pub struct Wasmtime {
+    engine: OnceLock<Engine>,
+}
+
+impl Components for Wasmtime {
+    fn load(&self, source: &ComponentSource) -> anyhow::Result<Instantiate> {
+        let engine = match self.engine.get() {
+            Some(engine) => engine,
+            None => {
+                let engine = engine()?;
+                self.engine.get_or_init(|| engine)
+            }
+        };
+        let plugin = WasmPlugin::load(engine, source)?;
+        Ok(Box::new(move |host, options| plugin.create(host, options)))
+    }
+}
 
 /// The engine every component of one pipeline compiles with.
 pub fn engine() -> anyhow::Result<Engine> {

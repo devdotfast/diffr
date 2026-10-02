@@ -288,7 +288,11 @@ fn go_and_javascript_comment_runs_document_functions() {
 
 #[test]
 fn the_default_pipeline_makes_every_plugin_that_is_on() {
-    let pipeline = Pipeline::from_config(&PluginsConfig::default(), Path::new(".")).unwrap();
+    let pipeline = Pipeline::from_config(
+        &PluginsConfig::default(),
+        crate::plugin::native::test_environment(),
+    )
+    .unwrap();
     let made: Vec<&str> = pipeline
         .plugins
         .iter()
@@ -430,7 +434,7 @@ fn a_plugin_that_cannot_be_made_is_a_setup_error() {
     {
         return;
     }
-    let error = Pipeline::from_config(&config.plugins, Path::new("."))
+    let error = Pipeline::from_config(&config.plugins, crate::plugin::native::test_environment())
         .err()
         .expect("a summarizer without a key cannot be made");
     assert_eq!(
@@ -444,7 +448,7 @@ fn a_plugin_that_cannot_be_made_is_a_setup_error() {
         "[plugins.bundled.summarize]\nenabled = true\nprovider = 'openai'\nmodel = 'm'\napi_key = ''\nendpoint = ''\n",
     )
     .unwrap();
-    let error = Pipeline::from_config(&config.plugins, Path::new("."))
+    let error = Pipeline::from_config(&config.plugins, crate::plugin::native::test_environment())
         .err()
         .expect("OpenAI at its default endpoint needs a key");
     assert_eq!(
@@ -478,9 +482,13 @@ fn external_plugins_never_fall_back_to_a_native_registration() {
         dir.path(),
     )
     .unwrap();
-    let error = Pipeline::from_config(&config.plugins, dir.path())
-        .err()
-        .unwrap();
+    let components = super::wasm::Wasmtime::default();
+    let error = Pipeline::from_config(
+        &config.plugins,
+        super::system::environment(dir.path(), &components),
+    )
+    .err()
+    .unwrap();
     let error = format!("{error:#}");
     assert!(error.contains("plugin.wasm"), "{error}");
     assert!(error.contains("plugins.external.context"), "{error}");

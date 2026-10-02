@@ -8,7 +8,7 @@ File selection and ordering belong to the caller, not this configuration.
 
 ```rust
 let config = Config::from_toml(toml_source)?;
-let pipeline = Pipeline::from_config(&config.plugins, workdir)?;
+let pipeline = Pipeline::from_config(&config.plugins, Environment::default())?;
 let params = config.compile_with(&pipeline)?;
 let result = DiffResult::from_sources_with_params(path, before, after, &params);
 ```

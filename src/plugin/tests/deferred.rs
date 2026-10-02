@@ -96,7 +96,7 @@ fn initial_file_is_flushed_before_enrichment_and_survives_failure() {
             },
             &params,
             &pipeline,
-            crate::protocol::stream::Options {
+            crate::protocol::record::Options {
                 syntax: false,
                 updates: true,
             },

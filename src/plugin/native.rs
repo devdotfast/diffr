@@ -4,6 +4,8 @@
 //! same records it hands a component.
 use super::host::Host;
 use super::Runner;
+#[cfg(test)]
+use super::{builtin, config::ComponentSource, Components, Environment, Instantiate};
 use diffr_plugin_sdk::native as sdk;
 use diffr_plugin_sdk::types::{FileEntry, Move, SourceSides};
 #[cfg(test)]
@@ -44,6 +46,39 @@ pub fn registered(
 ) -> anyhow::Result<Box<dyn Runner>> {
     let plugin = call(host, || (registration.create)(options))?;
     Ok(Box::new(Native(plugin)))
+}
+
+/// Runs each bundled component plugin's own code natively, for tests that
+/// need the plugin but not a component runtime.
+#[cfg(test)]
+pub struct BundledNatively;
+
+#[cfg(test)]
+impl Components for BundledNatively {
+    fn load(&self, source: &ComponentSource) -> anyhow::Result<Instantiate> {
+        let ComponentSource::Bundled(bytes) = source else {
+            anyhow::bail!("only a bundled component runs natively");
+        };
+        let registration = COMPONENT_CODE
+            .iter()
+            .find(|registration| {
+                builtin::component(registration.name).is_some_and(|own| std::ptr::eq(own, *bytes))
+            })
+            .ok_or_else(|| anyhow::anyhow!("no native code for this bundled component"))?;
+        Ok(Box::new(move |host, options| {
+            registered(registration, host, options)
+        }))
+    }
+}
+
+/// The environment tests make pipelines in: no git, and bundled components
+/// run natively.
+#[cfg(test)]
+pub fn test_environment() -> Environment<'static> {
+    Environment {
+        components: Some(&BundledNatively),
+        ..Environment::default()
+    }
 }
 
 #[cfg(test)]

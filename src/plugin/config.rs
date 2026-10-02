@@ -849,10 +849,10 @@ mod tests {
         let summarize = &plugins["bundled"]["properties"]["summarize"]["properties"];
         // A text setting, so settings screens let users edit the prompt.
         assert!(summarize["system_prompt"].get("x-settings").is_none());
-        assert!(summarize["system_prompt"]["default"]
-            .as_str()
-            .unwrap()
-            .starts_with("For each listed fold, rewrite that function body"));
+        assert_eq!(
+            summarize["system_prompt"]["default"],
+            super::builtin::manifest("summarize").unwrap().options["system_prompt"]["default"]
+        );
         let keys: Vec<&String> = plugins.as_object().unwrap().keys().collect();
         assert_eq!(keys, ["order", "bundled", "external"]);
     }

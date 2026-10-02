@@ -7,10 +7,10 @@
 //! extent really is that region, and carries that node's `syntax_id` and its
 //! pairing, so alignment follows the node the matcher paired.
 use super::query::node_range;
-use crate::config::query::AnnotationQuery;
 use crate::diff::changes::{ChangeKind, ChangeMap};
 use crate::hash::DftHashMap;
 use crate::lines::{SourcePosition, SourceRange};
+use crate::params::query::AnnotationQuery;
 use crate::parse::syntax::{FoldMetadata, Syntax, SyntaxId};
 use hashbrown::hash_map::Entry;
 use std::collections::BTreeSet;

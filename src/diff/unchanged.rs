@@ -488,7 +488,6 @@ mod tests {
     use typed_arena::Arena;
 
     use super::*;
-    use crate::config::Params;
     use crate::parse::guess_language;
     use crate::parse::tree_sitter_parser::parse;
     use crate::syntax::init_all_info;
@@ -496,7 +495,7 @@ mod tests {
     #[test]
     fn test_shrink_unchanged_at_start() {
         let arena = Arena::new();
-        let params = Params::default();
+        let params = crate::config::default_params();
         let config = params.language(guess_language::Language::EmacsLisp);
 
         let lhs_nodes = parse(&arena, "unchanged A B", config, false).unwrap();
@@ -523,7 +522,7 @@ mod tests {
     #[test]
     fn test_shrink_unchanged_at_end() {
         let arena = Arena::new();
-        let params = Params::default();
+        let params = crate::config::default_params();
         let config = params.language(guess_language::Language::EmacsLisp);
 
         let lhs_nodes = parse(&arena, "A B unchanged", config, false).unwrap();
@@ -550,7 +549,7 @@ mod tests {
     #[test]
     fn test_shrink_unchanged_nested() {
         let arena = Arena::new();
-        let params = Params::default();
+        let params = crate::config::default_params();
         let config = params.language(guess_language::Language::EmacsLisp);
 
         let lhs_nodes = parse(
@@ -588,7 +587,7 @@ mod tests {
     #[test]
     fn test_split_unchanged_toplevel_at_start() {
         let arena = Arena::new();
-        let params = Params::default();
+        let params = crate::config::default_params();
         let config = params.language(guess_language::Language::EmacsLisp);
 
         // Make sure that the initial unchanged node exceeds TINY_TREE_THRESHOLD.
@@ -630,7 +629,7 @@ mod tests {
     #[test]
     fn test_split_unchanged_toplevel_at_end() {
         let arena = Arena::new();
-        let params = Params::default();
+        let params = crate::config::default_params();
         let config = params.language(guess_language::Language::EmacsLisp);
 
         let lhs_nodes = parse(
@@ -671,7 +670,7 @@ mod tests {
     #[test]
     fn test_split_preserves_outer_delimiters() {
         let arena = Arena::new();
-        let params = Params::default();
+        let params = crate::config::default_params();
         let config = params.language(guess_language::Language::EmacsLisp);
 
         let lhs_nodes = parse(&arena, "(A)", config, false).unwrap();
@@ -699,7 +698,7 @@ mod tests {
     #[test]
     fn test_split_unchanged_middle() {
         let arena = Arena::new();
-        let params = Params::default();
+        let params = crate::config::default_params();
         let config = params.language(guess_language::Language::EmacsLisp);
 
         let lhs_nodes = parse(
@@ -741,7 +740,7 @@ mod tests {
     #[test]
     fn test_split_unchanged_multiple() {
         let arena = Arena::new();
-        let params = Params::default();
+        let params = crate::config::default_params();
         let config = params.language(guess_language::Language::EmacsLisp);
 
         let lhs_nodes = parse(
@@ -770,7 +769,7 @@ mod tests {
     #[test]
     fn test_split_unchanged_outer_delimiter() {
         let arena = Arena::new();
-        let params = Params::default();
+        let params = crate::config::default_params();
         let config = params.language(guess_language::Language::EmacsLisp);
 
         let lhs_nodes = parse(
@@ -802,7 +801,7 @@ mod tests {
     #[test]
     fn test_split_mostly_unchanged_toplevel() {
         let arena = Arena::new();
-        let params = Params::default();
+        let params = crate::config::default_params();
         let config = params.language(guess_language::Language::EmacsLisp);
 
         let lhs_nodes = parse(
@@ -828,7 +827,7 @@ mod tests {
     #[test]
     fn test_count_common_unique() {
         let arena = Arena::new();
-        let params = Params::default();
+        let params = crate::config::default_params();
         let config = params.language(guess_language::Language::EmacsLisp);
 
         // There are two subtrees that are unique on both sides and
@@ -858,7 +857,7 @@ mod tests {
     #[test]
     fn test_similar_with_common_grandchildren() {
         let arena = Arena::new();
-        let params = Params::default();
+        let params = crate::config::default_params();
         let config = params.language(guess_language::Language::EmacsLisp);
 
         let lhs_nodes = parse(&arena, "((novel-lhs 1 2 3 4 5)) x", config, false).unwrap();
@@ -873,7 +872,7 @@ mod tests {
     #[test]
     fn test_similar_ignore_delimiter() {
         let arena = Arena::new();
-        let params = Params::default();
+        let params = crate::config::default_params();
         let config = params.language(guess_language::Language::EmacsLisp);
 
         let lhs_nodes = parse(&arena, "(novel-lhs 1 2 3 4 5) x", config, false).unwrap();

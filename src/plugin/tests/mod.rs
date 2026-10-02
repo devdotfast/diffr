@@ -10,8 +10,8 @@ mod summarize;
 mod test_bodies;
 
 use super::*;
-use crate::config::{Config, Params};
-use crate::options::DiffOptions;
+use crate::config::Config;
+use crate::params::{DiffOptions, Params};
 use crate::protocol::{project, Diff, FileRef};
 use diffr_plugin_sdk::tree::{docstring_of, has_tag, is_fold, walk};
 use diffr_plugin_sdk::{FileEntry, Move, Plugin};

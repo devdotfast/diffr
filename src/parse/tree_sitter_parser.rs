@@ -1,7 +1,7 @@
 //! Load and configure parsers written with tree-sitter.
 
 use super::folds;
-use crate::config::LanguageParams;
+use crate::params::LanguageParams;
 use std::sync::{LazyLock, Mutex};
 
 use line_numbers::{LineNumber, LinePositions};
@@ -12,7 +12,7 @@ use typed_arena::Arena;
 use super::syntax::{self, FoldMetadata, MatchedPos, StringKind};
 use crate::constants::Side;
 use crate::hash::{DftHashMap, DftHashSet};
-use crate::options::DiffOptions;
+use crate::params::DiffOptions;
 use crate::parse::guess_language as guess;
 use crate::parse::syntax::{AtomKind, Syntax};
 
@@ -2161,7 +2161,6 @@ mod tests {
     use strum::IntoEnumIterator as _;
 
     use super::*;
-    use crate::config::Params;
 
     /// Simple smoke test for tree-sitter parsing. Having a test also
     /// ensures that this file has its coverage measured.
@@ -2169,7 +2168,7 @@ mod tests {
     #[test]
     fn test_parse() {
         let arena = Arena::new();
-        let params = Params::default();
+        let params = crate::config::default_params();
         let css_config = params.language(guess::Language::Css);
         parse(&arena, ".foo {}", css_config, false).unwrap();
     }
@@ -2177,7 +2176,7 @@ mod tests {
     #[test]
     fn test_parse_empty_file() {
         let arena = Arena::new();
-        let params = Params::default();
+        let params = crate::config::default_params();
         let config = params.language(guess::Language::EmacsLisp);
         let res = parse(&arena, "", config, false).unwrap();
 
@@ -2190,7 +2189,7 @@ mod tests {
     #[test]
     fn test_subtrees() {
         let arena = Arena::new();
-        let params = Params::default();
+        let params = crate::config::default_params();
         let config = params.language(guess::Language::Html);
         let res = parse(&arena, "<style>.a { color: red; }</style>", config, false).unwrap();
 

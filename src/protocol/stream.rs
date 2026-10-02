@@ -265,7 +265,7 @@ fn diffed(loaded: &LoadedFile, options: Options) -> anyhow::Result<(FileChange, 
 /// fell back to a line diff has none.
 fn syntax_spans(
     diff: &DiffResult,
-    params: &crate::config::Params,
+    params: &crate::params::Params,
 ) -> (Vec<SyntaxSpan>, Vec<SyntaxSpan>) {
     let FileFormat::SupportedLanguage(language) = &diff.file_format else {
         return (Vec::new(), Vec::new());
@@ -348,7 +348,7 @@ pub(crate) fn write_file(
     after: &str,
     sizes: (u64, u64),
     compute: impl FnOnce() -> Result<DiffResult, QueryConflict>,
-    params: &crate::config::Params,
+    params: &crate::params::Params,
     pipeline: &Pipeline,
     options: Options,
     output: &mut impl Write,

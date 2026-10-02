@@ -57,6 +57,7 @@ mod line_parser;
 mod lines;
 mod options;
 mod pairing;
+mod params;
 mod parse;
 mod plugin;
 pub(crate) mod protocol;
@@ -68,7 +69,7 @@ mod words;
 #[macro_use]
 extern crate log;
 
-use crate::config::Params;
+use crate::params::Params;
 
 use crate::exit_codes::EXIT_BAD_ARGUMENTS;
 use crate::files::{guess_content, read_files_or_die, read_or_die, ProbableFileKind};
@@ -107,7 +108,8 @@ use strum::IntoEnumIterator;
 use typed_arena::Arena;
 
 use crate::engine::QueryConflict;
-use crate::options::{DiffOptions, FileArgument, Mode};
+use crate::options::{FileArgument, Mode};
+use crate::params::DiffOptions;
 use crate::parse::folds::Conflict;
 use crate::parse::syntax::init_all_info;
 use crate::parse::tree_sitter_parser as tsp;
@@ -145,7 +147,7 @@ fn main() {
 
 /// `diffr debug`: syntax dumps and the language list.
 fn run_debug(mode: Mode) {
-    let params = &Params::default();
+    let params = &crate::config::default_params();
 
     match mode {
         Mode::DumpTreeSitter {
@@ -293,8 +295,7 @@ fn diff_file(
     diff_file_content(
         params,
         display_path,
-        lhs_path,
-        rhs_path,
+        matches!(rhs_path, FileArgument::DevNull),
         &lhs_src,
         &rhs_src,
         diff_options,
@@ -321,7 +322,6 @@ fn conflict_or_die<T>(result: Result<T, Conflict>) -> T {
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::OsStr;
 
     use super::*;
 
@@ -329,10 +329,9 @@ mod tests {
     fn test_diff_identical_content() {
         let s = "foo";
         let res = diff_file_content(
-            &Params::default(),
+            &crate::config::default_params(),
             "foo.el",
-            &FileArgument::from_path_argument(OsStr::new("foo.el")),
-            &FileArgument::from_path_argument(OsStr::new("foo.el")),
+            false,
             s,
             s,
             &DiffOptions::default(),

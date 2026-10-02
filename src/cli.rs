@@ -1,7 +1,8 @@
 //! Git-style CLI input: the terminal UI, the NDJSON stream, and Git metadata.
 use crate::config::{self, Config};
 use crate::git::{Comparison, DiffSession, FileParams, Operand, Result};
-use crate::options::{DebugArgs, DiffOptions};
+use crate::options::DebugArgs;
+use crate::params::DiffOptions;
 use crate::plugin::Pipeline;
 use clap::{
     error::ErrorKind, parser::ValueSource, ArgGroup, ArgMatches, Args, CommandFactory,
@@ -225,8 +226,9 @@ pub(crate) fn run() -> Result<i32> {
     apply_unified(&args, &mut config);
     let pipeline =
         Pipeline::from_config(&config.plugins, workspace).map_err(|error| format!("{error:#}"))?;
+    let limits = config.diff;
     let params = Arc::new(config.compile_with(&pipeline)?);
-    let diff_options = diff_options(&args, &params);
+    let diff_options = diff_options(&args, &limits);
     let mut session = DiffSession::open(
         workspace,
         comparison,
@@ -499,8 +501,9 @@ fn no_index(
     apply_unified(args, &mut config);
     let pipeline = Pipeline::from_config(&config.plugins, &std::env::current_dir()?)
         .map_err(|error| format!("{error:#}"))?;
+    let limits = config.diff;
     let config = config.compile_with(&pipeline)?;
-    let options = &diff_options(args, &config);
+    let options = &diff_options(args, &limits);
     let lhs = crate::options::FileArgument::from_path_argument(&paths[0]);
     let rhs = crate::options::FileArgument::from_path_argument(&paths[1]);
     let compute = || {
@@ -534,8 +537,8 @@ fn no_index(
 
 /// The engine limits: the configured `[diff]` table, then the command-line
 /// flags.
-fn diff_options(args: &Cli, params: &config::Params) -> DiffOptions {
-    let mut options = params.diff.options(args.ignore_comments);
+fn diff_options(args: &Cli, limits: &config::DiffConfig) -> DiffOptions {
+    let mut options = limits.options(args.ignore_comments);
     if let Some(limit) = args.byte_limit {
         options.byte_limit = limit;
     }

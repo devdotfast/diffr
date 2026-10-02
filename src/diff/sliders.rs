@@ -682,7 +682,6 @@ mod tests {
     use typed_arena::Arena;
 
     use super::*;
-    use crate::config::Params;
     use crate::parse::guess_language;
     use crate::parse::tree_sitter_parser::parse;
     use crate::syntax::{init_all_info, AtomKind};
@@ -799,7 +798,7 @@ mod tests {
     #[test]
     fn test_slider_two_steps() {
         let arena = Arena::new();
-        let params = Params::default();
+        let params = crate::config::default_params();
         let config = params.language(guess_language::Language::EmacsLisp);
 
         let lhs = parse(&arena, "A B", config, false).unwrap();
@@ -825,7 +824,7 @@ mod tests {
     #[test]
     fn test_slider_partially_unchanged() {
         let arena = Arena::new();
-        let params = Params::default();
+        let params = crate::config::default_params();
         let config = params.language(guess_language::Language::EmacsLisp);
 
         let lhs = parse(&arena, "(A B) X \n (A B)", config, false).unwrap();

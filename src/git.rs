@@ -1,6 +1,6 @@
 //! Git comparison selection and lazy source loading used by the CLI and its stdout stream.
-use crate::config::Params;
 use crate::pairing::Pairing;
+use crate::params::Params;
 use crate::plugin::Pipeline;
 use crate::protocol;
 use crate::summary::{DiffResult, FileContent, FileFormat};
@@ -397,7 +397,7 @@ pub(crate) struct DiffSession {
     pub(crate) comparison: Comparison,
     params: Arc<Params>,
     files: std::vec::IntoIter<PendingFile>,
-    pub(crate) diff_options: crate::options::DiffOptions,
+    pub(crate) diff_options: crate::params::DiffOptions,
 }
 
 impl DiffSession {
@@ -548,7 +548,7 @@ impl DiffSession {
             comparison,
             params,
             files: pending.into_iter(),
-            diff_options: crate::options::DiffOptions::default(),
+            diff_options: crate::params::DiffOptions::default(),
         })
     }
 }
@@ -559,7 +559,7 @@ pub(crate) struct LoadedFile {
     before: Vec<u8>,
     after: Vec<u8>,
     pub(crate) params: Arc<Params>,
-    diff_options: crate::options::DiffOptions,
+    diff_options: crate::params::DiffOptions,
 }
 
 impl LoadedFile {
@@ -584,7 +584,7 @@ impl LoadedFile {
         }
         let before = std::str::from_utf8(&self.before).context(FileError::NotUtf8)?;
         let after = std::str::from_utf8(&self.after).context(FileError::NotUtf8)?;
-        let options = crate::options::DiffOptions {
+        let options = crate::params::DiffOptions {
             generated: self.file.tags.iter().any(|tag| tag == tags::GENERATED),
             ..self.diff_options.clone()
         };

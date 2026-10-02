@@ -2,8 +2,8 @@
 //! Imports precede their importers and shared sources are included once. Sources
 //! returned by plugins take precedence over bundled or absolute-path imports.
 use super::builtin;
-use crate::config::query::QuerySource;
 use crate::config::ConfigError;
+use crate::params::query::QuerySource;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 

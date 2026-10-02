@@ -18,18 +18,15 @@
 //! `@fold` captures decide which folds exist, and its tags what they are.
 //! Every tag a query sets must be written `<plugin>:<name>`.
 pub(crate) mod prune;
-pub(crate) mod query;
 pub(crate) mod store;
-use crate::hash::DftHashMap;
-use crate::options::DiffOptions;
+use crate::params::query::{AnnotationQuery, QueryError};
+use crate::params::{DiffOptions, Params};
 use crate::parse::{guess_language::Language, tree_sitter_parser};
 use crate::plugin::config::PluginsConfig;
 use crate::plugin::queries::{self, Queries};
-use query::AnnotationQuery;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
 use strum::IntoEnumIterator;
 
 pub(crate) const DEFAULT_CONFIG: &str = include_str!("config/default.toml");
@@ -89,9 +86,9 @@ pub(crate) struct DiffConfig {
 impl Default for DiffConfig {
     fn default() -> Self {
         Self {
-            byte_limit: crate::options::DEFAULT_BYTE_LIMIT,
-            graph_limit: crate::options::DEFAULT_GRAPH_LIMIT,
-            parse_error_limit: crate::options::DEFAULT_PARSE_ERROR_LIMIT,
+            byte_limit: crate::params::DEFAULT_BYTE_LIMIT,
+            graph_limit: crate::params::DEFAULT_GRAPH_LIMIT,
+            parse_error_limit: crate::params::DEFAULT_PARSE_ERROR_LIMIT,
         }
     }
 }
@@ -138,31 +135,9 @@ impl std::fmt::Display for ConfigError {
 }
 impl std::error::Error for ConfigError {}
 
-pub(crate) struct Params {
-    languages: DftHashMap<Language, OnceLock<Arc<LanguageParams>>>,
-    pub(crate) diff: DiffConfig,
-}
-
-pub(crate) struct LanguageParams {
-    pub(crate) parser: &'static tree_sitter_parser::TreeSitterConfig,
-    /// The fold and context queries of every enabled plugin, concatenated.
-    pub(crate) query: AnnotationQuery,
-    sub_languages: OnceLock<
-        Vec<(
-            &'static tree_sitter_parser::TreeSitterSubLanguage,
-            Arc<LanguageParams>,
-        )>,
-    >,
-}
-
-impl LanguageParams {
-    pub(crate) fn sub_languages(
-        &self,
-    ) -> &[(
-        &'static tree_sitter_parser::TreeSitterSubLanguage,
-        Arc<LanguageParams>,
-    )] {
-        self.sub_languages.get().expect("resolved sub-languages")
+impl From<QueryError> for ConfigError {
+    fn from(error: QueryError) -> Self {
+        Self(error.0)
     }
 }
 
@@ -276,9 +251,7 @@ impl Config {
         self,
         queries: Vec<(String, Queries)>,
     ) -> Result<Params, ConfigError> {
-        let mut languages: DftHashMap<_, _> = Language::iter()
-            .map(|language| (language, OnceLock::new()))
-            .collect();
+        let mut compiled = Vec::new();
         for (name, sources) in queries::assemble(&queries)? {
             let language = Language::iter()
                 .find(|language| format!("{language:?}").to_lowercase() == name)
@@ -286,19 +259,9 @@ impl Config {
             let parser = tree_sitter_parser::from_language(language);
             let query = AnnotationQuery::compile(&parser.language, &sources)?;
             check_tags(&query, &self.plugins.order)?;
-            languages.insert(
-                language,
-                OnceLock::from(Arc::new(LanguageParams {
-                    parser,
-                    query,
-                    sub_languages: OnceLock::new(),
-                })),
-            );
+            compiled.push((language, query));
         }
-        Ok(Params {
-            languages,
-            diff: self.diff,
-        })
+        Ok(Params::new(compiled))
     }
 }
 
@@ -325,39 +288,15 @@ fn check_tags(query: &AnnotationQuery, order: &[String]) -> Result<(), ConfigErr
     Ok(())
 }
 
-impl Params {
-    pub(crate) fn language(&self, language: Language) -> &Arc<LanguageParams> {
-        let config = self.languages[&language].get_or_init(|| {
-            // Languages without annotation rules still support structural diffing.
-            // Keep their grammars lazy, as in the existing parser registry.
-            let parser = tree_sitter_parser::from_language(language);
-            Arc::new(LanguageParams {
-                parser,
-                query: AnnotationQuery::compile(&parser.language, &[]).expect("an empty query"),
-                sub_languages: OnceLock::new(),
-            })
-        });
-        config.sub_languages.get_or_init(|| {
-            config
-                .parser
-                .sub_languages
-                .iter()
-                .map(|sub| (sub, Arc::clone(self.language(sub.parse_as))))
-                .collect()
-        });
-        config
-    }
-}
-
-impl Default for Params {
-    fn default() -> Self {
-        let config = Config::default();
-        let pipeline = crate::plugin::Pipeline::from_config(&config.plugins, Path::new("."))
-            .expect("invalid bundled plugin configuration");
-        config
-            .compile_with(&pipeline)
-            .expect("invalid bundled annotation configuration")
-    }
+/// The bundled defaults, compiled: what diffr runs with when it reads no
+/// configuration.
+pub(crate) fn default_params() -> Params {
+    let config = Config::default();
+    let pipeline = crate::plugin::Pipeline::from_config(&config.plugins, Path::new("."))
+        .expect("invalid bundled plugin configuration");
+    config
+        .compile_with(&pipeline)
+        .expect("invalid bundled annotation configuration")
 }
 
 #[cfg(test)]
@@ -368,16 +307,14 @@ mod tests {
     #[test]
     fn diff_limits_default_and_layer_from_the_file() {
         let defaults = Config::default().diff;
-        assert_eq!(defaults.graph_limit, crate::options::DEFAULT_GRAPH_LIMIT);
-        assert_eq!(defaults.byte_limit, crate::options::DEFAULT_BYTE_LIMIT);
+        assert_eq!(defaults.graph_limit, crate::params::DEFAULT_GRAPH_LIMIT);
+        assert_eq!(defaults.byte_limit, crate::params::DEFAULT_BYTE_LIMIT);
         let custom = Config::from_toml("[diff]\ngraph_limit = 5").unwrap();
         assert_eq!(custom.diff.graph_limit, 5);
         assert_eq!(custom.diff.byte_limit, defaults.byte_limit);
         let options = custom.diff.options(true);
         assert_eq!(options.graph_limit, 5);
         assert!(options.ignore_comments);
-        let compiled = custom.compile().unwrap();
-        assert_eq!(compiled.diff.graph_limit, 5);
         let schema = Config::schema();
         assert!(
             schema["$defs"]["DiffConfig"]["properties"]["graph_limit"]["description"]
@@ -388,7 +325,7 @@ mod tests {
 
     #[test]
     fn language_without_annotation_rules_keeps_structural_diffing() {
-        let params = Params::default();
+        let params = default_params();
         let result = DiffResult::from_sources_with_params(
             "a.c",
             "int run() { return 1; }",
@@ -561,7 +498,7 @@ mod query_tests {
 
     #[test]
     fn rust_labeled_blocks_fold_between_actual_braces() {
-        let params = Params::default();
+        let params = crate::config::default_params();
         for source in [
             "fn f() { 'outer: { work(); } }",
             "fn f() { 'outer: /* prefix */ { work(); } }",
@@ -737,7 +674,7 @@ mod load_tests {
         assert_eq!(config.diff.byte_limit, 6);
         assert_eq!(
             config.diff.parse_error_limit,
-            crate::options::DEFAULT_PARSE_ERROR_LIMIT
+            crate::params::DEFAULT_PARSE_ERROR_LIMIT
         );
         assert_eq!(config.theme.name, "mine");
         assert_eq!(config.theme.path, None);
@@ -777,7 +714,7 @@ mod load_tests {
             None => diff,
         };
         let graph_limit = &diff["properties"]["graph_limit"];
-        assert_eq!(graph_limit["default"], crate::options::DEFAULT_GRAPH_LIMIT);
+        assert_eq!(graph_limit["default"], crate::params::DEFAULT_GRAPH_LIMIT);
         assert!(graph_limit["description"]
             .as_str()
             .unwrap()

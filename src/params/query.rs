@@ -3,8 +3,20 @@
 //! A query is compiled from one or more named sources, concatenated in
 //! order. Every pattern remembers which source it came from, so errors and
 //! conflicts can name the file that wrote it.
-use super::ConfigError;
 use tree_sitter::Query;
+
+/// A fold query that does not compile, or breaks a convention; the message
+/// names the source that wrote it.
+#[derive(Debug)]
+pub(crate) struct QueryError(pub(crate) String);
+
+impl std::fmt::Display for QueryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for QueryError {}
 
 pub(crate) struct AnnotationQuery {
     pub(crate) query: Query,
@@ -30,7 +42,7 @@ impl AnnotationQuery {
     pub(crate) fn compile(
         grammar: &tree_sitter::Language,
         sources: &[QuerySource],
-    ) -> Result<Self, ConfigError> {
+    ) -> Result<Self, QueryError> {
         let mut text = String::new();
         let mut starts = Vec::with_capacity(sources.len());
         for source in sources {
@@ -42,17 +54,17 @@ impl AnnotationQuery {
         let owner = |offset: usize| starts.partition_point(|&start| start <= offset) - 1;
         let query = Query::new(grammar, &text).map_err(|error| {
             if sources.is_empty() {
-                return ConfigError(error.to_string());
+                return QueryError(error.to_string());
             }
             let index = owner(error.offset.min(text.len().saturating_sub(1)));
             let line = text[starts[index]..error.offset].matches('\n').count() + 1;
-            ConfigError(format!(
+            QueryError(format!(
                 "{}:{line}: {:?} error: {}",
                 sources[index].name, error.kind, error.message
             ))
         })?;
         let named = |pattern: usize, message: String| {
-            ConfigError(format!(
+            QueryError(format!(
                 "{}: {message}",
                 sources[owner(query.start_byte_for_pattern(pattern))].name
             ))
@@ -65,7 +77,7 @@ impl AnnotationQuery {
                 .iter()
                 .find(|source| source.text.contains(&format!("@{name}")))
                 .expect("a capture name appears in the text that declared it");
-            return Err(ConfigError(format!(
+            return Err(QueryError(format!(
                 "{}: unsupported capture @{name}; use an underscore prefix for helper captures",
                 source.name
             )));

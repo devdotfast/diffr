@@ -595,7 +595,7 @@ fn positions_by_line(positions: &[MatchedPos]) -> BTreeMap<usize, Vec<&MatchedPo
 mod tests {
     use super::*;
     use crate::config::body_params;
-    use crate::options::DiffOptions;
+    use crate::params::DiffOptions;
 
     fn refs(lhs: bool, rhs: bool) -> Pairing<FileRef> {
         let file_ref = FileRef {

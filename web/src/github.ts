@@ -15,6 +15,10 @@ export interface ChangedFile {
   /** The path at the base, for a rename or copy. */
   previousPath?: string;
   status: Status;
+  /** GitHub's patch for the file; absent for binary files and ones too large for the listing. */
+  patch?: string;
+  additions: number;
+  deletions: number;
 }
 
 export interface Change {
@@ -25,6 +29,9 @@ export interface Change {
   base: string;
   head: string;
   files: ChangedFile[];
+  /** GitHub's totals for a pull request. Its file listing reports 0 for files too large to patch. */
+  additions?: number;
+  deletions?: number;
 }
 
 const TOKEN_KEY = "diffr.githubToken";
@@ -94,6 +101,9 @@ interface ApiFile {
   filename: string;
   previous_filename?: string;
   status: "added" | "removed" | "modified" | "renamed" | "copied" | "changed" | "unchanged";
+  patch?: string;
+  additions: number;
+  deletions: number;
 }
 
 const statuses: Record<ApiFile["status"], Status> = {
@@ -105,6 +115,9 @@ const changedFile = (file: ApiFile): ChangedFile => ({
   path: file.filename,
   previousPath: file.previous_filename,
   status: statuses[file.status],
+  patch: file.patch,
+  additions: file.additions,
+  deletions: file.deletions,
 });
 
 /** Every page of a listing GitHub caps at 100 a page; it stops listing a PR's files at 3000. */
@@ -118,25 +131,35 @@ async function pages<T>(path: (page: number) => string, items: (response: unknow
   return all;
 }
 
-export async function loadChange(target: Target): Promise<Change> {
+/** What can be shown before the whole listing is in: the title and the first page of files. */
+export type Preview = Omit<Change, "base"> & { base?: string };
+
+/**
+ * Load a change. A pull request calls `onPreview` as soon as its first hundred files are known,
+ * so they can be shown while the rest of the listing and the merge base load.
+ */
+export async function loadChange(target: Target, onPreview?: (preview: Preview) => void): Promise<Change> {
   const repo = `/repos/${target.owner}/${target.repo}`;
   if (target.kind === "pull") {
     const page = (n: number) => api<ApiFile[]>(`${repo}/pulls/${target.number}/files?per_page=100&page=${n}`);
     // The first page of files needs nothing from the PR, so it is asked for alongside it.
     const [pr, first] = await Promise.all([
-      api<{ title: string; html_url: string; base: { sha: string }; head: { sha: string }; changed_files: number }>(
+      api<{ title: string; html_url: string; base: { sha: string }; head: { sha: string }; changed_files: number; additions: number; deletions: number }>(
         `${repo}/pulls/${target.number}`),
       page(1),
     ]);
+    const preview: Preview = { target, title: pr.title, url: pr.html_url, head: pr.head.sha, files: first.map(changedFile),
+      additions: pr.additions, deletions: pr.deletions };
+    onPreview?.(preview);
+    // The merge base is all diffr needs to start on the files already shown.
+    const base = api<{ merge_base_commit: { sha: string } }>(`${repo}/compare/${pr.base.sha}...${pr.head.sha}?per_page=1`);
+    void base.then((compare) => onPreview?.({ ...preview, base: compare.merge_base_commit.sha }), () => {});
     // The PR says how many files it changed, so every other page can be asked for at once.
     const count = Math.min(30, Math.max(1, Math.ceil(pr.changed_files / 100)));
-    const [compare, ...rest] = await Promise.all([
-      api<{ merge_base_commit: { sha: string } }>(`${repo}/compare/${pr.base.sha}...${pr.head.sha}?per_page=1`),
-      ...Array.from({ length: count - 1 }, (_, i) => page(i + 2)),
-    ]);
+    const [compare, ...rest] = await Promise.all([base, ...Array.from({ length: count - 1 }, (_, i) => page(i + 2))]);
     const files = [first, ...rest].flat();
     return { target, title: pr.title, url: pr.html_url, base: compare.merge_base_commit.sha, head: pr.head.sha,
-      files: files.map(changedFile) };
+      files: files.map(changedFile), additions: pr.additions, deletions: pr.deletions };
   }
   const range = `${encodeURIComponent(target.base)}...${encodeURIComponent(target.head)}`;
   type Compare = { merge_base_commit: { sha: string }; html_url: string; files?: ApiFile[] };

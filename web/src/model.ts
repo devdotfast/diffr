@@ -10,6 +10,7 @@ import {
 } from "../../tui/packages/hunk/src/diffr/regions";
 import type { Span, TextDiff } from "../../tui/packages/hunk/src/diffr/wire";
 import type { Lines } from "./lines";
+import type { Hunk, PatchLine } from "./patch";
 import type { Syntax } from "./syntax";
 
 export type Layout = "split" | "unified";
@@ -26,6 +27,8 @@ export interface Cell {
   changed: Span[];
   /** Unified layout: the other side's line number for an unchanged line. */
   alt?: number;
+  /** The line's text, for a row from GitHub's patch; diffr's rows read it from the file. */
+  text?: string;
 }
 
 export type Row =
@@ -170,5 +173,51 @@ export function buildRows(p: Prepared, layout: Layout, collapsed: ReadonlySet<nu
   }
   flushRight(leaves[1].length);
   flush();
+  return rows;
+}
+
+/** A stretch the patch leaves out; it opens once diffr has the whole file. */
+export const PATCH_GAP = -1;
+
+/**
+ * Rows for GitHub's patch, before diffr has the file: each hunk's lines, with a run of removals
+ * paired against the additions after it in the split layout, as GitHub draws them.
+ */
+export function patchRows(hunks: Hunk[], layout: Layout): Row[] {
+  const rows: Row[] = [];
+  const cell = (line: PatchLine, side: 0 | 1): Cell => ({
+    side,
+    line: (side ? line.new! : line.old!) - 1,
+    kind: line.kind === "context" ? "context" : side ? "change-addition" : "change-deletion",
+    changed: [],
+    text: line.text,
+    alt: layout === "unified" && line.kind === "context" ? line.old! - 1 : undefined,
+  });
+  const gap = (key: string, lines: number) => {
+    if (lines > 0)
+      rows.push({ type: "fold", key, id: PATCH_GAP, label: plural(lines, "unmodified line"), tint: "neutral", lines, extra: [] });
+  };
+  let oldEnd = 1;
+  hunks.forEach((hunk, h) => {
+    gap(`g${h}`, hunk.oldStart - oldEnd);
+    oldEnd = hunk.oldStart + hunk.oldLines;
+    if (layout === "unified") {
+      hunk.lines.forEach((line, i) => rows.push({ type: "line", key: `${h}:${i}`, cell: cell(line, line.kind === "del" ? 0 : 1) }));
+      return;
+    }
+    for (let i = 0; i < hunk.lines.length;) {
+      const line = hunk.lines[i]!;
+      if (line.kind === "context") {
+        rows.push({ type: "line", key: `${h}:${i}`, left: cell(line, 0), right: cell(line, 1) });
+        i++;
+        continue;
+      }
+      const dels: PatchLine[] = [], adds: PatchLine[] = [];
+      for (; i < hunk.lines.length && hunk.lines[i]!.kind === "del"; i++) dels.push(hunk.lines[i]!);
+      for (; i < hunk.lines.length && hunk.lines[i]!.kind === "add"; i++) adds.push(hunk.lines[i]!);
+      for (let k = 0; k < Math.max(dels.length, adds.length); k++)
+        rows.push({ type: "line", key: `${h}:${i}:${k}`, left: dels[k] && cell(dels[k]!, 0), right: adds[k] && cell(adds[k]!, 1) });
+    }
+  });
   return rows;
 }

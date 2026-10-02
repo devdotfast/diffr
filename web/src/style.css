@@ -183,6 +183,8 @@ svg { flex: none; display: block; }
 .viewer {
   overflow: auto; scrollbar-gutter: stable; position: relative; min-width: 0; background: var(--bg);
   overscroll-behavior: contain;
+  /* The viewer keeps the reading position itself when files above change height. */
+  overflow-anchor: none;
 }
 .files { display: flex; flex-direction: column; gap: 1px; }
 diffr-file { display: block; flex: none; overflow: clip; overflow-clip-margin: 0; }

@@ -2,18 +2,18 @@
 import "./fonts";
 import "./style.css";
 import { diff, engineStats, onEngineChange, release } from "./engine";
-import { fileText, loadChange, parseTarget, setToken, targetPath, token, type Change, type Target } from "./github";
+import { fileText, loadChange, parseTarget, setToken, targetPath, token, type Change, type Preview, type Target } from "./github";
 import { icons, logo, mountSprite } from "./icons";
 import type { Layout } from "./model";
-import { escape, FileView } from "./view/file";
+import { escape, FileView, type FileHost } from "./view/file";
 import { Sidebar, type Timing } from "./view/sidebar";
 import { Viewer } from "./view/viewer";
 
 type ThemePreference = "system" | "dark" | "light";
 
 const EXAMPLES = ["devdotfast/whiteboard/pull/837", "oven-sh/bun/pull/30412", "nodejs/node/pull/59805", "ghostty-org/ghostty/pull/12291"];
-/** Files fetched from GitHub at once. */
-const FETCHES = 48;
+/** Files diffr works on at once: both sides fetched, then diffed. */
+const DIFFS = 8;
 
 const app = document.querySelector<HTMLElement>("#app")!;
 const darkQuery = matchMedia("(prefers-color-scheme: dark)");
@@ -196,21 +196,47 @@ class ChangePage {
   async load() {
     let change: Change;
     try {
-      change = await loadChange(this.target);
+      change = await loadChange(this.target, (preview) => this.live && this.show(preview));
     } catch (error) {
       if (!this.live) return;
       this.status("Could not load this change", error instanceof Error ? error.message : String(error), true);
       return;
     }
     if (!this.live) return;
-    this.change = change;
     this.timing.listed = performance.now();
-    document.title = `${change.title} · diffr`;
-    const host = { layout: effectiveLayout(), theme: theme(), changed: (view: FileView) => this.changed(view) };
-    this.host = host;
-    this.views = change.files.map((file, index) => new FileView(file, index, host));
+    this.show(change);
+    this.change = change;
+    this.pump();
+  }
+
+  /** What GitHub has listed so far: the first page early, then the whole change. */
+  listing?: Preview;
+
+  /**
+   * Show the listed files, each as GitHub's patch until diffr takes it over. A later, longer listing
+   * appends to the files already shown.
+   */
+  private show(listing: Preview) {
+    const first = !this.listing;
+    if (listing.files.length < (this.listing?.files.length ?? 0)) listing = { ...this.listing!, base: listing.base };
+    this.listing = listing;
+    if (listing.base && !this.change) {
+      this.change = { ...listing, base: listing.base };
+      queueMicrotask(() => this.pump());
+    }
+    if (first) {
+      document.title = `${listing.title} · diffr`;
+      this.host = {
+        layout: effectiveLayout(), theme: theme(),
+        changed: (view) => this.changed(view),
+        request: (view) => this.want([view, ...this.wanted]),
+      };
+      this.viewer.onNear = (views) => this.want(views);
+    }
+    if (listing.files.length === this.views.length && !first) return;
+    for (let i = this.views.length; i < listing.files.length; i++) this.views.push(new FileView(listing.files[i]!, i, this.host!));
     try {
-      this.sidebar.setFiles(change.files);
+      this.sidebar.setFiles(listing.files);
     } catch (error) {
       // The tree is a convenience; the files still load without it.
       console.error(error);
@@ -218,50 +244,74 @@ class ChangePage {
     if (!this.views.length) return this.status("No files changed", "This change has no file differences.");
     app.querySelector("[data-viewer-status]")?.remove();
     this.viewer.setViews(this.views);
+    this.viewer.paint();
+    this.timing.firstPaint ??= performance.now();
     this.scheduleStats();
-    const started = new Set<FileView>();
-    // The file on screen first, then the ones below it, then any the reader scrolled past.
-    const pick = () => {
-      const from = Math.max(0, this.views.indexOf(this.viewer.currentView!));
-      for (let i = 0; i < this.views.length; i++) {
-        const view = this.views[(from + i) % this.views.length]!;
-        if (!started.has(view)) {
-          started.add(view);
-          return view;
-        }
-      }
-    };
-    const work = async () => {
-      for (let view = pick(); view; view = pick()) {
-        try {
-          const result = await this.diffFile(change, view);
-          if (!this.live) return;
-          view.diffMs = result.ms;
-          view.setResult(result);
-          this.timing.firstDiff ??= performance.now();
-        } catch (error) {
-          if (!this.live) return;
-          view.setResult(undefined, error instanceof Error ? error.message : String(error));
-        }
-        this.viewer.measure();
-        this.scheduleStats();
-      }
-    };
-    await Promise.all(Array.from({ length: FETCHES }, work));
-    if (!this.live) return;
+  }
+
+  /** Files near the viewport, nearest first: the ones diffr should work on next. */
+  private wanted: FileView[] = [];
+  private inflight = 0;
+  private idleTimer = 0;
+
+  private want(views: FileView[]) {
+    this.wanted = views;
+    this.pump();
+  }
+
+  /** Start diffing wanted files, a few at a time; files scrolled past before their turn are skipped. */
+  private pump() {
+    if (!this.live || !this.change) return;
+    clearTimeout(this.idleTimer);
+    for (const view of this.wanted) {
+      if (this.inflight >= DIFFS) break;
+      if (view.state === "waiting") void this.diffOne(this.change, view);
+    }
+    if (!this.inflight) {
+      if (!this.timing.done && this.timing.firstDiff) this.settled();
+      // Nothing to do for a while: let the engine's extra workers and their memory go.
+      this.idleTimer = window.setTimeout(release, 10_000);
+    }
+  }
+
+  private async diffOne(change: Change, view: FileView) {
+    this.inflight++;
+    view.markLoading();
+    this.viewer.schedule();
+    this.scheduleStats();
+    try {
+      const result = await this.diffFile(change, view);
+      if (!this.live) return;
+      view.diffMs = result.ms;
+      view.setResult(result);
+      this.timing.firstDiff ??= performance.now();
+    } catch (error) {
+      if (!this.live) return;
+      view.setResult(undefined, error instanceof Error ? error.message : String(error));
+    } finally {
+      this.inflight--;
+    }
+    this.viewer.measure();
+    this.scheduleStats();
+    this.pump();
+  }
+
+  /** The files on screen at load are diffed: what the page reports as its load time. */
+  private settled() {
     this.timing.done = performance.now();
-    release();
     this.scheduleStats();
     (window as unknown as { diffrTiming: unknown }).diffrTiming = {
-      listed: this.timing.listed - this.timing.start,
-      firstDiff: (this.timing.firstDiff ?? this.timing.done) - this.timing.start,
+      listed: this.timing.listed! - this.timing.start,
+      firstPaint: this.timing.firstPaint! - this.timing.start,
+      firstDiff: this.timing.firstDiff! - this.timing.start,
       done: this.timing.done - this.timing.start,
       files: this.views.length,
+      diffed: this.views.filter((view) => view.state === "done").length,
       diffMs: this.views.reduce((sum, view) => sum + view.diffMs, 0),
     };
   }
 
-  private host?: { layout: Layout; theme: "dark" | "light"; changed(view: FileView): void };
+  private host?: FileHost;
 
   private async diffFile(change: Change, view: FileView) {
     const { file } = view;
@@ -295,7 +345,7 @@ class ChangePage {
     if (this.statsFrame) return;
     this.statsFrame = requestAnimationFrame(() => {
       this.statsFrame = 0;
-      this.sidebar.updateStats(this.views);
+      this.sidebar.updateStats(this.views, this.listing);
       this.sidebar.updateEngine(this.timing, this.views);
     });
   }

@@ -10,7 +10,8 @@ import { defaultCollapsed } from "../../../tui/packages/hunk/src/diffr/regions";
 import type { FileEvent } from "../../../tui/packages/hunk/src/diffr/wire";
 import type { ChangedFile } from "../github";
 import type { Diffed } from "../worker";
-import { buildRows, prepare, type Cell, type Layout, type Prepared, type Row } from "../model";
+import { buildRows, PATCH_GAP, patchRows, prepare, type Cell, type Layout, type Prepared, type Row } from "../model";
+import { lastLine, parsePatch, type Hunk } from "../patch";
 import { lineAt, lineCount } from "../lines";
 import { lineHtml, tokenCss } from "../tokens";
 
@@ -81,6 +82,10 @@ const extraCss = `
   padding: 2px 10px; cursor: pointer;
 }
 [data-message][data-error] { color: var(--diffs-deletion-base); }
+[data-filler] { background: var(--diffs-bg); }
+[data-tag][data-pending] { color: var(--diffs-modified-base); box-shadow: inset 0 0 0 1px color-mix(in lab, var(--diffs-modified-base) 45%, transparent); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .5; } }
+@media (prefers-reduced-motion: reduce) { [data-tag][data-pending], [data-shimmer]::after { animation: none; } }
 [data-shimmer] { position: relative; overflow: hidden; }
 [data-shimmer]::after {
   content: ""; position: absolute; inset: 0;
@@ -141,7 +146,16 @@ const changeIcon: Record<string, string> = {
   "rename-changed": "symbol-moved", "rename-pure": "symbol-moved",
 };
 
-export type FileState = "loading" | "done" | "failed";
+/** Waiting: GitHub's patch is shown and diffr has not been asked. Loading: diffr is on it. */
+export type FileState = "waiting" | "loading" | "done" | "failed";
+
+export interface FileHost {
+  layout: Layout;
+  theme: "dark" | "light";
+  changed(view: FileView): void;
+  /** The reader wants this file diffed now. */
+  request(view: FileView): void;
+}
 
 /** Height of each row and where it starts, for windowing. */
 interface Layouted {
@@ -154,7 +168,7 @@ interface Layouted {
 export class FileView {
   readonly element: HTMLElement;
   private root: ShadowRoot;
-  state: FileState = "loading";
+  state: FileState = "waiting";
   event?: FileEvent;
   error?: string;
   prepared?: Prepared;
@@ -172,8 +186,9 @@ export class FileView {
   private renderedKey = "";
   /** Milliseconds diffr spent on this file, for the engine panel. */
   diffMs = 0;
+  private parsed?: Hunk[];
 
-  constructor(readonly file: ChangedFile, readonly index: number, private host: { layout: Layout; theme: "dark" | "light"; changed(view: FileView): void }) {
+  constructor(readonly file: ChangedFile, readonly index: number, private host: FileHost) {
     this.element = document.createElement("diffr-file");
     this.element.dataset.index = String(index);
     this.root = this.element.attachShadow({ mode: "open" });
@@ -186,7 +201,23 @@ export class FileView {
     return this.file.path;
   }
 
+  /** GitHub's patch, parsed when first needed. */
+  private get hunks(): Hunk[] {
+    return (this.parsed ??= this.file.patch ? parsePatch(this.file.patch) : []);
+  }
+
+  /** Until diffr answers, the file reads as GitHub's line diff. */
+  private get showingPatch() {
+    return !this.prepared && (this.state === "waiting" || this.state === "loading");
+  }
+
+  markLoading() {
+    this.state = "loading";
+    this.renderedKey = "";
+  }
+
   setResult(result: Diffed | undefined, error?: string) {
+    this.parsed = undefined;
     const event = result?.event;
     this.event = event;
     this.error = error;
@@ -199,10 +230,11 @@ export class FileView {
     this.invalidate();
   }
 
-  /** Counts diffr reports for the header: changed lines under the default fold state. */
+  /** Counts for the header: diffr's under its default fold state, or GitHub's before that. */
   get stats() {
     const diff = this.event?.diff;
-    return diff?.type === "text" ? diff.stats.visible : undefined;
+    if (diff?.type === "text") return diff.stats.visible;
+    return this.state === "done" || this.state === "failed" ? undefined : { added: this.file.additions, removed: this.file.deletions };
   }
 
   /** An added or deleted file has one side, so it reads as one column in either layout. */
@@ -222,10 +254,12 @@ export class FileView {
   }
 
   private ensureLayout(): Layouted | undefined {
-    if (!this.prepared || this.closed || this.hiddenByDefault()) return undefined;
+    if (this.closed) return undefined;
+    const patch = this.showingPatch && this.hunks.length > 0;
+    if (!patch && (!this.prepared || this.hiddenByDefault())) return undefined;
     const key = this.version;
     if (this.layout && key === this.layoutKey) return this.layout;
-    const rows = buildRows(this.prepared, this.layoutMode, this.collapsed);
+    const rows = patch ? patchRows(this.hunks, this.layoutMode) : buildRows(this.prepared!, this.layoutMode, this.collapsed);
     const heights = new Float64Array(rows.length);
     rows.forEach((row, i) => {
       if (row.type !== "fold") heights[i] = LINE;
@@ -248,7 +282,10 @@ export class FileView {
   /** The file's full height, header included, whether or not its rows are on screen. */
   height(): number {
     if (this.closed) return HEADER;
-    if (this.state !== "done" || !this.prepared || this.hiddenByDefault()) return HEADER + MESSAGE;
+    if (this.showingPatch && !this.hunks.length)
+      // No patch from GitHub (too large, or binary): room for the lines it changed, until diffr fills it.
+      return HEADER + Math.max(MESSAGE, (this.file.additions + this.file.deletions) * LINE + GAP);
+    if (!this.showingPatch && (this.state !== "done" || !this.prepared || this.hiddenByDefault())) return HEADER + MESSAGE;
     // Off screen a file keeps only its height; its rows are built again when it comes back.
     if (this.bodyHeight?.key !== this.version) this.ensureLayout();
     return HEADER + this.bodyHeight!.height;
@@ -291,6 +328,10 @@ export class FileView {
     if (diff?.type === "text" && diff.stats.fallback && !empty)
       tags.push(`<span data-tag="fallback" title="${escape(diff.stats.fallback.message)}">line diff</span>`);
     if (diff?.type === "binary") tags.push(`<span data-tag>binary</span>`);
+    if (this.showingPatch)
+      tags.push(this.state === "loading"
+        ? `<span data-tag data-pending title="diffr is diffing this file">diffing</span>`
+        : `<span data-tag title="GitHub's line diff; diffr diffs the file when it comes into view">patch</span>`);
     const stats = this.stats;
     const counts = stats
       ? `${stats.removed ? `<span data-deletions-count>-${stats.removed}</span>` : ""}${stats.added ? `<span data-additions-count>+${stats.added}</span>` : ""}`
@@ -303,7 +344,12 @@ export class FileView {
   }
 
   private bodyHtml(layout: Layouted | undefined, [from, to]: [number, number]) {
-    if (this.state === "loading") return `<div data-message data-shimmer>Diffing with diffr…</div>`;
+    if (this.showingPatch && !this.hunks.length) {
+      const filler = this.height() - HEADER - MESSAGE;
+      return `<div data-message${this.state === "loading" ? " data-shimmer" : ""}>${this.state === "loading" ? "Diffing with diffr…" : "Diffed when it comes into view"}</div>`
+        + (filler > 0 ? `<div data-filler style="height:${filler}px"></div>` : "");
+    }
+    if (this.showingPatch && layout) return this.codeHtml(layout, [from, to], lastLine(this.hunks));
     if (this.state === "failed") return `<div data-message data-error>${escape(this.error ?? this.event?.error?.message ?? "diffr failed on this file")}</div>`;
     if (this.event?.error) return `<div data-message data-error>${escape(this.event.error.message)}</div>`;
     const diff = this.event?.diff;
@@ -316,7 +362,11 @@ export class FileView {
       return `<div data-message>${empty ? "Empty file" : "No changes to show"}</div>`;
     }
     const p = this.prepared!;
-    const digits = Math.max(3, String(Math.max(lineCount(p.texts[0]), lineCount(p.texts[1]))).length);
+    return this.codeHtml(layout, [from, to], Math.max(lineCount(p.texts[0]), lineCount(p.texts[1])));
+  }
+
+  private codeHtml(layout: Layouted, [from, to]: [number, number], lines: number) {
+    const digits = Math.max(3, String(lines).length);
     const before = layout.offsets[from]!, after = layout.offsets[layout.rows.length]! - layout.offsets[to]!;
     const rows = layout.rows.slice(from, to);
     const last = layout.rows.length - 1;
@@ -343,10 +393,10 @@ export class FileView {
   }
 
   private lineCell(cell: Cell, number: number, alt?: number) {
-    const p = this.prepared!;
-    const text = lineAt(p.texts[cell.side], cell.line);
+    const p = this.prepared;
+    const text = cell.text ?? lineAt(p!.texts[cell.side], cell.line);
     return `<div data-line="${number}"${alt !== undefined ? ` data-alt-line="${alt}"` : ""} data-line-type="${cell.kind}">`
-      + `${lineHtml(text, p.syntax[cell.side], cell.line, cell.changed)}</div>`;
+      + `${lineHtml(text, cell.text === undefined ? p?.syntax[cell.side] : undefined, cell.line, cell.changed)}</div>`;
   }
 
   private splitCode(side: 0 | 1, rows: Row[], from: number, last: number, before: number, after: number) {
@@ -432,6 +482,7 @@ export class FileView {
   private onClick(event: MouseEvent) {
     const target = event.target as Element;
     const fold = target.closest<HTMLElement>("[data-fold]");
+    if (fold && Number(fold.dataset.fold) === PATCH_GAP) return this.host.request(this);
     if (fold) {
       const id = Number(fold.dataset.fold);
       if (this.collapsed.has(id)) this.collapsed.delete(id);

@@ -6,7 +6,6 @@ import { FileTree, type GitStatus } from "@pierre/trees";
 import { activeWorkers, engineStats } from "../engine";
 import type { ChangedFile } from "../github";
 import { icons } from "../icons";
-import { lineCount } from "../lines";
 import type { FileView } from "./file";
 
 const gitStatus: Record<ChangedFile["status"], GitStatus> = {
@@ -32,6 +31,7 @@ const seconds = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `$
 export interface Timing {
   start: number;
   listed?: number;
+  firstPaint?: number;
   firstDiff?: number;
   done?: number;
 }
@@ -139,21 +139,26 @@ export class Sidebar {
     this.tree?.openSearch();
   }
 
-  updateStats(views: FileView[]) {
-    let added = 0, removed = 0, lines = 0, done = 0;
+  /** `totals`: GitHub's own counts for the change, which cover files too large for it to patch. */
+  updateStats(views: FileView[], totals?: { additions?: number; deletions?: number }) {
+    let added = 0, removed = 0, diffed = 0;
     for (const view of views) {
       const stats = view.stats;
       if (stats) {
         added += stats.added;
         removed += stats.removed;
       }
-      if (view.state !== "loading") done++;
-      if (view.prepared) lines += Math.max(lineCount(view.prepared.texts[0]), lineCount(view.prepared.texts[1]));
+      if (view.state === "done") diffed++;
     }
-    this.statsRows.innerHTML = row("Files", done < views.length ? `${number(done)} / ${number(views.length)}` : number(views.length))
+    // Until every file is diffed, GitHub's totals are the complete ones.
+    if (diffed < views.length && totals?.additions !== undefined) {
+      added = totals.additions;
+      removed = totals.deletions ?? removed;
+    }
+    this.statsRows.innerHTML = row("Files", number(views.length))
       + row("Additions", number(added), "added")
       + row("Deletions", number(removed), "removed")
-      + row("Lines", number(lines));
+      + row("Diffed by diffr", `${number(diffed)} / ${number(views.length)}`, "", "Files diffr has diffed; the rest show GitHub's patch until they come into view");
   }
 
   updateEngine(timing: Timing, views: FileView[]) {
@@ -161,11 +166,14 @@ export class Sidebar {
     const total = diffed.reduce((sum, view) => sum + view.diffMs, 0);
     const slowest = diffed.reduce<FileView | undefined>((a, b) => (!a || b.diffMs > a.diffMs ? b : a), undefined);
     const since = (at?: number) => (at ? seconds(at - timing.start) : "…");
+    const busy = views.filter((view) => view.state === "loading").length;
     this.engineRows.innerHTML = row("Engine", `diffr wasm × ${activeWorkers()}`)
       + row("Engine ready", engineStats.ready ? seconds(engineStats.ready) : "loading…")
       + row("Files listed", since(timing.listed))
+      + row("Patches shown", since(timing.firstPaint))
       + row("First diff", since(timing.firstDiff))
-      + row("All diffed", since(timing.done))
+      + row("Screen diffed", since(timing.done))
+      + row("Diffing now", number(busy))
       + row("Engine time", diffed.length ? seconds(total) : "…")
       + (slowest ? row("Slowest", seconds(slowest.diffMs), "", slowest.path) : "");
   }

@@ -17,7 +17,11 @@ export class Viewer {
   private views: FileView[] = [];
   private visible: FileView[] = [];
   private tops: number[] = [];
+  private heights: number[] = [];
   private frame = 0;
+  /** Called with the files on or near the screen, nearest first, whenever they change. */
+  onNear?: (views: FileView[]) => void;
+  private near = "";
   /** Called with the file at the top of the viewport whenever it changes. */
   onCurrent?: (view: FileView) => void;
   private current?: FileView;
@@ -47,14 +51,34 @@ export class Viewer {
     this.measure();
   }
 
-  /** Heights changed: a diff arrived, a fold toggled, the layout switched. */
+  /**
+   * Heights changed: a diff arrived, a fold toggled, the layout switched. The file being read stays
+   * where it is on screen, however much the files above it grew or shrank.
+   */
   measure() {
+    const scroll = this.element.scrollTop;
+    let anchor = -1, offset = 0;
+    if (scroll > 0 && this.tops.length === this.visible.length)
+      for (let i = 0; i < this.tops.length; i++)
+        if (this.tops[i]! + this.heights[i]! > scroll) {
+          anchor = i;
+          offset = scroll - this.tops[i]!;
+          break;
+        }
     let top = 0;
-    this.tops = this.visible.map((view) => {
+    this.heights = this.visible.map((view) => view.height());
+    this.tops = this.heights.map((height) => {
       const at = top;
-      top += view.height() + GAP;
+      top += height + GAP;
       return at;
     });
+    if (anchor >= 0) {
+      const target = this.tops[anchor]! + Math.min(offset, this.heights[anchor]!);
+      if (Math.abs(target - scroll) > 0.5) {
+        this.element.scrollTop = target;
+        if (this.jumped !== undefined) this.jumped = this.element.scrollTop;
+      }
+    }
     this.schedule();
   }
 
@@ -68,12 +92,21 @@ export class Viewer {
     this.frame = 0;
     const top = this.element.scrollTop, height = this.element.clientHeight;
     let current: FileView | undefined;
+    const onScreen: FileView[] = [], below: FileView[] = [], above: FileView[] = [];
     this.visible.forEach((view, i) => {
       const start = this.tops[i]!, end = start + view.height();
-      if (end >= top - AHEAD && start <= top + height + AHEAD) view.render(top - AHEAD - start, top + height + AHEAD - start);
-      else if (end < top - KEEP || start > top + height + KEEP) view.release();
+      if (end >= top - AHEAD && start <= top + height + AHEAD) {
+        view.render(top - AHEAD - start, top + height + AHEAD - start);
+        (end < top ? above : start > top + height ? below : onScreen).push(view);
+      } else if (end < top - KEEP || start > top + height + KEEP) view.release();
       if (!current && end > top + 1) current = view;
     });
+    const near = [...onScreen, ...below, ...above.reverse()];
+    const key = near.map((view) => view.index).join(",");
+    if (key !== this.near) {
+      this.near = key;
+      this.onNear?.(near);
+    }
     if (this.jumped !== undefined && Math.abs(top - this.jumped) > 1) this.jumped = undefined;
     if (current && current !== this.current && this.jumped === undefined) {
       this.current = current;
@@ -90,8 +123,11 @@ export class Viewer {
     const i = this.visible.indexOf(view);
     if (i < 0) return;
     this.element.scrollTop = this.tops[i]!;
-    this.current = view;
     this.jumped = this.element.scrollTop;
+    if (view !== this.current) {
+      this.current = view;
+      this.onCurrent?.(view);
+    }
     this.paint();
   }
 }

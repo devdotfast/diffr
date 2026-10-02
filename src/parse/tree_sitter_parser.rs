@@ -277,6 +277,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
+        #[cfg(feature = "lang-csharp")]
         CSharp => {
             let language_fn = tree_sitter_c_sharp::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);
@@ -827,6 +828,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
+        #[cfg(feature = "lang-objc")]
         ObjC => {
             let language_fn = tree_sitter_objc::LANGUAGE;
             let language = tree_sitter::Language::new(language_fn);

@@ -29,6 +29,7 @@ pub(crate) enum Language {
     CMake,
     CommonLisp,
     CPlusPlus,
+    #[cfg(feature = "lang-csharp")]
     CSharp,
     Css,
     Dart,
@@ -62,6 +63,7 @@ pub(crate) enum Language {
     Make,
     Newick,
     Nix,
+    #[cfg(feature = "lang-objc")]
     ObjC,
     #[cfg(feature = "lang-ocaml")]
     OCaml,
@@ -140,6 +142,7 @@ pub(crate) fn language_name(language: Language) -> &'static str {
         CMake => "CMake",
         CommonLisp => "Common Lisp",
         CPlusPlus => "C++",
+        #[cfg(feature = "lang-csharp")]
         CSharp => "C#",
         Css => "CSS",
         Dart => "Dart",
@@ -173,6 +176,7 @@ pub(crate) fn language_name(language: Language) -> &'static str {
         Make => "Make",
         Newick => "Newick",
         Nix => "Nix",
+        #[cfg(feature = "lang-objc")]
         ObjC => "Objective-C",
         #[cfg(feature = "lang-ocaml")]
         OCaml => "OCaml",
@@ -282,6 +286,7 @@ pub(crate) fn language_globs(language: Language) -> Vec<glob::Pattern> {
             "*.cc", "*.cpp", "*.c++", "*.cxx", "*.cu", "*.h", "*.hh", "*.hpp", "*.hxx", "*.inl",
             "*.ino", "*.ipp", "*.ixx", "*.tcc",
         ],
+        #[cfg(feature = "lang-csharp")]
         CSharp => &["*.cs"],
         Css => &["*.css"],
         Dart => &["*.dart"],
@@ -382,6 +387,7 @@ pub(crate) fn language_globs(language: Language) -> Vec<glob::Pattern> {
         ],
         Newick => &["*.nhx", "*.nwk", "*.nh"],
         Nix => &["*.nix"],
+        #[cfg(feature = "lang-objc")]
         ObjC => &["*.m"],
         #[cfg(feature = "lang-ocaml")]
         OCaml => &["*.ml"],
@@ -531,7 +537,10 @@ pub(crate) fn guess(
         return None;
     }
     if looks_like_objc(path, src) {
+        #[cfg(feature = "lang-objc")]
         return Some(Language::ObjC);
+        #[cfg(not(feature = "lang-objc"))]
+        return None;
     }
 
     if let Some(lang) = from_glob(path) {
@@ -567,6 +576,7 @@ fn from_emacs_mode_header(src: &str) -> Option<Language> {
             "ada" => Ada,
             "c" => C,
             "clojure" => Clojure,
+            #[cfg(feature = "lang-csharp")]
             "csharp" => CSharp,
             "css" => Css,
             "dart" => Dart,
@@ -590,6 +600,7 @@ fn from_emacs_mode_header(src: &str) -> Option<Language> {
             "js" | "js2" => JavaScript,
             "lisp" => CommonLisp,
             "nxml" => Xml,
+            #[cfg(feature = "lang-objc")]
             "objc" => ObjC,
             "perl" => Perl,
             "python" => Python,

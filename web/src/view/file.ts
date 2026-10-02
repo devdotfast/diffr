@@ -180,6 +180,8 @@ export class FileView {
   private bodyHeight?: { key: number; height: number };
   private window: [number, number] = [-1, -1];
   private renderedKey = "";
+  /** The placeholder's height for a layout, measured from GitHub's patch. */
+  private estimate?: { layout: Layout; height: number };
   /** Milliseconds diffr spent on this file, for the engine panel. */
   diffMs = 0;
 
@@ -205,8 +207,13 @@ export class FileView {
   private placeholder(): number {
     const patch = this.file.patch;
     if (!patch) return Math.max(MESSAGE, (this.file.additions + this.file.deletions) * LINE + GAP);
-    const { lines, gaps } = patchSize(patch, this.layoutMode === "split");
-    return Math.max(MESSAGE, lines * LINE + gaps * (SEPARATOR + 2 * GAP) + codeGap());
+    // Every file's height is read each time any diff lands, so the patch is measured once a layout.
+    const layout = this.layoutMode;
+    if (this.estimate?.layout !== layout) {
+      const { lines, gaps } = patchSize(patch, layout === "split");
+      this.estimate = { layout, height: Math.max(MESSAGE, lines * LINE + gaps * (SEPARATOR + 2 * GAP) + codeGap()) };
+    }
+    return this.estimate.height;
   }
 
   markLoading() {

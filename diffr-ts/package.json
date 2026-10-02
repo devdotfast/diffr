@@ -12,7 +12,8 @@
       "default": "./dist/index.js"
     },
     "./package.json": "./package.json",
-    "./src/*": "./src/*"
+    "./src/*": "./src/*",
+    "./binary": "./bin/binary.mjs"
   },
   "bin": {
     "diffr-fetch": "bin/fetch.mjs"

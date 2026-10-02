@@ -56,7 +56,7 @@ test("downloads, verifies, extracts, stamps, and reuses the pinned binary", () =
   );
   expect(readFileSync(join(f.into, "diffr"), "utf8")).toBe(f.content);
   expect(statSync(join(f.into, "diffr")).mode & 0o777).toBe(0o755);
-  expect(JSON.parse(readFileSync(join(f.into, "diffr.stamp.json"), "utf8"))).toEqual({ version, target });
+  expect(JSON.parse(readFileSync(join(f.into, "diffr.stamp.json"), "utf8"))).toMatchObject({ version, target });
   expect(readdirSync(f.into).sort()).toEqual(["diffr", "diffr.stamp.json"]);
   rmSync(join(f.dir, "requested"));
   expect(f.run(["--check"], true).code).toBe(0);
@@ -131,7 +131,7 @@ test("Linux ARM64 downloads and stamps the aarch64 release", () => {
     `https://github.com/devdotfast/diffr/releases/download/${version}/diffr-cli-${version}-aarch64-unknown-linux-gnu.tar.gz`,
   );
   expect(readFileSync(join(f.into, "diffr"), "utf8")).toBe(f.content);
-  expect(JSON.parse(readFileSync(join(f.into, "diffr.stamp.json"), "utf8"))).toEqual({
+  expect(JSON.parse(readFileSync(join(f.into, "diffr.stamp.json"), "utf8"))).toMatchObject({
     version, target: "aarch64-unknown-linux-gnu",
   });
   expect(f.run(["--check"], true).code).toBe(0);
@@ -177,4 +177,15 @@ test("--full downloads the full archive, fails without full pins, and refetches 
   );
   expect(f.run(["--full", "--check"]).code).toBe(0);
   expect(f.run(["--check"]).code).toBe(1);
+});
+
+
+test("corrupt executable is rejected offline and repaired on retry", () => {
+  const f = fixture();
+  expect(f.run().code).toBe(0);
+  writeFileSync(join(f.into, "diffr"), "corrupt");
+  expect(f.run(["--check"], true).code).toBe(1);
+  expect(f.run(["--required"], true).code).toBe(1);
+  expect(f.run().code).toBe(0);
+  expect(readFileSync(join(f.into, "diffr"), "utf8")).toBe(f.content);
 });

@@ -14,9 +14,9 @@ use std::rc::Rc;
 include!(concat!(env!("OUT_DIR"), "/native_plugins.rs"));
 
 #[cfg(test)]
-pub(crate) type Constructor = fn(Host, &str) -> anyhow::Result<Box<dyn Runner>>;
+pub type Constructor = fn(Host, &str) -> anyhow::Result<Box<dyn Runner>>;
 
-pub(crate) fn lookup(name: &str) -> anyhow::Result<Option<&'static sdk::Registration>> {
+pub fn lookup(name: &str) -> anyhow::Result<Option<&'static sdk::Registration>> {
     lookup_in(PLUGINS, name)
 }
 
@@ -37,7 +37,7 @@ fn lookup_in<'a>(
     Ok(found)
 }
 
-pub(crate) fn registered(
+pub fn registered(
     registration: &sdk::Registration,
     host: Host,
     options: &str,
@@ -47,7 +47,7 @@ pub(crate) fn registered(
 }
 
 #[cfg(test)]
-pub(crate) fn native<P: Plugin + Send + Sync + 'static>(
+pub fn native<P: Plugin + Send + Sync + 'static>(
     host: Host,
     options: &str,
 ) -> anyhow::Result<Box<dyn Runner>> {

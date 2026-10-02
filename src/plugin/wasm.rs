@@ -45,7 +45,7 @@ mod bindings {
 use bindings::diffr::plugin::{host, types};
 
 /// The engine every component of one pipeline compiles with.
-pub(crate) fn engine() -> anyhow::Result<Engine> {
+pub fn engine() -> anyhow::Result<Engine> {
     let mut config = Config::new();
     config.wasm_component_model(true);
     // The disk cache is an optimization; read-only homes must still run plugins.
@@ -210,14 +210,14 @@ impl tokio::io::AsyncWrite for Prefixed {
 }
 
 /// A compiled, linked component.
-pub(crate) struct WasmPlugin {
+pub struct WasmPlugin {
     engine: Engine,
     pre: bindings::PluginPre<State>,
 }
 
 impl WasmPlugin {
     /// Compile and link an external or bundled component.
-    pub(crate) fn load(engine: &Engine, source: &ComponentSource) -> anyhow::Result<Self> {
+    pub fn load(engine: &Engine, source: &ComponentSource) -> anyhow::Result<Self> {
         let started = Instant::now();
         let (component, label) = match source {
             ComponentSource::File(path) => (
@@ -250,7 +250,7 @@ impl WasmPlugin {
 
     /// Instantiate the component in a store of its own and make the plugin
     /// with its `new`, from `options`.
-    pub(crate) fn create(&self, host: Host, options: &str) -> anyhow::Result<Box<dyn Runner>> {
+    pub fn create(&self, host: Host, options: &str) -> anyhow::Result<Box<dyn Runner>> {
         let started = Instant::now();
         let mut wasi = WasiCtxBuilder::new();
         wasi.inherit_env()

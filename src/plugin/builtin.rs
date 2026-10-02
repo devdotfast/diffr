@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 // Manifests, queries and optional WASM components of plugin dependencies.
 include!(concat!(env!("OUT_DIR"), "/bundled_assets.rs"));
 
-pub(crate) fn component(name: &str) -> Option<&'static [u8]> {
+pub fn component(name: &str) -> Option<&'static [u8]> {
     COMPONENTS
         .iter()
         .find(|(own, _)| *own == name)
@@ -22,7 +22,7 @@ pub(crate) fn component(name: &str) -> Option<&'static [u8]> {
 }
 
 /// An embedded file by its normalized path under `plugins/`.
-pub(crate) fn file(path: &str) -> Option<&'static str> {
+pub fn file(path: &str) -> Option<&'static str> {
     FILES
         .iter()
         .find(|(name, _)| *name == path)
@@ -30,7 +30,7 @@ pub(crate) fn file(path: &str) -> Option<&'static str> {
 }
 
 /// Every bundled plugin manifest, discovered from Cargo dependencies.
-pub(crate) fn manifests() -> &'static [Manifest] {
+pub fn manifests() -> &'static [Manifest] {
     static MANIFESTS: OnceLock<Vec<Manifest>> = OnceLock::new();
     MANIFESTS.get_or_init(|| {
         FILES
@@ -43,7 +43,7 @@ pub(crate) fn manifests() -> &'static [Manifest] {
     })
 }
 
-pub(crate) fn manifest(name: &str) -> Option<&'static Manifest> {
+pub fn manifest(name: &str) -> Option<&'static Manifest> {
     manifests().iter().find(|manifest| manifest.name == name)
 }
 

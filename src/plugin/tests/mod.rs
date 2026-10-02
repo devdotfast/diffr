@@ -19,15 +19,11 @@ use serde_json::json;
 
 /// Project a two-source comparison with the bundled queries, the way the
 /// stream does before the plugins run.
-pub(crate) fn project(
-    path: &str,
-    before: &str,
-    after: &str,
-) -> (FileChange, Pairing<protocol::Source>) {
+pub fn project(path: &str, before: &str, after: &str) -> (FileChange, Pairing<protocol::Source>) {
     project_with(path, before, after, DiffOptions::default())
 }
 
-pub(crate) fn project_with(
+pub fn project_with(
     path: &str,
     before: &str,
     after: &str,
@@ -38,7 +34,7 @@ pub(crate) fn project_with(
 }
 
 /// Project with the queries `params` was compiled with.
-pub(crate) fn project_compiled(
+pub fn project_compiled(
     path: &str,
     before: &str,
     after: &str,
@@ -77,7 +73,7 @@ pub(crate) fn project_compiled(
 }
 
 /// A manifest entry for `path` on the sides `sides` names.
-pub(crate) fn manifest<T>(path: &str, sides: &tree::Pairing<T>, status: FileStatus) -> FileChange {
+pub fn manifest<T>(path: &str, sides: &tree::Pairing<T>, status: FileStatus) -> FileChange {
     let file_ref = || FileRef {
         path: path.to_owned(),
         oid: String::new(),
@@ -98,7 +94,7 @@ pub(crate) fn manifest<T>(path: &str, sides: &tree::Pairing<T>, status: FileStat
 }
 
 /// The wire's sides as the trees plugins read.
-pub(crate) fn trees(sides: &Pairing<protocol::Source>) -> tree::Pairing<tree::Source> {
+pub fn trees(sides: &Pairing<protocol::Source>) -> tree::Pairing<tree::Source> {
     match sides {
         Pairing::Both { lhs, rhs } => tree::Pairing::Both {
             lhs: to_tree(lhs),
@@ -110,7 +106,7 @@ pub(crate) fn trees(sides: &Pairing<protocol::Source>) -> tree::Pairing<tree::So
 }
 
 /// Trees built by hand, as the wire's sides.
-pub(crate) fn wire(sides: tree::Pairing<tree::Source>) -> Pairing<protocol::Source> {
+pub fn wire(sides: tree::Pairing<tree::Source>) -> Pairing<protocol::Source> {
     let source = |side: tree::Source| protocol::Source {
         text: side.text,
         syntax: Vec::new(),
@@ -126,17 +122,17 @@ pub(crate) fn wire(sides: tree::Pairing<tree::Source>) -> Pairing<protocol::Sour
     }
 }
 
-pub(crate) fn lhs(sides: &tree::Pairing<tree::Source>) -> &tree::Source {
+pub fn lhs(sides: &tree::Pairing<tree::Source>) -> &tree::Source {
     sides.lhs().expect("a before side")
 }
 
-pub(crate) fn rhs(sides: &tree::Pairing<tree::Source>) -> &tree::Source {
+pub fn rhs(sides: &tree::Pairing<tree::Source>) -> &tree::Source {
     sides.rhs().expect("an after side")
 }
 
 /// A pipeline of the bundled plugin `name` alone, made with its defaults and
 /// `overrides`.
-pub(crate) fn bundled(name: &str, overrides: serde_json::Value) -> Pipeline {
+pub fn bundled(name: &str, overrides: serde_json::Value) -> Pipeline {
     let serde_json::Value::Object(mut options) = overrides else {
         panic!("overrides are an object");
     };
@@ -166,7 +162,7 @@ pub(crate) fn bundled(name: &str, overrides: serde_json::Value) -> Pipeline {
 }
 
 /// Run the bundled plugin `name` with `overrides` and carry out its moves.
-pub(crate) fn run(
+pub fn run(
     name: &str,
     overrides: serde_json::Value,
     file: &FileChange,
@@ -177,7 +173,7 @@ pub(crate) fn run(
 
 /// Run the bundled plugin `name` with `overrides` on trees built by hand,
 /// and carry out its moves.
-pub(crate) fn run_trees(
+pub fn run_trees(
     name: &str,
     overrides: serde_json::Value,
     file: &FileChange,
@@ -189,7 +185,7 @@ pub(crate) fn run_trees(
 }
 
 /// The moves the only plugin of `pipeline` asks for, not carried out.
-pub(crate) fn moves(
+pub fn moves(
     pipeline: &Pipeline,
     file: &FileChange,
     sides: &Pairing<protocol::Source>,

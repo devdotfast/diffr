@@ -17,7 +17,7 @@ const LEGACY_DEFAULTS: &[(&str, &[&str])] = &[(
 
 /// `source` without the keys that hold a legacy default. Text that does not
 /// parse is returned as it is, for the caller to report.
-pub(crate) fn forget_legacy(source: &str) -> Cow<'_, str> {
+pub fn forget_legacy(source: &str) -> Cow<'_, str> {
     let Ok(mut document) = source.parse::<DocumentMut>() else {
         return Cow::Borrowed(source);
     };
@@ -41,7 +41,7 @@ pub(crate) fn forget_legacy(source: &str) -> Cow<'_, str> {
 /// Remove each value, then each table, whose removal leaves `resolve` of
 /// the document unchanged: an object option is only valid whole. `version` stays, and so does
 /// anything with a comment on it: a note marks intent.
-pub(crate) fn prune(document: &mut DocumentMut, resolve: impl Fn(&str) -> Option<toml::Value>) {
+pub fn prune(document: &mut DocumentMut, resolve: impl Fn(&str) -> Option<toml::Value>) {
     let Some(target) = resolve(&document.to_string()) else {
         return;
     };

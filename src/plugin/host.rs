@@ -10,16 +10,16 @@ use std::sync::Arc;
 
 /// What one call of a plugin reads and runs things in.
 #[derive(Clone)]
-pub(crate) struct Host {
-    pub(crate) name: Arc<str>,
-    pub(crate) workdir: Arc<Path>,
+pub struct Host {
+    pub name: Arc<str>,
+    pub workdir: Arc<Path>,
 }
 
 impl Host {
     /// `git`'s stdout when it exits successfully, its stderr otherwise.
     /// `Err` is the host failing: git could not be started, or wrote
     /// something that is not UTF-8.
-    pub(crate) fn git(&self, args: &[String]) -> anyhow::Result<Result<String, String>> {
+    pub fn git(&self, args: &[String]) -> anyhow::Result<Result<String, String>> {
         let output = Command::new("git")
             .args(args)
             .current_dir(&*self.workdir)

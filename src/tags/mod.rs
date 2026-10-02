@@ -11,22 +11,24 @@
 
 mod generated;
 
-pub(crate) use generated::Prefix;
+pub use generated::Prefix;
 
+#[cfg(not(target_family = "wasm"))]
 use git2::{AttrCheckFlags, AttrValue, Repository};
 use regex::Regex;
 use std::collections::BTreeSet;
 use std::fmt;
+#[cfg(not(target_family = "wasm"))]
 use std::path::Path;
 use std::sync::LazyLock;
 
-pub(crate) const GENERATED: &str = "generated";
-pub(crate) const VENDORED: &str = "vendored";
-pub(crate) const DOCS: &str = "docs";
-pub(crate) const TEST: &str = "test";
+pub const GENERATED: &str = "generated";
+pub const VENDORED: &str = "vendored";
+pub const DOCS: &str = "docs";
+pub const TEST: &str = "test";
 
 /// How much of a file the content rules read.
-pub(crate) const PREFIX_BYTES: usize = 8 * 1024;
+pub const PREFIX_BYTES: usize = 8 * 1024;
 
 /// Linguist builds one regex from a YAML list of patterns joined with `|`
 /// and matches it anywhere in the repository-relative path.
@@ -61,7 +63,7 @@ fn is_test(path: &str) -> bool {
 }
 
 /// Every bundled rule that looks at the repository-relative path alone.
-pub(crate) fn from_path(path: &str) -> BTreeSet<&'static str> {
+pub fn from_path(path: &str) -> BTreeSet<&'static str> {
     let mut tags = BTreeSet::new();
     if generated::by_path(path) {
         tags.insert(GENERATED);
@@ -80,18 +82,18 @@ pub(crate) fn from_path(path: &str) -> BTreeSet<&'static str> {
 
 /// Whether a Linguist content rule could apply to this path, so the start of
 /// the file is worth reading.
-pub(crate) fn needs_content(path: &str) -> bool {
+pub fn needs_content(path: &str) -> bool {
     generated::needs_content(path)
 }
 
 /// Linguist's content rules over the start of the file.
-pub(crate) fn generated_by_content(path: &str, prefix: &Prefix<'_>) -> bool {
+pub fn generated_by_content(path: &str, prefix: &Prefix<'_>) -> bool {
     generated::by_content(path, prefix)
 }
 
 /// A `diffr-tags` attribute that is not a comma-separated list of tags.
 #[derive(Debug)]
-pub(crate) struct TagError {
+pub struct TagError {
     path: String,
     message: String,
 }
@@ -107,20 +109,21 @@ impl std::error::Error for TagError {}
 /// What git attributes say about one file. `None` leaves the bundled rules
 /// in charge of that tag.
 #[derive(Debug, Default, PartialEq, Eq)]
-pub(crate) struct Attributes {
-    pub(crate) generated: Option<bool>,
-    pub(crate) vendored: Option<bool>,
-    pub(crate) docs: Option<bool>,
-    pub(crate) added: Vec<String>,
+pub struct Attributes {
+    pub generated: Option<bool>,
+    pub vendored: Option<bool>,
+    pub docs: Option<bool>,
+    pub added: Vec<String>,
 }
 
 impl Attributes {
+    #[cfg(not(target_family = "wasm"))]
     /// Look up the file's attributes with git's precedence: the repository's
     /// `$GIT_DIR/info/attributes`, then `.gitattributes` files (deeper first,
     /// working tree then index), then the user-wide file
     /// (`core.attributesFile`, default `$XDG_CONFIG_HOME/git/attributes`),
     /// then the system file.
-    pub(crate) fn lookup(
+    pub fn lookup(
         repo: &Repository,
         path: &str,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
@@ -142,6 +145,7 @@ impl Attributes {
         )?)
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn from_values(
         path: &str,
         generated: AttrValue<'_>,
@@ -174,7 +178,7 @@ impl Attributes {
     }
 
     /// Apply these attributes over the bundled tags, sorted and deduplicated.
-    pub(crate) fn resolve(&self, bundled: BTreeSet<&'static str>) -> Vec<String> {
+    pub fn resolve(&self, bundled: BTreeSet<&'static str>) -> Vec<String> {
         let mut tags: BTreeSet<String> = bundled.into_iter().map(str::to_owned).collect();
         for (tag, flag) in [
             (GENERATED, self.generated),
@@ -196,6 +200,7 @@ impl Attributes {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 /// Linguist's reading of a boolean attribute: unspecified has no opinion,
 /// unset or the string `false` is false, and anything else is true.
 fn linguist_flag(value: AttrValue<'_>) -> Option<bool> {
@@ -209,7 +214,7 @@ fn linguist_flag(value: AttrValue<'_>) -> Option<bool> {
 
 /// A tag is lowercase ASCII letters, digits, `-` and `_`, starting with a
 /// letter or digit.
-pub(crate) fn is_tag(tag: &str) -> bool {
+pub fn is_tag(tag: &str) -> bool {
     tag.chars()
         .next()
         .is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
@@ -218,6 +223,7 @@ pub(crate) fn is_tag(tag: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
+#[cfg(not(target_family = "wasm"))]
 /// `a,b`: each one a tag.
 fn parse_tags(value: &str) -> Result<Vec<String>, String> {
     value
@@ -234,7 +240,7 @@ fn parse_tags(value: &str) -> Result<Vec<String>, String> {
         .collect()
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;
     use git2::Repository;

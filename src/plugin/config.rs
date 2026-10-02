@@ -15,57 +15,57 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// The key in a plugin entry that turns the plugin on and off.
-pub(crate) const ENABLED: &str = "enabled";
+pub const ENABLED: &str = "enabled";
 
 /// The key in a plugin entry that points at a plugin folder on disk.
-pub(crate) const PATH: &str = "path";
+pub const PATH: &str = "path";
 
 /// The keys in a plugin entry that diffr owns: a plugin's options may not
 /// use them.
-pub(crate) const RESERVED: [&str; 3] = [ENABLED, PATH, "instances"];
+pub const RESERVED: [&str; 3] = [ENABLED, PATH, "instances"];
 
 /// A plugin folder's description, and its component when it has one.
-pub(crate) const MANIFEST_FILE: &str = "plugin.toml";
+pub const MANIFEST_FILE: &str = "plugin.toml";
 /// An option's default that depends on another option's value:
 /// `{ key = "<option>", values = { <value> = <default>, ... } }`.
 const DEFAULT_BY: &str = "x-default-by";
-pub(crate) const COMPONENT_FILE: &str = "plugin.wasm";
+pub const COMPONENT_FILE: &str = "plugin.wasm";
 
 /// A plugin's `plugin.toml`.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Manifest {
+pub struct Manifest {
     /// The plugin's entry name in `[plugins]`, and the prefix of every tag
     /// its queries set: `<name>:<tag>`.
-    pub(crate) name: String,
+    pub name: String,
     /// Opt in only when independent instances can process different files.
     /// No cross-call state, ordering, or unique external side effects may be required.
     #[serde(default)]
-    pub(crate) parallel: bool,
+    pub parallel: bool,
     /// The human name settings screens group the plugin's settings under.
-    pub(crate) title: String,
+    pub title: String,
     #[serde(default)]
-    pub(crate) description: String,
+    pub description: String,
     /// How settings screens show the `enabled` switch, and whether the
     /// plugin is on by default. Without it the switch is titled
     /// `Run <title>` and the plugin is on.
     #[serde(default)]
-    pub(crate) enabled: Option<Switch>,
+    pub enabled: Option<Switch>,
     /// Each option's JSON Schema, in the order settings screens list them.
     /// Every option has a `title`; one with a `default` is pre-filled.
     #[serde(default)]
-    pub(crate) options: Map<String, Value>,
+    pub options: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Switch {
-    pub(crate) title: String,
+pub struct Switch {
+    pub title: String,
     #[serde(default)]
-    pub(crate) description: String,
+    pub description: String,
     /// Whether an entry that does not set `enabled` runs the plugin.
     #[serde(default = "on")]
-    pub(crate) default: bool,
+    pub default: bool,
 }
 
 fn on() -> bool {
@@ -74,7 +74,7 @@ fn on() -> bool {
 
 impl Manifest {
     /// Parse and check a `plugin.toml`.
-    pub(crate) fn parse(text: &str) -> Result<Self, String> {
+    pub fn parse(text: &str) -> Result<Self, String> {
         let manifest: Self = toml::from_str(text).map_err(|error| error.to_string())?;
         manifest.check()?;
         Ok(manifest)
@@ -186,7 +186,7 @@ impl Manifest {
 
     /// Check `options` against the options schema. The message leads with
     /// the dotted path of the key it concerns, when there is one.
-    pub(crate) fn validate(&self, options: &Map<String, Value>) -> Result<(), String> {
+    pub fn validate(&self, options: &Map<String, Value>) -> Result<(), String> {
         let validator = jsonschema::validator_for(&self.options_schema())
             .map_err(|error| format!("the options schema is invalid: {error}"))?;
         let instance = Value::Object(options.clone());
@@ -207,12 +207,12 @@ impl Manifest {
     }
 
     /// Whether an entry that does not set `enabled` runs the plugin.
-    pub(crate) fn enabled_by_default(&self) -> bool {
+    pub fn enabled_by_default(&self) -> bool {
         self.enabled.as_ref().is_none_or(|switch| switch.default)
     }
 
     /// Every option that declares a default, with it.
-    pub(crate) fn defaults(&self) -> Map<String, Value> {
+    pub fn defaults(&self) -> Map<String, Value> {
         self.options
             .iter()
             .filter_map(|(key, option)| {
@@ -225,7 +225,7 @@ impl Manifest {
 
     /// Fill every option `options` leaves unset: from its `default`, or from
     /// its `x-default-by` for the value its key has.
-    pub(crate) fn fill_defaults(&self, options: &mut Map<String, Value>) {
+    pub fn fill_defaults(&self, options: &mut Map<String, Value>) {
         for (key, default) in self.defaults() {
             options.entry(key).or_insert(default);
         }
@@ -263,7 +263,7 @@ impl Manifest {
     /// `x-group` unless it sets one. An option whose type is an array or an
     /// object is marked `"x-settings": false`: settings screens edit
     /// scalars.
-    pub(crate) fn settings_schema(&self) -> Value {
+    pub fn settings_schema(&self) -> Value {
         let group = &self.title;
         let (title, description) = match &self.enabled {
             Some(switch) => (switch.title.clone(), switch.description.clone()),
@@ -318,12 +318,12 @@ impl Manifest {
 /// `[plugins]`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(from = "PluginTables", into = "PluginTables")]
-pub(crate) struct PluginsConfig {
+pub struct PluginsConfig {
     /// The plugins in the order they run; each sees the region trees the
     /// ones before it left. Every entry is listed exactly once.
-    pub(crate) order: Vec<String>,
+    pub order: Vec<String>,
     /// Every entry, by plugin name.
-    pub(crate) entries: BTreeMap<String, Entry>,
+    pub entries: BTreeMap<String, Entry>,
 }
 
 /// The on-disk namespaces. An explicit order makes the listed entries
@@ -408,29 +408,29 @@ impl From<PluginsConfig> for PluginTables {
 /// One plugin's entry: diffr's keys, and the plugin's options.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub(crate) struct Entry {
+pub struct Entry {
     /// Whether the plugin runs; once resolved, set, from the file or the
     /// plugin's default.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) enabled: Option<bool>,
+    pub enabled: Option<bool>,
     /// Host-owned deferred-work bound, shared by all files of this plugin.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) instances: Option<usize>,
+    pub instances: Option<usize>,
     /// The plugin's folder on disk, as written: relative to the
     /// configuration file's directory, or absolute.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) path: Option<PathBuf>,
+    pub path: Option<PathBuf>,
     /// The folder, loaded when the configuration resolves: `path`'s, or the
     /// bundled plugin's.
     #[serde(skip)]
-    pub(crate) folder: Option<Folder>,
+    pub folder: Option<Folder>,
     #[serde(flatten)]
-    pub(crate) options: Map<String, Value>,
+    pub options: Map<String, Value>,
 }
 
 /// Where a plugin folder is.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Location {
+pub enum Location {
     /// Embedded in diffr: `plugins/<name>/`.
     Bundled,
     /// On disk. Canonical.
@@ -438,16 +438,16 @@ pub(crate) enum Location {
 }
 
 /// A component loaded from disk or embedded with the executable.
-pub(crate) enum ComponentSource {
+pub enum ComponentSource {
     File(PathBuf),
     Bundled(&'static [u8]),
 }
 
 /// A plugin folder and the `plugin.toml` in it.
 #[derive(Clone, Debug)]
-pub(crate) struct Folder {
-    pub(crate) location: Location,
-    pub(crate) manifest: Manifest,
+pub struct Folder {
+    pub location: Location,
+    pub manifest: Manifest,
 }
 
 impl Folder {
@@ -461,7 +461,7 @@ impl Folder {
 
     /// External entries always name plugin.wasm, even when it is missing.
     /// A bundled native plugin has no component; other bundles embed one.
-    pub(crate) fn component(&self) -> Option<ComponentSource> {
+    pub fn component(&self) -> Option<ComponentSource> {
         match &self.location {
             Location::Bundled => {
                 builtin::component(&self.manifest.name).map(ComponentSource::Bundled)
@@ -497,14 +497,14 @@ impl Folder {
 impl Entry {
     /// The entry's folder. Every entry has one once the configuration
     /// resolves.
-    pub(crate) fn folder(&self) -> &Folder {
+    pub fn folder(&self) -> &Folder {
         self.folder
             .as_ref()
             .expect("a resolved entry has its plugin folder")
     }
 
     /// Whether the plugin runs.
-    pub(crate) fn is_enabled(&self) -> bool {
+    pub fn is_enabled(&self) -> bool {
         self.enabled.expect("a resolved entry is enabled or not")
     }
 }
@@ -522,7 +522,7 @@ impl Default for PluginsConfig {
 impl PluginsConfig {
     /// Resolve each selected entry, validate its options, fill their defaults,
     /// and require every entry to appear in the explicit order exactly once.
-    pub(crate) fn resolve(&mut self, base: &Path) -> Result<(), ConfigError> {
+    pub fn resolve(&mut self, base: &Path) -> Result<(), ConfigError> {
         for (reference, entry) in &mut self.entries {
             let (source, name) = reference
                 .split_once('.')
@@ -588,7 +588,7 @@ impl PluginsConfig {
     }
 
     /// The enabled entries, in `order`.
-    pub(crate) fn enabled(&self) -> impl Iterator<Item = (&str, &Entry)> {
+    pub fn enabled(&self) -> impl Iterator<Item = (&str, &Entry)> {
         self.order.iter().filter_map(|name| {
             self.entries
                 .get(name)
@@ -599,7 +599,7 @@ impl PluginsConfig {
 
     /// The `plugins` property of `diffr config schema`: `order`, and every
     /// bundled plugin's entry.
-    pub(crate) fn schema() -> Value {
+    pub fn schema() -> Value {
         let mut properties = Map::new();
         properties.insert(
             "order".to_owned(),

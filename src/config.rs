@@ -17,8 +17,8 @@
 //! query files of every enabled plugin (see [`crate::plugin::queries`]): its
 //! `@fold` captures decide which folds exist, and its tags what they are.
 //! Every tag a query sets must be written `<plugin>:<name>`.
-pub(crate) mod prune;
-pub(crate) mod store;
+pub mod prune;
+pub mod store;
 use crate::params::query::{AnnotationQuery, QueryError};
 use crate::params::{DiffOptions, Params};
 use crate::parse::{guess_language::Language, tree_sitter_parser};
@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use strum::IntoEnumIterator;
 
-pub(crate) const DEFAULT_CONFIG: &str = include_str!("config/default.toml");
+pub const DEFAULT_CONFIG: &str = include_str!("config/default.toml");
 const CONFIG_VERSION: u32 = 1;
 fn config_version() -> u32 {
     CONFIG_VERSION
@@ -37,23 +37,23 @@ fn config_version() -> u32 {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Config {
+pub struct Config {
     /// Configuration format version. Unknown versions require a newer diffr.
     #[serde(default = "config_version")]
     #[schemars(extend("x-settings" = false))]
-    pub(crate) version: u32,
+    pub version: u32,
     /// The plugins that decide what starts collapsed, hidden, linked or
     /// grouped, and the fold queries they own. Its schema comes from each
     /// plugin's `plugin.toml`; see [`PluginsConfig::schema`].
     #[schemars(skip)]
     #[serde(default)]
-    pub(crate) plugins: PluginsConfig,
+    pub plugins: PluginsConfig,
     /// Colors for the terminal frontend.
     #[serde(default)]
-    pub(crate) theme: ThemeConfig,
+    pub theme: ThemeConfig,
     /// Limits on the structural comparison itself.
     #[serde(default)]
-    pub(crate) diff: DiffConfig,
+    pub diff: DiffConfig,
 }
 
 impl Default for Config {
@@ -69,18 +69,18 @@ impl Default for Config {
 /// command-line flags override these for one run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct DiffConfig {
+pub struct DiffConfig {
     /// Files larger than this many bytes on either side get a line diff.
     #[schemars(title = "Largest file to diff structurally (bytes)", extend("x-group" = "Diff limits"))]
-    pub(crate) byte_limit: usize,
+    pub byte_limit: usize,
     /// The largest AST matching graph diffr will explore for one file.
     /// A large change to a large file can exceed it; raising it costs time
     /// and memory on those files only.
     #[schemars(title = "Largest matching graph", extend("x-group" = "Diff limits"))]
-    pub(crate) graph_limit: usize,
+    pub graph_limit: usize,
     /// Files with more tree-sitter parse errors than this get a line diff.
     #[schemars(title = "Parse errors allowed", extend("x-group" = "Diff limits"))]
-    pub(crate) parse_error_limit: usize,
+    pub parse_error_limit: usize,
 }
 
 impl Default for DiffConfig {
@@ -95,7 +95,7 @@ impl Default for DiffConfig {
 
 impl DiffConfig {
     /// The engine options for these limits.
-    pub(crate) fn options(&self, ignore_comments: bool) -> DiffOptions {
+    pub fn options(&self, ignore_comments: bool) -> DiffOptions {
         DiffOptions {
             byte_limit: self.byte_limit,
             graph_limit: self.graph_limit,
@@ -108,13 +108,13 @@ impl DiffConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct ThemeConfig {
+pub struct ThemeConfig {
     /// A bundled theme name.
     #[schemars(title = "Theme", extend("x-group" = "Appearance"))]
-    pub(crate) name: String,
+    pub name: String,
     /// A Helix-style theme file that replaces the bundled theme.
     #[schemars(title = "Theme file", extend("x-group" = "Appearance"))]
-    pub(crate) path: Option<PathBuf>,
+    pub path: Option<PathBuf>,
 }
 
 impl Default for ThemeConfig {
@@ -127,7 +127,7 @@ impl Default for ThemeConfig {
 }
 
 #[derive(Debug)]
-pub(crate) struct ConfigError(pub(crate) String);
+pub struct ConfigError(pub String);
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
@@ -143,24 +143,35 @@ impl From<QueryError> for ConfigError {
 
 /// The user's global file: `$XDG_CONFIG_HOME/diffr/config.toml`, falling
 /// back to `~/.config/diffr/config.toml`.
-pub(crate) fn global_path() -> Result<PathBuf, ConfigError> {
+pub fn global_path() -> Result<PathBuf, ConfigError> {
     let dir = match std::env::var_os("XDG_CONFIG_HOME") {
         Some(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => dirs::home_dir()
+        _ => home_dir()
             .ok_or_else(|| ConfigError("no home directory for this user".into()))?
             .join(".config"),
     };
     Ok(dir.join("diffr").join("config.toml"))
 }
 
+#[cfg(not(target_family = "wasm"))]
+fn home_dir() -> Option<PathBuf> {
+    dirs::home_dir()
+}
+
+/// A browser has no home directory.
+#[cfg(target_family = "wasm")]
+fn home_dir() -> Option<PathBuf> {
+    None
+}
+
 /// The directory a configuration file's relative paths resolve against.
-pub(crate) fn directory_of(file: &Path) -> &Path {
+pub fn directory_of(file: &Path) -> &Path {
     file.parent().unwrap_or(Path::new(""))
 }
 
 impl Config {
     /// Read the global file; a missing one is the defaults.
-    pub(crate) fn load() -> Result<Self, ConfigError> {
+    pub fn load() -> Result<Self, ConfigError> {
         Self::load_from(&global_path()?)
     }
 
@@ -180,13 +191,13 @@ impl Config {
     /// Parse text that is not a file's: a plugin folder's `path` is relative
     /// to the current directory.
     #[cfg(test)]
-    pub(crate) fn from_toml(source: &str) -> Result<Self, ConfigError> {
+    pub fn from_toml(source: &str) -> Result<Self, ConfigError> {
         Self::from_toml_in(source, Path::new(""))
     }
 
     /// Parse the text of a file in `directory`. Errors lead with the dotted
     /// path of the key they concern, such as `diff.typo`.
-    pub(crate) fn from_toml_in(source: &str, directory: &Path) -> Result<Self, ConfigError> {
+    pub fn from_toml_in(source: &str, directory: &Path) -> Result<Self, ConfigError> {
         let source = prune::forget_legacy(source);
         let document =
             toml::Deserializer::parse(&source).map_err(|error| ConfigError(error.to_string()))?;
@@ -211,7 +222,7 @@ impl Config {
     /// The JSON Schema of the configuration, with a description and default
     /// on every setting. `plugins` comes first, built from each bundled
     /// plugin's `plugin.toml`.
-    pub(crate) fn schema() -> serde_json::Value {
+    pub fn schema() -> serde_json::Value {
         let mut schema =
             serde_json::to_value(schemars::schema_for!(Config)).expect("schema serializes");
         let rest = std::mem::take(
@@ -228,10 +239,7 @@ impl Config {
     }
 
     /// Compile queries from the enabled plugin instances before processing files.
-    pub(crate) fn compile_with(
-        self,
-        pipeline: &crate::plugin::Pipeline,
-    ) -> Result<Params, ConfigError> {
+    pub fn compile_with(self, pipeline: &crate::plugin::Pipeline) -> Result<Params, ConfigError> {
         let queries = pipeline
             .queries()
             .map_err(|error| ConfigError(format!("{error:#}")))?;
@@ -239,7 +247,7 @@ impl Config {
     }
 
     #[cfg(test)]
-    pub(crate) fn compile(self) -> Result<Params, ConfigError> {
+    pub fn compile(self) -> Result<Params, ConfigError> {
         let pipeline = crate::plugin::Pipeline::from_config(&self.plugins, Path::new("."))
             .map_err(|error| ConfigError(format!("{error:#}")))?;
         self.compile_with(&pipeline)
@@ -247,10 +255,7 @@ impl Config {
 
     /// Compile with `queries`, the enabled plugins' source text in
     /// `plugins.order`.
-    pub(crate) fn compile_queries(
-        self,
-        queries: Vec<(String, Queries)>,
-    ) -> Result<Params, ConfigError> {
+    pub fn compile_queries(self, queries: Vec<(String, Queries)>) -> Result<Params, ConfigError> {
         let mut compiled = Vec::new();
         for (name, sources) in queries::assemble(&queries)? {
             let language = Language::iter()
@@ -290,7 +295,7 @@ fn check_tags(query: &AnnotationQuery, order: &[String]) -> Result<(), ConfigErr
 
 /// The bundled defaults, compiled: what diffr runs with when it reads no
 /// configuration.
-pub(crate) fn default_params() -> Params {
+pub fn default_params() -> Params {
     let config = Config::default();
     let pipeline = crate::plugin::Pipeline::from_config(&config.plugins, Path::new("."))
         .expect("invalid bundled plugin configuration");
@@ -427,7 +432,7 @@ mod tests {
 
 /// The diff of two sources with [`body_params`].
 #[cfg(test)]
-pub(crate) fn diff_sources(path: &str, lhs: &str, rhs: &str) -> crate::summary::DiffResult {
+pub fn diff_sources(path: &str, lhs: &str, rhs: &str) -> crate::summary::DiffResult {
     crate::summary::DiffResult::from_sources_with_params(path, lhs, rhs, &body_params())
 }
 
@@ -435,7 +440,7 @@ pub(crate) fn diff_sources(path: &str, lhs: &str, rhs: &str) -> crate::summary::
 /// returned as source text the removed-runs plugin owns; no other plugin
 /// contributes queries.
 #[cfg(test)]
-pub(crate) fn try_with_queries(queries: &[(&str, &str)]) -> Result<Params, ConfigError> {
+pub fn try_with_queries(queries: &[(&str, &str)]) -> Result<Params, ConfigError> {
     let files = queries
         .iter()
         .map(|(language, text)| diffr_plugin_sdk::QuerySource {
@@ -457,7 +462,7 @@ fn with_queries(queries: &[(&str, &str)]) -> Params {
 /// engine's tests are written against, without the scopes `context` lays
 /// over them.
 #[cfg(test)]
-pub(crate) fn body_params() -> Params {
+pub fn body_params() -> Params {
     Config::from_toml("[plugins.bundled.context]\nenabled = false\n[plugins.bundled.summarize]\nenabled = true\napi_key = 'test'\n")
         .expect("a valid configuration")
         .compile()

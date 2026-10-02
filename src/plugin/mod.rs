@@ -28,13 +28,14 @@
 //! carries the moves out, in order, and the next plugin sees the result. A
 //! move that cannot be carried out, or a plugin that fails, stops the run
 //! (`complete.aborted`).
-pub(crate) mod builtin;
-pub(crate) mod config;
-pub(crate) mod host;
-pub(crate) mod native;
+pub mod builtin;
+pub mod config;
+pub mod host;
+pub mod native;
 mod pool;
-pub(crate) mod queries;
-pub(crate) mod wasm;
+pub mod queries;
+#[cfg(not(target_family = "wasm"))]
+pub mod wasm;
 
 #[cfg(test)]
 mod tests;
@@ -50,12 +51,13 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
+#[cfg(not(target_family = "wasm"))]
 use std::time::Instant;
 
 /// One plugin instance: its native code or its component, made once from
 /// its options, behind the contract's two calls on a file. Each call gets
 /// the host for that call.
-pub(crate) trait Runner: Send + Sync {
+pub trait Runner: Send + Sync {
     fn enrich(
         &self,
         _host: Host,
@@ -80,7 +82,7 @@ pub(crate) trait Runner: Send + Sync {
 /// A plugin stopped the run: its own failure, or a move it asked for
 /// that could not be carried out. The stream reports `mutation_failed`.
 #[derive(Debug)]
-pub(crate) struct MutationFailed(pub(crate) String);
+pub struct MutationFailed(pub String);
 
 impl fmt::Display for MutationFailed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -92,7 +94,7 @@ impl std::error::Error for MutationFailed {}
 
 /// Makes a plugin's instance from its options, the entry as a JSON object
 /// with defaults filled in, with the host of that call.
-pub(crate) type Create<'a> = &'a dyn Fn(Host, &str) -> anyhow::Result<Box<dyn Runner>>;
+pub type Create<'a> = &'a dyn Fn(Host, &str) -> anyhow::Result<Box<dyn Runner>>;
 
 /// A plugin in the pipeline.
 struct Loaded {
@@ -102,7 +104,7 @@ struct Loaded {
 
 /// The enabled plugins, in the order they run, and the directory their
 /// `git` runs in.
-pub(crate) struct Pipeline {
+pub struct Pipeline {
     plugins: Vec<Loaded>,
     workdir: Arc<Path>,
 }
@@ -123,16 +125,22 @@ impl Pipeline {
     /// (a component that does not compile or link, options that do not
     /// deserialize, a summarizer without an API key), which is a setup error
     /// naming the plugin.
-    pub(crate) fn from_config(config: &PluginsConfig, workdir: &Path) -> anyhow::Result<Self> {
+    pub fn from_config(config: &PluginsConfig, workdir: &Path) -> anyhow::Result<Self> {
         let mut pipeline = Self {
             plugins: Vec::new(),
             workdir: workdir.into(),
         };
+        #[cfg(not(target_family = "wasm"))]
         let mut engine = None;
         for (name, entry) in config.enabled() {
             let folder = entry.folder();
             let options = Value::Object(entry.options.clone());
             match folder.component() {
+                #[cfg(target_family = "wasm")]
+                Some(_) => anyhow::bail!(
+                    "plugins.{name}: WASM component plugins need the native diffr; only bundled native plugins run here"
+                ),
+                #[cfg(not(target_family = "wasm"))]
                 Some(path) => {
                     let engine = match &engine {
                         Some(engine) => engine,
@@ -205,7 +213,7 @@ impl Pipeline {
     }
 
     /// Collect raw sources from the same instances that classify and mutate.
-    pub(crate) fn queries(&self) -> anyhow::Result<Vec<(String, Vec<types::QuerySource>)>> {
+    pub fn queries(&self) -> anyhow::Result<Vec<(String, Vec<types::QuerySource>)>> {
         self.plugins
             .iter()
             .map(|plugin| {
@@ -227,7 +235,7 @@ impl Pipeline {
 
     /// The file's tags once every plugin has classified it, in order: each
     /// sees the tags the ones before it left. Sorted and deduplicated.
-    pub(crate) fn classify(&self, file: &FileChange) -> anyhow::Result<Vec<String>> {
+    pub fn classify(&self, file: &FileChange) -> anyhow::Result<Vec<String>> {
         let mut entry = file_entry(file);
         for plugin in &self.plugins {
             let name = &plugin.name;
@@ -248,7 +256,7 @@ impl Pipeline {
     }
 
     /// Compatibility path: return the fully enriched file in one operation.
-    pub(crate) fn run(
+    pub fn run(
         &self,
         file: &FileChange,
         sides: &mut Pairing<protocol::Source>,
@@ -260,7 +268,7 @@ impl Pipeline {
     }
 
     /// Deferred plugins may only attach labels to existing regions.
-    pub(crate) fn enrich(
+    pub fn enrich(
         &self,
         file: &FileChange,
         sides: &Pairing<protocol::Source>,
@@ -291,7 +299,7 @@ impl Pipeline {
         Ok(annotations)
     }
 
-    pub(crate) fn apply_annotations(
+    pub fn apply_annotations(
         sides: &mut Pairing<protocol::Source>,
         annotations: &[protocol::Annotation],
     ) -> anyhow::Result<()> {
@@ -328,7 +336,7 @@ impl Pipeline {
 
     /// Run every plugin on one file's sides, returning the file's own
     /// visibility.
-    pub(crate) fn prepare(
+    pub fn prepare(
         &self,
         file: &FileChange,
         sides: &mut Pairing<protocol::Source>,
@@ -344,12 +352,15 @@ impl Pipeline {
         };
         let mut visibility = types::Visibility::default();
         for plugin in &self.plugins {
+            // wasm32-unknown-unknown has no clock to time the call with.
+            #[cfg(not(target_family = "wasm"))]
             let started = Instant::now();
             let records = source_sides(&trees);
             let moves = plugin
                 .runner
                 .mutate(self.host(&plugin.name), &entry, &records)
                 .with_context(|| MutationFailed(plugin.name.to_string()))?;
+            #[cfg(not(target_family = "wasm"))]
             log::debug!(
                 "plugin {}: mutate {} took {:?}",
                 plugin.name,
@@ -386,7 +397,7 @@ impl Pipeline {
 }
 
 /// The contract's record of a manifest entry.
-pub(crate) fn file_entry(file: &FileChange) -> types::FileEntry {
+pub fn file_entry(file: &FileChange) -> types::FileEntry {
     let file_ref = |side: &protocol::FileRef| types::FileRef {
         path: side.path.clone(),
         oid: side.oid.clone(),
@@ -422,7 +433,7 @@ fn source_sides(trees: &tree::Pairing<tree::Source>) -> types::SourceSides {
 }
 
 /// One side of the wire as the tree the applier works on.
-pub(crate) fn to_tree(side: &protocol::Source) -> tree::Source {
+pub fn to_tree(side: &protocol::Source) -> tree::Source {
     fn regions(list: &[protocol::Region]) -> Vec<tree::Region> {
         list.iter()
             .map(|region| tree::Region {

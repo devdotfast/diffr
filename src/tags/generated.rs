@@ -19,9 +19,9 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 /// The start of a file, and whether it is all of it.
-pub(crate) struct Prefix<'a> {
-    pub(crate) text: &'a str,
-    pub(crate) complete: bool,
+pub struct Prefix<'a> {
+    pub text: &'a str,
+    pub complete: bool,
 }
 
 impl Prefix<'_> {
@@ -115,7 +115,7 @@ patterns! {
 }
 
 /// Linguist's name rules: the path alone decides.
-pub(crate) fn by_path(path: &str) -> bool {
+pub fn by_path(path: &str) -> bool {
     let ext = extname(path);
     [".nib", ".xcworkspacedata", ".xcuserstate"].contains(&ext)
         || INTELLIJ.is_match(path)
@@ -552,13 +552,13 @@ fn generated_html(lines: &[&str]) -> bool {
 
 /// Whether any content rule could apply to this path, so its content is
 /// worth reading.
-pub(crate) fn needs_content(path: &str) -> bool {
+pub fn needs_content(path: &str) -> bool {
     let ext = extname(path);
     CONTENT_RULES.iter().any(|rule| (rule.guard)(path, ext))
 }
 
 /// Linguist's content rules over the start of the file.
-pub(crate) fn by_content(path: &str, prefix: &Prefix<'_>) -> bool {
+pub fn by_content(path: &str, prefix: &Prefix<'_>) -> bool {
     let ext = extname(path);
     let lines = prefix.lines();
     CONTENT_RULES

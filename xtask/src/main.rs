@@ -193,6 +193,23 @@ fn wasm_artifact(output: &[u8], package_id: &Value) -> Result<PathBuf> {
 /// scanners use beyond it. macOS's `ar` writes no index a wasm linker
 /// reads, so the archives are made with rustup's `llvm-ar`.
 fn build_core_wasm(root: &Path) -> Result<()> {
+    wasm_cargo(
+        root,
+        &[
+            "build",
+            "--locked",
+            "--release",
+            "--package",
+            "diffr-core",
+            "--features",
+            "all-languages",
+        ],
+    )
+}
+
+/// Run cargo with `args` for `wasm32-unknown-unknown`, set up as
+/// [`build_core_wasm`] describes.
+fn wasm_cargo(root: &Path, args: &[&str]) -> Result<()> {
     let target = "wasm32-unknown-unknown";
     let output = cargo()
         .current_dir(root)
@@ -233,18 +250,8 @@ fn build_core_wasm(root: &Path) -> Result<()> {
     run(
         cargo()
             .current_dir(root)
-            .args([
-                "build",
-                "--locked",
-                "--release",
-                "--package",
-                "diffr-core",
-                "--features",
-                "all-languages",
-                "--target",
-                target,
-                "--config",
-            ])
+            .args(args)
+            .args(["--target", target, "--config"])
             .arg(format!(
                 "target.{target}.tree-sitter-language.wasm-headers={:?}",
                 headers.display().to_string()
@@ -256,7 +263,23 @@ fn build_core_wasm(root: &Path) -> Result<()> {
             ))
             .env("AR_wasm32_unknown_unknown", llvm_ar()?)
             .env("CFLAGS_wasm32_unknown_unknown", cflags),
-        "Building diffr-core for wasm32-unknown-unknown (needs `rustup target add wasm32-unknown-unknown` and clang)",
+        "Running cargo for wasm32-unknown-unknown (needs `rustup target add wasm32-unknown-unknown` and clang)",
+    )
+}
+
+/// Build diffr-web for the browser and generate its bindings into `web/src/wasm`, where the
+/// web app imports them. Needs `cargo install wasm-bindgen-cli` at the crate's version.
+fn build_web(root: &Path) -> Result<()> {
+    wasm_cargo(
+        root,
+        &["build", "--locked", "--release", "--package", "diffr-web"],
+    )?;
+    run(
+        Command::new("wasm-bindgen")
+            .current_dir(root)
+            .args(["--target", "web", "--out-dir", "web/src/wasm"])
+            .arg("target/wasm32-unknown-unknown/release/diffr_web.wasm"),
+        "Running wasm-bindgen (install it with `cargo install wasm-bindgen-cli --version 0.2.129`)",
     )
 }
 
@@ -293,6 +316,11 @@ fn main() -> Result<()> {
         "install-tui" => install(root, false),
         "build-plugins" => build_plugins(root),
         "build-core-wasm" => build_core_wasm(root),
+        "build-web" => build_web(root),
+        "wasm" => {
+            let args: Vec<String> = std::env::args().skip(2).collect();
+            wasm_cargo(root, &args.iter().map(String::as_str).collect::<Vec<_>>())
+        }
         "test-plugins" => {
             build_plugins(root)?;
             let status = cargo()
@@ -302,6 +330,7 @@ fn main() -> Result<()> {
                     "--locked",
                     "--features",
                     "wasm-plugin-tests",
+                    "--lib",
                     "--bin",
                     "diffr",
                     "--test",
@@ -313,7 +342,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         _ => bail!(
-            "usage: cargo xtask <install|install-tui|build-plugins|test-plugins|build-core-wasm>"
+            "usage: cargo xtask <install|install-tui|build-plugins|test-plugins|build-core-wasm|build-web|wasm <cargo args>>"
         ),
     }
 }

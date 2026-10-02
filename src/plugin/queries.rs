@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// Named query sources returned by one plugin.
-pub(crate) type Queries = Vec<diffr_plugin_sdk::QuerySource>;
+pub type Queries = Vec<diffr_plugin_sdk::QuerySource>;
 
 const BUILTIN_PREFIX: &str = "builtin:";
 
@@ -183,7 +183,7 @@ impl Assembly {
 }
 
 /// Assemble in plugin order, with imports before their first importer.
-pub(crate) fn assemble(
+pub fn assemble(
     plugins: &[(String, Queries)],
 ) -> Result<BTreeMap<String, Vec<QuerySource>>, ConfigError> {
     let mut languages: BTreeMap<String, Assembly> = BTreeMap::new();

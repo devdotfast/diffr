@@ -30,19 +30,10 @@ include = [
 ]
 
 [dependencies]
-git2 = { version = "0.21", default-features = false }
 regex = "1.13.1"
-clap = { version = "4.6.7", features = ["cargo", "derive", "env", "wrap_help", "string"] }
 typed-arena = "2.0.2"
-libc = "0.2.189"
 log = "0.4.34"
-pretty_env_logger = "0.5.0"
 
-rayon = "1.12.0"
-tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "time", "sync"] }
-tree_magic_mini = "3.2.2"
-
-terminal_size = "0.4.4"
 glob = "0.3.4"
 strum = { version = "0.28", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -50,19 +41,12 @@ serde_json = "1.0"
 anyhow = "1.0"
 encoding_rs = "0.8.42"
 
-toml = { version = "1.1", default-features = false, features = ["display", "parse"] }
+toml = { version = "1.1", default-features = false, features = ["display", "parse", "serde", "std"] }
 serde_path_to_error = "0.1.20"
 schemars = { version = "1.2.2", features = ["preserve_order"] }
-dirs = "7"
 toml_edit = "0.25.15"
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "http2"] }
 serde_yaml_ng = "0.10.0"
 jsonschema = { version = "0.58.4", default-features = false }
-# WASM component plugins.
-wasmtime = { version = "49.0.1", default-features = false, features = ["runtime", "cranelift", "component-model", "cache", "parallel-compilation", "std", "anyhow"] }
-wasmtime-wasi = { version = "49.0.1", default-features = false, features = ["p2"] }
-# The byte buffer a guest's output stream is handed, wasmtime-wasi's own.
-bytes = "1.12"
 # The structural diff engine.
 diffr-core = { path = "crates/diffr-core", version = "0.1.9" }
 # The plugin contract, and the bundled plugins: each a crate the native
@@ -75,10 +59,27 @@ diffr-plugin-hide-files = { path = "plugins/hide-files", version = "0.1.1" }
 diffr-plugin-removed-runs = { path = "plugins/removed-runs", version = "0.1.1" }
 diffr-plugin-summarize = { path = "plugins/summarize", version = "0.1.1" }
 diffr-plugin-test-bodies = { path = "plugins/test-bodies", version = "0.1.1" }
+
+# What only the native CLI needs: git, the WASM component runtime, threads
+# and the terminal. The library builds for wasm32-unknown-unknown without them.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+git2 = { version = "0.21", default-features = false }
+clap = { version = "4.6.7", features = ["cargo", "derive", "env", "wrap_help", "string"] }
+libc = "0.2.189"
+pretty_env_logger = "0.5.0"
+rayon = "1.12.0"
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "time", "sync"] }
+tree_magic_mini = "3.2.2"
+terminal_size = "0.4.4"
+dirs = "7"
+# WASM component plugins.
+wasmtime = { version = "49.0.1", default-features = false, features = ["runtime", "cranelift", "component-model", "cache", "parallel-compilation", "std", "anyhow"] }
+wasmtime-wasi = { version = "49.0.1", default-features = false, features = ["p2"] }
+# The byte buffer a guest's output stream is handed, wasmtime-wasi's own.
+bytes = "1.12"
 wasmtime-wasi-http = { version = "49.0.1", default-features = false, features = ["p2", "default-send-request"] }
 
-
-[target.'cfg(not(any(windows, target_os = "illumos", target_os = "freebsd")))'.dependencies]
+[target.'cfg(not(any(windows, target_os = "illumos", target_os = "freebsd", target_family = "wasm")))'.dependencies]
 tikv-jemallocator = "0.7"
 
 [dev-dependencies]
@@ -97,6 +98,7 @@ version_check = "0.9.5"
 members = [
     "xtask",
 	"crates/diffr-core",
+	"crates/diffr-web",
 	"crates/diffr-plugin-sdk",
 	"plugins/context",
 	"plugins/deleted-bodies",
@@ -126,6 +128,12 @@ wasm-test-exclude = []
 
 [profile.release]
 lto = "thin"
+
+# The diff session, config, plugins and stream, shared by the CLI and the
+# browser build (crates/diffr-web).
+[lib]
+path = "src/lib.rs"
+doctest = false
 
 [[bin]]
 name = "diffr"

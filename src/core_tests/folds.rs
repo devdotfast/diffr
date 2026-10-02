@@ -427,7 +427,7 @@ mod results {
             byte_limit: 1,
             ..Default::default()
         };
-        let diff = crate::diff_file_content(
+        let diff = crate::engine::diff_file_content(
             &crate::config::default_params(),
             "a.py",
             false,

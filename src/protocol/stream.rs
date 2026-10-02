@@ -4,43 +4,56 @@
 //! before its record is written; `stats.visible` is recounted after them.
 use super::project::{self, Inputs};
 use super::{
-    Diff, Event, FileChange, LineRange, Node, Outcome, Problem, Region, Snapshot, Source,
-    StructuralChanges, SyntaxSpan, Visibility, VERSION,
+    Diff, Event, FileChange, FileRef, FileStatus, LineRange, Node, Outcome, Problem, Region,
+    Source, StructuralChanges, SyntaxSpan, Visibility,
 };
+#[cfg(not(target_family = "wasm"))]
+use super::{Snapshot, VERSION};
 use crate::engine::QueryConflict;
+#[cfg(not(target_family = "wasm"))]
 use crate::git::{DiffSession, FileError, LoadedFile};
 use crate::hash::DftHashSet;
 use crate::pairing::Pairing;
+use crate::params::{DiffOptions, Params};
 use crate::plugin::{MutationFailed, Pipeline};
 use crate::summary::{DiffResult, FileContent, FileFormat};
+use crate::tags::{self, Prefix};
+#[cfg(not(target_family = "wasm"))]
 use anyhow::anyhow;
+#[cfg(not(target_family = "wasm"))]
 use rayon::iter::{ParallelBridge, ParallelIterator};
+#[cfg(not(target_family = "wasm"))]
 use std::io::{BufWriter, Write};
+#[cfg(not(target_family = "wasm"))]
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+#[cfg(not(target_family = "wasm"))]
 use std::sync::mpsc::{sync_channel, SyncSender};
+#[cfg(not(target_family = "wasm"))]
 use std::sync::{Arc, Mutex};
+#[cfg(not(target_family = "wasm"))]
 use std::thread;
 
 /// Runtime choices that shape every file record.
 #[derive(Clone, Copy)]
-pub(crate) struct Options {
+pub struct Options {
     /// Emit every token's capture name (`--syntax`).
-    pub(crate) syntax: bool,
+    pub syntax: bool,
     /// Opt-in v4 stream; v3 consumers continue to receive finished files.
-    pub(crate) updates: bool,
+    pub updates: bool,
 }
 
 /// What the stream ended with: whether any file failed, and whether a
 /// run-level failure cut it short.
-pub(crate) struct Ended {
-    pub(crate) failed: bool,
-    pub(crate) aborted: bool,
+pub struct Ended {
+    pub failed: bool,
+    pub aborted: bool,
 }
 
+#[cfg(not(target_family = "wasm"))]
 /// Files are diffed on `jobs` workers and emitted as they finish. The queue
 /// holds at most one ready record, so computation overlaps output without
 /// retaining the whole comparison.
-pub(crate) fn write(
+pub fn write(
     session: DiffSession,
     jobs: usize,
     pipeline: Arc<Pipeline>,
@@ -89,8 +102,10 @@ pub(crate) fn write(
 }
 
 /// The consumer went away; production stops after the files in flight.
+#[cfg(not(target_family = "wasm"))]
 struct Disconnected;
 
+#[cfg(not(target_family = "wasm"))]
 fn manifest(session: &DiffSession) -> Vec<FileChange> {
     session
         .file_manifest()
@@ -99,6 +114,7 @@ fn manifest(session: &DiffSession) -> Vec<FileChange> {
         .collect()
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn produce(
     session: DiffSession,
     manifest: Vec<FileChange>,
@@ -208,7 +224,7 @@ fn produce(
 }
 
 /// An enrichment failure is local to this file's annotations.
-fn enrich_event(pipeline: &Pipeline, entry: &FileChange, sides: &Pairing<Source>) -> Event {
+pub fn enrich_event(pipeline: &Pipeline, entry: &FileChange, sides: &Pairing<Source>) -> Event {
     let (annotations, error) = match pipeline.enrich(entry, sides) {
         Ok(annotations) => (annotations, None),
         Err(error) => (
@@ -230,9 +246,14 @@ fn enrich_event(pipeline: &Pipeline, entry: &FileChange, sides: &Pairing<Source>
 /// the typed cause attached where the error arose; an error nothing
 /// classified is `internal`.
 fn wire_error(error: &anyhow::Error) -> Problem {
-    let code = if let Some(kind) = error.downcast_ref::<FileError>() {
-        kind.code()
-    } else if error.downcast_ref::<QueryConflict>().is_some() {
+    #[cfg(not(target_family = "wasm"))]
+    if let Some(kind) = error.downcast_ref::<FileError>() {
+        return Problem {
+            code: kind.code().to_owned(),
+            message: format!("{error:#}"),
+        };
+    }
+    let code = if error.downcast_ref::<QueryConflict>().is_some() {
         "query_conflict"
     } else if error.downcast_ref::<MutationFailed>().is_some() {
         "mutation_failed"
@@ -245,6 +266,7 @@ fn wire_error(error: &anyhow::Error) -> Problem {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 /// The projected diff of one loaded file and its manifest entry. `Err` is
 /// this file's failure.
 fn diffed(loaded: &LoadedFile, options: Options) -> anyhow::Result<(FileChange, Diff)> {
@@ -325,6 +347,113 @@ fn shape(
     }
 }
 
+/// One file's record from the text of both sides, for a caller that has
+/// the sources but no repository, such as the browser build. `file` and
+/// `status` describe the change as git would; a side the change does not
+/// have is `None`. The file goes through what a repository's files go
+/// through: the bundled tags (by path, then by content), each plugin's
+/// `classify`, the diff, and each plugin's `mutate`. Git attributes, which
+/// need the repository, are not read. Returns the manifest entry and the
+/// `file` record.
+pub fn file_from_sources(
+    file: Pairing<FileRef>,
+    status: FileStatus,
+    before: Option<&str>,
+    after: Option<&str>,
+    params: &Params,
+    pipeline: &Pipeline,
+    diff_options: &DiffOptions,
+    options: Options,
+) -> (FileChange, Event) {
+    let path = match &file {
+        Pairing::Both { rhs, .. } | Pairing::RightOnly { rhs } => rhs.path.clone(),
+        Pairing::LeftOnly { lhs } => lhs.path.clone(),
+    };
+    let mut bundled = tags::from_path(&path);
+    if !bundled.contains(tags::GENERATED) && tags::needs_content(&path) {
+        if let Some(text) = after.or(before) {
+            let complete = text.len() <= tags::PREFIX_BYTES;
+            let mut end = text.len().min(tags::PREFIX_BYTES);
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            let prefix = Prefix {
+                text: &text[..end],
+                complete,
+            };
+            if tags::generated_by_content(&path, &prefix) {
+                bundled.insert(tags::GENERATED);
+            }
+        }
+    }
+    let mut entry = FileChange {
+        file,
+        status,
+        tags: bundled.into_iter().map(str::to_owned).collect(),
+    };
+    let record = |entry: &FileChange, visibility, outcome| Event::File {
+        file: entry.file.clone(),
+        visibility,
+        outcome,
+    };
+    let failed = |entry: &FileChange, error: anyhow::Error| {
+        record(
+            entry,
+            Visibility::default(),
+            Outcome::Error {
+                error: wire_error(&error),
+            },
+        )
+    };
+    match pipeline.classify(&entry) {
+        Ok(tags) => entry.tags = tags,
+        Err(error) => {
+            let event = failed(&entry, error);
+            return (entry, event);
+        }
+    }
+    let (lhs, rhs) = (before.unwrap_or(""), after.unwrap_or(""));
+    let result = if lhs.contains('\0') || rhs.contains('\0') {
+        Ok(DiffResult {
+            file_format: FileFormat::Binary,
+            lhs_src: FileContent::Binary,
+            rhs_src: FileContent::Binary,
+            lhs_positions: vec![],
+            rhs_positions: vec![],
+            lhs_folds: vec![],
+            rhs_folds: vec![],
+        })
+    } else {
+        let diff_options = DiffOptions {
+            generated: entry.tags.iter().any(|tag| tag == tags::GENERATED),
+            ..diff_options.clone()
+        };
+        DiffResult::from_sources_with_options(&path, lhs, rhs, params, &diff_options)
+    };
+    let event = match result {
+        Err(conflict) => failed(&entry, conflict.into()),
+        Ok(result) => {
+            let projected = project::diff(
+                &result,
+                Inputs {
+                    file: &entry.file,
+                    sizes: (lhs.len() as u64, rhs.len() as u64),
+                    syntax: match options.syntax {
+                        true => syntax_spans(&result, params),
+                        false => (Vec::new(), Vec::new()),
+                    },
+                },
+            );
+            match shape(pipeline, &entry, projected, options.updates) {
+                Ok((visibility, diff)) => record(&entry, visibility, Outcome::Diff { diff }),
+                Err(error) => failed(&entry, error),
+            }
+        }
+    };
+    (entry, event)
+}
+
+#[cfg(not(target_family = "wasm"))]
 /// Reads sources serially on whichever worker pulls next; diffing then
 /// proceeds on that worker while others pull further files.
 struct Loader {
@@ -332,6 +461,7 @@ struct Loader {
     cancelled: Arc<AtomicBool>,
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl Iterator for Loader {
     type Item = (crate::git::FileChange, anyhow::Result<LoadedFile>);
     fn next(&mut self) -> Option<Self::Item> {
@@ -342,8 +472,9 @@ impl Iterator for Loader {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 /// A standalone two-path comparison through the same three records.
-pub(crate) fn write_file(
+pub fn write_file(
     before: &str,
     after: &str,
     sizes: (u64, u64),

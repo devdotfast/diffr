@@ -114,8 +114,6 @@ impl Manifest {
         self.check_defaults_by()
     }
 
-    /// Every `x-default-by` names an option with choices, gives a default
-    /// for each choice, and every choice's defaults satisfy the schema.
     /// The options a change of `key` clears.
     pub(crate) fn reset_by<'a>(&'a self, key: &'a str) -> impl Iterator<Item = &'a String> + 'a {
         self.options
@@ -124,6 +122,9 @@ impl Manifest {
             .map(|(name, _)| name)
     }
 
+    /// Every `x-reset-by` names another option. Every `x-default-by` names an
+    /// option with choices, gives a default for each choice, and every
+    /// choice's defaults satisfy the schema.
     fn check_defaults_by(&self) -> Result<(), String> {
         for (name, option) in &self.options {
             if let Some(by) = option.get(RESET_BY) {

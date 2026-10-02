@@ -165,9 +165,10 @@ test("a change shows every value it moves, such as a default that follows the pr
   const line = (text: string) => t.captureCharFrame().split("\n").find((l) => l.includes(text)) ?? "";
   try {
     await act(async () => { await t.renderOnce(); });
-    for (const char of "provider") await press(char);
+    const query = "provider";
+    for (const char of query) await press(char);
     await press("RETURN");
-    for (let i = 0; i < 8; i++) await press("BACKSPACE");
+    for (const _ of query) await press("BACKSPACE");
     expect(line("Provider")).toContain("none");
     expect(line("Model")).toContain("none-model");
   } finally {

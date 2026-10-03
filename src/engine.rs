@@ -8,7 +8,7 @@ use crate::diff::shortest_path::{mark_syntax, ExceededGraphLimit};
 use crate::diff::sliders::fix_all_sliders;
 use crate::diff::unchanged;
 use crate::line_parser;
-use crate::options::{DiffOptions, FileArgument};
+use crate::options::DiffOptions;
 use crate::parse::folds;
 use crate::parse::guess_language::{guess, language_name, LanguageOverride};
 use crate::parse::syntax::{self, init_next_prev};
@@ -95,25 +95,19 @@ impl DiffResult {
         params: &Params,
         options: &DiffOptions,
     ) -> Result<Self, QueryConflict> {
-        let file = crate::options::FileArgument::NamedPath(path.into());
-        diff_file_content(params, path, &file, &file, lhs, rhs, options, &[])
+        diff_file_content(params, path, lhs, rhs, options, &[])
     }
 }
 pub(crate) fn diff_file_content(
     params: &Params,
     display_path: &str,
-    _lhs_path: &FileArgument,
-    rhs_path: &FileArgument,
     lhs_src: &str,
     rhs_src: &str,
     diff_options: &DiffOptions,
     overrides: &[(LanguageOverride, Vec<glob::Pattern>)],
 ) -> Result<DiffResult, QueryConflict> {
-    let guess_src = match rhs_path {
-        FileArgument::DevNull => &lhs_src,
-        _ => &rhs_src,
-    };
-
+    // A deleted file's language comes from what it was.
+    let guess_src = if rhs_src.is_empty() { lhs_src } else { rhs_src };
     let language = guess(Path::new(display_path), guess_src, overrides);
     let lang_config = language.map(|lang| (lang, params.language(lang)));
 

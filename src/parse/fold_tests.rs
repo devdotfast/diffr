@@ -424,16 +424,13 @@ mod results {
 
     #[test]
     fn byte_limit_fallback_has_no_folds() {
-        let file = crate::options::FileArgument::NamedPath("a.py".into());
         let options = crate::options::DiffOptions {
             byte_limit: 1,
             ..Default::default()
         };
-        let diff = crate::diff_file_content(
+        let diff = crate::engine::diff_file_content(
             &crate::config::Params::default(),
             "a.py",
-            &file,
-            &file,
             "x = 1\n",
             "x = 2\n",
             &options,

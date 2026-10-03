@@ -1,9 +1,6 @@
 //! CLI option parsing.
 
 use std::env;
-use std::ffi::OsStr;
-use std::fmt::Display;
-use std::path::{Path, PathBuf};
 
 use clap::{error::ErrorKind, Args};
 
@@ -95,53 +92,6 @@ struct DebugAction {
     /// Print all the languages supported by diffr, along with their recognised extensions.
     #[arg(long)]
     list_languages: bool,
-}
-
-#[derive(Eq, PartialEq, Debug)]
-pub(crate) enum FileArgument {
-    NamedPath(std::path::PathBuf),
-    DevNull,
-}
-
-fn try_canonicalize(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.into())
-}
-
-fn relative_to_current(path: &Path) -> PathBuf {
-    if let Ok(current_path) = std::env::current_dir() {
-        let path = try_canonicalize(path);
-        let current_path = try_canonicalize(&current_path);
-
-        if let Ok(rel_path) = path.strip_prefix(current_path) {
-            return rel_path.into();
-        }
-    }
-
-    path.into()
-}
-
-impl FileArgument {
-    /// Return a `FileArgument` that always represents a path that
-    /// exists, with the exception of `/dev/null`, which is turned into [FileArgument::DevNull].
-    pub(crate) fn from_path_argument(arg: &OsStr) -> Self {
-        // For new and deleted files, Git passes `/dev/null` as the reference file.
-        if arg == "/dev/null" {
-            Self::DevNull
-        } else {
-            Self::NamedPath(PathBuf::from(arg))
-        }
-    }
-}
-
-impl Display for FileArgument {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NamedPath(path) => {
-                write!(f, "{}", relative_to_current(path).display())
-            }
-            Self::DevNull => write!(f, "/dev/null"),
-        }
-    }
 }
 
 pub(crate) enum Mode {

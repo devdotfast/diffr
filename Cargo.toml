@@ -94,7 +94,7 @@ assets = [
 ]
 
 [features]
-all-languages = ["diffr-core/all-languages"]
+all-languages = ["lang-fortran", "lang-fsharp", "lang-verilog", "lang-ocaml", "lang-julia", "lang-haskell", "lang-vhdl", "lang-apex", "lang-qml"]
 lang-fortran = ["diffr-core/lang-fortran"]
 lang-fsharp = ["diffr-core/lang-fsharp"]
 lang-verilog = ["diffr-core/lang-verilog"]

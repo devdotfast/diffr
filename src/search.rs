@@ -20,6 +20,9 @@ use std::{
     slice,
     sync::Mutex,
 };
+pub(crate) mod command;
+pub(crate) mod input;
+pub(crate) mod pprint;
 pub(crate) mod store;
 use store::{DiffKey, FileStore, StoredDiff};
 

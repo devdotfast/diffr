@@ -15,3 +15,6 @@ plugin.wasm
 !/plugins/*/plugin.wasm
 /crates/*/target
 /plugins/workspace/target
+
+# Computed search diffs.
+/.cache/diffr/

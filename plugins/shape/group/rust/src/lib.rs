@@ -23,9 +23,7 @@ impl GuestPlugin for Group {
         if phase == Visit::Post {
             return Ok(true);
         }
-        let NodeView::Region(RegionView { data, .. }) = cursor.get(cursor.id())? else {
-            return Ok(true);
-        };
+        let data = cursor.get(cursor.id())?.data;
         if cursor
             .ancestors(data.id)?
             .iter()
@@ -44,9 +42,8 @@ impl GuestPlugin for Group {
                 if same {
                     let mut lines = 0;
                     for &id in &ids {
-                        if let NodeView::Region(RegionView { data, .. }) = cursor.get(id)? {
-                            lines += (data.range.end.line - data.range.start.line) as usize;
-                        }
+                        let data = cursor.get(id)?.data;
+                        lines += (data.range.end.line - data.range.start.line) as usize;
                     }
                     ids.extend(peers);
                     let label = format!("{count} collapsed regions · {lines} lines");
@@ -91,7 +88,7 @@ fn run(cursor: &Cursor, id: u32) -> Result<Option<(Vec<u32>, u32)>, String> {
             ids.push(next);
             count += rows.collapsed;
             gap = rows.trailing;
-        } else if matches!(cursor.get(next)?, NodeView::Region(RegionView {data,..}) if matches!(data.kind, Kind::Leaf(_)))
+        } else if matches!(cursor.get(next)?.data.kind, Kind::Leaf(_))
             && gap + rows.leading <= MAX_SEPARATOR_LINES
         {
             gap += rows.leading;

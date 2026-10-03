@@ -13,7 +13,6 @@ impl From<MoveError> for String {
     fn from(error: MoveError) -> Self {
         match error {
             MoveError::NoRegion(id) => format!("no region {id}"),
-            MoveError::CutFile => "the file cannot be cut; only a leaf can".into(),
             MoveError::CutFold(id) => format!("region {id} is a fold; only a leaf can be cut"),
             MoveError::CutOutside(e) => format!(
                 "line {} is not inside region {}, which has {} lines",
@@ -23,7 +22,6 @@ impl From<MoveError> for String {
                 format!("region {id} has a different length on each side")
             }
             MoveError::TooFewRegions(g) => format!("{} needs at least two regions", grouping(g)),
-            MoveError::IncludesFile(g) => format!("{} cannot include the file", grouping(g)),
             MoveError::Repeated(e) => {
                 format!("{} lists a region twice: {:?}", grouping(e.grouping), e.ids)
             }

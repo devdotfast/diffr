@@ -34,14 +34,11 @@ impl GuestPlugin for DeletedBodies {
         if phase == Visit::Post {
             return Ok(true);
         }
-        if cursor.id() == ROOT {
-            return Ok(true);
-        }
-        let NodeView::Region(RegionView {
+        let RegionView {
             side: Side::Lhs,
             data: region,
             ..
-        }) = cursor.get(cursor.id())?
+        } = cursor.get(cursor.id())?
         else {
             return Ok(false);
         };

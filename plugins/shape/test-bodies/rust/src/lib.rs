@@ -36,9 +36,7 @@ impl GuestPlugin for TestBodies {
 
     async fn visit(&self, cursor: &Cursor, phase: Visit) -> Result<bool, String> {
         if phase == Visit::Pre {
-            let NodeView::Region(RegionView { data, .. }) = cursor.get(cursor.id())? else {
-                return Ok(true);
-            };
+            let data = cursor.get(cursor.id())?.data;
             if !matches!(data.kind, Kind::Fold)
                 || ((data.range.end.line - data.range.start.line) as usize) < self.options.min_lines
             {

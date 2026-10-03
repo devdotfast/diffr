@@ -3,21 +3,19 @@
 //! the plugin; the plugin reads and edits through it, and edits apply
 //! immediately.
 use super::bindings::types::{
-    self, CutOutside, FileEntry, Grouping, Kind, Leaf, MoveError, NodeView, RegionIds, RegionView,
-    Repeated, RowSummary, Side,
+    self, CutOutside, FileEntry, Grouping, Kind, Leaf, MoveError, RegionIds, RegionView, Repeated,
+    RowSummary, Side,
 };
 use crate::pairing::Pairing;
-use crate::protocol::{Node, Region, Source, SourcePos, SourceRange, Visibility, ROOT};
+use crate::protocol::{Node, Region, Source, SourcePos, SourceRange, Visibility};
 use std::collections::BTreeSet;
 
-/// A file's trees and visibility, the next unused IDs, and where the current
-/// walk stands.
+/// A file's trees, the next unused IDs, and where the current walk stands.
 pub struct Cursor {
     pub(crate) file: FileEntry,
     pub(crate) sides: Pairing<Source>,
-    pub(crate) visibility: Visibility,
-    /// The node the current callback is on.
-    pub(crate) id: u32,
+    /// The node the current callback is on; none between callbacks.
+    pub(crate) id: Option<u32>,
     /// IDs from here up were made during the current walk, which skips them.
     limit: u32,
     next_region_id: u32,
@@ -26,7 +24,7 @@ pub struct Cursor {
 
 impl Cursor {
     pub(crate) fn new(file: FileEntry, sides: Pairing<Source>) -> Self {
-        let mut next_region_id = ROOT + 1;
+        let mut next_region_id = 1;
         let mut next_alignment_id = 0;
         for source in sides.sides() {
             walk(&source.regions, &mut |region| {
@@ -39,77 +37,85 @@ impl Cursor {
         Self {
             file,
             sides,
-            visibility: Visibility::default(),
-            id: ROOT,
+            id: None,
             limit: next_region_id,
             next_region_id,
             next_alignment_id,
         }
     }
 
-    /// Start a walk at the file root over the nodes that exist now.
+    /// Start a walk over the nodes that exist now.
     pub(crate) fn rewind(&mut self) {
-        self.id = ROOT;
+        self.id = None;
         self.limit = self.next_region_id;
     }
 
-    /// The next child of `parent` after `after`, skipping nodes this walk
-    /// created.
+    /// The top-level regions, lhs before rhs.
+    fn top_level(&self) -> Vec<u32> {
+        self.sides
+            .sides()
+            .iter()
+            .flat_map(|source| source.regions.iter().map(|region| region.id))
+            .collect()
+    }
+
+    /// The next child of `parent` (none: the next top-level region) after
+    /// `after`, skipping nodes this walk created.
     pub(crate) fn next_child(
         &self,
-        parent: u32,
+        parent: Option<u32>,
         after: Option<u32>,
     ) -> Result<Option<u32>, MoveError> {
-        let children = children(self.get(parent)?);
+        let children = match parent {
+            Some(parent) => self.get(parent)?.children,
+            None => self.top_level(),
+        };
         let start = match after {
             None => 0,
             Some(mut previous) => loop {
                 if let Some(index) = children.iter().position(|&id| id == previous) {
                     break index + 1;
                 }
-                match self.get(previous)? {
-                    NodeView::Region(view) => previous = view.data.parent,
-                    NodeView::File(_) => return Err(MoveError::NoRegion(previous)),
+                // The node was wrapped during this walk: continue after its wrapper.
+                match self.get(previous)?.data.parent {
+                    Some(parent) => previous = parent,
+                    None => return Err(MoveError::NoRegion(previous)),
                 }
             },
         };
         Ok(children.into_iter().skip(start).find(|&id| id < self.limit))
     }
 
-    /// One node and its immediate children.
-    pub fn get(&self, id: u32) -> Result<NodeView, MoveError> {
-        fn find(regions: &[Region], parent: u32, id: u32, side: Side) -> Option<NodeView> {
+    /// One region and its immediate children.
+    pub fn get(&self, id: u32) -> Result<RegionView, MoveError> {
+        fn find(
+            regions: &[Region],
+            parent: Option<u32>,
+            id: u32,
+            side: Side,
+        ) -> Option<RegionView> {
             for region in regions {
                 if region.id == id {
                     let children = match &region.node {
                         Node::Leaf { .. } => vec![],
                         Node::Fold { children } => children.iter().map(|child| child.id).collect(),
                     };
-                    return Some(NodeView::Region(RegionView {
+                    return Some(RegionView {
                         side,
                         data: contract_region(region, parent),
                         children,
-                    }));
+                    });
                 }
                 if let Node::Fold { children } = &region.node {
-                    if let Some(node) = find(children, region.id, id, side) {
+                    if let Some(node) = find(children, Some(region.id), id, side) {
                         return Some(node);
                     }
                 }
             }
             None
         }
-        if id == ROOT {
-            return Ok(NodeView::File(
-                self.sides
-                    .sides()
-                    .iter()
-                    .flat_map(|source| source.regions.iter().map(|region| region.id))
-                    .collect(),
-            ));
-        }
         for (side, source) in [(Side::Lhs, self.sides.lhs()), (Side::Rhs, self.sides.rhs())] {
-            if let Some(node) = source.and_then(|source| find(&source.regions, ROOT, id, side)) {
+            if let Some(node) = source.and_then(|source| find(&source.regions, None, id, side)) {
                 return Ok(node);
             }
         }
@@ -356,27 +362,27 @@ impl Cursor {
 
     /// Siblings on this node's side, in source order, including the node itself.
     pub fn siblings(&self, id: u32) -> Result<Vec<u32>, MoveError> {
-        let NodeView::Region(view) = self.get(id)? else {
-            return Err(MoveError::NoRegion(id));
+        let view = self.get(id)?;
+        let children = match view.data.parent {
+            Some(parent) => self.get(parent)?.children,
+            None => self.top_level(),
         };
         let mut siblings = Vec::new();
-        for child in children(self.get(view.data.parent)?) {
-            if matches!(self.get(child)?, NodeView::Region(own) if own.side == view.side) {
+        for child in children {
+            if self.get(child)?.side == view.side {
                 siblings.push(child);
             }
         }
         Ok(siblings)
     }
 
-    /// Enclosing regions, nearest parent first, excluding the file root.
+    /// Enclosing folds, nearest first.
     pub fn ancestors(&self, id: u32) -> Result<Vec<types::Region>, MoveError> {
         let mut ancestors = Vec::new();
-        let mut node = self.get(id)?;
-        while let NodeView::Region(view) = node {
-            node = self.get(view.data.parent)?;
-            if let NodeView::Region(parent) = &node {
-                ancestors.push(parent.data.clone());
-            }
+        let mut view = self.get(id)?;
+        while let Some(parent) = view.data.parent {
+            view = self.get(parent)?;
+            ancestors.push(view.data.clone());
         }
         Ok(ancestors)
     }
@@ -389,9 +395,6 @@ impl Cursor {
             next_alignment_id,
             ..
         } = self;
-        if id == ROOT {
-            return Err(MoveError::CutFile);
-        }
         let Some((side, path)) = trees(sides)
             .into_iter()
             .enumerate()
@@ -549,12 +552,8 @@ impl Cursor {
         Ok(())
     }
 
-    /// Set the shared collapsed state, or file visibility for ID 0.
+    /// Set the shared collapsed state.
     pub fn set_collapsed(&mut self, region: u32, collapsed: bool) -> Result<(), MoveError> {
-        if region == ROOT {
-            self.visibility.collapsed = collapsed;
-            return Ok(());
-        }
         let state = region_of(&self.sides, region)?.fold_state_id;
         for tree in trees(&mut self.sides) {
             walk_mut(tree, &mut |region| {
@@ -566,14 +565,9 @@ impl Cursor {
         Ok(())
     }
 
-    /// Set or clear a region's label, or the file label for ID 0.
+    /// Set or clear a region's label.
     pub fn set_label(&mut self, region: u32, label: Option<String>) -> Result<(), MoveError> {
-        let visibility = if region == ROOT {
-            &mut self.visibility
-        } else {
-            &mut region_mut(&mut self.sides, region)?.visibility
-        };
-        visibility.label = label.unwrap_or_default();
+        region_mut(&mut self.sides, region)?.visibility.label = label.unwrap_or_default();
         Ok(())
     }
 
@@ -603,7 +597,7 @@ impl Cursor {
 }
 
 /// A region as the contract shows it: shallow, with its parent.
-fn contract_region(region: &Region, parent: u32) -> types::Region {
+fn contract_region(region: &Region, parent: Option<u32>) -> types::Region {
     let position = |position: SourcePos| types::Position {
         line: position.line,
         column: position.column,
@@ -638,13 +632,6 @@ fn contract_region(region: &Region, parent: u32) -> types::Region {
             }),
             Node::Fold { .. } => Kind::Fold,
         },
-    }
-}
-
-fn children(node: NodeView) -> Vec<u32> {
-    match node {
-        NodeView::File(children) => children,
-        NodeView::Region(view) => view.children,
     }
 }
 
@@ -822,13 +809,10 @@ fn split(leaf: Region, offset: u32, id: u32, alignment_id: u32, fold_state_id: u
     [head, tail]
 }
 
-/// Two or more distinct region ids, none of them the file.
+/// Two or more distinct region ids.
 fn check_regions(ids: &[u32], grouping: Grouping) -> Result<(), MoveError> {
     if ids.len() < 2 {
         return Err(MoveError::TooFewRegions(grouping));
-    }
-    if ids.contains(&ROOT) {
-        return Err(MoveError::IncludesFile(grouping));
     }
     if ids.iter().collect::<BTreeSet<_>>().len() != ids.len() {
         return Err(MoveError::Repeated(Repeated {

@@ -5,7 +5,7 @@ use super::bindings::{
     self,
     classifier::{DiffrClassifier, DiffrClassifierPre},
     exports::diffr::plugin::api::GuestPlugin,
-    types::{self, Attribute, FileEntry, MoveError, NodeView, RegionIds, RowSummary, Side, Tag},
+    types::{self, Attribute, FileEntry, MoveError, RegionIds, RegionView, RowSummary, Side, Tag},
     DiffrPlugin, DiffrPluginPre,
 };
 use super::config::{ComponentSource, Entry};
@@ -116,35 +116,58 @@ async fn walk(
     configured: ResourceAny,
     cursor: &Resource<Cursor>,
 ) -> anyhow::Result<()> {
+    let mut after = None;
+    while let Some(node) = next_child(accessor, cursor, None, after)? {
+        subtree(accessor, plugin, configured, cursor, node).await?;
+        after = Some(node);
+    }
+    Ok(())
+}
+
+/// Visit `node` before and after its children.
+async fn subtree(
+    accessor: &Accessor<State>,
+    plugin: &GuestPlugin<'_>,
+    configured: ResourceAny,
+    cursor: &Resource<Cursor>,
+    node: u32,
+) -> anyhow::Result<()> {
     let visit = async |phase| -> anyhow::Result<bool> {
+        accessor.with(|mut access| -> anyhow::Result<()> {
+            access.data_mut().table.get_mut(cursor)?.id = Some(node);
+            Ok(())
+        })?;
         let borrowed = Resource::new_borrow(cursor.rep());
         plugin
             .call_visit(accessor, configured, borrowed, phase)
             .await?
             .map_err(anyhow::Error::msg)
     };
-    let node = accessor.with(|mut access| access.data_mut().table.get(cursor).map(|c| c.id))?;
     if !visit(types::Visit::Pre).await? {
         return Ok(());
     }
     let mut after = None;
-    while let Some(child) = accessor.with(|mut access| -> anyhow::Result<_> {
-        let cursor = access.data_mut().table.get_mut(cursor)?;
-        let child = cursor.next_child(node, after)?;
-        if let Some(child) = child {
-            cursor.id = child;
-        }
-        Ok(child)
-    })? {
-        Box::pin(walk(accessor, plugin, configured, cursor)).await?;
+    while let Some(child) = next_child(accessor, cursor, Some(node), after)? {
+        Box::pin(subtree(accessor, plugin, configured, cursor, child)).await?;
         after = Some(child);
     }
-    accessor.with(|mut access| -> anyhow::Result<()> {
-        access.data_mut().table.get_mut(cursor)?.id = node;
-        Ok(())
-    })?;
     visit(types::Visit::Post).await?;
     Ok(())
+}
+
+fn next_child(
+    accessor: &Accessor<State>,
+    cursor: &Resource<Cursor>,
+    parent: Option<u32>,
+    after: Option<u32>,
+) -> anyhow::Result<Option<u32>> {
+    accessor.with(|mut access| {
+        Ok(access
+            .data_mut()
+            .table
+            .get(cursor)?
+            .next_child(parent, after)?)
+    })
 }
 
 impl bindings::diffr::plugin::host::HostCursor for State {
@@ -152,7 +175,11 @@ impl bindings::diffr::plugin::host::HostCursor for State {
         Ok(self.table.get(&c)?.file.clone())
     }
     fn id(&mut self, c: Resource<Cursor>) -> wasmtime::Result<u32> {
-        Ok(self.table.get(&c)?.id)
+        Ok(self
+            .table
+            .get(&c)?
+            .id
+            .expect("the cursor is positioned during a callback"))
     }
     fn siblings(
         &mut self,
@@ -172,7 +199,7 @@ impl bindings::diffr::plugin::host::HostCursor for State {
         &mut self,
         c: Resource<Cursor>,
         id: u32,
-    ) -> wasmtime::Result<Result<NodeView, MoveError>> {
+    ) -> wasmtime::Result<Result<RegionView, MoveError>> {
         Ok(self.table.get(&c)?.get(id))
     }
     fn text(
@@ -457,19 +484,19 @@ impl Pipeline {
     }
 
     /// Run every shape plugin on one file's sides, on whichever worker is
-    /// free. Returns the edited sides and the file's own visibility.
+    /// free. Returns the edited sides.
     pub(crate) async fn run(
         &self,
         file: &protocol::FileChange,
         sides: Pairing<protocol::Source>,
-    ) -> anyhow::Result<(Pairing<protocol::Source>, protocol::Visibility)> {
+    ) -> anyhow::Result<Pairing<protocol::Source>> {
         let (reply, result) = oneshot::channel();
         self.jobs
             .send(Job::Run(Cursor::new(file_entry(file), sides), reply))
             .await
             .map_err(|_| trapped())?;
         let cursor = result.await.map_err(|_| trapped())??;
-        Ok((cursor.sides, cursor.visibility))
+        Ok(cursor.sides)
     }
 }
 

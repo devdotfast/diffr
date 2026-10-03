@@ -288,23 +288,27 @@ fn syntax_spans(diff: &DiffResult, shared: &Shared) -> (Vec<SyntaxSpan>, Vec<Syn
 }
 
 /// Run the plugins on a diff and recount what stays visible. A hidden file
-/// runs no plugin and is shown collapsed. `Err` is a run-level failure.
+/// runs no plugin and is shown collapsed; a binary diff has nothing to shape.
+/// `Err` is a run-level failure.
 async fn present(
     pipeline: &Pipeline,
     entry: &FileChange,
     hidden: Option<&str>,
     diff: Diff,
 ) -> anyhow::Result<(Visibility, Diff)> {
-    let hide = |reason: &str| Visibility {
-        collapsed: true,
-        label: reason.to_owned(),
+    let visibility = match hidden {
+        Some(reason) => Visibility {
+            collapsed: true,
+            label: reason.to_owned(),
+        },
+        None => Visibility::default(),
     };
     match diff {
         Diff::Text {
             sides, mut stats, ..
         } => {
-            let (sides, visibility) = match hidden {
-                Some(reason) => (sides, hide(reason)),
+            let sides = match hidden {
+                Some(_) => sides,
                 None => pipeline.run(entry, sides).await?,
             };
             let coverage = change_coverage(&sides);
@@ -318,20 +322,7 @@ async fn present(
                 },
             ))
         }
-        Diff::Binary { sides } => {
-            let visibility = match hidden {
-                Some(reason) => hide(reason),
-                None => {
-                    let empty = sides.clone().map(|_| Source {
-                        text: String::new(),
-                        syntax: Vec::new(),
-                        regions: Vec::new(),
-                    });
-                    pipeline.run(entry, empty).await?.1
-                }
-            };
-            Ok((visibility, Diff::Binary { sides }))
-        }
+        Diff::Binary { sides } => Ok((visibility, Diff::Binary { sides })),
     }
 }
 

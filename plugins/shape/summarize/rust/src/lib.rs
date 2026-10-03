@@ -262,13 +262,13 @@ impl GuestPlugin for Summarize {
         if phase == Visit::Post {
             return Ok(true);
         }
-        let NodeView::Region(RegionView {
+        let RegionView {
             side: Side::Rhs,
             data,
             ..
-        }) = cursor.get(cursor.id())?
+        } = cursor.get(cursor.id())?
         else {
-            return Ok(cursor.id() == ROOT);
+            return Ok(true);
         };
         if !self.eligible(cursor, &data)? {
             return Ok(true);

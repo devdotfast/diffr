@@ -127,9 +127,9 @@ fn a_rejected_edit_leaves_the_file_unchanged() {
         vec![fold(1, false, vec![leaf(2, 0, 0, 4, &[])])],
         vec![leaf(3, 0, 0, 4, &[])],
     );
-    file.set_label(ROOT, Some("earlier edit".into())).unwrap();
-    let original = (file.sides.clone(), file.visibility.clone());
-    assert_eq!(file.cut(ROOT, 1).err(), Some(MoveError::CutFile));
+    file.set_label(2, Some("earlier edit".into())).unwrap();
+    let original = file.sides.clone();
+    assert_eq!(file.cut(0, 1).err(), Some(MoveError::NoRegion(0)));
     assert_eq!(file.cut(1, 1).err(), Some(MoveError::CutFold(1)));
     assert_eq!(
         file.cut(2, 4).err(),
@@ -146,7 +146,7 @@ fn a_rejected_edit_leaves_the_file_unchanged() {
         file.set_collapsed(999, true).err(),
         Some(MoveError::NoRegion(999))
     );
-    assert_eq!((file.sides, file.visibility), original);
+    assert_eq!(file.sides, original);
 }
 
 #[test]
@@ -330,13 +330,10 @@ fn moves_that_cannot_be_carried_out_are_errors() {
         }))
     );
     assert_eq!(file.cut(2, 1), Err(MoveError::CutFold(2)));
-    assert_eq!(file.cut(ROOT, 1), Err(MoveError::CutFile));
+    assert_eq!(file.cut(0, 1), Err(MoveError::NoRegion(0)));
     assert_eq!(file.join(&[1, 4]), Err(MoveError::NotSiblings(vec![1, 4])));
     assert_eq!(file.join(&[1, 2, 99]), Err(MoveError::NoRegion(99)));
-    assert_eq!(
-        file.join(&[ROOT, 1]),
-        Err(MoveError::IncludesFile(Grouping::Join))
-    );
+    assert_eq!(file.join(&[0, 1]), Err(MoveError::NoRegion(0)));
     assert_eq!(
         file.join(&[1, 2, 5]),
         Err(MoveError::OneSided(vec![1, 2, 5]))

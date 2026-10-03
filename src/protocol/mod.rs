@@ -191,11 +191,6 @@ pub struct SyntaxSpan {
     pub capture: String,
 }
 
-/// The `id` that names the file itself rather than a region. No region
-/// carries it: region ids start above it. A plugin addresses the file's own
-/// `visibility` through it, as the root every region hangs from.
-pub const ROOT: u32 = 0;
-
 /// A range on one side, carrying identities that must never be conflated.
 /// `id` names the region. `fold_state_id` says what the region *opens and
 /// closes with*: regions sharing it open and close together, on the same
@@ -206,8 +201,8 @@ pub const ROOT: u32 = 0;
 /// `fold_state_id`, and anything about the region itself by `id`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Region {
-    /// Names this region, unique within the file (across both sides), and
-    /// never [`ROOT`]. Plugin moves address it.
+    /// Names this region, unique within the file (across both sides).
+    /// Plugin moves address it.
     pub id: u32,
     pub fold_state_id: u32,
     #[serde(skip)]

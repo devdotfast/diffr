@@ -1,11 +1,8 @@
 use super::*;
 use crate::plugin::bindings::types::{FileRef, FileSides, FileStatus};
 
-fn data(node: NodeView) -> types::Region {
-    match node {
-        NodeView::Region(view) => view.data,
-        NodeView::File(_) => panic!("region"),
-    }
+fn data(view: RegionView) -> types::Region {
+    view.data
 }
 
 fn entry(sides: FileSides) -> FileEntry {
@@ -106,8 +103,6 @@ fn source_is_original_text_and_distinguishes_absent_from_empty() {
             };
             assert_eq!(c.source(other), None);
             assert_eq!(c.source(side), Some(text.into()));
-            c.set_label(ROOT, Some("label".into())).unwrap();
-            assert_eq!(c.source(side), Some(text.into()));
         }
     }
     let mut state = file_state();
@@ -134,7 +129,7 @@ fn returned_ids_preserve_the_side_for_one_sided_edits() {
         let new = first(&ids);
         let folds = c.join(&[7, new]).unwrap();
         assert_eq!(matches!(folds, RegionIds::LeftOnly(_)), lhs);
-        assert_eq!(children(c.get(first(&folds)).unwrap()), vec![7, new]);
+        assert_eq!(c.get(first(&folds)).unwrap().children, vec![7, new]);
     }
 }
 

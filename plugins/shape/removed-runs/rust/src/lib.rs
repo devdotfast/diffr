@@ -38,13 +38,13 @@ impl GuestPlugin for RemovedRuns {
         if phase == Visit::Post {
             return Ok(true);
         }
-        let NodeView::Region(RegionView {
+        let RegionView {
             side: Side::Lhs,
             data,
             ..
-        }) = cursor.get(cursor.id())?
+        } = cursor.get(cursor.id())?
         else {
-            return Ok(cursor.id() == ROOT);
+            return Ok(true);
         };
         if data.visibility.collapsed {
             return Ok(false);

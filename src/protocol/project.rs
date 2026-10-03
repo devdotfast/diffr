@@ -16,8 +16,8 @@
 //! it.
 //!
 //! Numbering (see `Ids`) runs as the regions are built, lhs preorder then
-//! rhs preorder, with two counters: `id` dense from 1, above [`ROOT`],
-//! and `alignment_id` dense from 0. Every region takes the next `id`, on
+//! rhs preorder, with two counters: `id` dense from 1 and `alignment_id`
+//! dense from 0. Every region takes the next `id`, on
 //! either side, so no id is shared. Every leaf that is not
 //! the second of a pair takes the next `alignment_id`; the second takes its
 //! counterpart's. A region's `fold_state_id` is its own `id`, except that the
@@ -29,7 +29,7 @@
 //! which unchanged lines to hide is the `context` plugin's.
 use super::{
     BinaryRef, Diff, FileRef, LineCounts, Node, Problem, Region, Source, SourcePos, SourceRange,
-    Span, Stats, SyntaxSpan, Visibility, ROOT,
+    Span, Stats, SyntaxSpan, Visibility,
 };
 use crate::hash::DftHashMap;
 use crate::line_layout::{aligned_rows, novel_lines, runs, Run};
@@ -299,7 +299,7 @@ fn split_runs(
 
 /// Wire id allocation, in the order regions are built: lhs preorder, then
 /// rhs preorder. `id` and leaf `alignment_id` are separate counters: `id`
-/// dense from 1, since [`ROOT`] names the file, and `alignment_id` from 0. Every region takes a fresh `id`. A leaf takes a fresh
+/// dense from 1 and `alignment_id` from 0. Every region takes a fresh `id`. A leaf takes a fresh
 /// `alignment_id` and its own `id` as `fold_state_id`, unless its
 /// counterpart is already numbered, whose pair it then shares.
 struct Ids {
@@ -316,7 +316,7 @@ struct Ids {
 impl Ids {
     fn new() -> Self {
         Self {
-            next_id: ROOT + 1,
+            next_id: 1,
             next_alignment: 0,
             leaves: DftHashMap::default(),
             folds: DftHashMap::default(),

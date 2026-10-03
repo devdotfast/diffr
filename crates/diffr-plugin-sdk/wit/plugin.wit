@@ -92,11 +92,10 @@ interface types {
 
     /// One region of a side's tree.
     record region {
-        /// Unique across both sides of the file, never 0.
+        /// Unique across both sides of the file.
         id: u32,
-        /// The fold that holds this region, or 0 (the file) for a top-level
-        /// region.
-        parent: u32,
+        /// The fold that holds this region; none for a top-level region.
+        parent: option<u32>,
         /// Regions sharing it open and close together, on either side.
         fold-state-id: u32,
         range: range,
@@ -111,12 +110,6 @@ interface types {
         side: side,
         data: region,
         children: list<u32>,
-    }
-
-    variant node-view {
-        /// Top-level IDs, lhs before rhs.
-        file(list<u32>),
-        region(region-view),
     }
 
     variant region-ids {
@@ -135,12 +128,10 @@ interface types {
     /// Typed failures from host tree operations.
     variant move-error {
         no-region(u32),
-        cut-file,
         cut-fold(u32),
         cut-outside(cut-outside),
         uneven-sides(u32),
         too-few-regions(grouping),
-        includes-file(grouping),
         repeated(repeated),
         one-sided(list<u32>),
         not-siblings(list<u32>),
@@ -167,16 +158,16 @@ interface types {
 }
 
 interface host {
-    use types.{file-entry, node-view, side, region, region-ids, row-summary, move-error};
+    use types.{file-entry, region-view, side, region, region-ids, row-summary, move-error};
     resource cursor {
         file: func() -> file-entry;
         /// Current node, positioned by the host before each callback.
         id: func() -> u32;
         /// Same-side siblings in source order, including the target.
         siblings: func(id: u32) -> result<list<u32>, move-error>;
-        /// Enclosing regions, nearest first, excluding the file root.
+        /// Enclosing folds, nearest first.
         ancestors: func(id: u32) -> result<list<region>, move-error>;
-        get: func(id: u32) -> result<node-view, move-error>;
+        get: func(id: u32) -> result<region-view, move-error>;
         text: func(id: u32) -> result<string, move-error>;
         display: func(id: u32) -> result<row-summary, move-error>;
         /// None means conflicting alignment; empty means no opposite-side members.
@@ -202,9 +193,9 @@ interface host {
         join: func(regions: list<u32>) -> result<region-ids, move-error>;
         /// Link collapse states, preserving labels and collapse if any input is collapsed.
         link: func(regions: list<u32>) -> result<_, move-error>;
-        /// Update the entire shared fold state; ID 0 hides or shows the file.
+        /// Update the entire shared fold state.
         set-collapsed: func(region: u32, collapsed: bool) -> result<_, move-error>;
-        /// Set or clear one region's label, or the file label (ID 0).
+        /// Set or clear one region's label.
         set-label: func(region: u32, label: option<string>) -> result<_, move-error>;
     }
 }

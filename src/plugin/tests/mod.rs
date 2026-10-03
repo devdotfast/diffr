@@ -143,10 +143,9 @@ pub(crate) fn shape(
     pipeline: &Pipeline,
     file: &FileChange,
     sides: &mut Pairing<Source>,
-) -> anyhow::Result<protocol::Visibility> {
-    let (edited, visibility) = crate::test_runtime().block_on(pipeline.run(file, sides.clone()))?;
-    *sides = edited;
-    Ok(visibility)
+) -> anyhow::Result<()> {
+    *sides = crate::test_runtime().block_on(pipeline.run(file, sides.clone()))?;
+    Ok(())
 }
 
 /// Run the bundled plugin `name` with `overrides` and carry out its moves.
@@ -165,9 +164,7 @@ fn edited(
     file: &FileChange,
     sides: &Pairing<Source>,
 ) -> anyhow::Result<Pairing<Source>> {
-    Ok(crate::test_runtime()
-        .block_on(pipeline.run(file, sides.clone()))?
-        .0)
+    crate::test_runtime().block_on(pipeline.run(file, sides.clone()))
 }
 
 /// For each `deleted-bodies:function` body on the after side, the first line

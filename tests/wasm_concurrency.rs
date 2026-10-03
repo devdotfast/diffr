@@ -260,15 +260,13 @@ fn two_workers_compute_two_files_at_once() -> Result<()> {
     for line in String::from_utf8(output.stdout)?.lines() {
         let record: Value = serde_json::from_str(line)?;
         if record["type"] == "file" {
-            let label = record["visibility"]["label"]
-                .as_str()
-                .context("file label")?;
-            let span: Vec<u128> = label
-                .strip_prefix("spun:")
-                .context("spun label")?
-                .split(':')
-                .map(str::parse)
-                .collect::<Result<_, _>>()?;
+            let mut found = Vec::new();
+            labels(&record["diff"], &mut found);
+            let label = found
+                .iter()
+                .find_map(|label| label.strip_prefix("spun:"))
+                .context("spun label")?;
+            let span: Vec<u128> = label.split(':').map(str::parse).collect::<Result<_, _>>()?;
             spans.push((span[0], span[1]));
         }
     }

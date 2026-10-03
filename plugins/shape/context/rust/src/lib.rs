@@ -31,9 +31,7 @@ impl GuestPlugin for Context {
         if phase == Visit::Post {
             return Ok(true);
         }
-        let NodeView::Region(RegionView { side, data, .. }) = cursor.get(cursor.id())? else {
-            return Ok(true);
-        };
+        let RegionView { side, data, .. } = cursor.get(cursor.id())?;
         if data.visibility.collapsed {
             return Ok(false);
         }
@@ -55,9 +53,7 @@ impl GuestPlugin for Context {
                 }
                 cursor.set_collapsed(data.id, true)?;
                 for peer in peers {
-                    let NodeView::Region(RegionView { data, .. }) = cursor.get(peer)? else {
-                        unreachable!()
-                    };
+                    let data = cursor.get(peer)?.data;
                     cursor.set_label(
                         peer,
                         Some(&label(data.range.end.line - data.range.start.line)),
@@ -69,9 +65,7 @@ impl GuestPlugin for Context {
                 let Some(peer) = cursor.paired_leaf(data.id)? else {
                     return Ok(false);
                 };
-                let NodeView::Region(RegionView { data: other, .. }) = cursor.get(peer)? else {
-                    unreachable!()
-                };
+                let other = cursor.get(peer)?.data;
                 kept.extend(
                     self.visible(cursor, peer)?
                         .into_iter()
@@ -126,9 +120,7 @@ impl GuestPlugin for Context {
 impl Context {
     /// Visible rows of this node: nearby changed rows and enclosing scope markers.
     fn visible(&self, cursor: &Cursor, id: u32) -> Result<BTreeSet<u32>, String> {
-        let NodeView::Region(RegionView { side, data, .. }) = cursor.get(id)? else {
-            unreachable!()
-        };
+        let RegionView { side, data, .. } = cursor.get(id)?;
         let lines = data.range.start.line..data.range.end.line;
         let mut kept = BTreeSet::new();
         let nearby = cursor.leaves(
@@ -144,9 +136,7 @@ impl Context {
                     None => true,
                 };
             if changed {
-                let NodeView::Region(RegionView { data, .. }) = cursor.get(leaf)? else {
-                    unreachable!()
-                };
+                let data = cursor.get(leaf)?.data;
                 let range = data.range.start.line..data.range.end.line;
                 kept.extend(
                     range
@@ -169,11 +159,9 @@ impl Context {
                     .into_iter()
                     .filter(|line| lines.contains(line)),
             );
-            if let NodeView::Region(RegionView { children, .. }) = cursor.get(scope.id)? {
-                for child in children {
-                    let NodeView::Region(RegionView { data, .. }) = cursor.get(child)? else {
-                        unreachable!()
-                    };
+            {
+                for child in cursor.get(scope.id)?.children {
+                    let data = cursor.get(child)?.data;
                     if data.tags.iter().any(|tag| tag == "context:body") {
                         kept.extend(
                             span.start.max(lines.start)..data.range.start.line.min(lines.end),

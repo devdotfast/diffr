@@ -13,17 +13,16 @@ mod bindings {
 }
 use bindings::diffr::plugin::host::Cursor;
 use bindings::diffr::plugin::types::{FileSides, MoveError};
-use bindings::diffr::plugin::types::{NodeView, Side, Visit};
+use bindings::diffr::plugin::types::{Side, Visit};
 use bindings::exports::diffr::plugin::api::{Guest, GuestPlugin};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
-const ROOT: u32 = 0;
 
 #[derive(Deserialize)]
 struct Options {
     endpoint: String,
-    /// When set, every file computes this long at its root without awaiting,
-    /// labels the file with when it did, and makes no request.
+    /// When set, every file computes this long at its first node without
+    /// awaiting, labels that node with when it did, and makes no request.
     #[serde(default)]
     spin_ms: u64,
 }
@@ -45,10 +44,9 @@ impl GuestPlugin for Probe {
     }
     async fn visit(&self, cursor: &Cursor, phase: Visit) -> Result<bool, String> {
         if phase == Visit::Post {
-            assert_eq!(cursor.id(), ROOT, "Pre false must skip Post");
-            return Ok(true);
+            unreachable!("Pre false must skip Post");
         }
-        if cursor.id() == ROOT && self.options.spin_ms > 0 {
+        if self.options.spin_ms > 0 {
             let millis = || {
                 SystemTime::now()
                     .duration_since(SystemTime::UNIX_EPOCH)
@@ -61,12 +59,9 @@ impl GuestPlugin for Probe {
                 std::hint::spin_loop();
             }
             cursor
-                .set_label(ROOT, Some(&format!("spun:{start}:{}", millis())))
+                .set_label(cursor.id(), Some(&format!("spun:{start}:{}", millis())))
                 .map_err(|error| format!("{error:?}"))?;
             return Ok(false);
-        }
-        if cursor.id() == ROOT {
-            return Ok(true);
         }
         let result: Result<bool, Error> = async {
             let call = self.calls.fetch_add(1, Ordering::Relaxed) + 1;
@@ -90,19 +85,17 @@ impl GuestPlugin for Probe {
                 "the host must preserve this callback's position across await"
             );
             assert_eq!(cursor.source(Side::Rhs).as_deref(), Some(source.as_str()));
-            let NodeView::Region(node) = cursor.get(id)? else {
-                panic!("region")
-            };
+            let node = cursor.get(id)?;
             assert_eq!(node.data.visibility.label, format!("waiting for {path}"));
             let body = match body {
                 "fail" => return Err("probe failed after an edit".into()),
                 "trap" => panic!("probe trapped after an edit"),
                 "edit-error" => {
-                    cursor.cut(ROOT, 1)?;
+                    cursor.cut(0, 1)?;
                     unreachable!()
                 }
                 "recover" => {
-                    assert_eq!(cursor.cut(ROOT, 1).unwrap_err(), MoveError::CutFile);
+                    assert_eq!(cursor.cut(0, 1).unwrap_err(), MoveError::NoRegion(0));
                     "A"
                 }
                 body => body,

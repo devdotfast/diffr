@@ -2,14 +2,14 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { STRUCTURAL_DIFF_BASE_WIRE_VERSION } from "./contract.js";
+import { STRUCTURAL_DIFF_WIRE_VERSION } from "./contract.js";
 import { repositoryRoot } from "./test-binary.js";
 
-test("STRUCTURAL_DIFF_BASE_WIRE_VERSION matches src/protocol/mod.rs", () => {
+test("STRUCTURAL_DIFF_WIRE_VERSION matches src/protocol/mod.rs", () => {
   const source = readFileSync(join(repositoryRoot, "src/protocol/mod.rs"), "utf8");
   const match = /pub const VERSION: u32 = (\d+);/.exec(source);
   expect(match).not.toBeNull();
-  expect(Number(match![1])).toBe(STRUCTURAL_DIFF_BASE_WIRE_VERSION);
+  expect(Number(match![1])).toBe(STRUCTURAL_DIFF_WIRE_VERSION);
 });
 
 test("release pins match the package version and cover all supported targets", () => {

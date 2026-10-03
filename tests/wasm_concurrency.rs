@@ -205,7 +205,10 @@ fn generated_bindings_component_overlaps_http_and_never_emits_partial_files() ->
         .build()?
         .block_on(async {
             for outcome in ["A", "recover", "fail", "edit-error", "trap"] {
-                tokio::time::timeout(Duration::from_secs(30), run_case(outcome))
+                // Ordering is enforced by the server's notifications, so this
+                // only catches a hang. A CI runner compiling the component in a
+                // debug build beside the other test can take over thirty seconds.
+                tokio::time::timeout(Duration::from_secs(180), run_case(outcome))
                     .await
                     .with_context(|| {
                         format!("component overlap/emission case {outcome} timed out")

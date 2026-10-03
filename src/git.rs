@@ -1,17 +1,19 @@
-//! Git comparison selection and lazy source loading used by the CLI and its stdout stream.
-use crate::config::Params;
+//! Git comparison selection and lazy source loading: the files a comparison
+//! changed and where each side's bytes are.
 use crate::pairing::Pairing;
-use crate::plugin::Pipeline;
 use crate::protocol;
-use crate::summary::{DiffResult, FallbackCause, FileContent, FileFormat};
-use crate::tags;
 use anyhow::Context as _;
 use gix::filter::plumbing::pipeline::convert::ToGitOutcome;
 use gix::{index::entry::Mode, ObjectId as Oid, Repository};
 mod diff;
 pub(crate) use diff::Diff;
 use serde::Deserialize;
-use std::{fmt, io::Read as _, path::Path, sync::Arc};
+use std::{
+    fmt,
+    io::Read as _,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 pub(crate) type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -221,17 +223,25 @@ impl Default for FileParams {
     }
 }
 
-/// Blob IDs pin revision/index content without retaining every file's source text.
+/// Where one side's bytes come from.
 #[derive(Clone)]
-enum Source {
+pub(crate) enum Source {
     Absent,
     Blob {
+        repo: Arc<gix::ThreadSafeRepository>,
         id: Oid,
         mode: Mode,
     },
-    /// A working-tree file, by its repository-relative path.
+    /// A working-tree file, by its repository-relative path: read through
+    /// Git's clean filters.
     WorkingFile {
+        repo: Arc<gix::ThreadSafeRepository>,
         path: String,
+        mode: Mode,
+    },
+    /// A `--no-index` path, read as it is.
+    File {
+        path: PathBuf,
         mode: Mode,
     },
 }
@@ -240,43 +250,53 @@ impl Source {
     fn from_entry(
         entry: Option<&diff::Entry>,
         operand: &Operand,
-        workspace: Option<&Path>,
+        repo: &Repository,
+        shared: &Arc<gix::ThreadSafeRepository>,
     ) -> Result<Self> {
         let Some(entry) = entry else {
             return Ok(Self::Absent);
         };
         if matches!(operand, Operand::WorkingTree) {
-            if workspace.is_none() {
+            if repo.workdir().is_none() {
                 return Err("working-tree comparison requires a working tree".into());
             }
             return Ok(Self::WorkingFile {
+                repo: shared.clone(),
                 path: entry.path.clone(),
                 mode: entry.mode,
             });
         }
         Ok(Self::Blob {
+            repo: shared.clone(),
             id: entry.id,
             mode: entry.mode,
         })
     }
 
-    fn read(&self, repo: &Repository) -> anyhow::Result<Vec<u8>> {
+    /// The side's bytes.
+    fn read(&self) -> anyhow::Result<Vec<u8>> {
         let mode = match self {
             Self::Absent => return Ok(Vec::new()),
-            Self::Blob { mode, .. } | Self::WorkingFile { mode, .. } => mode,
+            Self::Blob { mode, .. } | Self::WorkingFile { mode, .. } | Self::File { mode, .. } => {
+                mode
+            }
         };
         if !matches!(*mode, Mode::FILE | Mode::FILE_EXECUTABLE) {
             return Err(FileError::UnsupportedFileType.into());
         }
         let bytes = match self {
-            Self::Blob { id, .. } => {
-                repo.find_blob(*id)
+            Self::Absent => unreachable!("handled above"),
+            Self::Blob { repo, id, .. } => {
+                repo.to_thread_local()
+                    .find_blob(*id)
                     .context(FileError::ReadFailed)?
                     .detach()
                     .data
             }
-            Self::WorkingFile { path, .. } => clean(repo, path).context(FileError::ReadFailed)?,
-            Self::Absent => unreachable!(),
+            Self::WorkingFile { repo, path, .. } => {
+                clean(&repo.to_thread_local(), path).context(FileError::ReadFailed)?
+            }
+            Self::File { path, .. } => std::fs::read(path).context(FileError::ReadFailed)?,
         };
         Ok(bytes)
     }
@@ -304,198 +324,115 @@ fn clean(repo: &Repository, path: &str) -> anyhow::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-pub(crate) struct PendingFile {
-    pub(crate) file: FileChange,
+/// One changed file: its manifest entry, and where each side's bytes come
+/// from.
+pub(crate) struct File {
+    pub(crate) change: FileChange,
     before: Source,
     after: Source,
 }
 
-pub(crate) struct DiffSession {
-    repo: gix::ThreadSafeRepository,
-    pub(crate) comparison: Comparison,
-    params: Arc<Params>,
-    files: std::vec::IntoIter<PendingFile>,
-    diff_options: crate::options::DiffOptions,
-}
-
-impl DiffSession {
-    pub(crate) fn file_manifest(&self) -> Vec<FileChange> {
-        self.files
-            .as_slice()
-            .iter()
-            .map(|pending| pending.file.clone())
-            .collect()
-    }
-
-    pub(crate) fn remaining(&self) -> usize {
-        self.files.len()
-    }
-
-    /// List the comparison's files and their tags, from the classifier in
-    /// `pipeline`, whose failure fails the session.
-    pub(crate) fn open(
-        workspace: &Path,
-        comparison: Comparison,
-        params: Arc<Params>,
-        diff_options: crate::options::DiffOptions,
-        files: &FileParams,
-        pipeline: &Pipeline,
-    ) -> Result<Self> {
-        let repo = gix::open(workspace)?;
-        let comparison = comparison.resolve(&repo)?;
-        let pending = {
-            let diff = comparison.diff(&repo, files)?;
-            let mut pending = Vec::new();
-            for delta in &diff.changes {
-                let old_path = delta.before.as_ref().map(|entry| entry.path.clone());
-                let new_path = delta.after.as_ref().map(|entry| entry.path.clone());
-                // A working-tree side names no stored blob, so it carries the
-                // null id, as `git diff --raw` writes it.
-                let file_ref = |entry: &diff::Entry, operand: &Operand| protocol::FileRef {
-                    path: entry.path.clone(),
-                    oid: match operand {
-                        Operand::WorkingTree => gix::ObjectId::null(repo.object_hash()).to_string(),
-                        _ => entry.id.to_string(),
-                    },
-                    mode: format!("{:o}", entry.mode.bits()),
-                };
-                let (lhs, rhs) = (&comparison.before, &comparison.after);
-                let sides = match (&delta.before, &delta.after) {
-                    (Some(old), Some(new)) => Pairing::Both {
-                        lhs: file_ref(old, lhs),
-                        rhs: file_ref(new, rhs),
-                    },
-                    (Some(old), None) => Pairing::LeftOnly {
-                        lhs: file_ref(old, lhs),
-                    },
-                    (None, Some(new)) => Pairing::RightOnly {
-                        rhs: file_ref(new, rhs),
-                    },
-                    (None, None) => unreachable!("a change has a path"),
-                };
-                let file = FileChange {
-                    old_path,
-                    new_path,
-                    status: delta.status.clone(),
-                    tags: Vec::new(),
-                    hidden: None,
-                    sides,
-                };
-                let before =
-                    Source::from_entry(delta.before.as_ref(), &comparison.before, repo.workdir())?;
-                let after =
-                    Source::from_entry(delta.after.as_ref(), &comparison.after, repo.workdir())?;
-                pending.push(PendingFile {
-                    before,
-                    after,
-                    file,
-                });
-            }
-            let entries: Vec<protocol::FileChange> = pending
-                .iter()
-                .map(|pending| pending.file.manifest_entry())
-                .collect();
-            let classified = pipeline
-                .classify(&entries)
-                .map_err(|error| format!("{error:#}"))?;
-            for (pending, classified) in pending.iter_mut().zip(classified) {
-                pending.file.tags = classified.tags;
-                pending.file.hidden = classified.hidden;
-            }
-            pending
-        };
-        Ok(Self {
-            repo: repo.into_sync(),
-            comparison,
-            params,
-            files: pending.into_iter(),
-            diff_options,
-        })
-    }
-}
-
-/// Owned source bytes; diffing needs no repository access.
-pub(crate) struct LoadedFile {
-    pub(crate) file: FileChange,
-    before: Vec<u8>,
-    after: Vec<u8>,
-}
-
-impl LoadedFile {
-    pub(crate) fn sizes(&self) -> (u64, u64) {
-        (self.before.len() as u64, self.after.len() as u64)
-    }
-}
-
-impl DiffSession {
-    /// Assign concrete files before any task is scheduled.
-    pub(crate) fn into_files(self) -> (Differ, std::vec::IntoIter<PendingFile>) {
-        (
-            Differ {
-                repo: self.repo,
-                params: self.params,
-                diff_options: self.diff_options,
-            },
-            self.files,
-        )
-    }
-}
-
-/// What every file's load and diff share: the repository, each blocking task
-/// making its own gix view of it, the compiled queries and the diff options.
-pub(crate) struct Differ {
-    repo: gix::ThreadSafeRepository,
-    pub(crate) params: Arc<Params>,
-    diff_options: crate::options::DiffOptions,
-}
-
-impl Differ {
-    pub(crate) fn load(&self, pending: PendingFile) -> anyhow::Result<LoadedFile> {
-        if matches!(pending.file.status, FileStatus::Conflicted) {
+impl File {
+    /// Both sides' bytes. The error carries a [`FileError`].
+    pub(crate) fn read(&self) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+        if matches!(self.change.status, FileStatus::Conflicted) {
             return Err(FileError::Unmerged.into());
         }
-        let repo = self.repo.to_thread_local();
-        Ok(LoadedFile {
-            before: pending.before.read(&repo)?,
-            after: pending.after.read(&repo)?,
-            file: pending.file,
-        })
+        Ok((self.before.read()?, self.after.read()?))
     }
+}
 
-    /// A fold query conflict fails this file alone.
-    pub(crate) fn diff(&self, loaded: &LoadedFile) -> anyhow::Result<DiffResult> {
-        // Preserve binary files as successful, size-only records. Rejecting
-        // them while loading bypasses the protocol and TUI's binary support.
-        if loaded.before.contains(&0) || loaded.after.contains(&0) {
-            return Ok(DiffResult {
-                file_format: FileFormat::Binary,
-                lhs_src: FileContent::Binary,
-                rhs_src: FileContent::Binary,
-                lhs_positions: vec![],
-                rhs_positions: vec![],
-                lhs_folds: vec![],
-                rhs_folds: vec![],
-            });
+/// What a comparison changed: the two sides and every file, in Git's
+/// order.
+pub(crate) struct Listing {
+    pub(crate) lhs: protocol::Snapshot,
+    pub(crate) rhs: protocol::Snapshot,
+    pub(crate) files: Vec<File>,
+}
+
+/// A standalone comparison of two paths on disk, outside any repository;
+/// `/dev/null` is an absent side.
+pub(crate) fn standalone(before: &str, after: &str) -> Listing {
+    let source = |path: &str| {
+        if path == "/dev/null" {
+            Source::Absent
+        } else {
+            Source::File {
+                path: PathBuf::from(path),
+                mode: Mode::FILE,
+            }
         }
-        let before = std::str::from_utf8(&loaded.before).context(FileError::NotUtf8)?;
-        let after = std::str::from_utf8(&loaded.after).context(FileError::NotUtf8)?;
-        let file = &loaded.file;
-        let options = crate::options::DiffOptions {
-            by_line: if file.tags.iter().any(|tag| tag == tags::GENERATED) {
-                Some(FallbackCause::Generated)
-            } else if file.hidden.is_some() {
-                Some(FallbackCause::Hidden)
-            } else {
-                None
-            },
-            ..self.diff_options.clone()
-        };
-        Ok(DiffResult::from_sources_with_options(
-            file.path(),
-            before,
-            after,
-            &self.params,
-            &options,
-        )?)
+    };
+    Listing {
+        lhs: protocol::Snapshot::Path {
+            path: before.to_owned(),
+        },
+        rhs: protocol::Snapshot::Path {
+            path: after.to_owned(),
+        },
+        files: vec![File {
+            change: FileChange::standalone(before, after),
+            before: source(before),
+            after: source(after),
+        }],
     }
+}
+
+/// List the comparison's changed files and where their bytes are.
+pub(crate) fn list(
+    workspace: &Path,
+    comparison: Comparison,
+    files: &FileParams,
+) -> Result<Listing> {
+    let repo = gix::open(workspace)?;
+    let comparison = comparison.resolve(&repo)?;
+    let diff = comparison.diff(&repo, files)?;
+    // Each blob read makes its own thread-local view of this one handle.
+    let shared = Arc::new(repo.clone().into_sync());
+    let mut listed = Vec::new();
+    for delta in &diff.changes {
+        let old_path = delta.before.as_ref().map(|entry| entry.path.clone());
+        let new_path = delta.after.as_ref().map(|entry| entry.path.clone());
+        // A working-tree side names no stored blob, so it carries the
+        // null id, as `git diff --raw` writes it.
+        let file_ref = |entry: &diff::Entry, operand: &Operand| protocol::FileRef {
+            path: entry.path.clone(),
+            oid: match operand {
+                Operand::WorkingTree => gix::ObjectId::null(repo.object_hash()).to_string(),
+                _ => entry.id.to_string(),
+            },
+            mode: format!("{:o}", entry.mode.bits()),
+        };
+        let (lhs, rhs) = (&comparison.before, &comparison.after);
+        let sides = match (&delta.before, &delta.after) {
+            (Some(old), Some(new)) => Pairing::Both {
+                lhs: file_ref(old, lhs),
+                rhs: file_ref(new, rhs),
+            },
+            (Some(old), None) => Pairing::LeftOnly {
+                lhs: file_ref(old, lhs),
+            },
+            (None, Some(new)) => Pairing::RightOnly {
+                rhs: file_ref(new, rhs),
+            },
+            (None, None) => unreachable!("a change has a path"),
+        };
+        listed.push(File {
+            change: FileChange {
+                old_path,
+                new_path,
+                status: delta.status.clone(),
+                tags: Vec::new(),
+                hidden: None,
+                sides,
+            },
+            before: Source::from_entry(delta.before.as_ref(), &comparison.before, &repo, &shared)?,
+            after: Source::from_entry(delta.after.as_ref(), &comparison.after, &repo, &shared)?,
+        });
+    }
+    Ok(Listing {
+        lhs: protocol::Snapshot::from(&comparison.before),
+        rhs: protocol::Snapshot::from(&comparison.after),
+        files: listed,
+    })
 }

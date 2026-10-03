@@ -1,8 +1,9 @@
 //! Git-style CLI input: the terminal UI, the NDJSON stream, and Git metadata.
 use crate::config::{self, Config};
-use crate::git::{Comparison, DiffSession, FileParams, Operand, Result};
-use crate::options::{DebugArgs, DiffOptions};
+use crate::git::{self, Comparison, FileParams, Operand, Result};
+use crate::options::DebugArgs;
 use crate::plugin::Pipeline;
+use crate::run;
 use clap::{
     error::ErrorKind, parser::ValueSource, ArgGroup, ArgMatches, Args, CommandFactory,
     FromArgMatches, Parser, Subcommand, ValueEnum,
@@ -13,7 +14,6 @@ use std::{
     io::{self, IsTerminal, Write},
     num::NonZeroUsize,
     path::{Component, Path, PathBuf},
-    sync::Arc,
 };
 
 /// The metadata outputs, named one by one in conflicts so clap's error names
@@ -183,15 +183,11 @@ pub(crate) fn run(runtime: &tokio::runtime::Runtime) -> Result<i32> {
     if !streaming && !metadata_or_quiet {
         return launch_tui(&frontend_args, true);
     }
-    let stream_options = crate::protocol::stream::Options {
-        syntax: args.syntax,
-    };
     if args.no_index {
         return no_index(
             runtime,
             &args,
             args.items.iter().chain(&args.paths).cloned().collect(),
-            stream_options,
         );
     }
     let location = std::fs::canonicalize(&args.repo)?;
@@ -214,32 +210,26 @@ pub(crate) fn run(runtime: &tokio::runtime::Runtime) -> Result<i32> {
         }
         return Ok(i32::from(changed && (args.exit_code || args.quiet)));
     }
-    let mut config = Config::load()?;
-    apply_unified(&args, &mut config);
-    let params = Arc::new(config.compile()?);
+    let config = args.config()?;
+    let params = config.compile()?;
     let pipeline = Pipeline::from_config(&config, workspace, args.jobs)
         .map_err(|error| format!("{error:#}"))?;
-    let session = DiffSession::open(
-        workspace,
-        comparison,
-        Arc::clone(&params),
-        diff_options(&args, &params),
-        &files,
-        &pipeline,
-    )?;
-    let changed = session.remaining() > 0;
-    let ended = crate::protocol::stream::write(
+    let mut listing = git::list(workspace, comparison, &files)?;
+    run::classify(&pipeline, &mut listing).map_err(|error| format!("{error:#}"))?;
+    let ended = run::stream(
         runtime,
-        session,
-        args.jobs.get(),
-        Arc::new(pipeline),
-        stream_options,
+        listing,
+        pipeline,
+        params,
+        args.jobs,
+        args.options(),
         &mut io::stdout().lock(),
-    )?;
+    )
+    .map_err(|error| format!("{error:#}"))?;
     Ok(if ended.failed || ended.aborted {
         2
     } else {
-        i32::from(changed && args.exit_code)
+        i32::from(ended.files > 0 && args.exit_code)
     })
 }
 
@@ -555,12 +545,7 @@ fn print_metadata(
     Ok(())
 }
 
-fn no_index(
-    runtime: &tokio::runtime::Runtime,
-    args: &Cli,
-    paths: Vec<OsString>,
-    stream_options: crate::protocol::stream::Options,
-) -> Result<i32> {
+fn no_index(runtime: &tokio::runtime::Runtime, args: &Cli, paths: Vec<OsString>) -> Result<i32> {
     if paths.len() != 2 {
         return Err("--no-index requires two file paths".into());
     }
@@ -574,46 +559,26 @@ fn no_index(
         }
         Ok(std::fs::read(path)?)
     };
-    let before = read(&paths[0])?;
-    let after = read(&paths[1])?;
-    let changed = before != after;
+    let changed = read(&paths[0])? != read(&paths[1])?;
     if args.quiet {
         return Ok(i32::from(changed));
     }
-    let mut config = Config::load()?;
-    apply_unified(args, &mut config);
-    let params = Arc::new(config.compile()?);
-    // One file: one worker is all it can use.
-    let pipeline = Pipeline::from_config(&config, &std::env::current_dir()?, NonZeroUsize::MIN)
+    // Paths outside a repository have no attributes, and Linguist's rules
+    // are written for repository-relative paths, so they are not classified.
+    let config = args.config()?;
+    let params = config.compile()?;
+    let pipeline = Pipeline::from_config(&config, &std::env::current_dir()?, args.jobs)
         .map_err(|error| format!("{error:#}"))?;
-    let config = params;
-    let options = diff_options(args, &config);
-    let lhs = crate::options::FileArgument::from_path_argument(&paths[0]);
-    let rhs = crate::options::FileArgument::from_path_argument(&paths[1]);
-    let label = paths[1].to_string_lossy().into_owned();
-    let compute_params = config.clone();
-    let ended = crate::protocol::stream::write_file(
+    let ended = run::stream(
         runtime,
-        &paths[0].to_string_lossy(),
-        &paths[1].to_string_lossy(),
-        (before.len() as u64, after.len() as u64),
-        move || {
-            crate::diff_file(
-                &compute_params,
-                &label,
-                &lhs,
-                &rhs,
-                &options,
-                false,
-                &[],
-                &[],
-            )
-        },
-        config,
-        Arc::new(pipeline),
-        stream_options,
+        git::standalone(&paths[0].to_string_lossy(), &paths[1].to_string_lossy()),
+        pipeline,
+        params,
+        args.jobs,
+        args.options(),
         &mut io::stdout().lock(),
-    )?;
+    )
+    .map_err(|error| format!("{error:#}"))?;
     Ok(if ended.failed || ended.aborted {
         2
     } else {
@@ -621,31 +586,35 @@ fn no_index(
     })
 }
 
-/// The engine limits: the configured `[diff]` table, then the command-line
-/// flags.
-fn diff_options(args: &Cli, params: &config::Params) -> DiffOptions {
-    let mut options = params.diff.options(args.ignore_comments);
-    if let Some(limit) = args.byte_limit {
-        options.byte_limit = limit;
+impl Cli {
+    /// The configuration file with this run's flags merged in: `-U` is the
+    /// context plugin's `lines`, and the limit flags are `[diff]`.
+    fn config(&self) -> Result<Config> {
+        let mut config = Config::load()?;
+        if let Some(unified) = self.unified {
+            if let Some(entry) = config.plugins.entries.get_mut("bundled.context") {
+                entry
+                    .options
+                    .insert("lines".into(), serde_json::Value::from(unified));
+            }
+        }
+        if let Some(limit) = self.byte_limit {
+            config.diff.byte_limit = limit;
+        }
+        if let Some(limit) = self.graph_limit {
+            config.diff.graph_limit = limit;
+        }
+        if let Some(limit) = self.parse_error_limit {
+            config.diff.parse_error_limit = limit;
+        }
+        Ok(config)
     }
-    if let Some(limit) = args.graph_limit {
-        options.graph_limit = limit;
-    }
-    if let Some(limit) = args.parse_error_limit {
-        options.parse_error_limit = limit;
-    }
-    options
-}
 
-/// `-U` overrides the context plugin's `lines` for this run.
-fn apply_unified(args: &Cli, config: &mut Config) {
-    let Some(unified) = args.unified else {
-        return;
-    };
-    if let Some(entry) = config.plugins.entries.get_mut("bundled.context") {
-        entry
-            .options
-            .insert("lines".into(), serde_json::Value::from(unified));
+    fn options(&self) -> run::Options {
+        run::Options {
+            syntax: self.syntax,
+            ignore_comments: self.ignore_comments,
+        }
     }
 }
 
@@ -734,7 +703,5 @@ fn launch_tui(args: &[OsString], comparison: bool) -> Result<i32> {
     #[cfg(not(unix))]
     let result = command.status().map(|status| status.code().unwrap_or(2));
 
-    result.map_err(|error| {
-        format!("Could not launch terminal frontend: {error}. Run cargo xtask install-tui from the checkout to install the frontend, or use --format ndjson. For source development, set DIFFR_TUI_ENTRY and ensure Bun is available.").into()
-    })
+    result.map_err(|error| format!("Could not launch terminal frontend: {error}.").into())
 }

@@ -7,6 +7,10 @@ extend-exclude = [
   "examples/review/real/*/change.patch",
 ]
 
+[default.extend-identifiers]
+# gix names the repository-relative path of a status item rela_path.
+rela_path = "rela_path"
+
 [default.extend-words]
 ba = "ba"
 edn = "edn"

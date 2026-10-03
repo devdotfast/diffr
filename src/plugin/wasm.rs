@@ -54,6 +54,8 @@ pub(super) struct State {
     workdir: PathBuf,
     /// The repository `git` reads, opened the first time a plugin asks.
     repo: Option<gix::Repository>,
+    /// Its attribute files, read once and queried per path.
+    attributes: Option<gix::worktree::Stack>,
 }
 
 impl State {
@@ -73,6 +75,7 @@ impl State {
             table: ResourceTable::new(),
             workdir: workdir.into(),
             repo: None,
+            attributes: None,
         })
     }
 
@@ -357,9 +360,27 @@ impl bindings::diffr::plugin::git::Host for State {
         attributes: Vec<String>,
         path: String,
     ) -> wasmtime::Result<Result<Vec<Attribute>, String>> {
-        Ok(self.repo().and_then(|repo| {
-            check_attr(repo, &attributes, &path).map_err(|error| format!("{error:#}"))
-        }))
+        if let Err(error) = self.repo() {
+            return Ok(Err(error));
+        }
+        let repo = self.repo.as_ref().expect("opened above");
+        if self.attributes.is_none() {
+            let stack = (|| -> anyhow::Result<_> {
+                let index = repo.index_or_empty()?;
+                Ok(repo
+                    .attributes_only(
+                        &index,
+                        gix::worktree::stack::state::attributes::Source::WorktreeThenIdMapping,
+                    )?
+                    .detach())
+            })();
+            match stack {
+                Ok(stack) => self.attributes = Some(stack),
+                Err(error) => return Ok(Err(format!("{error:#}"))),
+            }
+        }
+        let stack = self.attributes.as_mut().expect("built above");
+        Ok(check_attr(repo, stack, &attributes, &path).map_err(|error| format!("{error:#}")))
     }
 
     fn cat_file(&mut self, object: String) -> wasmtime::Result<Result<Vec<u8>, String>> {
@@ -373,16 +394,14 @@ impl bindings::diffr::plugin::git::Host for State {
 /// precedence (info/attributes, .gitattributes files, user, system).
 fn check_attr(
     repo: &gix::Repository,
+    stack: &mut gix::worktree::Stack,
     attributes: &[String],
     path: &str,
 ) -> anyhow::Result<Vec<Attribute>> {
-    let index = repo.index_or_empty()?;
-    let mut stack = repo.attributes_only(
-        &index,
-        gix::worktree::stack::state::attributes::Source::WorktreeThenIdMapping,
-    )?;
     let mut matches = stack.selected_attribute_matches(attributes.iter().map(String::as_str));
-    stack.at_path(path, None)?.matching_attributes(&mut matches);
+    stack
+        .at_path(path, None, &repo.objects)?
+        .matching_attributes(&mut matches);
     matches
         .iter_selected()
         .map(|matched| {

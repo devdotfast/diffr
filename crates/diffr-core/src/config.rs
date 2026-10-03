@@ -20,6 +20,7 @@
 pub mod migrate;
 pub(crate) mod prune;
 pub(crate) mod query;
+pub mod storage;
 pub mod store;
 use crate::hash::DftHashMap;
 use crate::options::DiffOptions;
@@ -56,6 +57,9 @@ pub struct Config {
     /// Limits on the structural comparison itself.
     #[serde(default)]
     pub diff: DiffConfig,
+    /// Cache for computed diffs.
+    #[serde(default)]
+    pub storage: storage::StoreConfig,
 }
 
 impl Default for Config {

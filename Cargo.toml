@@ -9,7 +9,7 @@ authors = ["dev.fast"]
 keywords = ["diff", "syntax"]
 categories = ["development-tools", "command-line-utilities", "parser-implementations"]
 edition = "2021"
-# Wasmtime 48 requires Rust 1.95.
+# Wasmtime 49 requires at least Rust 1.96.
 rust-version = "1.99.0"
 
 include = [
@@ -128,11 +128,11 @@ toml_edit = "0.25.15"
 serde_yaml_ng = "0.10.0"
 jsonschema = { version = "0.56.0", default-features = false }
 # WASM component plugins, with component concurrency available for the runtime redesign.
-wasmtime = { version = "48.0.2", default-features = false, features = ["runtime", "cranelift", "component-model", "component-model-async", "anyhow", "cache", "parallel-compilation", "std"] }
-wasmtime-wasi = { version = "48.0.2", default-features = false, features = ["p2", "p3"] }
+wasmtime = { version = "49.0.2", default-features = false, features = ["runtime", "cranelift", "component-model", "component-model-async", "anyhow", "cache", "parallel-compilation", "std"] }
+wasmtime-wasi = { version = "49.0.2", default-features = false, features = ["p2", "p3"] }
 # The byte buffer a guest's output stream is handed, wasmtime-wasi's own.
 bytes = "1.12"
-wasmtime-wasi-http = { version = "48.0.2", default-features = false, features = ["p2", "p3", "default-send-request"] }
+wasmtime-wasi-http = { version = "49.0.2", default-features = false, features = ["p2", "p3", "default-send-request"] }
 
 
 [target.'cfg(not(any(windows, target_os = "illumos", target_os = "freebsd")))'.dependencies]

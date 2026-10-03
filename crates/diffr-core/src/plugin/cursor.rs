@@ -35,6 +35,7 @@ pub enum Kind {
     Leaf {
         alignment_id: u32,
         changed: Vec<Span>,
+        search_highlights: Vec<Span>,
     },
     Fold,
 }
@@ -80,6 +81,8 @@ pub enum MoveError {
 pub struct Cursor {
     pub file: FileChange,
     pub sides: Pairing<Source>,
+    /// Whether any leaf holds a search hit; plugins never add one.
+    hits: bool,
     /// The region the cursor is on: the one the current callback visits.
     pub id: u32,
     /// IDs from here up were made during the current walk, which skips them.
@@ -106,9 +109,11 @@ impl Cursor {
                 }
             });
         }
+        let hits = sides.sides().iter().any(|source| holds_hit(&source.root));
         Ok(Self {
             file,
             sides,
+            hits,
             id: first,
             limit: next_region_id,
             next_region_id,
@@ -364,6 +369,7 @@ impl Cursor {
             if let Node::Leaf {
                 alignment_id,
                 changed,
+                ..
             } = &region.node
             {
                 changes |= !changed.is_empty() || !alignments.contains(alignment_id);
@@ -632,6 +638,14 @@ impl Cursor {
         Ok(())
     }
 
+    pub fn has_search_highlights(&self, id: u32) -> Result<bool, MoveError> {
+        let state = region_of(&self.sides, id)?.fold_state_id;
+        if !self.hits || self.top_level().contains(&id) {
+            return Ok(self.hits);
+        }
+        Ok(highlighted_states(&self.sides, &BTreeSet::from([state])))
+    }
+
     /// Set or clear a region's label.
     pub fn set_label(&mut self, region: u32, label: Option<String>) -> Result<(), MoveError> {
         region_mut(&mut self.sides, region)?.visibility.label = label.unwrap_or_default();
@@ -673,9 +687,11 @@ fn view(region: &Region, parent: Option<u32>, side: Side, children: Vec<u32>) ->
             Node::Leaf {
                 alignment_id,
                 changed,
+                search_highlights,
             } => Kind::Leaf {
                 alignment_id: *alignment_id,
                 changed: changed.clone(),
+                search_highlights: search_highlights.clone(),
             },
             Node::Fold { .. } => Kind::Fold,
         },
@@ -852,7 +868,12 @@ fn find_mut(regions: &mut [Region], id: u32) -> Option<&mut Region> {
 /// A leaf split at relative line `offset`. The second piece takes `id`,
 /// `alignment_id` and `fold_state_id`.
 fn split(leaf: Region, offset: u32, id: u32, alignment_id: u32, fold_state_id: u32) -> [Region; 2] {
-    let Node::Leaf { changed, .. } = &leaf.node else {
+    let Node::Leaf {
+        changed,
+        search_highlights,
+        ..
+    } = &leaf.node
+    else {
         unreachable!("only leaves are cut");
     };
     let boundary = SourcePos {
@@ -869,6 +890,11 @@ fn split(leaf: Region, offset: u32, id: u32, alignment_id: u32, fold_state_id: u
             visibility: leaf.visibility.clone(),
             node: Node::Leaf {
                 alignment_id,
+                search_highlights: search_highlights
+                    .iter()
+                    .copied()
+                    .filter(|span| lines.contains(&span.line))
+                    .collect(),
                 changed: changed
                     .iter()
                     .copied()
@@ -926,3 +952,24 @@ mod mutations;
 
 #[cfg(test)]
 mod tests;
+
+/// Whether any region in `states` holds a search hit.
+fn highlighted_states(sides: &Pairing<Source>, states: &BTreeSet<u32>) -> bool {
+    let mut any = false;
+    for source in sides.sides() {
+        walk(std::slice::from_ref(&source.root), &mut |region| {
+            any |= states.contains(&region.fold_state_id) && holds_hit(region);
+        });
+    }
+    any
+}
+
+/// Whether a region or anything under it holds a search hit.
+fn holds_hit(region: &Region) -> bool {
+    match &region.node {
+        Node::Leaf {
+            search_highlights, ..
+        } => !search_highlights.is_empty(),
+        Node::Fold { children, .. } => children.iter().any(holds_hit),
+    }
+}

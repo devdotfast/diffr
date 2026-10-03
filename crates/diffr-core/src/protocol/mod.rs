@@ -154,6 +154,7 @@ pub enum FileStatus {
     Renamed,
     Copied,
     TypeChanged,
+    Unchanged,
 }
 
 /// One side of a git delta.
@@ -305,6 +306,8 @@ pub enum Node {
         alignment_id: u32,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         changed: Vec<Span>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        search_highlights: Vec<Span>,
     },
     /// A foldable region. Its range is the hull of its children.
     Fold {
@@ -402,6 +405,7 @@ mod tests {
             visibility: Visibility::default(),
             node: Node::Leaf {
                 alignment_id: index,
+                search_highlights: Vec::new(),
                 changed,
             },
         }

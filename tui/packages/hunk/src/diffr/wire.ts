@@ -15,7 +15,7 @@ const visibility = z.object({
 const problem = z.object({ code: z.string(), message: z.string() });
 const fileChange = z.object({
   file: pairing(fileRef),
-  status: z.enum(["added", "deleted", "modified", "renamed", "copied", "type_changed"]),
+  status: z.enum(["added", "deleted", "modified", "renamed", "copied", "type_changed", "unchanged"]),
   /** What the file is (`generated`, `vendored`, `docs`, `test`, or a `diffr-tags` attribute), sorted. */
   tags: z.array(z.string()).default([]),
 });

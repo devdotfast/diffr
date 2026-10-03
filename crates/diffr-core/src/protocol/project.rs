@@ -671,6 +671,7 @@ fn leaf_region(
         visibility: Visibility::default(),
         node: Node::Leaf {
             alignment_id,
+            search_highlights: Vec::new(),
             changed,
         },
     }

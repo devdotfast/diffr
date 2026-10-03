@@ -61,6 +61,7 @@ fn visible_changes(sides: &Pairing<Source>) -> LineCounts {
                 Node::Leaf {
                     alignment_id,
                     changed,
+                    ..
                 } => {
                     if other.contains(alignment_id) {
                         visible.extend(changed.iter().map(|span| [span.line, span.line + 1]));
@@ -156,6 +157,7 @@ mod visible_tests {
                 label: String::new(),
             },
             node: Node::Leaf {
+                search_highlights: Vec::new(),
                 alignment_id: alignment,
                 changed: changed
                     .iter()

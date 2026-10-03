@@ -601,7 +601,8 @@ impl Cursor {
         Ok(region_ids(lhs, rhs))
     }
 
-    /// Merge the fold states of `ids` into the first's; all collapse if any was.
+    /// Merge the fold states of `ids` into the first's; all collapse if any
+    /// was, unless a member holds a search hit.
     pub fn link(&mut self, ids: &[u32]) -> Result<(), MoveError> {
         let sides = &mut self.sides;
         check_regions(ids, Grouping::Link)?;
@@ -614,6 +615,7 @@ impl Cursor {
             .iter()
             .map(|id| Ok(region_of(sides, *id)?.fold_state_id))
             .collect::<Result<BTreeSet<u32>, MoveError>>()?;
+        collapsed &= !highlighted_states(sides, &states);
         for tree in trees(sides) {
             walk_mut(tree, &mut |region| {
                 if states.contains(&region.fold_state_id) {
@@ -625,9 +627,10 @@ impl Cursor {
         Ok(())
     }
 
-    /// Set the shared collapsed state.
+    /// Set the shared collapsed state; a search hit stays open.
     pub fn set_collapsed(&mut self, region: u32, collapsed: bool) -> Result<(), MoveError> {
         let state = region_of(&self.sides, region)?.fold_state_id;
+        let collapsed = collapsed && !highlighted_states(&self.sides, &BTreeSet::from([state]));
         for tree in trees(&mut self.sides) {
             walk_mut(tree, &mut |region| {
                 if region.fold_state_id == state {

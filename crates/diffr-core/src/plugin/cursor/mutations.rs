@@ -390,3 +390,40 @@ fn moves_that_cannot_be_carried_out_are_errors() {
         })
     );
 }
+
+#[test]
+fn cuts_keep_highlights_on_their_piece_and_linked_states_keep_matches_open() {
+    let mut left = leaf(1, 1, 0, 6, &[]);
+    let Node::Leaf {
+        search_highlights, ..
+    } = &mut left.node
+    else {
+        unreachable!()
+    };
+    search_highlights.push(Span {
+        line: 4,
+        start_column: 0,
+        end_column: 1,
+    });
+    let mut state = both(vec![left], vec![in_state(leaf(2, 1, 0, 6, &[]), 1)]);
+    let RegionIds::Both(left_tail, right_tail) = state.cut(1, 3).unwrap() else {
+        unreachable!()
+    };
+    assert!(!state.has_search_highlights(1).unwrap());
+    assert!(state.has_search_highlights(left_tail).unwrap());
+    assert!(state.has_search_highlights(right_tail).unwrap());
+    state.set_collapsed(1, true).unwrap();
+    state.set_collapsed(right_tail, true).unwrap();
+    let (lhs, _) = sides_of(&state);
+    assert!(lhs.root.children()[0].visibility.collapsed);
+    assert!(!lhs.root.children()[1].visibility.collapsed);
+    state.link(&[1, left_tail]).unwrap();
+    state.set_collapsed(2, true).unwrap();
+    for source in state.sides.sides() {
+        assert!(source
+            .root
+            .children()
+            .iter()
+            .all(|region| !region.visibility.collapsed));
+    }
+}

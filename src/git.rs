@@ -207,7 +207,6 @@ impl From<&Operand> for protocol::Snapshot {
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileParams {
-    pub(crate) order: Vec<String>,
     /// Repository-relative paths or wildcard patterns; empty selects all changed files.
     pub(crate) paths: Vec<String>,
     pub(crate) renames: bool,
@@ -216,7 +215,6 @@ pub(crate) struct FileParams {
 impl Default for FileParams {
     fn default() -> Self {
         Self {
-            order: Vec::new(),
             paths: Vec::new(),
             renames: true,
         }
@@ -404,19 +402,6 @@ impl DiffSession {
                 pending.file.tags = classified.tags;
                 pending.file.hidden = classified.hidden;
             }
-            // A file ranks by the earliest `--order` tag it carries.
-            let rank = |file: &FileChange| {
-                files
-                    .order
-                    .iter()
-                    .position(|tag| file.tags.contains(tag))
-                    .unwrap_or(files.order.len())
-            };
-            pending.sort_by(|a, b| {
-                rank(&a.file)
-                    .cmp(&rank(&b.file))
-                    .then_with(|| a.file.path().cmp(b.file.path()))
-            });
             pending
         };
         Ok(Self {

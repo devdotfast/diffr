@@ -38,9 +38,6 @@ struct Cli {
     /// Concurrent file diffs for --format ndjson; results are emitted as each finishes
     #[arg(short, long, default_value = "16")]
     jobs: NonZeroUsize,
-    /// File tag priority: files carrying an earlier listed tag come first
-    #[arg(long, value_delimiter = ',')]
-    order: Vec<String>,
     /// Compare the index with HEAD, or with the given revision
     #[arg(long, visible_alias = "staged")]
     cached: bool,
@@ -205,7 +202,6 @@ pub(crate) fn run(runtime: &tokio::runtime::Runtime) -> Result<i32> {
         paths,
         // `-M` conflicts with `--no-renames`; renames are on by default.
         renames: args.find_renames || !args.no_renames,
-        order: args.order.clone(),
     };
     if metadata_or_quiet {
         let diff = comparison.resolve(&repo)?.diff(&repo, &files)?;

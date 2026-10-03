@@ -777,6 +777,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "diffr-grammars"
+version = "0.1.10"
+dependencies = [
+ "cc",
+ "rayon",
+ "serde_json",
+ "tree-sitter",
+ "tree-sitter-c",
+ "tree-sitter-language",
+ "zstd",
+ "zstd-sys",
+]
+
+[[package]]
 name = "diffr-plugin-sdk"
 version = "0.1.1"
 dependencies = [

@@ -1,7 +1,8 @@
 //! Plugin workers: each is a thread holding an instance of every shape
-//! plugin. A file is walked by every plugin on one worker; files interleave
-//! while a plugin awaits I/O. The engine, store state and linker are shared
-//! with the [classifier](super::classify).
+//! plugin. A file goes to the worker with the fewest files in flight and is
+//! walked by every plugin there; files on a worker interleave while a plugin
+//! awaits I/O. The engine, store state and linker are shared with the
+//! [classifier](super::classify).
 use super::bindings::{
     self,
     exports::diffr::plugin::api::GuestPlugin,
@@ -14,18 +15,19 @@ use super::{file_entry, MutationFailed};
 use crate::pairing::Pairing;
 use crate::protocol;
 use anyhow::Context as _;
-use futures::{stream::FuturesUnordered, StreamExt};
 use gix::attrs::StateRef as AttrState;
 use gix::bstr::ByteSlice;
 use output::Prefixed;
 use serde_json::Value;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot, Notify};
 use wasmtime::component::{
-    Accessor, Component as Compiled, HasSelf, Linker, Resource, ResourceAny, ResourceTable,
+    Accessor, AccessorTask, Component as Compiled, HasSelf, Linker, Resource, ResourceAny,
+    ResourceTable,
 };
 use wasmtime::{Cache, CacheConfig, Config, Engine, Store};
 use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
@@ -381,18 +383,27 @@ struct Component {
     options: String,
 }
 
-/// Walk one file with every shape plugin in order, on whichever worker is
-/// free first.
+/// Walk one file with every shape plugin in order.
 struct Job {
     cursor: Cursor,
     reply: oneshot::Sender<anyhow::Result<Cursor>>,
 }
 
+/// A worker's mailbox, and how many files it holds. The mailbox holds one
+/// file, so a worker blocked in guest compute leaves it full and dispatch
+/// looks elsewhere.
+struct WorkerHandle {
+    jobs: mpsc::Sender<Job>,
+    in_flight: Arc<AtomicUsize>,
+}
+
 /// The enabled shape plugins, run by a pool of workers. Each worker holds an
-/// instance of every plugin; dropping the pipeline closes the queue and the
-/// workers stop once their files are done.
+/// instance of every plugin; dropping the pipeline closes the mailboxes and
+/// the workers stop once their files are done.
 pub(crate) struct Pipeline {
-    jobs: async_channel::Sender<Job>,
+    workers: Vec<WorkerHandle>,
+    /// Choosing a worker and counting the file on it is one step.
+    dispatch: Mutex<()>,
 }
 
 /// The host's imports: WASI, HTTP, and the `git` and `cursor` interfaces.
@@ -428,19 +439,32 @@ impl Pipeline {
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
         let plugins = Arc::new(plugins);
-        let (jobs, queue) = async_channel::unbounded();
-        let started: Vec<_> = (0..workers.get())
-            .map(|_| spawn_worker(&engine, plugins.clone(), workdir, queue.clone()))
-            .collect::<anyhow::Result<_>>()?;
+        let mut handles = Vec::with_capacity(workers.get());
+        let mut started = Vec::with_capacity(workers.get());
+        for _ in 0..workers.get() {
+            let (jobs, mailbox) = mpsc::channel(1);
+            let in_flight = Arc::new(AtomicUsize::new(0));
+            started.push(spawn_worker(
+                &engine,
+                plugins.clone(),
+                workdir,
+                mailbox,
+                in_flight.clone(),
+            )?);
+            handles.push(WorkerHandle { jobs, in_flight });
+        }
         for made in started {
             made.blocking_recv()
                 .context("plugin worker stopped while starting")??;
         }
-        Ok(Self { jobs })
+        Ok(Self {
+            workers: handles,
+            dispatch: Mutex::new(()),
+        })
     }
 
-    /// Run every shape plugin on one file's sides, on whichever worker is
-    /// free. Returns the edited sides.
+    /// Run every shape plugin on one file's sides, on the worker with the
+    /// fewest files in flight. Returns the edited sides.
     pub(crate) async fn run(
         &self,
         file: &protocol::FileChange,
@@ -451,12 +475,37 @@ impl Pipeline {
             Err(sides) => return Ok(sides),
         };
         let (reply, result) = oneshot::channel();
-        self.jobs
-            .send(Job { cursor, reply })
-            .await
-            .map_err(|_| trapped())?;
+        if let Some((job, mailbox)) = self.offer(Job { cursor, reply })? {
+            mailbox.send(job).await.map_err(|_| trapped())?;
+        }
         let cursor = result.await.map_err(|_| trapped())??;
         Ok(cursor.sides)
+    }
+
+    /// Give the file to the least-loaded worker whose mailbox has room. When
+    /// every mailbox is full, the file is counted on the least-loaded worker
+    /// and handed back with that mailbox for the caller to wait on.
+    fn offer(&self, job: Job) -> anyhow::Result<Option<(Job, mpsc::Sender<Job>)>> {
+        let _choosing = self
+            .dispatch
+            .lock()
+            .expect("choosing a worker does not panic");
+        let mut workers: Vec<&WorkerHandle> = self.workers.iter().collect();
+        workers.sort_by_key(|worker| worker.in_flight.load(Ordering::SeqCst));
+        let mut job = job;
+        for worker in &workers {
+            match worker.jobs.try_send(job) {
+                Ok(()) => {
+                    worker.in_flight.fetch_add(1, Ordering::SeqCst);
+                    return Ok(None);
+                }
+                Err(mpsc::error::TrySendError::Full(returned)) => job = returned,
+                Err(mpsc::error::TrySendError::Closed(_)) => return Err(trapped()),
+            }
+        }
+        let worker = workers[0];
+        worker.in_flight.fetch_add(1, Ordering::SeqCst);
+        Ok(Some((job, worker.jobs.clone())))
     }
 }
 
@@ -521,7 +570,8 @@ fn spawn_worker(
     engine: &Engine,
     plugins: Arc<Vec<Component>>,
     workdir: &Path,
-    jobs: async_channel::Receiver<Job>,
+    jobs: mpsc::Receiver<Job>,
+    in_flight: Arc<AtomicUsize>,
 ) -> anyhow::Result<oneshot::Receiver<anyhow::Result<()>>> {
     let (ready, made) = oneshot::channel();
     let engine = engine.clone();
@@ -543,7 +593,7 @@ fn spawn_worker(
                 match Worker::make(&engine, &plugins, &workdir).await {
                     Ok(worker) => {
                         if ready.send(Ok(())).is_ok() {
-                            worker.serve(jobs).await;
+                            worker.serve(jobs, in_flight).await;
                         }
                     }
                     Err(error) => {
@@ -601,45 +651,38 @@ impl Worker {
         Ok(Self { store, instances })
     }
 
-    /// Serve jobs until the queue closes.
-    async fn serve(self, jobs: async_channel::Receiver<Job>) {
+    /// Run every file sent to this worker, concurrently on the Store's event
+    /// loop, until the mailbox closes and the last file is done.
+    async fn serve(self, mut jobs: mpsc::Receiver<Job>, in_flight: Arc<AtomicUsize>) {
         let Self {
             mut store,
             instances,
         } = self;
+        let instances = Arc::new(instances);
+        let done = Arc::new(Notify::new());
         let served = store
-            .run_concurrent(async |accessor| {
-                let instances = &instances;
-                let mut pending: FuturesUnordered<futures::future::BoxFuture<'_, ()>> =
-                    FuturesUnordered::new();
-                let mut open = true;
-                while open || !pending.is_empty() {
-                    tokio::select! {
-                        job = jobs.recv(), if open => {
-                            let Ok(job) = job else {
-                                open = false;
-                                continue;
-                            };
-                            pending.push(Box::pin(async move {
-                                let _ = job
-                                    .reply
-                                    .send(run_chain(accessor, instances, job.cursor).await);
-                            }));
-                            // Wasmtime runs queued guest calls only once this future
-                            // yields. Yield before taking another job so a computing job
-                            // does not block the queue.
-                            let _ = futures::poll!(pending.next());
-                            tokio::task::yield_now().await;
-                        }
-                        _ = pending.next(), if !pending.is_empty() => {}
-                    }
+            .run_concurrent(async |accessor| -> anyhow::Result<()> {
+                while let Some(job) = jobs.recv().await {
+                    accessor.spawn(Run {
+                        job,
+                        instances: instances.clone(),
+                        in_flight: in_flight.clone(),
+                        done: done.clone(),
+                    })?;
                 }
+                while in_flight.load(Ordering::SeqCst) > 0 {
+                    done.notified().await;
+                }
+                Ok(())
             })
             .await;
-        if let Err(error) = served {
-            log::error!("plugin worker trapped: {error:#}");
+        if let Err(error) = served
+            .map_err(anyhow::Error::from)
+            .and_then(|served| served)
+        {
+            log::error!("plugin worker: {error:#}");
         }
-        for instance in instances {
+        for instance in instances.iter() {
             if let Err(error) = instance.configured.resource_drop_async(&mut store).await {
                 log::error!(
                     "plugin {}: dropping configuration: {error:#}",
@@ -647,6 +690,32 @@ impl Worker {
                 );
             }
         }
+    }
+}
+
+/// One file's run on a worker: a task on the Store's event loop. Its reply
+/// carries the result, so the task itself never fails the Store.
+struct Run {
+    job: Job,
+    instances: Arc<Vec<Instance>>,
+    in_flight: Arc<AtomicUsize>,
+    done: Arc<Notify>,
+}
+
+impl AccessorTask<State> for Run {
+    async fn run(self, accessor: &Accessor<State>) -> wasmtime::Result<()> {
+        let Self {
+            job,
+            instances,
+            in_flight,
+            done,
+        } = self;
+        let _ = job
+            .reply
+            .send(run_chain(accessor, &instances, job.cursor).await);
+        in_flight.fetch_sub(1, Ordering::SeqCst);
+        done.notify_one();
+        Ok(())
     }
 }
 

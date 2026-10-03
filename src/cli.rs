@@ -7,7 +7,7 @@ use clap::{
     error::ErrorKind, parser::ValueSource, ArgGroup, ArgMatches, Args, CommandFactory,
     FromArgMatches, Parser, Subcommand, ValueEnum,
 };
-use git2::{DiffStatsFormat, Repository};
+use gix::Repository;
 use std::{
     ffi::OsString,
     io::{self, IsTerminal, Write},
@@ -89,9 +89,6 @@ struct Cli {
     /// Write the event stream to stdout instead of opening the terminal UI
     #[arg(long, conflicts_with = "quiet", conflicts_with_all = METADATA)]
     format: Option<Format>,
-    /// Emit initial files followed by deferred annotations (NDJSON v4)
-    #[arg(long, requires = "format", conflicts_with = "quiet", conflicts_with_all = METADATA)]
-    stream_annotations: bool,
     /// Include every token's tree-sitter capture name in --format ndjson output
     #[arg(long, requires = "format", conflicts_with = "quiet", conflicts_with_all = METADATA)]
     syntax: bool,
@@ -168,7 +165,7 @@ enum ConfigCommand {
     Set { key: String, value: String },
 }
 
-pub(crate) fn run() -> Result<i32> {
+pub(crate) fn run(runtime: &tokio::runtime::Runtime) -> Result<i32> {
     let frontend_args: Vec<OsString> = std::env::args_os().skip(1).collect();
     // Git treats an argument before `--` as a revision even when a file shares
     // its name, so a bare trailing `--` still matters.
@@ -179,7 +176,7 @@ pub(crate) fn run() -> Result<i32> {
     match &args.command {
         Some(Command::Config(config)) => return run_config(config),
         Some(Command::Debug(debug)) => {
-            crate::run_debug(debug.mode());
+            crate::run_debug(debug.mode(), &Config::default().compile()?);
             return Ok(0);
         }
         None => {}
@@ -191,18 +188,18 @@ pub(crate) fn run() -> Result<i32> {
     }
     let stream_options = crate::protocol::stream::Options {
         syntax: args.syntax,
-        updates: args.stream_annotations,
     };
     if args.no_index {
         return no_index(
+            runtime,
             &args,
             args.items.iter().chain(&args.paths).cloned().collect(),
             stream_options,
         );
     }
     let location = std::fs::canonicalize(&args.repo)?;
-    let repo = Repository::discover(&location)?;
-    let workspace = repo.workdir().unwrap_or(repo.path());
+    let repo = gix::discover(&location)?;
+    let workspace = repo.workdir().unwrap_or(repo.git_dir());
     let (comparison, paths) = select(&repo, &location, &args, has_separator)?;
     let files = FileParams {
         paths,
@@ -212,31 +209,31 @@ pub(crate) fn run() -> Result<i32> {
     };
     if metadata_or_quiet {
         let diff = comparison.resolve(&repo)?.diff(&repo, &files)?;
-        let changed = diff.deltas().len() > 0;
+        let changed = !diff.is_empty();
         if !args.quiet {
             let width = args
                 .width
                 .unwrap_or_else(crate::options::detect_terminal_width);
-            print_metadata(&diff, &args, width)?;
+            print_metadata(&repo, &comparison, &diff, &args, width)?;
         }
         return Ok(i32::from(changed && (args.exit_code || args.quiet)));
     }
     let mut config = Config::load()?;
     apply_unified(&args, &mut config);
-    let pipeline =
-        Pipeline::from_config(&config.plugins, workspace).map_err(|error| format!("{error:#}"))?;
-    let params = Arc::new(config.compile_with(&pipeline)?);
-    let diff_options = diff_options(&args, &params);
-    let mut session = DiffSession::open(
+    let params = Arc::new(config.compile()?);
+    let pipeline = Pipeline::from_config(&config, workspace, args.jobs)
+        .map_err(|error| format!("{error:#}"))?;
+    let session = DiffSession::open(
         workspace,
         comparison,
         Arc::clone(&params),
+        diff_options(&args, &params),
         &files,
         &pipeline,
     )?;
-    session.diff_options = diff_options;
     let changed = session.remaining() > 0;
     let ended = crate::protocol::stream::write(
+        runtime,
         session,
         args.jobs.get(),
         Arc::new(pipeline),
@@ -285,7 +282,7 @@ fn select(
         let text = item
             .to_str()
             .ok_or("non-UTF-8 revision/path arguments are unsupported")?;
-        let is_rev = repo.revparse(text).is_ok();
+        let is_rev = repo.rev_parse(text).is_ok();
         let is_path = location.join(item).exists();
         if is_rev && is_path && !has_separator {
             return Err(
@@ -306,7 +303,7 @@ fn select(
     }
     paths.extend(args.paths.iter().cloned());
     // Match canonical path forms, including Windows verbatim path prefixes.
-    let root = std::fs::canonicalize(repo.workdir().unwrap_or(repo.path()))?;
+    let root = std::fs::canonicalize(repo.workdir().unwrap_or(repo.git_dir()))?;
     let prefix = location.strip_prefix(&root)?;
     let paths = paths
         .into_iter()
@@ -315,10 +312,10 @@ fn select(
     let cached = args.cached;
     let mut comparison = match revisions.as_slice() {
         [] if cached => Comparison {
-            before: match repo.head() {
-                Ok(_) => Operand::revision("HEAD"),
-                Err(error) if error.code() == git2::ErrorCode::UnbornBranch => Operand::EmptyTree,
-                Err(error) => return Err(error.into()),
+            before: if repo.head()?.is_unborn() {
+                Operand::EmptyTree
+            } else {
+                Operand::revision("HEAD")
             },
             after: Operand::Index,
         },
@@ -381,8 +378,8 @@ fn select(
 }
 
 fn merge_base(repo: &Repository, a: &str, b: &str) -> Result<Operand> {
-    let a = repo.revparse_single(a)?.peel_to_commit()?.id();
-    let b = repo.revparse_single(b)?.peel_to_commit()?.id();
+    let a = repo.rev_parse_single(a)?.object()?.peel_to_commit()?.id();
+    let b = repo.rev_parse_single(b)?.object()?.peel_to_commit()?.id();
     Ok(Operand::revision(repo.merge_base(a, b)?.to_string()))
 }
 
@@ -402,76 +399,168 @@ fn normalize_path(prefix: &Path, path: &std::ffi::OsStr) -> Result<String> {
     Ok(normalized.to_str().ok_or("non-UTF-8 pathspec")?.to_owned())
 }
 
-fn print_metadata(diff: &git2::Diff<'_>, args: &Cli, width: usize) -> Result<()> {
+fn print_metadata(
+    repo: &Repository,
+    comparison: &Comparison,
+    diff: &crate::git::Diff,
+    args: &Cli,
+    width: usize,
+) -> Result<()> {
+    use crate::git::FileStatus;
     let mut stdout = io::stdout().lock();
     if args.name_only || args.name_status {
         let separator: &[u8] = if args.null { b"\0" } else { b"\t" };
         let terminator: &[u8] = if args.null { b"\0" } else { b"\n" };
-        for delta in diff.deltas() {
+        for change in &diff.changes {
             if args.name_status {
                 write!(
                     stdout,
                     "{}",
-                    match delta.status() {
-                        git2::Delta::Added => 'A',
-                        git2::Delta::Deleted => 'D',
-                        git2::Delta::Renamed => 'R',
-                        git2::Delta::Typechange => 'T',
-                        git2::Delta::Conflicted => 'U',
-                        _ => 'M',
+                    match change.status {
+                        FileStatus::Added => 'A',
+                        FileStatus::Deleted => 'D',
+                        FileStatus::Renamed => 'R',
+                        FileStatus::TypeChanged => 'T',
+                        FileStatus::Conflicted => 'U',
+                        FileStatus::Modified => 'M',
                     }
                 )?;
                 stdout.write_all(separator)?;
-                if delta.status() == git2::Delta::Renamed {
-                    stdout.write_all(delta.old_file().path_bytes().unwrap())?;
+                if matches!(change.status, FileStatus::Renamed) {
+                    stdout.write_all(
+                        change
+                            .before
+                            .as_ref()
+                            .ok_or("missing old path")?
+                            .path
+                            .as_bytes(),
+                    )?;
                     stdout.write_all(separator)?;
                 }
             }
             stdout.write_all(
-                delta
-                    .new_file()
-                    .path_bytes()
-                    .or(delta.old_file().path_bytes())
-                    .ok_or("missing path")?,
+                change
+                    .after
+                    .as_ref()
+                    .or(change.before.as_ref())
+                    .ok_or("missing path")?
+                    .path
+                    .as_bytes(),
             )?;
             stdout.write_all(terminator)?;
         }
         return Ok(());
     }
-    if args.numstat {
-        for (index, delta) in diff.deltas().enumerate() {
-            let patch = git2::Patch::from_diff(diff, index)?;
-            if let Some(patch) = patch {
-                let (_, additions, deletions) = patch.line_stats()?;
-                write!(stdout, "{additions}\t{deletions}\t")?;
-            } else {
-                write!(stdout, "-\t-\t")?;
+    let counts = diff.line_counts(repo, comparison)?;
+    let names: Vec<_> = diff
+        .changes
+        .iter()
+        .map(|change| -> Result<String> {
+            let entry = change
+                .after
+                .as_ref()
+                .or(change.before.as_ref())
+                .ok_or("missing path")?;
+            if !matches!(change.status, FileStatus::Renamed) {
+                return Ok(entry.path.clone());
             }
-            if delta.status() == git2::Delta::Renamed {
-                stdout.write_all(delta.old_file().path_bytes().ok_or("missing old path")?)?;
-                stdout.write_all(b" => ")?;
+            let old = &change.before.as_ref().ok_or("missing old path")?.path;
+            if !args.numstat {
+                let common = old
+                    .bytes()
+                    .zip(entry.path.bytes())
+                    .take_while(|(a, b)| a == b)
+                    .count();
+                if let Some(slash) = old.as_bytes()[..common].iter().rposition(|b| *b == b'/') {
+                    let prefix = slash + 1;
+                    return Ok(format!(
+                        "{}{{{} => {}}}",
+                        &old[..prefix],
+                        &old[prefix..],
+                        &entry.path[prefix..]
+                    ));
+                }
             }
-            stdout.write_all(
-                delta
-                    .new_file()
-                    .path_bytes()
-                    .or(delta.old_file().path_bytes())
-                    .ok_or("missing path")?,
-            )?;
-            stdout.write_all(b"\n")?;
+            Ok(format!("{old} => {}", entry.path))
+        })
+        .collect::<Result<_>>()?;
+    let name_width = names.iter().map(String::len).max().unwrap_or(0);
+    let maximum = counts
+        .iter()
+        .filter_map(|stats| stats.lines)
+        .map(|(a, d)| a + d)
+        .max()
+        .unwrap_or(0) as usize;
+    let digits = maximum.to_string().len();
+    // Preserve the previous stat formatter's shared column widths and graph scale.
+    let mut scale = width;
+    if scale > 0 {
+        if scale > name_width + digits + 5 {
+            scale -= name_width + digits + 5;
         }
-        return Ok(());
+        scale = scale.max(7);
     }
-    let format = if args.shortstat {
-        DiffStatsFormat::SHORT
-    } else {
-        DiffStatsFormat::FULL
-    };
-    stdout.write_all(&diff.stats()?.to_buf(format, width)?)?;
+    if scale > maximum {
+        scale = 0;
+    }
+    let (mut added, mut removed) = (0, 0);
+    for (name, stats) in names.iter().zip(&counts) {
+        if let Some((a, d)) = stats.lines {
+            added += a;
+            removed += d;
+        }
+        if args.numstat {
+            match stats.lines {
+                Some((a, d)) => write!(stdout, "{a}\t{d}\t")?,
+                None => write!(stdout, "-\t-\t")?,
+            }
+            writeln!(stdout, "{name}")?;
+        } else if !args.shortstat {
+            write!(stdout, " {name}{} | ", " ".repeat(name_width - name.len()))?;
+            match stats.lines {
+                Some((a, d)) => {
+                    let total = (a + d) as usize;
+                    write!(stdout, "{total:>digits$}")?;
+                    if total > 0 {
+                        let (plus, minus) = if scale == 0 {
+                            (a as usize, d as usize)
+                        } else {
+                            let bars = (total * scale + maximum / 2) / maximum;
+                            let plus = bars * a as usize / total;
+                            (plus.max(1), (bars - plus).max(1))
+                        };
+                        write!(stdout, " {}{}", "+".repeat(plus), "-".repeat(minus))?;
+                    }
+                    writeln!(stdout)?;
+                }
+                None => writeln!(stdout, "Bin {} -> {} bytes", stats.sizes.0, stats.sizes.1)?,
+            }
+        }
+    }
+    if !args.numstat {
+        let n = diff.changes.len();
+        write!(stdout, " {n} file{} changed", if n == 1 { "" } else { "s" })?;
+        if added > 0 || removed == 0 {
+            write!(
+                stdout,
+                ", {added} insertion{}(+)",
+                if added == 1 { "" } else { "s" }
+            )?;
+        }
+        if removed > 0 || added == 0 {
+            write!(
+                stdout,
+                ", {removed} deletion{}(-)",
+                if removed == 1 { "" } else { "s" }
+            )?;
+        }
+        writeln!(stdout)?;
+    }
     Ok(())
 }
 
 fn no_index(
+    runtime: &tokio::runtime::Runtime,
     args: &Cli,
     paths: Vec<OsString>,
     stream_options: crate::protocol::stream::Options,
@@ -497,31 +586,35 @@ fn no_index(
     }
     let mut config = Config::load()?;
     apply_unified(args, &mut config);
-    let pipeline = Pipeline::from_config(&config.plugins, &std::env::current_dir()?)
+    let params = Arc::new(config.compile()?);
+    // One file: one worker is all it can use.
+    let pipeline = Pipeline::from_config(&config, &std::env::current_dir()?, NonZeroUsize::MIN)
         .map_err(|error| format!("{error:#}"))?;
-    let config = config.compile_with(&pipeline)?;
-    let options = &diff_options(args, &config);
+    let config = params;
+    let options = diff_options(args, &config);
     let lhs = crate::options::FileArgument::from_path_argument(&paths[0]);
     let rhs = crate::options::FileArgument::from_path_argument(&paths[1]);
-    let compute = || {
-        crate::diff_file(
-            &config,
-            &paths[1].to_string_lossy(),
-            &lhs,
-            &rhs,
-            options,
-            false,
-            &[],
-            &[],
-        )
-    };
+    let label = paths[1].to_string_lossy().into_owned();
+    let compute_params = config.clone();
     let ended = crate::protocol::stream::write_file(
+        runtime,
         &paths[0].to_string_lossy(),
         &paths[1].to_string_lossy(),
         (before.len() as u64, after.len() as u64),
-        compute,
-        &config,
-        &pipeline,
+        move || {
+            crate::diff_file(
+                &compute_params,
+                &label,
+                &lhs,
+                &rhs,
+                &options,
+                false,
+                &[],
+                &[],
+            )
+        },
+        config,
+        Arc::new(pipeline),
         stream_options,
         &mut io::stdout().lock(),
     )?;

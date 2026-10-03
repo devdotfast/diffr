@@ -41,7 +41,7 @@ impl TreeSitterParser {
 }
 
 fn main() {
-    native_plugins();
+    bundled_plugins();
     let parsers = vec![
         TreeSitterParser {
             name: "tree-sitter-janet-simple",
@@ -109,46 +109,25 @@ fn commit_info() {
     println!("cargo:rustc-env=DFT_COMMIT_DATE={}", next())
 }
 
-/// Collect native registrations and bundled assets from plugin package metadata.
-fn native_plugins() {
+/// Embed the component, manifest and queries from every bundled shape plugin
+/// folder under `plugins/shape/`, and the classifier in `plugins/classify/`.
+fn bundled_plugins() {
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    println!("cargo:rerun-if-changed=Cargo.toml");
-    let manifest: toml::Value = std::fs::read_to_string(root.join("Cargo.toml"))
-        .unwrap()
-        .parse()
-        .unwrap();
-    let mut code = String::from("const PLUGINS: &[&sdk::Registration] = &[\n");
+    println!("cargo:rerun-if-changed=plugins");
     let mut files = String::from("const FILES: &[(&str, &str)] = &[\n");
     let mut components = String::from("const COMPONENTS: &[(&str, &[u8])] = &[\n");
     embed_queries(
-        &root.join("plugins/shared/queries"),
+        &root.join("plugins/shape/shared/queries"),
         "shared/queries",
         &mut files,
     );
-    for dependency in manifest["dependencies"].as_table().unwrap().keys() {
-        // Resolve assets through Cargo links metadata.
-        if !dependency.starts_with("diffr-plugin-") || dependency == "diffr-plugin-sdk" {
-            continue;
-        }
-        let variable = format!("DEP_{}_ASSETS", dependency.to_uppercase().replace('-', "_"));
-        let folder = PathBuf::from(
-            std::env::var_os(&variable)
-                .unwrap_or_else(|| panic!("{dependency} did not publish {variable}")),
-        );
-        let file = folder.join("Cargo.toml");
-        println!("cargo:rerun-if-changed={}", file.display());
-        let package: toml::Value = std::fs::read_to_string(file).unwrap().parse().unwrap();
-        let Some(plugin) = package
-            .get("package")
-            .and_then(|p| p.get("metadata"))
-            .and_then(|p| p.get("diffr"))
-        else {
-            continue;
-        };
-        let native = plugin
-            .get("native")
-            .and_then(toml::Value::as_bool)
-            .unwrap_or(false);
+    let mut folders: Vec<_> = std::fs::read_dir(root.join("plugins/shape"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|folder| folder.join("plugin.toml").is_file())
+        .collect();
+    folders.sort();
+    for folder in folders {
         let plugin_manifest = folder.join("plugin.toml");
         let description: toml::Value = std::fs::read_to_string(&plugin_manifest)
             .expect("a plugin has plugin.toml")
@@ -166,30 +145,25 @@ fn native_plugins() {
             &format!("{name}/queries"),
             &mut files,
         );
-        if !native {
-            let wasm = folder.join("plugin.wasm");
-            println!("cargo:rerun-if-changed={}", wasm.display());
-            components.push_str(&format!("    ({name:?}, include_bytes!({wasm:?})),\n"));
-        }
-        if native {
-            code.push_str(&format!(
-                "    &{}::DIFFR_PLUGIN,\n",
-                dependency.replace('-', "_")
-            ));
-        }
+        let wasm = folder.join("plugin.wasm");
+        println!("cargo:rerun-if-changed={}", wasm.display());
+        components.push_str(&format!("    ({name:?}, include_bytes!({wasm:?})),\n"));
     }
-    code.push_str("];\n");
     files.push_str("];\n");
     components.push_str("];\n");
     files.push_str(&components);
+    let classifier = root.join("plugins/classify");
+    for file in ["plugin.toml", "plugin.wasm"] {
+        println!("cargo:rerun-if-changed={}", classifier.join(file).display());
+    }
+    files.push_str(&format!(
+        "const CLASSIFIER_MANIFEST: &str = include_str!({:?});\nconst CLASSIFIER_COMPONENT: &[u8] = include_bytes!({:?});\n",
+        classifier.join("plugin.toml"),
+        classifier.join("plugin.wasm"),
+    ));
     std::fs::write(
         PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("bundled_assets.rs"),
         files,
-    )
-    .unwrap();
-    std::fs::write(
-        PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("native_plugins.rs"),
-        code,
     )
     .unwrap();
 }

@@ -14,9 +14,9 @@ Helix editor themes (tui/themes/)
   https://github.com/helix-editor/helix/tree/master/runtime/themes
   Mozilla Public License 2.0 (see tui/themes/LICENSE).
 
-GitHub Linguist language data (src/tags/linguist/)
+GitHub Linguist language data (plugins/classify/rust/src/linguist/)
   https://github.com/github-linguist/linguist
-  MIT License (see src/tags/linguist/LICENSE).
+  MIT License (see plugins/classify/rust/src/linguist/LICENSE).
 
 tree-sitter grammars (vendored_parsers/)
   Each grammar directory carries its upstream license file. Grammars

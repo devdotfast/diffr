@@ -1,4 +1,4 @@
-//! Owned comparison metadata. gix repository views never cross a worker boundary.
+//! Comparison metadata, owned so it can leave the repository thread.
 use super::{Comparison, FileParams, FileStatus, Operand, Result};
 use gix::{
     bstr::{BString, ByteSlice},

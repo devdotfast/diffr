@@ -1,30 +1,32 @@
 use super::*;
+use crate::protocol::{SourcePos, SourceRange, Span, Visibility};
 
-fn range(start: u32, end: u32) -> types::Range {
-    types::Range {
-        start: types::Position {
+fn range(start: u32, end: u32) -> SourceRange {
+    SourceRange {
+        start: SourcePos {
             line: start,
             column: 0,
         },
-        end: types::Position {
+        end: SourcePos {
             line: end,
             column: 0,
         },
     }
 }
 
-fn removed_leaf(id: u32, alignment: u32, start: u32, end: u32, changed: &[u32]) -> tree::Region {
-    tree::Region {
+fn removed_leaf(id: u32, alignment: u32, start: u32, end: u32, changed: &[u32]) -> Region {
+    Region {
         id,
         fold_state_id: id,
         range: range(start, end),
+        relations: Vec::new(),
         tags: vec![],
-        visibility: types::Visibility::default(),
-        node: tree::Node::Leaf {
+        visibility: Visibility::default(),
+        node: Node::Leaf {
             alignment_id: alignment,
             changed: changed
                 .iter()
-                .map(|&line| types::Span {
+                .map(|&line| Span {
                     line,
                     start_column: 0,
                     end_column: 4,
@@ -34,19 +36,21 @@ fn removed_leaf(id: u32, alignment: u32, start: u32, end: u32, changed: &[u32]) 
     }
 }
 
-fn function_fold(id: u32, start: u32, end: u32, children: Vec<tree::Region>) -> tree::Region {
-    tree::Region {
+fn function_fold(id: u32, start: u32, end: u32, children: Vec<Region>) -> Region {
+    Region {
         id,
         fold_state_id: id,
         range: range(start, end),
+        relations: Vec::new(),
         tags: vec!["removed-runs:function".to_owned()],
-        visibility: types::Visibility::default(),
-        node: tree::Node::Fold { children },
+        visibility: Visibility::default(),
+        node: Node::Fold { children },
     }
 }
 
-fn source(regions: Vec<tree::Region>) -> tree::Source {
-    tree::Source {
+fn source(regions: Vec<Region>) -> Source {
+    Source {
+        syntax: Vec::new(),
         text: String::new(),
         regions,
     }
@@ -69,11 +73,11 @@ fn deleted() -> FileChange {
 /// `(id, alignment_id, start, end, collapsed, label, changed lines)`.
 type Shape = (u32, u32, u32, u32, bool, String, Vec<u32>);
 
-fn shape(regions: &[tree::Region]) -> Vec<Shape> {
+fn shape(regions: &[Region]) -> Vec<Shape> {
     regions
         .iter()
         .map(|region| {
-            let tree::Node::Leaf {
+            let Node::Leaf {
                 alignment_id,
                 changed,
             } = &region.node
@@ -96,7 +100,7 @@ fn shape(regions: &[tree::Region]) -> Vec<Shape> {
 
 #[test]
 fn removed_runs_keep_the_first_and_last_line_open() {
-    let mut sides = tree::Pairing::LeftOnly {
+    let mut sides = Pairing::LeftOnly {
         lhs: source(vec![removed_leaf(
             1,
             0,
@@ -105,7 +109,7 @@ fn removed_runs_keep_the_first_and_last_line_open() {
             &[10, 11, 12, 13, 14, 15, 16],
         )]),
     };
-    run_trees(
+    run(
         "removed-runs",
         json!({"min_lines": 5}),
         &deleted(),
@@ -131,10 +135,10 @@ fn removed_runs_keep_the_first_and_last_line_open() {
 
 #[test]
 fn removed_runs_respect_the_threshold() {
-    let mut sides = tree::Pairing::LeftOnly {
+    let mut sides = Pairing::LeftOnly {
         lhs: source(vec![removed_leaf(1, 0, 0, 4, &[0, 1, 2, 3])]),
     };
-    run_trees(
+    run(
         "removed-runs",
         json!({"min_lines": 5}),
         &deleted(),
@@ -142,10 +146,10 @@ fn removed_runs_respect_the_threshold() {
     );
     assert_eq!(lhs(&sides).regions.len(), 1);
     // A tiny threshold still needs three lines.
-    let mut sides = tree::Pairing::LeftOnly {
+    let mut sides = Pairing::LeftOnly {
         lhs: source(vec![removed_leaf(1, 0, 0, 2, &[0, 1])]),
     };
-    run_trees(
+    run(
         "removed-runs",
         json!({"min_lines": 1}),
         &deleted(),
@@ -159,19 +163,20 @@ fn removed_runs_skip_paired_leaves_and_collapsed_ancestors() {
     let paired = removed_leaf(7, 7, 0, 8, &[]);
     let mut paired_rhs = removed_leaf(10, 7, 0, 8, &[]);
     paired_rhs.fold_state_id = 7;
-    let mut sides = tree::Pairing::Both {
+    let mut sides = Pairing::Both {
         lhs: source(vec![
             paired,
-            tree::Region {
+            Region {
                 id: 1,
                 fold_state_id: 1,
                 range: range(8, 20),
+                relations: Vec::new(),
                 tags: vec![],
-                visibility: types::Visibility {
+                visibility: Visibility {
                     collapsed: true,
                     label: "12 lines removed".to_owned(),
                 },
-                node: tree::Node::Fold {
+                node: Node::Fold {
                     children: vec![removed_leaf(2, 2, 8, 20, &[])],
                 },
             },
@@ -179,7 +184,7 @@ fn removed_runs_skip_paired_leaves_and_collapsed_ancestors() {
         ]),
         rhs: source(vec![paired_rhs]),
     };
-    run_trees(
+    run(
         "removed-runs",
         json!({"min_lines": 5}),
         &deleted(),
@@ -188,7 +193,7 @@ fn removed_runs_skip_paired_leaves_and_collapsed_ancestors() {
     let lhs = &lhs(&sides).regions;
     assert_eq!(lhs.len(), 5, "paired leaf, collapsed fold, three pieces");
     assert_eq!(lhs[0].id, 7);
-    let tree::Node::Fold { children } = &lhs[1].node else {
+    let Node::Fold { children } = &lhs[1].node else {
         panic!("fold expected");
     };
     assert_eq!(
@@ -232,23 +237,23 @@ fn removed_runs_stay_open_under_a_paired_function() {
             &[20, 21, 22, 23, 24, 25, 26, 27],
         )],
     );
-    let mut sides = tree::Pairing::Both {
+    let mut sides = Pairing::Both {
         lhs: source(vec![rewritten, removed]),
         rhs: source(vec![removed_leaf(6, 3, 0, 10, &[])]),
     };
-    run_trees(
+    run(
         "removed-runs",
         json!({"min_lines": 5}),
         &deleted(),
         &mut sides,
     );
     let lhs = &lhs(&sides).regions;
-    let tree::Node::Fold { children } = &lhs[0].node else {
+    let Node::Fold { children } = &lhs[0].node else {
         panic!("fold expected");
     };
     assert_eq!(children.len(), 2, "nothing split under the paired function");
     assert!(children.iter().all(|child| !child.visibility.collapsed));
-    let tree::Node::Fold { children } = &lhs[1].node else {
+    let Node::Fold { children } = &lhs[1].node else {
         panic!("fold expected");
     };
     assert_eq!(

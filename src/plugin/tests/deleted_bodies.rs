@@ -1,42 +1,45 @@
 use super::*;
+use crate::protocol::{SourcePos, SourceRange, Visibility};
 
 const FUNCTION: &str = "deleted-bodies:function";
 
-fn range(start: u32, end: u32) -> types::Range {
-    types::Range {
-        start: types::Position {
+fn range(start: u32, end: u32) -> SourceRange {
+    SourceRange {
+        start: SourcePos {
             line: start,
             column: 0,
         },
-        end: types::Position {
+        end: SourcePos {
             line: end,
             column: 0,
         },
     }
 }
 
-fn leaf(id: u32, alignment: u32, start: u32, end: u32) -> tree::Region {
-    tree::Region {
+fn leaf(id: u32, alignment: u32, start: u32, end: u32) -> Region {
+    Region {
         id,
         fold_state_id: id,
         range: range(start, end),
+        relations: Vec::new(),
         tags: vec![],
-        visibility: types::Visibility::default(),
-        node: tree::Node::Leaf {
+        visibility: Visibility::default(),
+        node: Node::Leaf {
             alignment_id: alignment,
             changed: vec![],
         },
     }
 }
 
-fn function(id: u32, start: u32, end: u32, children: Vec<tree::Region>) -> tree::Region {
-    tree::Region {
+fn function(id: u32, start: u32, end: u32, children: Vec<Region>) -> Region {
+    Region {
         id,
         fold_state_id: id,
         range: range(start, end),
+        relations: Vec::new(),
         tags: vec![FUNCTION.to_owned()],
-        visibility: types::Visibility::default(),
-        node: tree::Node::Fold { children },
+        visibility: Visibility::default(),
+        node: Node::Fold { children },
     }
 }
 
@@ -65,15 +68,16 @@ fn deleted_bodies_skip_folds_with_paired_content() {
     // the body lines align.
     let rewritten = function(1, 0, 20, vec![leaf(2, 0, 0, 20)]);
     let removed = function(3, 20, 40, vec![leaf(4, 1, 20, 40)]);
-    let source = |regions| tree::Source {
+    let source = |regions| Source {
+        syntax: Vec::new(),
         text: String::new(),
         regions,
     };
-    let mut sides = tree::Pairing::Both {
+    let mut sides = Pairing::Both {
         lhs: source(vec![rewritten, removed]),
         rhs: source(vec![leaf(5, 0, 0, 20)]),
     };
-    run_trees(
+    run(
         "deleted-bodies",
         json!({"min_lines": 3}),
         &modified(),
@@ -97,15 +101,16 @@ fn a_matched_function_whose_lines_all_went_away_is_a_removal() {
     kept_rhs.fold_state_id = 3;
     let mut moved_rhs = function(5, 20, 40, vec![leaf(6, 2, 20, 40)]);
     moved_rhs.fold_state_id = 1;
-    let source = |regions| tree::Source {
+    let source = |regions| Source {
+        syntax: Vec::new(),
         text: String::new(),
         regions,
     };
-    let mut sides = tree::Pairing::Both {
+    let mut sides = Pairing::Both {
         lhs: source(vec![moved, kept]),
         rhs: source(vec![kept_rhs, moved_rhs]),
     };
-    run_trees(
+    run(
         "deleted-bodies",
         json!({"min_lines": 3}),
         &modified(),
@@ -122,7 +127,7 @@ fn a_matched_function_whose_lines_all_went_away_is_a_removal() {
 
 /// Every docstring region on one side: its first line, fold state,
 /// collapsed state and label.
-fn docstrings(source: &tree::Source) -> Vec<(u32, u32, bool, String)> {
+fn docstrings(source: &Source) -> Vec<(u32, u32, bool, String)> {
     let mut out = Vec::new();
     walk(&source.regions, &mut |region| {
         if has_tag(region, "deleted-bodies:docstring") {
@@ -138,7 +143,7 @@ fn docstrings(source: &tree::Source) -> Vec<(u32, u32, bool, String)> {
 }
 
 /// The collapsed function body on one side: its fold state.
-fn collapsed_body(source: &tree::Source) -> u32 {
+fn collapsed_body(source: &Source) -> u32 {
     let mut states = Vec::new();
     walk(&source.regions, &mut |region| {
         if has_tag(region, FUNCTION) && region.visibility.collapsed {
@@ -154,7 +159,6 @@ fn a_deleted_body_links_its_docstring_which_collapses_with_it() {
     let before = "fn keep() {}\n\n/// Documented.\n/// Really.\nfn gone() -> u32 {\n    let a = 1;\n    let b = 2;\n    a + b\n}\n";
     let (file, mut sides) = project("a.rs", before, "fn keep() {}\n");
     run("deleted-bodies", json!({"min_lines": 3}), &file, &mut sides);
-    let sides = trees(&sides);
     let lhs = lhs(&sides);
     let state = collapsed_body(lhs);
     assert_eq!(docstrings(lhs), [(2, state, true, String::new())]);
@@ -162,7 +166,6 @@ fn a_deleted_body_links_its_docstring_which_collapses_with_it() {
     let before = "def keep():\n    pass\n\ndef gone(a):\n    \"\"\"Double a.\n\n    Returns an int.\n    \"\"\"\n    b = a\n    return b * 2\n";
     let (file, mut sides) = project("a.py", before, "def keep():\n    pass\n");
     run("deleted-bodies", json!({"min_lines": 3}), &file, &mut sides);
-    let sides = trees(&sides);
     let lhs = self::lhs(&sides);
     let state = collapsed_body(lhs);
     assert_eq!(docstrings(lhs), [(4, state, true, String::new())]);
@@ -174,7 +177,6 @@ fn deleted_bodies_collapse_when_large_and_one_sided() {
     let after = "def kept():\n    a()\n    b()\n    c()\n";
     let (file, mut sides) = project("m.py", before, after);
     run("deleted-bodies", json!({"min_lines": 3}), &file, &mut sides);
-    let sides = trees(&sides);
     let mut collapsed = Vec::new();
     walk(&lhs(&sides).regions, &mut |region| {
         if is_fold(region) && region.visibility.collapsed {

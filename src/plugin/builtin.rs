@@ -1,17 +1,17 @@
-//! The bundled plugins' folders, embedded. Each is a folder under
-//! `plugins/` shaped like any plugin's: a `plugin.toml` (name, title, options
-//! schema), its query files, and its code, a crate that uses the
-//! plugin SDK. The code is compiled in and reached through the native
-//! registry ([`super::native`]); `plugin.toml` and the query files are
-//! embedded here, so `builtin:<plugin>/<path>` names `plugins/<plugin>/<path>`.
-//! `plugins/shared/` is not a plugin: it holds the query files every bundled
-//! plugin imports, as `builtin:shared/queries/<language>.scm`, and the
-//! docstrings the plugins that collapse function bodies import, as
-//! `builtin:shared/queries/<language>-docstrings.scm`.
+//! The bundled plugins' folders, embedded. Each shape plugin is a folder
+//! under `plugins/shape/` shaped like any plugin's: a `plugin.toml` (name,
+//! title, options schema), queries and a compiled `plugin.wasm`. These assets
+//! are embedded here, so `builtin:<plugin>/<path>` names
+//! `plugins/shape/<plugin>/<path>`. `plugins/shape/shared/` is not a plugin:
+//! it holds the query files every bundled plugin imports, as
+//! `builtin:shared/queries/<language>.scm`, and the docstrings the plugins
+//! that collapse function bodies import, as
+//! `builtin:shared/queries/<language>-docstrings.scm`. The one bundled
+//! classifier is `plugins/classify/`.
 use super::config::Manifest;
 use std::sync::OnceLock;
 
-// Manifests, queries and optional WASM components of plugin dependencies.
+// Manifests, queries and components from plugins/shape/, and the classifier.
 include!(concat!(env!("OUT_DIR"), "/bundled_assets.rs"));
 
 pub(crate) fn component(name: &str) -> Option<&'static [u8]> {
@@ -29,7 +29,7 @@ pub(crate) fn file(path: &str) -> Option<&'static str> {
         .map(|(_, text)| *text)
 }
 
-/// Every bundled plugin manifest, discovered from Cargo dependencies.
+/// Every bundled plugin manifest, discovered from plugin folders.
 pub(crate) fn manifests() -> &'static [Manifest] {
     static MANIFESTS: OnceLock<Vec<Manifest>> = OnceLock::new();
     MANIFESTS.get_or_init(|| {
@@ -47,6 +47,20 @@ pub(crate) fn manifest(name: &str) -> Option<&'static Manifest> {
     manifests().iter().find(|manifest| manifest.name == name)
 }
 
+/// The bundled classifier's manifest.
+pub(crate) fn classifier_manifest() -> &'static Manifest {
+    static MANIFEST: OnceLock<Manifest> = OnceLock::new();
+    MANIFEST.get_or_init(|| {
+        Manifest::parse(CLASSIFIER_MANIFEST)
+            .unwrap_or_else(|error| panic!("plugins/classify/plugin.toml: {error}"))
+    })
+}
+
+/// The bundled classifier's component.
+pub(crate) fn classifier_component() -> &'static [u8] {
+    CLASSIFIER_COMPONENT
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,7 +69,7 @@ mod tests {
 
     #[test]
     fn every_plugin_folder_is_embedded_and_described() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/shape");
         let mut on_disk = BTreeSet::new();
         let mut folders = BTreeSet::new();
         for folder in std::fs::read_dir(&root).unwrap() {
@@ -86,10 +100,7 @@ mod tests {
         for manifest in manifests() {
             let name = manifest.name.as_str();
             assert_eq!(super::manifest(name).unwrap().name, name);
-            assert!(
-                crate::plugin::native::lookup(name).unwrap().is_some() || component(name).is_some(),
-                "{name} has native code"
-            );
+            assert!(component(name).is_some(), "{name} has a component");
         }
     }
 }

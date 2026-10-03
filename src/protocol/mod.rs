@@ -24,13 +24,6 @@ pub(crate) mod stream;
 /// The current wire version. Changes within a version are additive.
 pub const VERSION: u32 = 3;
 
-/// Deferred content for an existing region; never changes fold state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Annotation {
-    pub region_id: u32,
-    pub label: String,
-}
-
 // ── stream ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,14 +48,6 @@ pub enum Event {
         visibility: Visibility,
         #[serde(flatten)]
         outcome: Outcome,
-    },
-    /// Deferred labels for a previously emitted successful file. A failure
-    /// affects enrichment only; the initial file and its counts stay valid.
-    Annotations {
-        file: Pairing<FileRef>,
-        annotations: Vec<Annotation>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        error: Option<Problem>,
     },
     /// The footer. `aborted` is present when a run-level failure stopped
     /// the comparison early; every file already emitted stays valid.
@@ -123,7 +108,7 @@ pub struct FileChange {
     pub tags: Vec<String>,
 }
 
-/// libgit2's delta status.
+/// Git's change status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FileStatus {
@@ -226,6 +211,8 @@ pub struct Region {
     /// never [`ROOT`]. Plugin moves address it.
     pub id: u32,
     pub fold_state_id: u32,
+    #[serde(skip)]
+    pub relations: Vec<(String, u32)>,
     #[serde(flatten)]
     pub range: SourceRange,
     /// On folds, the tags the fold queries set, written `<plugin>:<name>`
@@ -238,6 +225,16 @@ pub struct Region {
     pub visibility: Visibility,
     #[serde(flatten)]
     pub node: Node,
+}
+
+impl Region {
+    /// A leaf's row alignment; a fold has none.
+    pub fn alignment_id(&self) -> Option<u32> {
+        match self.node {
+            Node::Leaf { alignment_id, .. } => Some(alignment_id),
+            Node::Fold { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -357,6 +354,7 @@ mod tests {
                 start: pos(start, 0),
                 end: pos(end, 0),
             },
+            relations: Vec::new(),
             tags: vec![],
             visibility: Visibility::default(),
             node: Node::Leaf {
@@ -384,6 +382,7 @@ mod tests {
                     start: pos(0, 0),
                     end: pos(3, 0),
                 },
+                relations: Vec::new(),
                 tags: vec!["deleted-bodies:function".to_owned()],
                 visibility: Visibility::default(),
                 node: Node::Fold {

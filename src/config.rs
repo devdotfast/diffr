@@ -23,7 +23,7 @@ pub(crate) mod store;
 use crate::hash::DftHashMap;
 use crate::options::DiffOptions;
 use crate::parse::{guess_language::Language, tree_sitter_parser};
-use crate::plugin::config::PluginsConfig;
+use crate::plugin::config::{ClassifierConfig, PluginsConfig};
 use crate::plugin::queries::{self, Queries};
 use query::AnnotationQuery;
 use schemars::JsonSchema;
@@ -51,6 +51,11 @@ pub(crate) struct Config {
     #[schemars(skip)]
     #[serde(default)]
     pub(crate) plugins: PluginsConfig,
+    /// The one plugin that tags files before diffing; see
+    /// [`ClassifierConfig::schema`].
+    #[schemars(skip)]
+    #[serde(default)]
+    pub(crate) classifier: ClassifierConfig,
     /// Colors for the terminal frontend.
     #[serde(default)]
     pub(crate) theme: ThemeConfig,
@@ -229,6 +234,7 @@ impl Config {
             )));
         }
         config.plugins.resolve(directory)?;
+        config.classifier.resolve(directory)?;
         Ok(config)
     }
 
@@ -247,32 +253,21 @@ impl Config {
             .as_object_mut()
             .expect("the schema has properties");
         properties.insert("plugins".to_owned(), PluginsConfig::schema());
+        properties.insert("classifier".to_owned(), ClassifierConfig::schema());
         properties.extend(rest);
         schema
     }
 
-    /// Compile queries from the enabled plugin instances before processing files.
-    pub(crate) fn compile_with(
-        self,
-        pipeline: &crate::plugin::Pipeline,
-    ) -> Result<Params, ConfigError> {
-        let queries = pipeline
-            .queries()
-            .map_err(|error| ConfigError(format!("{error:#}")))?;
-        self.compile_queries(queries)
+    /// Compile the query files the enabled plugins' manifests declare. No
+    /// plugin runs to supply them.
+    pub(crate) fn compile(&self) -> Result<Params, ConfigError> {
+        self.compile_queries(self.plugins.queries()?)
     }
 
-    #[cfg(test)]
-    pub(crate) fn compile(self) -> Result<Params, ConfigError> {
-        let pipeline = crate::plugin::Pipeline::from_config(&self.plugins, Path::new("."))
-            .map_err(|error| ConfigError(format!("{error:#}")))?;
-        self.compile_with(&pipeline)
-    }
-
-    /// Compile with `queries`, the enabled plugins' source text in
+    /// Compile with `queries`, the enabled plugins' query files in
     /// `plugins.order`.
     pub(crate) fn compile_queries(
-        self,
+        &self,
         queries: Vec<(String, Queries)>,
     ) -> Result<Params, ConfigError> {
         let mut languages: DftHashMap<_, _> = Language::iter()
@@ -348,13 +343,11 @@ impl Params {
     }
 }
 
+#[cfg(test)]
 impl Default for Params {
     fn default() -> Self {
-        let config = Config::default();
-        let pipeline = crate::plugin::Pipeline::from_config(&config.plugins, Path::new("."))
-            .expect("invalid bundled plugin configuration");
-        config
-            .compile_with(&pipeline)
+        Config::default()
+            .compile()
             .expect("invalid bundled annotation configuration")
     }
 }
@@ -455,7 +448,7 @@ mod tests {
         let error = Config::default()
             .compile_queries(vec![(
                 "removed-runs".to_owned(),
-                vec![diffr_plugin_sdk::QuerySource {
+                vec![crate::plugin::queries::PluginQuery {
                     language: "klingon".into(),
                     name: "unknown.scm".into(),
                     text: "".into(),
@@ -494,7 +487,7 @@ mod tests {
 pub(crate) fn try_with_queries(queries: &[(&str, &str)]) -> Result<Params, ConfigError> {
     let files = queries
         .iter()
-        .map(|(language, text)| diffr_plugin_sdk::QuerySource {
+        .map(|(language, text)| crate::plugin::queries::PluginQuery {
             language: (*language).into(),
             name: format!("{language}-removed-runs.scm"),
             text: (*text).into(),
@@ -649,7 +642,7 @@ mod tag_tests {
         let queries = |plugin: &str, path: &std::path::Path| {
             (
                 plugin.to_owned(),
-                vec![diffr_plugin_sdk::QuerySource {
+                vec![crate::plugin::queries::PluginQuery {
                     language: "rust".into(),
                     name: path.display().to_string(),
                     text: std::fs::read_to_string(path).unwrap(),

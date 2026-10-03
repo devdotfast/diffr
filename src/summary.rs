@@ -36,6 +36,8 @@ pub(crate) enum FallbackCause {
     ParseErrorLimit,
     /// The file is tagged `generated`, and so is never parsed.
     Generated,
+    /// The classifier hid the file, and so it is never parsed.
+    Hidden,
 }
 
 impl Display for FileFormat {

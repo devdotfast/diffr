@@ -35,6 +35,7 @@ fn settings() -> Vec<(String, Value)> {
     out.retain(|(key, node)| {
         key != "version"
             && !key.starts_with("plugins.external")
+            && key != "classifier.path"
             && node.get("type").and_then(Value::as_str) != Some("object")
     });
     out

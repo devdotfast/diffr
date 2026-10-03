@@ -34,7 +34,7 @@ jobs:
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@1.95.0
       with:
-        targets: ${{ matrix.job.target }}
+        targets: ${{ matrix.job.target }}, wasm32-wasip2
 
     - name: Install cross
       if: matrix.job.use-cross
@@ -61,8 +61,8 @@ jobs:
         with:
           # The tests build every bundled plugin as a component.
           targets: wasm32-wasip2
-      # Component loading is host behaviour, so it is tested once, natively,
-      # rather than on every target the matrix above cross-compiles for.
+      # Rebuild the components and test external loading and async HTTP.
+      # The target matrix above exercises the embedded components.
       - run: cargo xtask test-plugins
 
   test_mime_db:
@@ -72,6 +72,8 @@ jobs:
       # v4.2.2
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: wasm32-wasip2
       # This runs tests that rely on the MIME database being present.
       - run: cargo test -- --ignored
 
@@ -82,6 +84,8 @@ jobs:
       # v4.2.2
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
       - run: cargo +stable test
 
   fmt:
@@ -92,6 +96,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: dtolnay/rust-toolchain@1.95.0
       - run: cargo fmt --all -- --check
+      - run: cargo fmt --manifest-path plugins/workspace/Cargo.toml --all -- --check
 
   actionlint:
     name: Actionlint

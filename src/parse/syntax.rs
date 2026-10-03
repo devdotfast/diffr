@@ -55,6 +55,7 @@ pub(crate) type ContentId = u32;
 /// One semantic fold boundary, shared by Atoms and Lists.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FoldMetadata {
+    pub(crate) relations: Vec<(String, SourceRange)>,
     pub(crate) tags: Vec<String>,
     /// Query-selected boundary, retained when flattening removes its owner.
     pub(crate) range_override: Option<SourceRange>,
@@ -1257,6 +1258,7 @@ mod tests {
             end_col: col,
         };
         let metadata = |tag: &str| FoldMetadata {
+            relations: Vec::new(),
             tags: vec![tag.to_owned()],
             range_override: Some(folds::interior_range(&[point(0)], &[point(10)])),
         };

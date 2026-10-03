@@ -1,14 +1,24 @@
-//! Assemble named source text returned by plugins into one query per language.
+//! Assemble the query files plugins declare into one query per language.
 //! Imports precede their importers and shared sources are included once. Sources
-//! returned by plugins take precedence over bundled or absolute-path imports.
+//! plugins declare take precedence over bundled or absolute-path imports.
 use super::builtin;
 use crate::config::query::QuerySource;
 use crate::config::ConfigError;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-/// Named query sources returned by one plugin.
-pub(crate) type Queries = Vec<diffr_plugin_sdk::QuerySource>;
+/// One language's query file a plugin declares: its text, and the name
+/// imports and diagnostics know it by (`builtin:<plugin>/queries/rust.scm`,
+/// or the file's path).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PluginQuery {
+    pub(crate) language: String,
+    pub(crate) name: String,
+    pub(crate) text: String,
+}
+
+/// The query files one plugin declares.
+pub(crate) type Queries = Vec<PluginQuery>;
 
 const BUILTIN_PREFIX: &str = "builtin:";
 
@@ -233,11 +243,8 @@ pub(crate) fn assemble(
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::plugin::Pipeline;
-    use diffr_plugin_sdk::QuerySource as RawSource;
-
-    fn source(name: &str, text: &str) -> RawSource {
-        RawSource {
+    fn source(name: &str, text: &str) -> PluginQuery {
+        PluginQuery {
             language: "rust".into(),
             name: name.into(),
             text: text.into(),
@@ -247,8 +254,7 @@ mod tests {
     #[test]
     fn every_bundled_query_resolves_and_compiles() {
         let config = Config::default();
-        let pipeline = Pipeline::from_config(&config.plugins, Path::new(".")).unwrap();
-        let assembled = assemble(&pipeline.queries().unwrap()).unwrap();
+        let assembled = assemble(&config.plugins.queries().unwrap()).unwrap();
         assert_eq!(
             assembled.keys().map(String::as_str).collect::<Vec<_>>(),
             [
@@ -275,15 +281,14 @@ mod tests {
                 "builtin:removed-runs/queries/rust.scm",
             ]
         );
-        config.compile_with(&pipeline).unwrap();
+        config.compile().unwrap();
     }
 
     #[test]
     fn disabled_plugins_contribute_no_queries() {
         let config =
             Config::from_toml("[plugins.bundled.deleted-bodies]\nenabled = false\n").unwrap();
-        let pipeline = Pipeline::from_config(&config.plugins, Path::new(".")).unwrap();
-        let assembled = assemble(&pipeline.queries().unwrap()).unwrap();
+        let assembled = assemble(&config.plugins.queries().unwrap()).unwrap();
         assert!(!assembled["rust"]
             .iter()
             .any(|s| s.name.contains("deleted-bodies")));

@@ -134,7 +134,11 @@ fn main() {
         .expect("The logger has not been previously initialized");
     reset_sigpipe();
 
-    match cli::run() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("application runtime");
+    match cli::run(&runtime) {
         Ok(code) => std::process::exit(code),
         Err(error) => {
             eprintln!("{error}");
@@ -144,9 +148,7 @@ fn main() {
 }
 
 /// `diffr debug`: syntax dumps and the language list.
-fn run_debug(mode: Mode) {
-    let params = &Params::default();
-
+fn run_debug(mode: Mode, params: &Params) {
     match mode {
         Mode::DumpTreeSitter {
             path,
@@ -343,4 +345,16 @@ mod tests {
         assert_eq!(res.lhs_positions, vec![]);
         assert_eq!(res.rhs_positions, vec![]);
     }
+}
+
+#[cfg(test)]
+pub(crate) fn test_runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap()
+    })
 }

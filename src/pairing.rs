@@ -26,6 +26,29 @@ impl<T> Pairing<T> {
             Self::RightOnly { rhs } => Pairing::RightOnly { rhs: f(rhs) },
         }
     }
+
+    pub(crate) fn lhs(&self) -> Option<&T> {
+        match self {
+            Self::Both { lhs, .. } | Self::LeftOnly { lhs } => Some(lhs),
+            Self::RightOnly { .. } => None,
+        }
+    }
+
+    pub(crate) fn rhs(&self) -> Option<&T> {
+        match self {
+            Self::Both { rhs, .. } | Self::RightOnly { rhs } => Some(rhs),
+            Self::LeftOnly { .. } => None,
+        }
+    }
+
+    /// Every side that exists, lhs first.
+    pub(crate) fn sides(&self) -> Vec<&T> {
+        match self {
+            Self::Both { lhs, rhs } => vec![lhs, rhs],
+            Self::LeftOnly { lhs } => vec![lhs],
+            Self::RightOnly { rhs } => vec![rhs],
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]

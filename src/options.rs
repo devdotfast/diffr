@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use clap::{error::ErrorKind, Args};
 
 use crate::parse::guess_language::{language_override_from_name, LanguageOverride};
+use crate::summary::FallbackCause;
 
 pub(crate) const DEFAULT_BYTE_LIMIT: usize = 1_000_000;
 // Chosen experimentally: this is sufficiently many for all the sample
@@ -24,8 +25,9 @@ pub(crate) struct DiffOptions {
     pub(crate) byte_limit: usize,
     pub(crate) parse_error_limit: usize,
     pub(crate) ignore_comments: bool,
-    /// The file is tagged `generated`: diff it by line without parsing.
-    pub(crate) generated: bool,
+    /// Diff the file by line without parsing, for this reason: it is
+    /// generated or hidden.
+    pub(crate) by_line: Option<FallbackCause>,
 }
 
 impl Default for DiffOptions {
@@ -35,7 +37,7 @@ impl Default for DiffOptions {
             byte_limit: DEFAULT_BYTE_LIMIT,
             parse_error_limit: DEFAULT_PARSE_ERROR_LIMIT,
             ignore_comments: false,
-            generated: false,
+            by_line: None,
         }
     }
 }

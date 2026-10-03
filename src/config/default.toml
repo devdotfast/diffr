@@ -4,7 +4,6 @@ version = 1
 [plugins]
 order = [
     "bundled.context",
-    "bundled.hide-files",
     "bundled.deleted-bodies",
     "bundled.summarize",
     "bundled.test-bodies",
@@ -23,15 +22,6 @@ min_lines = 12
 [plugins.bundled.group]
 enabled = true
 
-[plugins.bundled.hide-files]
-enabled = true
-tags = [
-    "generated",
-    "vendored",
-    "test",
-]
-deleted = true
-
 [plugins.bundled.removed-runs]
 enabled = true
 min_lines = 5
@@ -43,7 +33,6 @@ min_lines = 20
 tests = true
 test_min_lines = 20
 request_timeout_ms = 60000
-max_concurrency = 16
 retries = 3
 
 [plugins.bundled.test-bodies]

@@ -1,8 +1,7 @@
 use super::*;
-use diffr_plugin_sdk::tree::walk_mut;
-use diffr_plugin_summarize::{select, Options};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
+use std::path::Path;
 
 const FUNCTION: &str = "summarize:function";
 
@@ -96,7 +95,7 @@ fn serve(responses: Vec<(u16, String)>) -> (String, std::thread::JoinHandle<Vec<
 
 /// The label of the only function body on the after side. The scope fold
 /// the context queries wrap around it is not one.
-fn fold_label(sides: &tree::Pairing<tree::Source>) -> String {
+fn fold_label(sides: &Pairing<Source>) -> String {
     let mut labels = Vec::new();
     walk(&rhs(sides).regions, &mut |region| {
         if is_fold(region) && has_tag(region, FUNCTION) {
@@ -131,14 +130,98 @@ fn summarizer_with(overrides: serde_json::Value) -> Pipeline {
     bundled("summarize", overrides)
 }
 
+/// Inspect requests emitted by the actual node callbacks.
+fn select(
+    sides: &Pairing<Source>,
+    min_lines: usize,
+    test_min_lines: Option<usize>,
+) -> Vec<(u32, u32, u32, Option<u32>)> {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let mut selected = Vec::new();
+        loop {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                .unwrap();
+            let mut reader = BufReader::new(&mut socket);
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap() == 0 {
+                return selected;
+            }
+            let mut length = 0;
+            loop {
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap();
+                }
+            }
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            let prompt = body["contents"][0]["parts"][0]["text"].as_str().unwrap();
+            selected.extend(prompt.lines().filter_map(|line| {
+                let (id, lines) = line.strip_prefix("- fold ")?.split_once(": lines ")?;
+                let (start, end) = lines.split_once('-')?;
+                Some((
+                    id.parse::<u32>().unwrap(),
+                    start.parse::<u32>().unwrap(),
+                    end.parse::<u32>().unwrap(),
+                ))
+            }));
+            let response =
+                json!({"candidates":[{"content":{"parts":[{"text":"[]"}]}}]}).to_string();
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response.len(),
+                response
+            )
+            .unwrap();
+        }
+    });
+    let mut options = builtin::manifest("summarize").unwrap().defaults();
+    options.extend(json!({"api_key":"test", "endpoint":format!("http://{address}"), "min_lines":min_lines,
+        "tests":test_min_lines.is_some(), "test_min_lines":test_min_lines.unwrap_or(3), "retries":0}).as_object().unwrap().clone());
+    let pipeline = bundled("summarize", serde_json::Value::Object(options));
+    let file = crate::git::FileChange::standalone("selection", "selection");
+    let result = shape(&pipeline, &file.manifest_entry(), &mut sides.clone());
+    // Tell the server this traversal has emitted all of its node requests.
+    drop(std::net::TcpStream::connect(address));
+    let selected = server.join().unwrap();
+    result.unwrap();
+    selected
+        .into_iter()
+        .map(|(id, start, end)| {
+            let source = sides.rhs().unwrap();
+            let mut doc = None;
+            walk(&source.regions, &mut |region| {
+                if region.id == id {
+                    doc = region
+                        .relations
+                        .iter()
+                        .find(|(name, _)| name == "documentation")
+                        .map(|(_, id)| *id);
+                }
+            });
+            (id, start, end, doc)
+        })
+        .collect()
+}
+
 #[test]
 fn selection_takes_new_bodies_of_at_least_min_lines() {
     let (_, sides) = project("a.py", "", LARGE);
-    let selected = select(&trees(&sides), 3, None);
+    let selected = select(&sides, 3, None);
     assert_eq!(selected.len(), 1);
     assert_eq!((selected[0].1, selected[0].2), (2, 4));
     let (_, sides) = project("a.py", LARGE, LARGE);
-    assert!(select(&trees(&sides), 3, None).is_empty());
+    assert!(select(&sides, 3, None).is_empty());
 }
 
 #[test]
@@ -156,7 +239,7 @@ fn selection_reads_newness_from_the_lines_when_the_match_fell_back() {
     );
     // Nothing matched, so no fold is paired; the lines still are. Only the
     // added body, whose lines pair with nothing, is new.
-    let selected = select(&trees(&sides), 3, None);
+    let selected = select(&sides, 3, None);
     assert_eq!(selected.len(), 1, "{selected:?}");
     assert_eq!((selected[0].1, selected[0].2), (7, 9));
 }
@@ -167,23 +250,23 @@ fn selection_takes_outermost_function_bodies_only() {
     // not a function, so the method is the outermost selection.
     let after = "impl A {\n    fn m(&self) {\n        a();\n        b();\n        c();\n        let f = || {\n            d();\n            e();\n            g();\n        };\n        f();\n    }\n}\n";
     let (_, sides) = project("a.rs", "", after);
-    let selected = select(&trees(&sides), 3, None);
+    let selected = select(&sides, 3, None);
     assert_eq!(selected.len(), 1, "{selected:?}");
     assert_eq!((selected[0].1, selected[0].2), (3, 11));
     // Below the threshold, nothing.
-    assert!(select(&trees(&sides), 30, None).is_empty());
+    assert!(select(&sides, 30, None).is_empty());
 }
 
 #[test]
 fn selection_skips_test_bodies_and_collapsed_folds() {
     let after = "#[test]\nfn t() {\n    a();\n    b();\n    c();\n}\n\nfn f() {\n    a();\n    b();\n    c();\n}\n";
     let (file, mut sides) = project("a.rs", "", after);
-    let selected = select(&trees(&sides), 3, None);
+    let selected = select(&sides, 3, None);
     assert_eq!(selected.len(), 1, "{selected:?}");
     assert_eq!((selected[0].1, selected[0].2), (9, 11));
     run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
-    let mut sides = trees(&sides);
-    let (tree::Pairing::Both { rhs, .. } | tree::Pairing::RightOnly { rhs }) = &mut sides else {
+    let mut sides = sides.clone();
+    let (Pairing::Both { rhs, .. } | Pairing::RightOnly { rhs }) = &mut sides else {
         panic!("an after side");
     };
     walk_mut(&mut rhs.regions, &mut |region| {
@@ -197,10 +280,9 @@ fn selection_skips_test_bodies_and_collapsed_folds() {
 #[test]
 fn long_summaries_are_discarded_without_changing_initial_folding() {
     let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&trees(&sides), 3, None)[0].0;
+    let id = select(&sides, 3, None)[0].0;
     let (endpoint, server) = serve(vec![(200, gemini_answer(&[(id, "a()\nb()\nc()")]))]);
-    summarizer(&endpoint, 0).run(&file, &mut sides).unwrap();
-    let sides = trees(&sides);
+    shape(&summarizer(&endpoint, 0), &file, &mut sides).unwrap();
     server.join().unwrap();
     let mut folds = Vec::new();
     walk(&rhs(&sides).regions, &mut |region| {
@@ -208,17 +290,16 @@ fn long_summaries_are_discarded_without_changing_initial_folding() {
             folds.push((region.visibility.collapsed, region.visibility.label.clone()));
         }
     });
-    // Enrichment cannot reopen a fold after the initial file was displayed.
-    assert_eq!(folds, vec![(true, String::new())]);
+    // A discarded summary leaves the original open body unchanged.
+    assert_eq!(folds, vec![(false, String::new())]);
 }
 
 #[test]
 fn summaries_collapse_selected_folds_behind_pseudocode() {
     let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&trees(&sides), 3, None)[0].0;
+    let id = select(&sides, 3, None)[0].0;
     let (endpoint, server) = serve(vec![(200, gemini_answer(&[(id, "call a, b, c")]))]);
-    summarizer(&endpoint, 0).run(&file, &mut sides).unwrap();
-    let sides = trees(&sides);
+    shape(&summarizer(&endpoint, 0), &file, &mut sides).unwrap();
     let bodies = server.join().unwrap();
     assert!(bodies[0].contains("thinkingBudget"));
     assert!(bodies[0].contains(&format!("fold {id}: lines 2-4")));
@@ -241,7 +322,7 @@ fn a_docstring_is_sent_and_only_a_verbatim_sentence_from_it_is_kept() {
         json!({"candidates": [{"content": {"parts": [{"text": serde_json::to_string(&answers).unwrap()}]}}]})
             .to_string()
     };
-    let body_label = |sides: &tree::Pairing<tree::Source>| {
+    let body_label = |sides: &Pairing<Source>| {
         let mut labels = Vec::new();
         walk(&rhs(sides).regions, &mut |region| {
             if is_fold(region) && has_tag(region, FUNCTION) {
@@ -252,10 +333,9 @@ fn a_docstring_is_sent_and_only_a_verbatim_sentence_from_it_is_kept() {
         labels.remove(0)
     };
     let (file, mut sides) = project("a.rs", "", after);
-    let id = select(&trees(&sides), 3, None)[0].0;
+    let id = select(&sides, 3, None)[0].0;
     let (endpoint, server) = serve(vec![(200, answer(id, "Sums three numbers."))]);
-    summarizer(&endpoint, 0).run(&file, &mut sides).unwrap();
-    let sides = trees(&sides);
+    shape(&summarizer(&endpoint, 0), &file, &mut sides).unwrap();
     let bodies = server.join().unwrap();
     assert!(
         bodies[0].contains("doc: Sums three numbers. Used by tests."),
@@ -268,15 +348,14 @@ fn a_docstring_is_sent_and_only_a_verbatim_sentence_from_it_is_kept() {
     // A sentence the docstring does not contain is dropped.
     let (file, mut sides) = project("a.rs", "", after);
     let (endpoint, server) = serve(vec![(200, answer(id, "Adds things up."))]);
-    summarizer(&endpoint, 0).run(&file, &mut sides).unwrap();
-    let sides = trees(&sides);
+    shape(&summarizer(&endpoint, 0), &file, &mut sides).unwrap();
     server.join().unwrap();
     assert_eq!(body_label(&sides), "return a + b + c");
 }
 
 /// The after side's docstring shares the summarized body's fold state
 /// and starts collapsed with an empty label.
-fn assert_linked(sides: &tree::Pairing<tree::Source>, body: u32) {
+fn assert_linked(sides: &Pairing<Source>, body: u32) {
     let rhs = rhs(sides);
     let mut state = None;
     walk(&rhs.regions, &mut |region| {
@@ -308,7 +387,7 @@ fn newness_is_the_lines_inside_the_body() {
     let after =
         format!("{head}{{\n    let x = a;\n    let y = b;\n    let z = c;\n    x + y + z\n}}\n");
     let (_, sides) = project("a.rs", &one_liner, &after);
-    let states = |source: &tree::Source| {
+    let states = |source: &Source| {
         let mut states = Vec::new();
         walk(&source.regions, &mut |region| {
             if is_fold(region) && region.range.start.line == 2 {
@@ -317,8 +396,8 @@ fn newness_is_the_lines_inside_the_body() {
         });
         states
     };
-    let projected = trees(&sides);
-    let tree::Pairing::Both { lhs, rhs: replaced } = &projected else {
+    let projected = sides.clone();
+    let Pairing::Both { lhs, rhs: replaced } = &projected else {
         panic!("both sides");
     };
     assert_eq!(
@@ -343,20 +422,20 @@ fn newness_is_the_lines_inside_the_body() {
     // The same body grown from one that already had lines: `let x = a;`
     // still pairs, so this is a rewrite rather than a new body.
     let (_, sides) = project("a.rs", &grown, &after);
-    assert!(select(&trees(&sides), 3, None).is_empty());
+    assert!(select(&sides, 3, None).is_empty());
 }
 
 #[test]
 fn the_system_prompt_is_the_configured_one() {
     let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&trees(&sides), 3, None)[0].0;
+    let id = select(&sides, 3, None)[0].0;
     let request = |overrides: serde_json::Value, sides: &mut Pairing<protocol::Source>| {
         let (endpoint, server) = serve(vec![(200, gemini_answer(&[(id, "call a, b, c")]))]);
         let mut overrides = overrides;
         overrides["api_key"] = json!("test-key");
         overrides["endpoint"] = json!(endpoint);
         overrides["min_lines"] = json!(3);
-        summarizer_with(overrides).run(&file, sides).unwrap();
+        shape(&summarizer_with(overrides), &file, sides).unwrap();
         let bodies = server.join().unwrap();
         let body: serde_json::Value = serde_json::from_str(&bodies[0]).unwrap();
         (
@@ -372,29 +451,25 @@ fn the_system_prompt_is_the_configured_one() {
 
     let (_, mut sides) = project("a.py", "", LARGE);
     let (system, _) = request(json!({}), &mut sides);
-    let mut defaults = serde_json::Map::new();
-    builtin::manifest("summarize")
-        .unwrap()
-        .fill_defaults(&mut defaults);
-    let default: Options = serde_json::from_value(serde_json::Value::Object(defaults)).unwrap();
-    assert_eq!(system, default.system_prompt.as_str());
-    assert!(default.system_prompt.starts_with(
+    let defaults = builtin::manifest("summarize").unwrap().defaults();
+    let prompt = defaults["system_prompt"].as_str().unwrap();
+    assert_eq!(system, prompt);
+    assert!(prompt.starts_with(
         "For each listed fold, rewrite that function body as short pseudocode. Keep the names."
     ));
-    assert!(!default.system_prompt.contains('\n'));
+    assert!(!prompt.contains('\n'));
 }
 
 #[test]
 fn transient_failures_are_retried_then_succeed() {
     let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&trees(&sides), 3, None)[0].0;
+    let id = select(&sides, 3, None)[0].0;
     let (endpoint, server) = serve(vec![
         (503, "{}".to_owned()),
         (429, "{}".to_owned()),
         (200, gemini_answer(&[(id, "retry ok")])),
     ]);
-    summarizer(&endpoint, 3).run(&file, &mut sides).unwrap();
-    let sides = trees(&sides);
+    shape(&summarizer(&endpoint, 3), &file, &mut sides).unwrap();
     assert_eq!(server.join().unwrap().len(), 3);
     let label = fold_label(&sides);
     assert!(label.ends_with("retry ok"), "{label}");
@@ -404,17 +479,13 @@ fn transient_failures_are_retried_then_succeed() {
 fn hard_failures_and_exhausted_retries_are_run_failures() {
     let (file, sides) = project("a.py", "", LARGE);
     let (endpoint, server) = serve(vec![(400, "{\"error\": \"bad key\"}".to_owned())]);
-    let error = summarizer(&endpoint, 3)
-        .run(&file, &mut sides.clone())
-        .unwrap_err();
+    let error = shape(&summarizer(&endpoint, 3), &file, &mut sides.clone()).unwrap_err();
     server.join().unwrap();
     assert!(error.downcast_ref::<MutationFailed>().is_some());
     assert!(format!("{error:#}").starts_with("mutation summarize: summarizer: "));
     assert!(format!("{error:#}").contains("HTTP 400"), "{error:#}");
     let (endpoint, server) = serve(vec![(500, "{}".to_owned()), (500, "{}".to_owned())]);
-    let error = summarizer(&endpoint, 1)
-        .run(&file, &mut sides.clone())
-        .unwrap_err();
+    let error = shape(&summarizer(&endpoint, 1), &file, &mut sides.clone()).unwrap_err();
     server.join().unwrap();
     assert!(
         format!("{error:#}").contains("after 2 attempts"),
@@ -430,46 +501,28 @@ fn small_files_never_call_the_model() {
         "endpoint": "http://127.0.0.1:1",
         "min_lines": 3,
     }));
-    let moves = moves(&pipeline, &file, &sides).unwrap();
-    assert!(moves.is_empty());
+    assert_eq!(edited(&pipeline, &file, &sides).unwrap(), sides.clone());
 }
 
 /// Exercise the same component a user loads from an external plugin folder.
-#[cfg(feature = "wasm-plugin-tests")]
 #[test]
 fn external_component_summarizes_over_http() {
     let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&trees(&sides), 3, None)[0].0;
+    let id = select(&sides, 3, None)[0].0;
     let (endpoint, server) = serve(vec![
         (429, "{}".into()),
         (200, gemini_answer(&[(id, "call a, b, c")])),
     ]);
-    let engine = super::super::wasm::engine().unwrap();
-    let plugin = super::super::wasm::WasmPlugin::load(
-        &engine,
-        &super::super::config::ComponentSource::File(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/summarize/plugin.wasm"),
-        ),
-    )
-    .unwrap();
-    let mut options =
-        json!({"api_key": "test-key", "endpoint": endpoint, "min_lines": 3, "retries": 1})
-            .as_object()
-            .unwrap()
-            .clone();
-    builtin::manifest("summarize")
-        .unwrap()
-        .fill_defaults(&mut options);
-    let mut pipeline = Pipeline::default();
-    pipeline
-        .push(
-            "summarize",
-            serde_json::Value::Object(options),
-            &|host, options| plugin.create(host, options),
+    let pipeline = super::configured(&format!(
+        "[plugins]\norder = ['external.summarize']\n[plugins.external.summarize]\nenabled = true\npath = {:?}\n{}",
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/shape/summarize"),
+        super::options(
+            json!({"api_key": "test-key", "endpoint": endpoint, "min_lines": 3, "retries": 1})
         )
-        .unwrap();
-    pipeline.run(&file, &mut sides).unwrap();
-    assert_eq!(fold_label(&trees(&sides)), "call a, b, c");
+    ))
+    .unwrap();
+    shape(&pipeline, &file, &mut sides).unwrap();
+    assert_eq!(fold_label(&sides), "call a, b, c");
     assert_eq!(server.join().unwrap().len(), 2);
 }
 
@@ -503,11 +556,11 @@ fn tests_are_selected_when_added_modified_unchanged_or_already_collapsed() {
             let comment = if path.ends_with(".py") { "#" } else { "//" };
             let after = format!("{after}\n{comment} changed elsewhere\n");
             let (file, mut sides) = project(path, old, &after);
-            assert_eq!(select(&trees(&sides), 3, Some(3)).len(), 1, "{path}: {old}");
-            assert!(select(&trees(&sides), 3, None).is_empty());
-            assert!(select(&trees(&sides), 3, Some(30)).is_empty());
+            assert_eq!(select(&sides, 3, Some(3)).len(), 1, "{path}: {old}");
+            assert!(select(&sides, 3, None).is_empty());
+            assert!(select(&sides, 3, Some(30)).is_empty());
             run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
-            assert_eq!(select(&trees(&sides), 3, Some(3)).len(), 1);
+            assert_eq!(select(&sides, 3, Some(3)).len(), 1);
         }
     }
 }
@@ -519,14 +572,13 @@ fn suites_select_individual_tests_and_preserve_nested_summary_folds() {
         ("a.ts", "describe('suite', () => {\n    it('one', () => {\n        setup();\n        act();\n        check();\n    });\n    test('two', () => {\n        setup();\n        act();\n        check();\n    });\n});\n", "test-bodies:test"),
     ] {
         let (file, mut sides) = project(path, "", after);
-        let selected = select(&trees(&sides), 3, Some(3));
+        let selected = select(&sides, 3, Some(3));
         assert_eq!(selected.len(), 2, "{path}: {selected:?}");
-        let (endpoint, server) = serve(vec![(200, gemini_answer(&[(selected[0].0, "setup; act; check one"), (selected[1].0, "setup; act; check two")]))]);
-        summarizer_with(json!({"api_key": "test", "endpoint": endpoint, "test_min_lines": 3})).run(&file, &mut sides).unwrap();
+        let (endpoint, server) = serve(vec![(200, gemini_answer(&[(selected[0].0, "setup; act; check one")])), (200, gemini_answer(&[(selected[1].0, "setup; act; check two")]))]);
+        shape(&summarizer_with(json!({"api_key": "test", "endpoint": endpoint, "test_min_lines": 3})), &file, &mut sides).unwrap();
         run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
         server.join().unwrap();
         run("group", json!({}), &file, &mut sides);
-        let sides = trees(&sides);
         let mut found = 0;
         let mut outer_state = None;
         walk(&rhs(&sides).regions, &mut |region| {
@@ -551,77 +603,51 @@ fn bundled_wasm_summarizer_streams_large_prompts() {
     // Exceed the host's outgoing body buffer and close the server immediately
     // after replying, exercising backpressure and the response/finish race.
     let after = format!(
-        "def test_it():\n    setup()\n    act()\n    check()\n# {}\n",
+        "def test_it():\n    setup()\n    act()\n    check() # {}\n# outside the selected body\n",
         "context ".repeat(16_384)
     );
     let (file, mut sides) = project("a.py", "", &after);
-    let id = select(&trees(&sides), 3, Some(3))[0].0;
+    let id = select(&sides, 3, Some(3))[0].0;
     let (endpoint, server) = serve(vec![(200, gemini_answer(&[(id, "setup; act; check")]))]);
     let wasm = summarizer_with(json!({
         "api_key": "test", "endpoint": endpoint, "test_min_lines": 3, "retries": 0,
     }));
     assert!(builtin::component("summarize").is_some());
-    wasm.run(&file, &mut sides).unwrap();
-    assert_eq!(fold_label(&trees(&sides)), "setup; act; check");
+    shape(&wasm, &file, &mut sides).unwrap();
+    assert_eq!(fold_label(&sides), "setup; act; check");
     let requests = server.join().unwrap();
     assert_eq!(requests.len(), 1);
     let request: serde_json::Value = serde_json::from_str(&requests[0]).unwrap();
     let prompt = request["contents"][0]["parts"][0]["text"].as_str().unwrap();
     assert!(prompt.contains(&"context ".repeat(16_384)));
+    assert!(!prompt.contains("outside the selected body"));
     assert!(prompt.contains(&format!("fold {id}: lines 2-4")));
 }
 
 #[test]
-fn deferred_summary_preserves_user_fold_state_and_region_identity() {
-    let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&trees(&sides), 3, None)[0].0;
-    let (endpoint, server) = serve(vec![(200, gemini_answer(&[(id, "call a, b, c")]))]);
-    let pipeline = summarizer(&endpoint, 0);
-    pipeline.prepare(&file, &mut sides).unwrap();
-    // No HTTP is required for prepare. The selected fold already exists.
-    assert_eq!(fold_label(&trees(&sides)), "");
-    let annotations = pipeline.enrich(&file, &sides).unwrap();
-    fn open(regions: &mut [protocol::Region]) {
-        for region in regions {
-            region.visibility.collapsed = false;
-            if let protocol::Node::Fold { children } = &mut region.node {
-                open(children);
-            }
-        }
+fn missing_or_empty_summaries_leave_the_file_unchanged() {
+    for empty in [false, true] {
+        let (file, mut sides) = project("a.py", "", LARGE);
+        let id = select(&sides, 3, None)[0].0;
+        let answer = if empty {
+            gemini_answer(&[(id, "")])
+        } else {
+            gemini_answer(&[])
+        };
+        let before = sides.clone();
+        let (endpoint, server) = serve(vec![(200, answer)]);
+        shape(&summarizer(&endpoint, 0), &file, &mut sides).unwrap();
+        assert_eq!(sides, before);
+        server.join().unwrap();
     }
-    match &mut sides {
-        Pairing::Both { lhs, rhs } => {
-            open(&mut lhs.regions);
-            open(&mut rhs.regions);
-        }
-        Pairing::RightOnly { rhs } => open(&mut rhs.regions),
-        _ => panic!("right side required"),
-    }
-    let before = sides.clone();
-    Pipeline::apply_annotations(&mut sides, &annotations).unwrap();
-    assert_eq!(fold_label(&trees(&sides)), "call a, b, c");
-    walk(&rhs(&trees(&sides)).regions, &mut |region| {
-        assert!(!region.visibility.collapsed);
-    });
-    // Removing only the added label recovers the exact initial tree.
-    Pipeline::apply_annotations(
-        &mut sides,
-        &[protocol::Annotation {
-            region_id: id,
-            label: String::new(),
-        }],
-    )
-    .unwrap();
-    assert_eq!(sides, before);
-    server.join().unwrap();
 }
 
 #[test]
 fn gemini_requests_keep_their_path_and_key_header() {
     let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&trees(&sides), 3, None)[0].0;
+    let id = select(&sides, 3, None)[0].0;
     let (endpoint, server) = serve_requests(vec![(200, gemini_answer(&[(id, "call a, b, c")]))]);
-    summarizer(&endpoint, 0).run(&file, &mut sides).unwrap();
+    shape(&summarizer(&endpoint, 0), &file, &mut sides).unwrap();
     let request = server.join().unwrap().remove(0);
     assert_eq!(
         request.line,
@@ -663,7 +689,7 @@ fn assert_summaries_schema(schema: &serde_json::Value) {
 #[test]
 fn each_provider_sends_its_own_request_and_reads_its_own_answer() {
     let (_, sides) = project("a.py", "", LARGE);
-    let id = select(&trees(&sides), 3, None)[0].0;
+    let id = select(&sides, 3, None)[0].0;
     let wrapped = format!("{{\"summaries\": {}}}", answers(&[(id, "call a, b, c")]));
     // A compatible server that ignores the schema may wrap its answer.
     let fenced = format!("<think>maybe [a] or [b], or []</think>\n```json\n{wrapped}\n```");
@@ -683,17 +709,16 @@ fn each_provider_sends_its_own_request_and_reads_its_own_answer() {
     ] {
         let (file, mut sides) = project("a.py", "", LARGE);
         let (endpoint, server) = serve_requests(vec![(200, response.to_string())]);
-        summarizer_with(json!({
+        let pipeline = summarizer_with(json!({
             "provider": provider,
             "model": "test-model",
             "api_key": "test-key",
             "endpoint": format!("{endpoint}{path}"),
             "min_lines": 3,
             "retries": 0,
-        }))
-        .run(&file, &mut sides)
-        .unwrap();
-        assert_eq!(fold_label(&trees(&sides)), "call a, b, c", "{provider}");
+        }));
+        shape(&pipeline, &file, &mut sides).unwrap();
+        assert_eq!(fold_label(&sides), "call a, b, c", "{provider}");
         let request = server.join().unwrap().remove(0);
         let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
         assert!(
@@ -741,18 +766,17 @@ fn an_openai_compatible_server_needs_no_key() {
         return;
     }
     let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&trees(&sides), 3, None)[0].0;
+    let id = select(&sides, 3, None)[0].0;
     let response = json!({"choices": [{"message": {"content": answers(&[(id, "call a, b, c")])}}]});
     let (endpoint, server) = serve_requests(vec![(200, response.to_string())]);
-    summarizer_with(json!({
+    let pipeline = summarizer_with(json!({
         "provider": "openai",
         "model": "llama",
         "endpoint": format!("{endpoint}/v1"),
         "min_lines": 3,
-    }))
-    .run(&file, &mut sides)
-    .unwrap();
-    assert_eq!(fold_label(&trees(&sides)), "call a, b, c");
+    }));
+    shape(&pipeline, &file, &mut sides).unwrap();
+    assert_eq!(fold_label(&sides), "call a, b, c");
     let request = server.join().unwrap().remove(0);
     assert!(!request
         .headers
@@ -763,18 +787,17 @@ fn an_openai_compatible_server_needs_no_key() {
 #[test]
 fn an_unset_model_is_the_providers_default() {
     let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&trees(&sides), 3, None)[0].0;
+    let id = select(&sides, 3, None)[0].0;
     let text = json!({"summaries": [{"id": id, "summary": "", "pseudocode": "call a, b, c"}]});
     let response = json!({"content": [{"type": "text", "text": text.to_string()}]});
     let (endpoint, server) = serve_requests(vec![(200, response.to_string())]);
-    summarizer_with(json!({
+    let pipeline = summarizer_with(json!({
         "provider": "anthropic",
         "api_key": "test-key",
         "endpoint": endpoint,
         "min_lines": 3,
-    }))
-    .run(&file, &mut sides)
-    .unwrap();
+    }));
+    shape(&pipeline, &file, &mut sides).unwrap();
     let body: serde_json::Value = serde_json::from_str(&server.join().unwrap()[0].body).unwrap();
     assert_eq!(body["model"], "claude-haiku-4-5");
 }

@@ -58,7 +58,10 @@ impl AnnotationQuery {
             ))
         };
         for name in query.capture_names() {
-            if name.starts_with('_') || matches!(*name, "fold" | "fold.open" | "fold.close") {
+            if name.starts_with("related.")
+                || name.starts_with('_')
+                || matches!(*name, "fold" | "fold.open" | "fold.close")
+            {
                 continue;
             }
             let source = sources

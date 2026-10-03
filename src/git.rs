@@ -227,9 +227,15 @@ impl Default for FileParams {
 #[derive(Clone)]
 enum Source {
     Absent,
-    Blob { id: Oid, mode: Mode },
+    Blob {
+        id: Oid,
+        mode: Mode,
+    },
     /// A working-tree file, by its repository-relative path.
-    WorkingFile { path: String, mode: Mode },
+    WorkingFile {
+        path: String,
+        mode: Mode,
+    },
 }
 
 impl Source {

@@ -19,6 +19,7 @@ use tree_sitter::{QueryCursor, Tree};
 
 #[derive(Debug)]
 pub(crate) struct Fold {
+    pub(crate) relations: Vec<(String, SourceRange)>,
     pub(crate) tags: Vec<String>,
     /// Source on this side; may span multiple syntax nodes.
     pub(crate) range: SourceRange,
@@ -75,6 +76,7 @@ pub(crate) fn classify(
     };
     let query = &compiled.query;
     let mut cursor = QueryCursor::new();
+    let mut relations = Vec::new();
     let mut matches = cursor.matches(query, tree.root_node(), src.as_bytes());
     while let Some(matched) = matches.next() {
         let pattern = &compiled.patterns[matched.pattern_index];
@@ -84,6 +86,38 @@ pub(crate) fn classify(
                 .iter()
                 .filter(move |capture| query.capture_names()[capture.index as usize] == name)
         };
+        for source in named("related.from") {
+            let mut targets: std::collections::BTreeMap<&str, SourceRange> =
+                std::collections::BTreeMap::new();
+            for capture in matched.captures {
+                let name = query.capture_names()[capture.index as usize];
+                let Some(name) = name.strip_prefix("related.").filter(|name| *name != "from")
+                else {
+                    continue;
+                };
+                let range = node_range(capture.node);
+                targets
+                    .entry(name)
+                    .and_modify(|span| {
+                        if (range.start.line, range.start.byte_column)
+                            < (span.start.line, span.start.byte_column)
+                        {
+                            span.start = range.start;
+                        }
+                        if (range.end.line, range.end.byte_column)
+                            > (span.end.line, span.end.byte_column)
+                        {
+                            span.end = range.end;
+                        }
+                    })
+                    .or_insert(range);
+            }
+            relations.extend(
+                targets
+                    .into_iter()
+                    .map(|(name, range)| (source.node.id(), name.to_owned(), range)),
+            );
+        }
         let folds: Vec<_> = named("fold").collect();
         let Some(first) = folds.iter().min_by_key(|capture| capture.node.start_byte()) else {
             continue;
@@ -133,6 +167,7 @@ pub(crate) fn classify(
                 tags.dedup();
                 entry.insert((
                     FoldMetadata {
+                        relations: Vec::new(),
                         tags,
                         range_override: Some(region),
                     },
@@ -157,6 +192,13 @@ pub(crate) fn classify(
                 metadata.tags.extend(pattern.tags.iter().cloned());
                 metadata.tags.sort();
                 metadata.tags.dedup();
+            }
+        }
+    }
+    for (id, name, range) in relations {
+        if let Some((metadata, _)) = kinds.get_mut(&id) {
+            if !metadata.relations.contains(&(name.clone(), range)) {
+                metadata.relations.push((name, range));
             }
         }
     }
@@ -363,6 +405,7 @@ pub(crate) fn project(node: &Syntax<'_>, partner: Option<&Syntax<'_>>) -> Option
             .is_some_and(|metadata| range(partner, metadata).is_some())
     });
     Some(Fold {
+        relations: metadata.relations.clone(),
         tags: metadata.tags.clone(),
         range: own_range,
         syntax_id: node.id(),
@@ -422,6 +465,7 @@ pub(crate) fn merge_spans(folds: &mut Vec<Fold>, lines: &[&str]) {
                     merged.syntax_id = fold.syntax_id;
                     merged.match_kind = fold.match_kind;
                 }
+                merged.relations.extend(fold.relations);
                 merged.tags.extend(fold.tags);
                 merged.tags.sort();
                 merged.tags.dedup();

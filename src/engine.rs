@@ -18,9 +18,16 @@ use humansize::{format_size, FormatSizeOptions, BINARY};
 use std::{env, fmt, path::Path};
 use typed_arena::Arena;
 
-/// The fallback reason for a file tagged `generated`, which is always diffed
-/// by line.
-pub(crate) const GENERATED_FALLBACK: &str = "generated file, diffed by line";
+/// The fallback reason for a file diffed by line because of what it is.
+fn by_line_reason(cause: FallbackCause) -> &'static str {
+    match cause {
+        FallbackCause::Generated => "generated file, diffed by line",
+        FallbackCause::Hidden => "hidden file, diffed by line",
+        FallbackCause::ByteLimit | FallbackCause::GraphLimit | FallbackCause::ParseErrorLimit => {
+            unreachable!("only a file's tags choose a line diff up front")
+        }
+    }
+}
 
 /// A file whose fold query captured one syntax node with two different
 /// ranges. The file is not diffed; the stream reports it as a
@@ -132,10 +139,11 @@ pub(crate) fn diff_file_content(
     let mut lhs_folds = Vec::new();
     let mut rhs_folds = Vec::new();
     let (file_format, lhs_positions, rhs_positions) = match lang_config {
-        _ if diff_options.generated => {
+        _ if diff_options.by_line.is_some() => {
+            let cause = diff_options.by_line.expect("checked above");
             let file_format = FileFormat::TextFallback {
-                cause: FallbackCause::Generated,
-                reason: GENERATED_FALLBACK.to_owned(),
+                cause,
+                reason: by_line_reason(cause).to_owned(),
             };
             let (lhs_positions, rhs_positions) = line_parser::change_positions(lhs_src, rhs_src);
             (file_format, lhs_positions, rhs_positions)

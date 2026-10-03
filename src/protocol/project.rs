@@ -130,6 +130,7 @@ fn stats(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> Stats {
 fn fallback_code(cause: FallbackCause) -> &'static str {
     match cause {
         FallbackCause::Generated => "generated",
+        FallbackCause::Hidden => "hidden",
         FallbackCause::ByteLimit => "too_large",
         FallbackCause::GraphLimit => "too_complex",
         FallbackCause::ParseErrorLimit => "parse_error",
@@ -460,6 +461,7 @@ fn tree(
             id: open.ids.0,
             fold_state_id: open.ids.1,
             range,
+            relations: Vec::new(),
             tags: fold.tags.clone(),
             visibility: Visibility {
                 collapsed: false,
@@ -503,6 +505,48 @@ fn tree(
     while !stack.is_empty() {
         close(&mut stack, &mut root);
     }
+    fn all(regions: &[Region], out: &mut Vec<(u32, SourceRange)>) {
+        for region in regions {
+            if let Node::Fold { children } = &region.node {
+                out.push((region.id, region.range));
+                all(children, out);
+            }
+        }
+    }
+    fn attach(regions: &mut [Region], relations: &[(u32, String, u32)]) {
+        for region in regions {
+            region.relations = relations
+                .iter()
+                .filter(|(id, _, _)| *id == region.id)
+                .map(|(_, name, target)| (name.clone(), *target))
+                .collect();
+            if let Node::Fold { children } = &mut region.node {
+                attach(children, relations);
+            }
+        }
+    }
+    let mut regions = Vec::new();
+    all(&root, &mut regions);
+    let mut relations = Vec::new();
+    for fold in folds {
+        let owner = regions.iter().find(|(_, range)| {
+            range.start.line as usize == fold.lines.0 && range.end.line as usize == fold.lines.1
+        });
+        let Some((owner, _)) = owner else { continue };
+        for (name, range) in &fold.fold.relations {
+            let start = range.start.line.as_usize() as u32;
+            let end = range.end.line.as_usize() as u32 + u32::from(range.end.byte_column > 0);
+            if let Some((target, _)) = regions
+                .iter()
+                .find(|(_, span)| span.start.line == start && span.end.line == end)
+            {
+                if owner != target {
+                    relations.push((*owner, name.clone(), *target));
+                }
+            }
+        }
+    }
+    attach(&mut root, &relations);
     root
 }
 
@@ -568,6 +612,7 @@ fn leaf_region(
                 column: 0,
             },
         },
+        relations: Vec::new(),
         tags: Vec::new(),
         visibility: Visibility::default(),
         node: Node::Leaf {

@@ -4,10 +4,10 @@
 //!
 //! The embedded default config selects bundled plugins. An explicit `order`
 //! is authoritative; every declared entry must appear exactly once. Bundled
-//! entries use embedded assets and implementations; external entries require
-//! a folder containing `plugin.toml` and `plugin.wasm`. No external entry
-//! falls back to a native implementation. Options come from each manifest.
+//! entries use embedded components; external entries require a folder containing
+//! `plugin.toml` and `plugin.wasm`. Options come from each manifest.
 use super::builtin;
+use super::queries::{PluginQuery, Queries};
 use crate::config::ConfigError;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -22,7 +22,7 @@ pub(crate) const PATH: &str = "path";
 
 /// The keys in a plugin entry that diffr owns: a plugin's options may not
 /// use them.
-pub(crate) const RESERVED: [&str; 3] = [ENABLED, PATH, "instances"];
+pub(crate) const RESERVED: [&str; 2] = [ENABLED, PATH];
 
 /// A plugin folder's description, and its component when it has one.
 pub(crate) const MANIFEST_FILE: &str = "plugin.toml";
@@ -40,10 +40,6 @@ pub(crate) struct Manifest {
     /// The plugin's entry name in `[plugins]`, and the prefix of every tag
     /// its queries set: `<name>:<tag>`.
     pub(crate) name: String,
-    /// Opt in only when independent instances can process different files.
-    /// No cross-call state, ordering, or unique external side effects may be required.
-    #[serde(default)]
-    pub(crate) parallel: bool,
     /// The human name settings screens group the plugin's settings under.
     pub(crate) title: String,
     #[serde(default)]
@@ -57,6 +53,9 @@ pub(crate) struct Manifest {
     /// Every option has a `title`; one with a `default` is pre-filled.
     #[serde(default)]
     pub(crate) options: Map<String, Value>,
+    /// Each language's fold query: a file in the plugin's folder.
+    #[serde(default)]
+    pub(crate) queries: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -305,13 +304,6 @@ impl Manifest {
                 "x-group": group,
             }),
         );
-        if self.parallel {
-            properties.insert("instances".into(), json!({
-                "type": "integer", "minimum": 1, "maximum": 64, "default": 4,
-                "title": "Parallel instances", "description": "Maximum simultaneous deferred plugin calls across all files.",
-                "x-group": group,
-            }));
-        }
         for (key, option) in &self.options {
             let mut option = option.clone();
             if let Some(option) = option.as_object_mut() {
@@ -437,9 +429,6 @@ pub(crate) struct Entry {
     /// plugin's default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) enabled: Option<bool>,
-    /// Host-owned deferred-work bound, shared by all files of this plugin.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) instances: Option<usize>,
     /// The plugin's folder on disk, as written: relative to the
     /// configuration file's directory, or absolute.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -452,11 +441,80 @@ pub(crate) struct Entry {
     pub(crate) options: Map<String, Value>,
 }
 
+/// `[classifier]`: the one plugin that tags each changed file before
+/// anything is diffed. The bundled classifier unless `path` names another.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct ClassifierConfig {
+    /// A classifier folder on disk, as written: relative to the configuration
+    /// file's directory, or absolute.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) path: Option<PathBuf>,
+    /// The folder, loaded when the configuration resolves.
+    #[serde(skip)]
+    folder: Option<Folder>,
+    /// The classifier's options, checked against its manifest.
+    #[serde(flatten)]
+    pub(crate) options: Map<String, Value>,
+}
+
+impl ClassifierConfig {
+    /// Load the classifier's folder, validate its options and fill their
+    /// defaults.
+    pub(crate) fn resolve(&mut self, base: &Path) -> Result<(), ConfigError> {
+        let folder = match &self.path {
+            Some(path) => Folder::read(&base.join(path))
+                .map_err(|error| ConfigError(format!("classifier: {error}")))?,
+            None => Folder {
+                location: Location::Classifier,
+                manifest: builtin::classifier_manifest().clone(),
+            },
+        };
+        folder
+            .manifest
+            .validate(&self.options)
+            .map_err(|error| ConfigError(format!("classifier: {error}")))?;
+        folder.manifest.fill_defaults(&mut self.options);
+        self.folder = Some(folder);
+        Ok(())
+    }
+
+    /// The classifier's folder. Set once the configuration resolves.
+    pub(crate) fn folder(&self) -> &Folder {
+        self.folder
+            .as_ref()
+            .expect("a resolved classifier has its folder")
+    }
+
+    /// The `classifier` property of `diffr config schema`: `path`, and the
+    /// bundled classifier's options.
+    pub(crate) fn schema() -> Value {
+        let mut schema = builtin::classifier_manifest().settings_schema();
+        let properties = schema["properties"]
+            .as_object_mut()
+            .expect("a settings schema has properties");
+        // There is always one classifier: it cannot be turned off.
+        properties.remove(ENABLED);
+        properties.insert(
+            "path".to_owned(),
+            json!({
+                "type": "string",
+                "description": "A classifier folder to use instead of the bundled one.",
+                "x-settings": false,
+            }),
+        );
+        schema["description"] = Value::String("The one plugin that tags each changed file (generated, vendored, docs, test, or a custom tag) and hides some, before anything is diffed. The bundled classifier unless `path` names another.".to_owned());
+        schema
+    }
+}
+
 /// Where a plugin folder is.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Location {
-    /// Embedded in diffr: `plugins/<name>/`.
+    /// Embedded in diffr: `plugins/shape/<name>/`.
     Bundled,
+    /// The bundled classifier, embedded from `plugins/classify/`.
+    Classifier,
     /// On disk. Canonical.
     Disk(PathBuf),
 }
@@ -483,20 +541,67 @@ impl Folder {
         })
     }
 
-    /// External entries always name plugin.wasm, even when it is missing.
-    /// A bundled native plugin has no component; other bundles embed one.
-    pub(crate) fn component(&self) -> Option<ComponentSource> {
+    /// Every plugin folder supplies a component.
+    pub(crate) fn component(&self) -> ComponentSource {
         match &self.location {
-            Location::Bundled => {
-                builtin::component(&self.manifest.name).map(ComponentSource::Bundled)
-            }
-            Location::Disk(dir) => Some(ComponentSource::File(dir.join(COMPONENT_FILE))),
+            Location::Bundled => ComponentSource::Bundled(
+                builtin::component(&self.manifest.name)
+                    .expect("every bundled manifest has a component"),
+            ),
+            Location::Classifier => ComponentSource::Bundled(builtin::classifier_component()),
+            Location::Disk(dir) => ComponentSource::File(dir.join(COMPONENT_FILE)),
         }
+    }
+
+    /// The query files the manifest declares, read from the folder.
+    pub(crate) fn queries(&self) -> Result<Queries, ConfigError> {
+        self.manifest
+            .queries
+            .iter()
+            .map(|(language, file)| {
+                let (name, text) = match &self.location {
+                    Location::Bundled => {
+                        let path = format!("{}/{file}", self.manifest.name);
+                        let text = builtin::file(&path).ok_or_else(|| {
+                            ConfigError(format!("plugins/shape/{path}: not a bundled file"))
+                        })?;
+                        (format!("builtin:{path}"), text.to_owned())
+                    }
+                    Location::Classifier => {
+                        return Err(ConfigError("the classifier has no queries".to_owned()))
+                    }
+                    Location::Disk(dir) => {
+                        let path = dir.join(file);
+                        let text = std::fs::read_to_string(&path)
+                            .map_err(|error| ConfigError(format!("{}: {error}", path.display())))?;
+                        (path.display().to_string(), text)
+                    }
+                };
+                Ok(PluginQuery {
+                    language: language.clone(),
+                    name,
+                    text,
+                })
+            })
+            .collect()
     }
 
     /// Load the folder at `dir` for the entry `name`: its `plugin.toml` must
     /// name the entry.
     fn load(name: &str, dir: &Path) -> Result<Self, ConfigError> {
+        let folder = Self::read(dir)?;
+        if folder.manifest.name != name {
+            return Err(ConfigError(format!(
+                "{}: the plugin is named {:?}, not {name:?}",
+                dir.join(MANIFEST_FILE).display(),
+                folder.manifest.name
+            )));
+        }
+        Ok(folder)
+    }
+
+    /// Load the folder at `dir`, whatever its plugin is named.
+    fn read(dir: &Path) -> Result<Self, ConfigError> {
         let dir = std::fs::canonicalize(dir)
             .map_err(|error| ConfigError(format!("{}: {error}", dir.display())))?;
         let manifest_path = dir.join(MANIFEST_FILE);
@@ -504,13 +609,6 @@ impl Folder {
             .map_err(|error| ConfigError(format!("{}: {error}", manifest_path.display())))?;
         let manifest = Manifest::parse(&text)
             .map_err(|error| ConfigError(format!("{}: {error}", manifest_path.display())))?;
-        if manifest.name != name {
-            return Err(ConfigError(format!(
-                "{}: the plugin is named {:?}, not {name:?}",
-                manifest_path.display(),
-                manifest.name
-            )));
-        }
         Ok(Self {
             location: Location::Disk(dir),
             manifest,
@@ -561,16 +659,6 @@ impl PluginsConfig {
             };
             let manifest = &folder.manifest;
             entry.enabled.get_or_insert(manifest.enabled_by_default());
-            let instances = entry
-                .instances
-                .unwrap_or(if manifest.parallel { 4 } else { 1 });
-            if !(1..=64).contains(&instances) || (!manifest.parallel && instances != 1) {
-                return Err(ConfigError(format!("plugins.{reference}.instances: expected 1..=64 for a parallel plugin, or 1 for a serial plugin")));
-            }
-            // Only parallel plugins offer the setting.
-            if manifest.parallel {
-                entry.instances = Some(instances);
-            }
             manifest
                 .validate(&entry.options)
                 .map_err(|error| ConfigError(format!("plugins.{reference}: {error}")))?;
@@ -609,6 +697,24 @@ impl PluginsConfig {
             )));
         }
         Ok(())
+    }
+
+    /// Each enabled plugin's name and query files, in `order`.
+    pub(crate) fn queries(&self) -> Result<Vec<(String, Queries)>, ConfigError> {
+        self.enabled()
+            .map(|(reference, entry)| {
+                let name = reference
+                    .split_once('.')
+                    .map_or(reference, |(_, name)| name);
+                Ok((
+                    name.to_owned(),
+                    entry
+                        .folder()
+                        .queries()
+                        .map_err(|error| ConfigError(format!("plugins.{reference}: {error}")))?,
+                ))
+            })
+            .collect()
     }
 
     /// The enabled entries, in `order`.
@@ -658,7 +764,7 @@ mod tests {
 
     #[test]
     fn the_prompt_description_links_to_its_default_in_the_source() {
-        let source = include_str!("../../plugins/summarize/plugin.toml");
+        let source = include_str!("../../plugins/shape/summarize/plugin.toml");
         let lines: Vec<&str> = source.lines().collect();
         let table = lines
             .iter()
@@ -679,7 +785,7 @@ mod tests {
             .as_str()
             .unwrap();
         let link = format!(
-            "https://github.com/devdotfast/diffr/blob/main/plugins/summarize/plugin.toml#L{}-L{}",
+            "https://github.com/devdotfast/diffr/blob/main/plugins/shape/summarize/plugin.toml#L{}-L{}",
             start + 1,
             end + 1
         );
@@ -874,10 +980,6 @@ mod tests {
         let plugins = &schema["properties"]["plugins"]["properties"];
         assert_eq!(plugins["order"]["x-settings"], false);
         assert_eq!(plugins["order"]["type"], "array");
-        assert_eq!(
-            plugins["bundled"]["properties"]["hide-files"]["properties"]["tags"]["x-settings"],
-            false
-        );
         let summarize = &plugins["bundled"]["properties"]["summarize"]["properties"];
         // A text setting, so settings screens let users edit the prompt.
         assert!(summarize["system_prompt"].get("x-settings").is_none());
@@ -926,7 +1028,7 @@ mod tests {
             "name = 'mine'\ntitle = 'Mine'\n[options.depth]\ntype = 'integer'\ntitle = 'Depth'\ndefault = 2\n",
         )
         .unwrap();
-        let order = "order = ['bundled.context', 'bundled.hide-files', 'bundled.deleted-bodies', 'bundled.test-bodies', 'bundled.removed-runs', 'bundled.summarize', 'bundled.group', 'external.mine']";
+        let order = "order = ['bundled.context', 'bundled.deleted-bodies', 'bundled.test-bodies', 'bundled.removed-runs', 'bundled.summarize', 'bundled.group', 'external.mine']";
         let config = Config::from_toml_in(
             &format!("[plugins]\n{order}\n[plugins.external.mine]\npath = 'plugins/mine'\n"),
             dir.path(),
@@ -967,17 +1069,18 @@ mod tests {
     #[test]
     fn options_are_checked_against_the_plugin_toml_and_filled_with_its_defaults() {
         let config = Config::from_toml(
-            "[plugins.bundled.deleted-bodies]\nmin_lines = 30\n[plugins.bundled.hide-files]\nenabled = false\n",
+            "[plugins.bundled.deleted-bodies]\nmin_lines = 30\n[plugins.bundled.removed-runs]\nenabled = false\n[classifier]\nhide_deleted = false\n",
         )
         .unwrap();
         let deleted = &config.plugins.entries["bundled.deleted-bodies"];
         assert_eq!(deleted.enabled, Some(true));
         assert_eq!(deleted.options["min_lines"], 30);
-        let hide = &config.plugins.entries["bundled.hide-files"];
-        assert_eq!(hide.enabled, Some(false));
-        assert_eq!(hide.options["deleted"], true);
+        let removed = &config.plugins.entries["bundled.removed-runs"];
+        assert_eq!(removed.enabled, Some(false));
+        let classifier = &config.classifier.options;
+        assert_eq!(classifier["hide_deleted"], false);
         assert_eq!(
-            hide.options["tags"],
+            classifier["hide"],
             serde_json::json!(["generated", "vendored", "test"])
         );
         let summarize = &config.plugins.entries["bundled.summarize"];
@@ -999,9 +1102,9 @@ mod tests {
             mistyped.starts_with("plugins.bundled.deleted-bodies: min_lines: "),
             "{mistyped}"
         );
-        let zero = error("[plugins.bundled.summarize]\nmax_concurrency = 0\n");
+        let zero = error("[plugins.bundled.summarize]\nrequest_timeout_ms = 0\n");
         assert!(
-            zero.starts_with("plugins.bundled.summarize: max_concurrency: "),
+            zero.starts_with("plugins.bundled.summarize: request_timeout_ms: "),
             "{zero}"
         );
         assert!(error("[plugins.bundled.summarize]\nprovider = 'mistral'\n")
@@ -1014,18 +1117,12 @@ mod concurrency_tests {
     use crate::config::Config;
 
     #[test]
-    fn concurrency_requires_plugin_opt_in_and_a_bounded_positive_count() {
-        for count in [0, 65] {
-            assert!(Config::from_toml(&format!(
-                "[plugins.bundled.summarize]\ninstances = {count}\n"
-            ))
-            .is_err());
+    fn obsolete_instance_and_concurrency_options_are_rejected() {
+        for name in ["context", "summarize"] {
+            assert!(
+                Config::from_toml(&format!("[plugins.bundled.{name}]\ninstances = 1\n")).is_err()
+            );
         }
-        assert!(Config::from_toml("[plugins.bundled.context]\ninstances = 2\n").is_err());
-        let config = Config::from_toml("[plugins.bundled.summarize]\ninstances = 3\n").unwrap();
-        assert_eq!(
-            config.plugins.entries["bundled.summarize"].instances,
-            Some(3)
-        );
+        assert!(Config::from_toml("[plugins.bundled.summarize]\nmax_concurrency = 16\n").is_err());
     }
 }

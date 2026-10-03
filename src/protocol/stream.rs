@@ -8,26 +8,21 @@ use super::{
     StructuralChanges, SyntaxSpan, Visibility, VERSION,
 };
 use crate::engine::QueryConflict;
-use crate::git::{DiffSession, FileError, LoadedFile};
+use crate::git::{DiffSession, Differ, FileError, LoadedFile, PendingFile};
 use crate::hash::DftHashSet;
 use crate::pairing::Pairing;
 use crate::plugin::{MutationFailed, Pipeline};
 use crate::summary::{DiffResult, FileContent, FileFormat};
-use anyhow::anyhow;
-use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::io::{BufWriter, Write};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::mpsc::{sync_channel, SyncSender};
-use std::sync::{Arc, Mutex};
-use std::thread;
+use std::sync::mpsc::{channel, Sender};
+use std::sync::Arc;
+use tokio::task::JoinSet;
 
 /// Runtime choices that shape every file record.
 #[derive(Clone, Copy)]
 pub(crate) struct Options {
     /// Emit every token's capture name (`--syntax`).
     pub(crate) syntax: bool,
-    /// Opt-in v4 stream; v3 consumers continue to receive finished files.
-    pub(crate) updates: bool,
 }
 
 /// What the stream ended with: whether any file failed, and whether a
@@ -37,26 +32,35 @@ pub(crate) struct Ended {
     pub(crate) aborted: bool,
 }
 
-/// Files are diffed on `jobs` workers and emitted as they finish. The queue
-/// holds at most one ready record, so computation overlaps output without
-/// retaining the whole comparison.
+/// Blocking workers load sources; `jobs` Rayon workers compute; async plugin
+/// chains finish independently of the writer. Completed records queue in memory.
 pub(crate) fn write(
+    runtime: &tokio::runtime::Runtime,
     session: DiffSession,
     jobs: usize,
     pipeline: Arc<Pipeline>,
     options: Options,
     output: &mut impl Write,
 ) -> anyhow::Result<Ended> {
-    let manifest = manifest(&session);
-    let (sender, receiver) = sync_channel(1);
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(jobs)
         .thread_name(|index| format!("diffr-worker-{index}"))
         .build()?;
-    let worker = thread::spawn(move || {
-        // A disconnected consumer cancels production after the files in flight.
-        let _ = produce(session, manifest, &pool, &pipeline, options, sender);
-    });
+    write_output(
+        runtime,
+        |sender| produce(session, Arc::new(pool), pipeline, options, sender),
+        output,
+    )
+}
+
+/// Run production on the application runtime while the caller writes records.
+fn write_output<F: std::future::Future<Output = anyhow::Result<()>> + Send + 'static>(
+    runtime: &tokio::runtime::Runtime,
+    produce: impl FnOnce(Sender<Event>) -> F,
+    output: &mut impl Write,
+) -> anyhow::Result<Ended> {
+    let (sender, receiver) = channel();
+    let worker = runtime.spawn(produce(sender));
     let mut output = BufWriter::new(output);
     let result: anyhow::Result<Ended> = (|| {
         let mut ended = Ended {
@@ -71,159 +75,123 @@ pub(crate) fn write(
                 ended.failed |= *failed > 0;
                 ended.aborted = aborted.is_some();
             }
-            if matches!(&event, Event::Annotations { error: Some(_), .. }) {
-                ended.failed = true;
-            }
             serde_json::to_writer(&mut output, &event)?;
             output.write_all(b"\n")?;
             output.flush()?;
         }
         Ok(ended)
     })();
-    // Wake a producer blocked on a full queue if writing failed.
+    // Stop outstanding file tasks when output fails.
     drop(receiver);
-    let joined = worker.join();
+    if result.is_err() {
+        worker.abort();
+    }
+    let joined = runtime.block_on(worker);
     let ended = result?;
-    joined.map_err(|_| anyhow!("diff computation thread panicked"))?;
+    // Aborted only when output failed, which returned above.
+    joined.expect("the diff task does not panic")?;
     Ok(ended)
 }
 
-/// The consumer went away; production stops after the files in flight.
-struct Disconnected;
-
-fn manifest(session: &DiffSession) -> Vec<FileChange> {
-    session
-        .file_manifest()
-        .iter()
-        .map(crate::git::FileChange::manifest_entry)
-        .collect()
-}
-
-fn produce(
+async fn produce(
     session: DiffSession,
-    manifest: Vec<FileChange>,
-    pool: &rayon::ThreadPool,
-    pipeline: &Pipeline,
+    pool: Arc<rayon::ThreadPool>,
+    pipeline: Arc<Pipeline>,
     options: Options,
-    sender: SyncSender<Event>,
-) -> Result<(), Disconnected> {
-    let send = |event: Event| sender.send(event).map_err(|_| Disconnected);
-    let start = Event::Start {
-        version: if options.updates { 4 } else { VERSION },
+    sender: Sender<Event>,
+) -> anyhow::Result<()> {
+    sender.send(Event::Start {
+        version: VERSION,
         lhs: Snapshot::from(&session.comparison.before),
         rhs: Snapshot::from(&session.comparison.after),
-        files: manifest,
-    };
-    send(start)?;
-    let succeeded = AtomicU32::new(0);
-    let failed = AtomicU32::new(0);
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let aborted: Mutex<Option<anyhow::Error>> = Mutex::new(None);
-    let loader = Loader {
-        session,
-        cancelled: Arc::clone(&cancelled),
-    };
-    let (enrich_sender, enrich_receiver) =
-        sync_channel::<(FileChange, Pairing<Source>)>(pool.current_num_threads());
-    let enrich_receiver = Mutex::new(enrich_receiver);
-    thread::scope(|scope| {
-        let enrich_receiver = &enrich_receiver;
-        if options.updates {
-            for _ in 0..pool.current_num_threads() {
-                let sender = &sender;
-                let cancelled = &cancelled;
-                scope.spawn(move || loop {
-                    let job = enrich_receiver.lock().expect("enrichment queue").recv();
-                    let Ok((entry, sides)) = job else {
-                        break;
-                    };
-                    if cancelled.load(Ordering::Relaxed) {
-                        continue;
-                    }
-                    let event = enrich_event(pipeline, &entry, &sides);
-                    if sender.send(event).is_err() {
-                        cancelled.store(true, Ordering::Relaxed);
-                    }
-                });
+        files: session
+            .file_manifest()
+            .iter()
+            .map(crate::git::FileChange::manifest_entry)
+            .collect(),
+    })?;
+    let (differ, files) = session.into_files();
+    let differ = Arc::new(differ);
+    let mut pending = JoinSet::new();
+    for file in files {
+        pending.spawn(process_file(
+            file,
+            differ.clone(),
+            pool.clone(),
+            pipeline.clone(),
+            options,
+        ));
+    }
+    let (mut succeeded, mut failed) = (0, 0);
+    let mut aborted = None;
+    while let Some(result) = pending.join_next().await {
+        let (file, result) = result.expect("a file task does not panic");
+        let (visibility, outcome) = match result {
+            Ok(result) => result,
+            Err(error) => {
+                failed += 1;
+                aborted = Some(wire_error(&error));
+                break;
             }
+        };
+        match &outcome {
+            Outcome::Diff { .. } => succeeded += 1,
+            Outcome::Error { .. } => failed += 1,
         }
-        pool.install(|| {
-            loader.par_bridge().for_each(|(file, loaded)| {
-                let (visibility, outcome) = match loaded.and_then(|loaded| diffed(&loaded, options))
-                {
-                    Ok((entry, diff)) => match shape(pipeline, &entry, diff, options.updates) {
-                        Ok((visibility, diff)) => (visibility, Outcome::Diff { diff }),
-                        Err(error) => {
-                            // A run-level failure: stop pulling files, let the ones
-                            // in flight finish, and report why in the footer.
-                            failed.fetch_add(1, Ordering::Relaxed);
-                            cancelled.store(true, Ordering::Relaxed);
-                            aborted.lock().expect("abort reason").get_or_insert(error);
-                            return;
-                        }
-                    },
-                    Err(error) => (
-                        Visibility::default(),
-                        Outcome::Error {
-                            error: wire_error(&error),
-                        },
-                    ),
-                };
-                match &outcome {
-                    Outcome::Diff { .. } => succeeded.fetch_add(1, Ordering::Relaxed),
-                    Outcome::Error { .. } => failed.fetch_add(1, Ordering::Relaxed),
-                };
-                let pending = if options.updates {
-                    match &outcome {
-                        Outcome::Diff {
-                            diff: Diff::Text { sides, .. },
-                        } => Some((file.manifest_entry(), sides.clone())),
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
-                let event = Event::File {
-                    file: file.sides,
-                    visibility,
-                    outcome,
-                };
-                if sender.send(event).is_err() {
-                    cancelled.store(true, Ordering::Relaxed);
-                } else if let Some(pending) = pending {
-                    if !cancelled.load(Ordering::Relaxed) && enrich_sender.send(pending).is_err() {
-                        cancelled.store(true, Ordering::Relaxed);
-                    }
-                }
-            });
-        });
-        drop(enrich_sender);
-    });
-    let aborted = aborted.into_inner().expect("abort reason");
-    send(Event::Complete {
-        succeeded: succeeded.into_inner(),
-        failed: failed.into_inner(),
-        aborted: aborted.map(|error| wire_error(&error)),
-    })
+        sender.send(Event::File {
+            file: file.sides,
+            visibility,
+            outcome,
+        })?;
+    }
+    sender.send(Event::Complete {
+        succeeded,
+        failed,
+        aborted,
+    })?;
+    Ok(())
 }
 
-/// An enrichment failure is local to this file's annotations.
-fn enrich_event(pipeline: &Pipeline, entry: &FileChange, sides: &Pairing<Source>) -> Event {
-    let (annotations, error) = match pipeline.enrich(entry, sides) {
-        Ok(annotations) => (annotations, None),
-        Err(error) => (
-            Vec::new(),
-            Some(Problem {
-                code: "enrichment_failed".into(),
-                message: format!("{error:#}"),
-            }),
-        ),
+async fn process_file(
+    pending: PendingFile,
+    differ: Arc<Differ>,
+    pool: Arc<rayon::ThreadPool>,
+    pipeline: Arc<Pipeline>,
+    options: Options,
+) -> (
+    crate::git::FileChange,
+    anyhow::Result<(Visibility, Outcome)>,
+) {
+    let file = pending.file.clone();
+    // Only blocking workers touch the repository or filesystem.
+    let loading = differ.clone();
+    let loaded = tokio::task::spawn_blocking(move || loading.load(pending))
+        .await
+        .expect("loading a file does not panic");
+    let projected = match loaded {
+        Ok(loaded) => {
+            let (send, receive) = tokio::sync::oneshot::channel();
+            pool.spawn(move || {
+                // Detached Rayon panics retain Rayon's fatal default policy.
+                let result = diffed(&differ, &loaded, options);
+                let _ = send.send(result);
+            });
+            receive.await.expect("Rayon task returns its result")
+        }
+        Err(error) => Err(error),
     };
-    Event::Annotations {
-        file: entry.file.clone(),
-        annotations,
-        error,
-    }
+    let result = match projected {
+        Ok((entry, diff)) => present(&pipeline, &entry, file.hidden.as_deref(), diff)
+            .await
+            .map(|(visibility, diff)| (visibility, Outcome::Diff { diff })),
+        Err(error) => Ok((
+            Visibility::default(),
+            Outcome::Error {
+                error: wire_error(&error),
+            },
+        )),
+    };
+    (file, result)
 }
 
 /// The wire record for an error, built as it is written. The code comes from
@@ -247,10 +215,14 @@ fn wire_error(error: &anyhow::Error) -> Problem {
 
 /// The projected diff of one loaded file and its manifest entry. `Err` is
 /// this file's failure.
-fn diffed(loaded: &LoadedFile, options: Options) -> anyhow::Result<(FileChange, Diff)> {
-    let result = loaded.diff()?;
+fn diffed(
+    differ: &Differ,
+    loaded: &LoadedFile,
+    options: Options,
+) -> anyhow::Result<(FileChange, Diff)> {
+    let result = differ.diff(loaded)?;
     let syntax = match options.syntax {
-        true => syntax_spans(&result, &loaded.params),
+        true => syntax_spans(&result, &differ.params),
         false => (Vec::new(), Vec::new()),
     };
     let inputs = Inputs {
@@ -278,25 +250,27 @@ fn syntax_spans(
     (spans(&diff.lhs_src), spans(&diff.rhs_src))
 }
 
-/// Run the plugins on a diff and recount what stays visible. A binary diff has
-/// no text and no regions, so only moves on the file apply to it. `Err`
-/// is a run-level failure.
-fn shape(
+/// Run the plugins on a diff and recount what stays visible: the file as it
+/// is presented. A file the classifier hid runs no plugin and is shown
+/// collapsed behind its reason. A binary diff has no text and no regions, so
+/// only moves on the file apply to it. `Err` is a run-level failure.
+async fn present(
     pipeline: &Pipeline,
     entry: &FileChange,
+    hidden: Option<&str>,
     diff: Diff,
-    updates: bool,
 ) -> anyhow::Result<(Visibility, Diff)> {
+    let hide = |reason: &str| Visibility {
+        collapsed: true,
+        label: reason.to_owned(),
+    };
     match diff {
         Diff::Text {
-            mut sides,
-            mut stats,
-            ..
+            sides, mut stats, ..
         } => {
-            let visibility = if updates {
-                pipeline.prepare(entry, &mut sides)?
-            } else {
-                pipeline.run(entry, &mut sides)?
+            let (sides, visibility) = match hidden {
+                Some(reason) => (sides, hide(reason)),
+                None => pipeline.run(entry, sides).await?,
             };
             let coverage = change_coverage(&sides);
             stats.visible = coverage.initially_visible.counts();
@@ -310,54 +284,38 @@ fn shape(
             ))
         }
         Diff::Binary { sides } => {
-            let mut empty = sides.clone().map(|_| Source {
-                text: String::new(),
-                syntax: Vec::new(),
-                regions: Vec::new(),
-            });
-            let visibility = if updates {
-                pipeline.prepare(entry, &mut empty)?
-            } else {
-                pipeline.run(entry, &mut empty)?
+            let visibility = match hidden {
+                Some(reason) => hide(reason),
+                None => {
+                    let empty = sides.clone().map(|_| Source {
+                        text: String::new(),
+                        syntax: Vec::new(),
+                        regions: Vec::new(),
+                    });
+                    pipeline.run(entry, empty).await?.1
+                }
             };
             Ok((visibility, Diff::Binary { sides }))
         }
     }
 }
 
-/// Reads sources serially on whichever worker pulls next; diffing then
-/// proceeds on that worker while others pull further files.
-struct Loader {
-    session: DiffSession,
-    cancelled: Arc<AtomicBool>,
-}
-
-impl Iterator for Loader {
-    type Item = (crate::git::FileChange, anyhow::Result<LoadedFile>);
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.cancelled.load(Ordering::Relaxed) {
-            return None;
-        }
-        self.session.load()
-    }
-}
-
 /// A standalone two-path comparison through the same three records.
 pub(crate) fn write_file(
+    runtime: &tokio::runtime::Runtime,
     before: &str,
     after: &str,
     sizes: (u64, u64),
-    compute: impl FnOnce() -> Result<DiffResult, QueryConflict>,
-    params: &crate::config::Params,
-    pipeline: &Pipeline,
+    compute: impl FnOnce() -> Result<DiffResult, QueryConflict> + Send + 'static,
+    params: Arc<crate::config::Params>,
+    pipeline: Arc<Pipeline>,
     options: Options,
     output: &mut impl Write,
 ) -> anyhow::Result<Ended> {
     let file = crate::git::FileChange::standalone(before, after);
     let entry = file.manifest_entry();
-    let mut output = BufWriter::new(output);
     let start = Event::Start {
-        version: if options.updates { 4 } else { VERSION },
+        version: VERSION,
         lhs: Snapshot::Path {
             path: before.to_owned(),
         },
@@ -366,88 +324,61 @@ pub(crate) fn write_file(
         },
         files: vec![entry.clone()],
     };
-    serde_json::to_writer(&mut output, &start)?;
-    output.write_all(b"\n")?;
-    output.flush()?;
-    let (record, failed, aborted) = match compute() {
-        Err(conflict) => (
-            Some(Event::File {
-                file: file.sides,
-                visibility: Visibility::default(),
-                outcome: Outcome::Error {
-                    error: wire_error(&anyhow::Error::from(conflict)),
-                },
-            }),
-            true,
-            None,
-        ),
-        Ok(result) => {
-            let projected = project::diff(
-                &result,
-                Inputs {
-                    file: &file.sides,
-                    sizes,
-                    syntax: match options.syntax {
-                        true => syntax_spans(&result, params),
-                        false => (Vec::new(), Vec::new()),
+    write_output(
+        runtime,
+        move |sender| async move {
+            sender.send(start)?;
+            let (send, receive) = tokio::sync::oneshot::channel();
+            let sides = file.sides.clone();
+            rayon::spawn(move || {
+                let projected = compute().map(|result| {
+                    project::diff(
+                        &result,
+                        Inputs {
+                            file: &sides,
+                            sizes,
+                            syntax: if options.syntax {
+                                syntax_spans(&result, &params)
+                            } else {
+                                (Vec::new(), Vec::new())
+                            },
+                        },
+                    )
+                });
+                let _ = send.send(projected);
+            });
+            let result = match receive.await? {
+                Ok(diff) => present(&pipeline, &entry, None, diff)
+                    .await
+                    .map(|(visibility, diff)| (visibility, Outcome::Diff { diff })),
+                Err(conflict) => Ok((
+                    Visibility::default(),
+                    Outcome::Error {
+                        error: wire_error(&conflict.into()),
                     },
-                },
-            );
-            match shape(pipeline, &entry, projected, options.updates) {
-                Ok((visibility, diff)) => (
-                    Some(Event::File {
+                )),
+            };
+            let (succeeded, failed, aborted) = match result {
+                Ok((visibility, outcome)) => {
+                    let failed = matches!(outcome, Outcome::Error { .. });
+                    sender.send(Event::File {
                         file: file.sides,
                         visibility,
-                        outcome: Outcome::Diff { diff },
-                    }),
-                    false,
-                    None,
-                ),
-                Err(error) => (None, true, Some(wire_error(&error))),
-            }
-        }
-    };
-    if let Some(record) = &record {
-        serde_json::to_writer(&mut output, record)?;
-        output.write_all(b"\n")?;
-    }
-    output.flush()?;
-    let mut enrichment_failed = false;
-    if options.updates {
-        if let Some(Event::File {
-            outcome: Outcome::Diff {
-                diff: Diff::Text { sides, .. },
-            },
-            ..
-        }) = &record
-        {
-            let event = enrich_event(pipeline, &entry, sides);
-            enrichment_failed = matches!(&event, Event::Annotations { error: Some(_), .. });
-            serde_json::to_writer(&mut output, &event)?;
-            output.write_all(b"\n")?;
-        }
-    }
-    let ended = Ended {
-        failed: failed || enrichment_failed,
-        aborted: aborted.is_some(),
-    };
-    serde_json::to_writer(
-        &mut output,
-        &Event::Complete {
-            succeeded: u32::from(matches!(
-                &record,
-                Some(Event::File {
-                    outcome: Outcome::Diff { .. },
-                    ..
-                })
-            )),
-            failed: u32::from(failed),
-            aborted,
+                        outcome,
+                    })?;
+                    (u32::from(!failed), u32::from(failed), None)
+                }
+                Err(error) => (0, 1, Some(wire_error(&error))),
+            };
+            sender.send(Event::Complete {
+                succeeded,
+                failed,
+                aborted,
+            })?;
+            Ok(())
         },
-    )?;
-    output.write_all(b"\n")?;
-    output.flush()?;
-    Ok(ended)
+        output,
+    )
 }
 
 /// Collect complete and default-visible coverage together. A paired leaf counts
@@ -567,6 +498,7 @@ mod visible_tests {
                 start: pos(lines.0),
                 end: pos(lines.1),
             },
+            relations: Vec::new(),
             tags: vec![],
             visibility: Visibility {
                 collapsed,
@@ -594,6 +526,7 @@ mod visible_tests {
                 start: pos(lines.0),
                 end: pos(lines.1),
             },
+            relations: Vec::new(),
             tags: vec![],
             visibility: Visibility {
                 collapsed,
@@ -710,24 +643,31 @@ mod conflict_tests {
         )])
         .unwrap();
         let mut output = Vec::new();
+        let params = Arc::new(params);
+        let compute_params = params.clone();
         let ended = write_file(
+            crate::test_runtime(),
             "a.rs",
             "b.rs",
             (0, 0),
-            || {
+            move || {
                 DiffResult::try_from_sources_with_params(
                     "src/lib.rs",
                     "fn f() {\n    one();\n}\n",
                     "fn f() {\n    two();\n}\n",
-                    &params,
+                    &compute_params,
                 )
             },
-            &params,
-            &Pipeline::default(),
-            Options {
-                syntax: false,
-                updates: false,
-            },
+            params,
+            Arc::new(
+                Pipeline::from_config(
+                    &crate::config::Config::from_toml("[plugins]\norder = []\n").unwrap(),
+                    std::path::Path::new("."),
+                    std::num::NonZeroUsize::MIN,
+                )
+                .unwrap(),
+            ),
+            Options { syntax: false },
             &mut output,
         )
         .unwrap();
@@ -747,5 +687,70 @@ mod conflict_tests {
         );
         assert_eq!(records[2]["failed"], 1);
         assert!(records[2].get("aborted").is_none());
+    }
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn production_finishes_while_the_writer_is_blocked() {
+        struct BlockedWriter {
+            started: Option<mpsc::Sender<()>>,
+            finished: mpsc::Receiver<()>,
+            bytes: Vec<u8>,
+        }
+        impl Write for BlockedWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if let Some(started) = self.started.take() {
+                    started.send(()).unwrap();
+                    self.finished
+                        .recv_timeout(Duration::from_secs(10))
+                        .expect("production must finish while the writer is blocked");
+                }
+                self.bytes.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let (started, writing) = mpsc::channel();
+        let (finished, completed) = mpsc::channel();
+        let mut output = BlockedWriter {
+            started: Some(started),
+            finished: completed,
+            bytes: vec![],
+        };
+        write_output(
+            crate::test_runtime(),
+            move |sender| async move {
+                let event = || Event::Complete {
+                    succeeded: 0,
+                    failed: 0,
+                    aborted: None,
+                };
+                sender.send(event())?;
+                tokio::task::spawn_blocking(move || writing.recv_timeout(Duration::from_secs(10)))
+                    .await
+                    .expect("waiting for the writer does not panic")?;
+                // These records are produced only after the writer blocks. A bounded
+                // queue, or polling this future from the writer, would deadlock here.
+                for _ in 0..100 {
+                    sender.send(event())?;
+                }
+                finished.send(())?;
+                Ok(())
+            },
+            &mut output,
+        )
+        .unwrap();
+        assert_eq!(
+            output.bytes.iter().filter(|&&byte| byte == b'\n').count(),
+            101
+        );
     }
 }

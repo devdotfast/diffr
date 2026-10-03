@@ -1,7 +1,8 @@
 //! File tags on the stream manifest, from bundled rules and git attributes.
 mod support;
 
-use git2::{IndexAddOption, Repository, Signature, Time};
+mod git_fixture;
+use gix::Repository;
 use serde_json::Value;
 use std::fs;
 use std::process::Output;
@@ -18,7 +19,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let repo = Repository::init(dir.path().join("repo")).unwrap();
+        let repo = gix::init(dir.path().join("repo")).unwrap();
         fs::create_dir_all(dir.path().join("home/.config/git")).unwrap();
         Self { dir, repo }
     }
@@ -29,46 +30,33 @@ impl Fixture {
         fs::write(path, text).unwrap();
     }
 
+    /// diffr's own config file, under the fixture's home.
+    fn config(&self, text: &str) {
+        let dir = self.dir.path().join("home/.config/diffr");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("config.toml"), text).unwrap();
+    }
+
     fn user_attributes(&self, text: &str) {
         fs::write(self.dir.path().join("home/.config/git/attributes"), text).unwrap();
     }
 
     fn commit(&self) -> String {
-        let mut index = self.repo.index().unwrap();
-        index.add_all(["*"], IndexAddOption::DEFAULT, None).unwrap();
-        index.write().unwrap();
-        let tree = self.repo.find_tree(index.write_tree().unwrap()).unwrap();
-        let signature = Signature::new(
-            "Fixture",
-            "fixture@example.invalid",
-            &Time::new(946684800, 0),
-        )
-        .unwrap();
-        let parent = self
-            .repo
-            .head()
-            .ok()
-            .map(|head| head.peel_to_commit().unwrap());
-        let parents: Vec<_> = parent.iter().collect();
-        self.repo
-            .commit(
-                Some("HEAD"),
-                &signature,
-                &signature,
-                "fixture\n",
-                &tree,
-                &parents,
-            )
-            .unwrap()
-            .to_string()
+        git_fixture::commit(&self.repo, "fixture")
     }
 
     fn run(&self, base: &str, head: &str) -> Output {
+        self.diff(&[base, head])
+    }
+
+    /// Diff `revisions`: two, or one against the working tree.
+    fn diff(&self, revisions: &[&str]) -> Output {
         let home = self.dir.path().join("home");
         get_base_command()
             .arg("--repo")
             .arg(self.dir.path().join("repo"))
-            .args([base, head, "--format", "ndjson"])
+            .args(revisions)
+            .args(["--format", "ndjson"])
             .env("HOME", &home)
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env_remove("GIT_DIR")
@@ -177,17 +165,213 @@ fn manifest_tags_follow_rules_then_attributes() {
     assert_eq!(fallback_of(&records, "src/lib.rs"), None);
 }
 
+/// The bundled classifier's path rules: Linguist's vendor and documentation
+/// patterns, its generated-file names, and diffr's test paths.
 #[test]
-fn a_malformed_diffr_tags_attribute_names_the_path() {
+fn bundled_path_rules_tag_vendored_docs_test_and_generated_files() {
+    let carries: &[(&str, &[&str])] = &[
+        (
+            "vendored",
+            &[
+                "node_modules/left-pad/index.js",
+                "third_party/zlib/inflate.c",
+                "static/jquery-3.7.1.min.js",
+            ],
+        ),
+        ("docs", &["docs/cli.md", "README.md", "CHANGELOG.md"]),
+    ];
+    let lacks: &[(&str, &[&str])] = &[
+        ("vendored", &["src/vendors.rs", "distribution/a.py"]),
+        ("docs", &["src/docs/mod.rs", "src/readme_parser.rs"]),
+        ("test", &["testing/helpers.rs", "src/testament.py"]),
+    ];
+    let exactly: &[(&str, &[&str])] = &[
+        ("tests/streaming/check.py", &["test"]),
+        ("src/App.test.tsx", &["test"]),
+        ("src/review/tests.rs", &["test"]),
+        ("tests/snapshots/Cargo.lock", &["generated", "test"]),
+        (
+            "node_modules/x/package-lock.json",
+            &["generated", "vendored"],
+        ),
+    ];
+    let paths: std::collections::BTreeSet<&str> = carries
+        .iter()
+        .chain(lacks)
+        .flat_map(|(_, paths)| paths.iter().copied())
+        .chain(exactly.iter().map(|(path, _)| *path))
+        .collect();
     let fixture = Fixture::new();
-    fixture.write("bad.txt", "one\n");
-    fixture.write(".gitattributes", "bad.txt diffr-tags=Not,ok\n");
+    for path in &paths {
+        fixture.write(path, "one\n");
+    }
     let base = fixture.commit();
-    fixture.write("bad.txt", "two\n");
+    for path in &paths {
+        fixture.write(path, "two\n");
+    }
     let head = fixture.commit();
-    let output = fixture.run(&base, &head);
-    assert_eq!(output.status.code(), Some(2));
-    assert!(output.stdout.is_empty());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("bad.txt: diffr-tags=Not,ok"), "{stderr}");
+    let records = records(&fixture.run(&base, &head));
+    for (tag, paths) in carries {
+        for path in *paths {
+            assert!(tags_of(&records, path).contains(tag), "{path} is {tag}");
+        }
+    }
+    for (tag, paths) in lacks {
+        for path in *paths {
+            assert!(
+                !tags_of(&records, path).contains(tag),
+                "{path} is not {tag}"
+            );
+        }
+    }
+    for (path, expected) in exactly {
+        assert_eq!(tags_of(&records, path), expected.to_vec(), "{path}");
+    }
+}
+
+/// Git attributes decide a tag outright, whatever the path rules said.
+#[test]
+fn linguist_attributes_set_or_clear_their_tags() {
+    let fixture = Fixture::new();
+    for path in [
+        "Cargo.lock",
+        "unset/Cargo.lock",
+        "false/Cargo.lock",
+        "src/schema.rs",
+        "src/true.rs",
+        "README.md",
+    ] {
+        fixture.write(path, "one\n");
+    }
+    fixture.write(
+        ".gitattributes",
+        "unset/Cargo.lock -linguist-generated\nfalse/Cargo.lock linguist-generated=false\nsrc/schema.rs linguist-generated\nsrc/true.rs linguist-generated=true\nREADME.md linguist-vendored -linguist-documentation\n",
+    );
+    let base = fixture.commit();
+    for path in [
+        "Cargo.lock",
+        "unset/Cargo.lock",
+        "false/Cargo.lock",
+        "src/schema.rs",
+        "src/true.rs",
+        "README.md",
+    ] {
+        fixture.write(path, "two\n");
+    }
+    let head = fixture.commit();
+    let records = records(&fixture.run(&base, &head));
+    assert_eq!(tags_of(&records, "Cargo.lock"), vec!["generated"]);
+    assert_eq!(tags_of(&records, "unset/Cargo.lock"), Vec::<&str>::new());
+    assert_eq!(tags_of(&records, "false/Cargo.lock"), Vec::<&str>::new());
+    assert_eq!(tags_of(&records, "src/schema.rs"), vec!["generated"]);
+    assert_eq!(tags_of(&records, "src/true.rs"), vec!["generated"]);
+    assert_eq!(tags_of(&records, "README.md"), vec!["vendored"]);
+}
+
+/// `diffr-tags` must be a comma-separated list of tag names.
+#[test]
+fn every_malformed_diffr_tags_value_is_an_error() {
+    for attribute in [
+        "diffr-tags",
+        "diffr-tags=a,,b",
+        "diffr-tags=Schema",
+        "diffr-tags=-a",
+    ] {
+        let fixture = Fixture::new();
+        fixture.write("web/a.json", "1\n");
+        fixture.write(".gitattributes", &format!("web/a.json {attribute}\n"));
+        let base = fixture.commit();
+        fixture.write("web/a.json", "2\n");
+        let head = fixture.commit();
+        let output = fixture.run(&base, &head);
+        assert_eq!(output.status.code(), Some(2), "{attribute}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("web/a.json: diffr-tags"),
+            "{attribute}: {stderr}"
+        );
+    }
+}
+
+/// A working-tree side names no stored blob: it carries git's null id, and the
+/// classifier reads its content from the file system.
+#[test]
+fn working_tree_content_is_classified_from_the_file_system() {
+    let fixture = Fixture::new();
+    let go = "package api\n\nfunc A() int {\n\treturn 1\n}\n";
+    fixture.write("api/service.go", go);
+    let base = fixture.commit();
+    fixture.write(
+        "api/service.go",
+        &format!("// Code generated by protoc-gen-go. DO NOT EDIT.\n{go}"),
+    );
+    let output = fixture.diff(&[&base]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let records = records(&output);
+    assert_eq!(tags_of(&records, "api/service.go"), vec!["generated"]);
+    let entry = records[0]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| path_of(&entry["file"]) == "api/service.go")
+        .unwrap();
+    assert_eq!(entry["file"]["rhs"]["oid"], "0".repeat(40));
+    assert_ne!(entry["file"]["lhs"]["oid"], "0".repeat(40));
+}
+
+fn visibility_of<'a>(records: &'a [Value], path: &str) -> Option<&'a Value> {
+    records
+        .iter()
+        .find(|record| record["type"] == "file" && path_of(&record["file"]) == path)
+        .and_then(|record| record.get("visibility"))
+}
+
+/// By default the classifier hides generated, vendored and test files, and
+/// deleted ones: each is diffed by line and shown behind its reason.
+#[test]
+fn hidden_files_are_diffed_by_line_and_shown_behind_their_reason() {
+    let fixture = Fixture::new();
+    let rust = |n: u32| format!("fn a() -> u32 {{\n    {n}\n}}\n");
+    for path in ["vendor/lib/a.rs", "tests/a.rs", "src/a.rs", "src/gone.rs"] {
+        fixture.write(path, &rust(1));
+    }
+    let base = fixture.commit();
+    for path in ["vendor/lib/a.rs", "tests/a.rs", "src/a.rs"] {
+        fixture.write(path, &rust(2));
+    }
+    fs::remove_file(fixture.dir.path().join("repo/src/gone.rs")).unwrap();
+    let head = fixture.commit();
+
+    let defaults = records(&fixture.run(&base, &head));
+    let hidden = |label: &str| Some(serde_json::json!({"collapsed": true, "label": label}));
+    assert_eq!(
+        visibility_of(&defaults, "vendor/lib/a.rs").cloned(),
+        hidden("Vendored file · hidden by default")
+    );
+    assert_eq!(fallback_of(&defaults, "vendor/lib/a.rs"), Some("hidden"));
+    assert_eq!(
+        visibility_of(&defaults, "tests/a.rs").cloned(),
+        hidden("Test file · hidden by default")
+    );
+    assert_eq!(
+        visibility_of(&defaults, "src/gone.rs").cloned(),
+        hidden("Deleted file · hidden by default")
+    );
+    assert_eq!(visibility_of(&defaults, "src/a.rs"), None);
+    assert_eq!(fallback_of(&defaults, "src/a.rs"), None);
+
+    fixture.config("[classifier]\nhide = []\nhide_deleted = false\n");
+    let shown = records(&fixture.run(&base, &head));
+    for path in ["vendor/lib/a.rs", "tests/a.rs", "src/gone.rs"] {
+        assert_eq!(visibility_of(&shown, path), None, "{path}");
+    }
+    assert_eq!(
+        fallback_of(&shown, "vendor/lib/a.rs"),
+        None,
+        "a shown vendored file is diffed structurally"
+    );
 }

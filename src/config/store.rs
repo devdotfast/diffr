@@ -368,7 +368,7 @@ mod tests {
         )
         .unwrap();
         let path = dir.path().join("config.toml");
-        let order = "order = ['bundled.context', 'bundled.hide-files', 'bundled.deleted-bodies', 'bundled.test-bodies', 'bundled.removed-runs', 'bundled.summarize', 'bundled.group', 'external.mine']";
+        let order = "order = ['bundled.context', 'bundled.deleted-bodies', 'bundled.test-bodies', 'bundled.removed-runs', 'bundled.summarize', 'bundled.group', 'external.mine']";
         std::fs::write(
             &path,
             format!("[plugins]\n{order}\n[plugins.external.mine]\npath = 'plugins/mine'\n"),
@@ -592,7 +592,7 @@ mod sparse_tests {
         let path = dir.path().join("config.toml");
         std::fs::write(
             &path,
-            "[plugins.bundled.hide-files]\ntags = [\n  # keep generated code out\n  \"generated\",\n  \"vendored\",\n  \"test\", # tests too\n]\n",
+            "[classifier]\nhide = [\n  # keep generated code out\n  \"generated\",\n  \"vendored\",\n  \"test\", # tests too\n]\n",
         )
         .unwrap();
         set(&path, "diff.graph_limit", "42").unwrap();

@@ -1,10 +1,9 @@
 //! The plugin host and the bundled plugins, run the way the stream runs
 //! them: a file projected with the bundled queries, then each plugin's
-//! native code through a [`Pipeline`].
+//! components through a [`Pipeline`].
 mod context;
 mod deleted_bodies;
 mod group;
-mod hide_files;
 mod removed_runs;
 mod summarize;
 mod test_bodies;
@@ -12,10 +11,41 @@ mod test_bodies;
 use super::*;
 use crate::config::{Config, Params};
 use crate::options::DiffOptions;
-use crate::protocol::{project, Diff, FileRef};
-use diffr_plugin_sdk::tree::{docstring_of, has_tag, is_fold, walk};
-use diffr_plugin_sdk::{FileEntry, Move, Plugin};
+use crate::plugin::cursor::Cursor;
+use crate::protocol::{project, Diff, FileRef, Node, Region, Source};
 use serde_json::json;
+use std::num::NonZeroUsize;
+use std::path::Path;
+
+pub(crate) fn walk(regions: &[Region], visit: &mut impl FnMut(&Region)) {
+    for region in regions {
+        visit(region);
+        if let Node::Fold { children } = &region.node {
+            walk(children, visit);
+        }
+    }
+}
+
+pub(crate) fn walk_mut(regions: &mut [Region], visit: &mut impl FnMut(&mut Region)) {
+    for region in regions {
+        visit(region);
+        if let Node::Fold { children } = &mut region.node {
+            walk_mut(children, visit);
+        }
+    }
+}
+
+pub(crate) fn line_count(region: &Region) -> usize {
+    region.range.lines().len()
+}
+
+pub(crate) fn is_fold(region: &Region) -> bool {
+    matches!(region.node, Node::Fold { .. })
+}
+
+pub(crate) fn has_tag(region: &Region, tag: &str) -> bool {
+    region.tags.iter().any(|own| own == tag)
+}
 
 /// Project a two-source comparison with the bundled queries, the way the
 /// stream does before the plugins run.
@@ -76,93 +106,47 @@ pub(crate) fn project_compiled(
     (file, sides)
 }
 
-/// A manifest entry for `path` on the sides `sides` names.
-pub(crate) fn manifest<T>(path: &str, sides: &tree::Pairing<T>, status: FileStatus) -> FileChange {
-    let file_ref = || FileRef {
-        path: path.to_owned(),
-        oid: String::new(),
-        mode: String::new(),
-    };
-    FileChange {
-        file: match sides {
-            tree::Pairing::Both { .. } => Pairing::Both {
-                lhs: file_ref(),
-                rhs: file_ref(),
-            },
-            tree::Pairing::LeftOnly { .. } => Pairing::LeftOnly { lhs: file_ref() },
-            tree::Pairing::RightOnly { .. } => Pairing::RightOnly { rhs: file_ref() },
-        },
-        status,
-        tags: Vec::new(),
-    }
-}
-
-/// The wire's sides as the trees plugins read.
-pub(crate) fn trees(sides: &Pairing<protocol::Source>) -> tree::Pairing<tree::Source> {
-    match sides {
-        Pairing::Both { lhs, rhs } => tree::Pairing::Both {
-            lhs: to_tree(lhs),
-            rhs: to_tree(rhs),
-        },
-        Pairing::LeftOnly { lhs } => tree::Pairing::LeftOnly { lhs: to_tree(lhs) },
-        Pairing::RightOnly { rhs } => tree::Pairing::RightOnly { rhs: to_tree(rhs) },
-    }
-}
-
-/// Trees built by hand, as the wire's sides.
-pub(crate) fn wire(sides: tree::Pairing<tree::Source>) -> Pairing<protocol::Source> {
-    let source = |side: tree::Source| protocol::Source {
-        text: side.text,
-        syntax: Vec::new(),
-        regions: from_tree(side.regions),
-    };
-    match sides {
-        tree::Pairing::Both { lhs, rhs } => Pairing::Both {
-            lhs: source(lhs),
-            rhs: source(rhs),
-        },
-        tree::Pairing::LeftOnly { lhs } => Pairing::LeftOnly { lhs: source(lhs) },
-        tree::Pairing::RightOnly { rhs } => Pairing::RightOnly { rhs: source(rhs) },
-    }
-}
-
-pub(crate) fn lhs(sides: &tree::Pairing<tree::Source>) -> &tree::Source {
+pub(crate) fn lhs(sides: &Pairing<Source>) -> &Source {
     sides.lhs().expect("a before side")
 }
 
-pub(crate) fn rhs(sides: &tree::Pairing<tree::Source>) -> &tree::Source {
+pub(crate) fn rhs(sides: &Pairing<Source>) -> &Source {
     sides.rhs().expect("an after side")
 }
 
-/// A pipeline of the bundled plugin `name` alone, made with its defaults and
-/// `overrides`.
+/// A pipeline of the bundled plugin `name` alone, configured with
+/// `overrides` the way a settings file would.
 pub(crate) fn bundled(name: &str, overrides: serde_json::Value) -> Pipeline {
-    let serde_json::Value::Object(mut options) = overrides else {
-        panic!("overrides are an object");
+    configured(&format!(
+        "[plugins]\norder = ['bundled.{name}']\n[plugins.bundled.{name}]\nenabled = true\n{}",
+        options(overrides)
+    ))
+    .unwrap()
+}
+
+/// A one-worker pipeline from a settings file's text.
+pub(crate) fn configured(toml: &str) -> anyhow::Result<Pipeline> {
+    let config = Config::from_toml(toml)?;
+    Pipeline::from_config(&config, Path::new("."), NonZeroUsize::MIN)
+}
+
+/// Plugin options as the lines of a settings table.
+pub(crate) fn options(options: serde_json::Value) -> String {
+    let serde_json::Value::Object(options) = options else {
+        panic!("options are an object");
     };
-    builtin::manifest(name)
-        .expect("a bundled plugin")
-        .fill_defaults(&mut options);
-    let mut pipeline = Pipeline::default();
-    pipeline
-        .push(
-            name,
-            serde_json::Value::Object(options),
-            &|host, options| {
-                if let Some(bytes) = builtin::component(name) {
-                    let engine = super::wasm::engine()?;
-                    super::wasm::WasmPlugin::load(
-                        &engine,
-                        &super::config::ComponentSource::Bundled(bytes),
-                    )?
-                    .create(host, options)
-                } else {
-                    native::registered(native::lookup(name)?.expect("native code"), host, options)
-                }
-            },
-        )
-        .unwrap();
-    pipeline
+    toml::to_string(&options).unwrap()
+}
+
+/// Run `pipeline` on `sides` in place, as the stream does.
+pub(crate) fn shape(
+    pipeline: &Pipeline,
+    file: &FileChange,
+    sides: &mut Pairing<Source>,
+) -> anyhow::Result<protocol::Visibility> {
+    let (edited, visibility) = crate::test_runtime().block_on(pipeline.run(file, sides.clone()))?;
+    *sides = edited;
+    Ok(visibility)
 }
 
 /// Run the bundled plugin `name` with `overrides` and carry out its moves.
@@ -172,56 +156,43 @@ pub(crate) fn run(
     file: &FileChange,
     sides: &mut Pairing<protocol::Source>,
 ) {
-    bundled(name, overrides).run(file, sides).unwrap();
+    shape(&bundled(name, overrides), file, sides).unwrap();
 }
 
-/// Run the bundled plugin `name` with `overrides` on trees built by hand,
-/// and carry out its moves.
-pub(crate) fn run_trees(
-    name: &str,
-    overrides: serde_json::Value,
-    file: &FileChange,
-    sides: &mut tree::Pairing<tree::Source>,
-) {
-    let mut wired = wire(sides.clone());
-    run(name, overrides, file, &mut wired);
-    *sides = trees(&wired);
-}
-
-/// The moves the only plugin of `pipeline` asks for, not carried out.
-pub(crate) fn moves(
+/// Run a pipeline and inspect the sides it left, without changing `sides`.
+fn edited(
     pipeline: &Pipeline,
     file: &FileChange,
-    sides: &Pairing<protocol::Source>,
-) -> anyhow::Result<Vec<Move>> {
-    let [plugin] = &pipeline.plugins[..] else {
-        panic!("one plugin");
-    };
-    let records = super::source_sides(&trees(sides));
-    plugin
-        .runner
-        .mutate(pipeline.host(&plugin.name), &file_entry(file), &records)
+    sides: &Pairing<Source>,
+) -> anyhow::Result<Pairing<Source>> {
+    Ok(crate::test_runtime()
+        .block_on(pipeline.run(file, sides.clone()))?
+        .0)
 }
 
 /// For each `deleted-bodies:function` body on the after side, the first line
-/// of the body and the lines of its docstring, as `docstring_of` finds it.
+/// of the body and the lines of its docstring, as the query relationship identifies it.
 fn documented(path: &str, after: &str) -> Vec<(u32, Option<(u32, u32)>)> {
-    let (_, sides) = project(path, "", after);
-    let sides = trees(&sides);
+    let (file, sides) = project(path, "", after);
     let source = rhs(&sides);
+    let cursor = Cursor::new(file_entry(&file), sides.clone());
     let mut bodies = Vec::new();
     walk(&source.regions, &mut |region| {
         if is_fold(region) && has_tag(region, "deleted-bodies:function") {
-            let docstring = docstring_of(source, region, "deleted-bodies").map(|id| {
-                let mut lines = None;
-                walk(&source.regions, &mut |docstring| {
-                    if docstring.id == id {
-                        let range = docstring.range.lines();
-                        lines = Some((range.start, range.end));
-                    }
+            let docstring = cursor
+                .related(region.id, "documentation")
+                .unwrap()
+                .first()
+                .map(|id| {
+                    let mut lines = None;
+                    walk(&source.regions, &mut |docstring| {
+                        if docstring.id == *id {
+                            lines = Some(docstring.range.lines());
+                        }
+                    });
+                    let lines = lines.expect("a related region on the same side");
+                    (lines.start, lines.end)
                 });
-                lines.expect("the docstring is on this side")
-            });
             bodies.push((region.range.start.line, docstring));
         }
     });
@@ -292,17 +263,17 @@ fn go_and_javascript_comment_runs_document_functions() {
 
 #[test]
 fn the_default_pipeline_makes_every_plugin_that_is_on() {
-    let pipeline = Pipeline::from_config(&PluginsConfig::default(), Path::new(".")).unwrap();
-    let made: Vec<&str> = pipeline
+    let config = Config::default();
+    Pipeline::from_config(&config, Path::new("."), NonZeroUsize::MIN).unwrap();
+    let made: Vec<&str> = config
         .plugins
-        .iter()
-        .map(|plugin| &*plugin.name)
+        .enabled()
+        .map(|(reference, _)| reference.trim_start_matches("bundled."))
         .collect();
     assert_eq!(
         made,
         [
             "context",
-            "hide-files",
             "deleted-bodies",
             "test-bodies",
             "removed-runs",
@@ -310,119 +281,6 @@ fn the_default_pipeline_makes_every_plugin_that_is_on() {
         ],
         "the summarizer is off until turned on"
     );
-}
-
-/// Test plugins without options.
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NoOptions {}
-
-/// A plugin asking for a move that cannot be carried out.
-struct Bad;
-
-impl Plugin for Bad {
-    type Options = NoOptions;
-
-    fn new(_: NoOptions) -> anyhow::Result<Self> {
-        Ok(Self)
-    }
-
-    fn classify(&self, _: &FileEntry) -> anyhow::Result<Vec<String>> {
-        Ok(Vec::new())
-    }
-
-    fn mutate(&self, _: &FileEntry, _: &tree::Pairing<tree::Source>) -> anyhow::Result<Vec<Move>> {
-        Ok(vec![Move::SetCollapsed((99_999, true))])
-    }
-}
-
-/// Plugins adding tags: `a` and `z`; then `b`, checking it sees the tags
-/// before it; then one that is not a tag.
-struct TagsAZ;
-struct TagsB;
-struct NotATag;
-
-impl Plugin for TagsAZ {
-    type Options = NoOptions;
-
-    fn new(_: NoOptions) -> anyhow::Result<Self> {
-        Ok(Self)
-    }
-
-    fn classify(&self, _: &FileEntry) -> anyhow::Result<Vec<String>> {
-        Ok(vec!["a".to_owned(), "z".to_owned()])
-    }
-
-    fn mutate(&self, _: &FileEntry, _: &tree::Pairing<tree::Source>) -> anyhow::Result<Vec<Move>> {
-        Ok(Vec::new())
-    }
-}
-
-impl Plugin for TagsB {
-    type Options = NoOptions;
-
-    fn new(_: NoOptions) -> anyhow::Result<Self> {
-        Ok(Self)
-    }
-
-    fn classify(&self, file: &FileEntry) -> anyhow::Result<Vec<String>> {
-        assert_eq!(file.tags, ["a", "z"], "a plugin sees the tags before it");
-        Ok(vec!["b".to_owned()])
-    }
-
-    fn mutate(&self, _: &FileEntry, _: &tree::Pairing<tree::Source>) -> anyhow::Result<Vec<Move>> {
-        Ok(Vec::new())
-    }
-}
-
-impl Plugin for NotATag {
-    type Options = NoOptions;
-
-    fn new(_: NoOptions) -> anyhow::Result<Self> {
-        Ok(Self)
-    }
-
-    fn classify(&self, _: &FileEntry) -> anyhow::Result<Vec<String>> {
-        Ok(vec!["Not A Tag".to_owned()])
-    }
-
-    fn mutate(&self, _: &FileEntry, _: &tree::Pairing<tree::Source>) -> anyhow::Result<Vec<Move>> {
-        Ok(Vec::new())
-    }
-}
-
-/// A pipeline of test plugins, each made with no options.
-fn pipeline(plugins: Vec<(&str, native::Constructor)>) -> Pipeline {
-    let mut pipeline = Pipeline::default();
-    for (name, create) in plugins {
-        pipeline.push(name, json!({}), &create).unwrap();
-    }
-    pipeline
-}
-
-#[test]
-fn classifying_plugins_add_tags_in_order_and_a_bad_tag_is_an_error() {
-    let (mut file, _) = project("a.rs", "", "");
-    file.tags = vec!["z".to_owned()];
-    let tagging = pipeline(vec![
-        ("first", native::native::<TagsAZ>),
-        ("second", native::native::<TagsB>),
-    ]);
-    assert_eq!(tagging.classify(&file).unwrap(), ["a", "b", "z"]);
-    let bad = pipeline(vec![("bad", native::native::<NotATag>)]);
-    assert_eq!(
-        format!("{:#}", bad.classify(&file).unwrap_err()),
-        "plugin bad: classify a.rs: \"Not A Tag\" is not a tag; use lowercase letters, digits, '-' and '_'"
-    );
-}
-
-#[test]
-fn a_move_that_cannot_be_carried_out_fails_naming_the_plugin() {
-    let (file, mut sides) = project("a.rs", "fn a() {}\n", "fn b() {}\n");
-    let bad = pipeline(vec![("bad", native::native::<Bad>)]);
-    let error = bad.run(&file, &mut sides).unwrap_err();
-    assert!(error.downcast_ref::<MutationFailed>().is_some());
-    assert_eq!(format!("{error:#}"), "mutation bad: no region 99999");
 }
 
 #[test]
@@ -434,7 +292,7 @@ fn a_plugin_that_cannot_be_made_is_a_setup_error() {
     {
         return;
     }
-    let error = Pipeline::from_config(&config.plugins, Path::new("."))
+    let error = Pipeline::from_config(&config, Path::new("."), NonZeroUsize::MIN)
         .err()
         .expect("a summarizer without a key cannot be made");
     assert_eq!(
@@ -448,7 +306,7 @@ fn a_plugin_that_cannot_be_made_is_a_setup_error() {
         "[plugins.bundled.summarize]\nenabled = true\nprovider = 'openai'\nmodel = 'm'\napi_key = ''\nendpoint = ''\n",
     )
     .unwrap();
-    let error = Pipeline::from_config(&config.plugins, Path::new("."))
+    let error = Pipeline::from_config(&config, Path::new("."), NonZeroUsize::MIN)
         .err()
         .expect("OpenAI at its default endpoint needs a key");
     assert_eq!(
@@ -457,20 +315,34 @@ fn a_plugin_that_cannot_be_made_is_a_setup_error() {
     );
 }
 
+/// The manifest can accept an option the component itself rejects: the
+/// component's constructor has the last word, and fails setup.
 #[test]
 fn options_that_do_not_deserialize_are_a_setup_error() {
-    let mut pipeline = Pipeline::default();
-    let error = pipeline
-        .push("bad", json!({"extra": 1}), &native::native::<Bad>)
-        .unwrap_err();
-    assert_eq!(
-        format!("{error:#}"),
-        "plugins.bad: invalid options: unknown field `extra`, there are no fields at line 1 column 8"
-    );
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/shape/context/plugin.wasm"),
+        dir.path().join("plugin.wasm"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("plugin.toml"),
+        "name = 'context'\ntitle = 'Context'\n[options.extra]\ntype = 'integer'\ntitle = 'Extra'\n",
+    )
+    .unwrap();
+    let error = configured(&format!(
+        "[plugins]\norder = ['external.context']\n[plugins.external.context]\npath = {:?}\nextra = 1\n",
+        dir.path()
+    ))
+    .err()
+    .expect("unknown option rejected");
+    let error = format!("{error:#}");
+    assert!(error.contains("plugins.external.context"), "{error}");
+    assert!(error.contains("unknown field `extra`"), "{error}");
 }
 
 #[test]
-fn external_plugins_never_fall_back_to_a_native_registration() {
+fn external_plugins_require_a_component() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("plugin.toml"),
@@ -482,7 +354,7 @@ fn external_plugins_never_fall_back_to_a_native_registration() {
         dir.path(),
     )
     .unwrap();
-    let error = Pipeline::from_config(&config.plugins, dir.path())
+    let error = Pipeline::from_config(&config, dir.path(), NonZeroUsize::MIN)
         .err()
         .unwrap();
     let error = format!("{error:#}");
@@ -498,4 +370,38 @@ fn a_subset_of_bundled_plugins_can_use_shared_query_tags() {
         .unwrap();
 }
 
-mod deferred;
+#[test]
+fn documentation_relationship_comes_from_query_captures_not_distance() {
+    let parameters = (0..16)
+        .map(|i| format!("    arg{i}: u32,\n"))
+        .collect::<String>();
+    let source = format!("/// This belongs to f.\n/// Even with a long signature.\nfn f(\n{parameters}) {{\n    first();\n    second();\n}}\n");
+    assert_eq!(documented("long.rs", &source), [(20, Some((0, 2)))]);
+}
+
+/// A component's exports decide its kind: a shape plugin is no classifier,
+/// and the classifier is no shape plugin.
+#[test]
+fn a_plugin_configured_as_the_wrong_kind_is_a_setup_error() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let error = configured(&format!(
+        "[classifier]\npath = {:?}\n",
+        root.join("plugins/shape/context")
+    ))
+    .err()
+    .expect("a shape plugin is not a classifier");
+    assert!(
+        format!("{error:#}").contains("not a classifier"),
+        "{error:#}"
+    );
+    let error = configured(&format!(
+        "[plugins]\norder = ['external.classify']\n[plugins.external.classify]\npath = {:?}\n",
+        root.join("plugins/classify")
+    ))
+    .err()
+    .expect("the classifier is not a shape plugin");
+    assert!(
+        format!("{error:#}").contains("not a shape plugin"),
+        "{error:#}"
+    );
+}

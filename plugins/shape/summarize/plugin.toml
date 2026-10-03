@@ -1,0 +1,128 @@
+name = "summarize"
+title = "Summaries"
+description = "Pseudocode summaries for large new function bodies and tests."
+
+# Off by default: the summarizer needs an API key, and diffr stops at
+# startup when a plugin that is on cannot be made.
+[enabled]
+title = "Summarize functions and tests"
+description = "Summarize large new function bodies and right-side tests as pseudocode. Needs an API key: `api_key`, or the provider's variable in the environment: `GEMINI_API_KEY` or `GOOGLE_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`."
+default = false
+
+[options.provider]
+enum = ["gemini", "openai", "anthropic"]
+"x-enum-titles" = ["Gemini", "OpenAI", "Anthropic"]
+title = "Provider"
+description = "Which model API to call. `openai` also reaches OpenRouter and any other OpenAI-compatible server through `endpoint`."
+default = "gemini"
+
+[options.model]
+type = "string"
+"x-reset-by" = "provider"
+title = "Model"
+description = "The model name sent to the provider. Unset uses the provider's default."
+
+[options.model."x-default-by"]
+key = "provider"
+values = { gemini = "gemini-3.8-flash", openai = "gpt-6-luna", anthropic = "claude-haiku-4-5" }
+
+[options.min_lines]
+type = "integer"
+minimum = 0
+title = "Shortest body to summarize (lines)"
+description = "New function bodies shorter than this are shown as code, not summarized: pseudocode only pays off once the body is long."
+default = 20
+
+[options.api_key]
+type = "string"
+"x-reset-by" = "provider"
+title = "API key"
+description = "Sent to the selected provider. The provider's variable in the environment is used when this is unset. Optional for `openai` with a custom `endpoint`."
+
+[options.endpoint]
+type = "string"
+"x-reset-by" = "provider"
+title = "Endpoint URL"
+description = "Override the provider's base URL, for proxies, OpenAI-compatible servers (for example `https://openrouter.ai/api/v1` or `http://localhost:11434/v1`) and tests. Empty uses the provider's default."
+
+[options.request_timeout_ms]
+type = "integer"
+minimum = 1
+title = "Request timeout (ms)"
+description = "Connect, first-byte and between-byte timeout, in milliseconds."
+default = 60000
+
+[options.retries]
+type = "integer"
+minimum = 0
+title = "Retries"
+description = "Retries after a timeout, rate limit, or server error before the run is aborted."
+default = 3
+
+[options.system_prompt]
+type = "string"
+title = "System prompt"
+description = "The system instruction sent with every request; diffr builds each request's message from one body's numbered lines and its documentation. Unset uses the default: https://github.com/devdotfast/diffr/blob/main/plugins/shape/summarize/plugin.toml#L66-L72"
+default = """\
+For each listed fold, rewrite that function body as short \
+pseudocode. Keep the names. No prose, no comments, no code fences. Use as few lines as \
+possible: about one pseudocode line per five source lines, and never more than a third \
+of the body's lines. When a fold lists a doc, also set "summary" to one sentence copied \
+verbatim from that doc; otherwise leave it empty. Answer with a JSON object whose \
+"summaries" array holds one {"id", "summary", "pseudocode"} object per fold."""
+
+[options.tests]
+type = "boolean"
+title = "Summarize tests"
+description = "Summarize right-side test bodies, including modified and unchanged tests in diffed files."
+default = true
+
+[options.test_min_lines]
+type = "integer"
+minimum = 0
+title = "Shortest test body to summarize (lines)"
+description = "Test bodies shorter than this keep their ordinary fold labels."
+default = 20
+
+# Per-provider facts the summarizer and settings screens share. Settings
+# screens do not edit an object option, so this is a file-only override.
+[options.provider_details]
+type = "object"
+"x-reset-by" = "provider"
+title = "Provider details"
+description = "The provider's default endpoint, the environment variables that hold its key, and whether a custom endpoint may go without a key."
+required = ["endpoint", "key_variables", "keyless_custom_endpoint"]
+additionalProperties = false
+
+[options.provider_details.properties]
+endpoint = { type = "string" }
+key_variables = { type = "array", items = { type = "string" } }
+keyless_custom_endpoint = { type = "boolean" }
+
+[options.provider_details."x-default-by"]
+key = "provider"
+
+[options.provider_details."x-default-by".values.gemini]
+endpoint = "https://generativelanguage.googleapis.com"
+key_variables = ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+keyless_custom_endpoint = false
+
+[options.provider_details."x-default-by".values.openai]
+endpoint = "https://api.openai.com/v1"
+key_variables = ["OPENAI_API_KEY"]
+keyless_custom_endpoint = true
+
+[options.provider_details."x-default-by".values.anthropic]
+endpoint = "https://api.anthropic.com"
+key_variables = ["ANTHROPIC_API_KEY"]
+keyless_custom_endpoint = false
+
+# The fold queries for each language, as files in this folder.
+[queries]
+rust = "queries/rust.scm"
+python = "queries/python.scm"
+go = "queries/go.scm"
+javascript = "queries/javascript.scm"
+javascriptjsx = "queries/javascript.scm"
+typescript = "queries/javascript.scm"
+typescripttsx = "queries/javascript.scm"

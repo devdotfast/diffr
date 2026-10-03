@@ -3,7 +3,8 @@
 //! fixtures example classifies, reads a file, runs git and moves regions.
 mod support;
 
-use git2::{IndexAddOption, Repository, Signature, Time};
+mod git_fixture;
+use gix::Repository;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,9 +18,6 @@ use tempfile::TempDir;
 fn build_plugins() {
     static BUILD: Once = Once::new();
     BUILD.call_once(|| {
-        if std::env::var_os("DIFFR_PLUGINS_BUILT").is_some() {
-            return;
-        }
         let output = Command::new(env!("CARGO"))
             .current_dir(root())
             .args([
@@ -54,7 +52,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let repo = Repository::init(dir.path().join("repo")).unwrap();
+        let repo = gix::init(dir.path().join("repo")).unwrap();
         fs::create_dir_all(dir.path().join("home/.config")).unwrap();
         Self { dir, repo }
     }
@@ -70,34 +68,7 @@ impl Fixture {
     }
 
     fn commit(&self, message: &str) -> String {
-        let mut index = self.repo.index().unwrap();
-        index.add_all(["*"], IndexAddOption::DEFAULT, None).unwrap();
-        index.update_all(["*"], None).unwrap();
-        index.write().unwrap();
-        let tree = self.repo.find_tree(index.write_tree().unwrap()).unwrap();
-        let signature = Signature::new(
-            "Fixture",
-            "fixture@example.invalid",
-            &Time::new(946684800, 0),
-        )
-        .unwrap();
-        let parent = self
-            .repo
-            .head()
-            .ok()
-            .map(|head| head.peel_to_commit().unwrap());
-        let parents: Vec<_> = parent.iter().collect();
-        self.repo
-            .commit(
-                Some("HEAD"),
-                &signature,
-                &signature,
-                message,
-                &tree,
-                &parents,
-            )
-            .unwrap()
-            .to_string()
+        git_fixture::commit(&self.repo, message)
     }
 
     /// A global config file holding `text`, under a config home of its own.
@@ -161,15 +132,8 @@ fn walk<'a>(regions: &'a Value, out: &mut Vec<&'a Value>) {
     }
 }
 
-fn file_record<'a>(records: &'a [Value], path: &str) -> &'a Value {
-    records
-        .iter()
-        .find(|record| record["type"] == "file" && path_of(&record["file"]) == path)
-        .unwrap_or_else(|| panic!("{path} has no file record"))
-}
-
 #[test]
-fn bundled_plugins_as_components_shape_files_exactly_as_natively() {
+fn bundled_and_external_components_produce_identical_files() {
     build_plugins();
     let fixture = Fixture::new();
     let body = |name: &str| {
@@ -228,15 +192,21 @@ fn bundled_plugins_as_components_shape_files_exactly_as_natively() {
     let head = fixture.commit("head\n");
 
     let options = "[plugins.bundled.deleted-bodies]\nmin_lines = 3\n[plugins.bundled.test-bodies]\nmin_lines = 2\n";
-    let native = fixture.config("native", options);
-    let plugin = |name: &str| root().join("plugins").join(name).display().to_string();
-    // Every bundled plugin that builds as a component; the summarizer is off.
+    let bundled = fixture.config("bundled", options);
+    let plugin = |name: &str| {
+        root()
+            .join("plugins/shape")
+            .join(name)
+            .display()
+            .to_string()
+    };
+    // Every bundled plugin from its folder, and the classifier; the summarizer is off.
     let wasm = fixture.config(
         "wasm",
         &format!(
-            "[plugins]\norder = ['external.context', 'external.hide-files', 'external.deleted-bodies', 'external.test-bodies', 'external.removed-runs', 'external.group']\n[plugins.external.context]\npath = {:?}\n[plugins.external.hide-files]\npath = {:?}\n[plugins.external.deleted-bodies]\npath = {:?}\nmin_lines = 3\n[plugins.external.test-bodies]\npath = {:?}\nmin_lines = 2\n[plugins.external.removed-runs]\npath = {:?}\n[plugins.external.group]\npath = {:?}\n",
+            "[classifier]\npath = {:?}\n[plugins]\norder = ['external.context', 'external.deleted-bodies', 'external.test-bodies', 'external.removed-runs', 'external.group']\n[plugins.external.context]\npath = {:?}\n[plugins.external.deleted-bodies]\npath = {:?}\nmin_lines = 3\n[plugins.external.test-bodies]\npath = {:?}\nmin_lines = 2\n[plugins.external.removed-runs]\npath = {:?}\n[plugins.external.group]\npath = {:?}\n",
+            root().join("plugins/classify").display().to_string(),
             plugin("context"),
-            plugin("hide-files"),
             plugin("deleted-bodies"),
             plugin("test-bodies"),
             plugin("removed-runs"),
@@ -244,12 +214,12 @@ fn bundled_plugins_as_components_shape_files_exactly_as_natively() {
         ),
     );
 
-    let native = sorted(&fixture.run(&native, &base, &head));
+    let bundled = sorted(&fixture.run(&bundled, &base, &head));
     let wasm = sorted(&fixture.run(&wasm, &base, &head));
-    assert_eq!(native.1.len(), 6);
+    assert_eq!(bundled.1.len(), 6);
     // The runs shape something, so that equal streams mean something.
     let mut collapsed = Vec::new();
-    for record in &native.1 {
+    for record in &bundled.1 {
         for side in ["lhs", "rhs"] {
             let mut regions = Vec::new();
             walk(&record["diff"][side]["regions"], &mut regions);
@@ -262,166 +232,12 @@ fn bundled_plugins_as_components_shape_files_exactly_as_natively() {
         }
     }
     for label in [
-        "2 collapsed regions · 7 lines",
+        "2 collapsed regions · 6 lines",
         "test body",
         "test module",
         "4 lines removed",
     ] {
         assert!(collapsed.contains(&label), "{label}: {collapsed:?}");
     }
-    assert_eq!(native, wasm);
-}
-
-/// The example's config: every bundled plugin, then `fixtures`, whose folder
-/// is written relative to the config file.
-fn fixtures_config(fixture: &Fixture, extra: &str) -> PathBuf {
-    let config = fixture.config("fixtures", "");
-    let relative = pathdiff(
-        &root().join("examples/plugins/fixtures"),
-        config.parent().unwrap(),
-    );
-    fs::write(
-        &config,
-        format!(
-            "[plugins]\norder = [\"bundled.context\", \"bundled.hide-files\", \"bundled.deleted-bodies\", \"bundled.test-bodies\", \"bundled.removed-runs\", \"bundled.summarize\", \"bundled.group\", \"external.fixtures\"]\n[plugins.external.fixtures]\npath = {:?}\n{extra}",
-            relative.display().to_string()
-        ),
-    )
-    .unwrap();
-    config
-}
-
-/// `path` relative to `base`, both absolute.
-fn pathdiff(path: &Path, base: &Path) -> PathBuf {
-    let path = fs::canonicalize(path).unwrap();
-    let base = fs::canonicalize(base).unwrap();
-    let common = path
-        .components()
-        .zip(base.components())
-        .take_while(|(a, b)| a == b)
-        .count();
-    let mut relative = PathBuf::new();
-    for _ in base.components().skip(common) {
-        relative.push("..");
-    }
-    for component in path.components().skip(common) {
-        relative.push(component);
-    }
-    relative
-}
-
-fn fixtures_repo() -> (Fixture, String, String) {
-    let fixture = Fixture::new();
-    let data = |last: &str| format!("header\none\ntwo\nthree\nfour\n{last}\n");
-    fixture.write("fixtures/data.txt", &data("five"));
-    fixture.write("src/marked.txt", &format!("// fixture\n{}", data("five")));
-    fixture.write("src/plain.txt", &data("five"));
-    // Deleted at head: the working tree no longer has it, so only the blob
-    // the file entry names can say whether it was a fixture.
-    fixture.write("src/gone.txt", &format!("// fixture\n{}", data("five")));
-    let base = fixture.commit("Add fixtures\n");
-    fixture.write("fixtures/data.txt", &data("six"));
-    fixture.write("src/marked.txt", &format!("// fixture\n{}", data("six")));
-    fixture.write("src/plain.txt", &data("six"));
-    fixture.remove("src/gone.txt");
-    let head = fixture.commit("Update fixtures\n");
-    (fixture, base, head)
-}
-
-#[test]
-fn the_fixtures_example_classifies_reads_files_runs_git_and_moves_regions() {
-    build_plugins();
-    let (fixture, base, head) = fixtures_repo();
-    let output = fixture.run(&fixtures_config(&fixture, ""), &base, &head);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let records = records(&output);
-    let tags = |path: &str| {
-        records[0]["files"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|entry| path_of(&entry["file"]) == path)
-            .unwrap()
-            .get("tags")
-            .cloned()
-    };
-    assert_eq!(
-        tags("fixtures/data.txt"),
-        Some(serde_json::json!(["fixture"]))
-    );
-    assert_eq!(
-        tags("src/marked.txt"),
-        Some(serde_json::json!(["fixture"])),
-        "the plugin reads the file and finds the marker"
-    );
-    assert_eq!(tags("src/plain.txt"), None);
-    assert_eq!(
-        tags("src/gone.txt"),
-        Some(serde_json::json!(["fixture"])),
-        "a deleted file is read from its blob, not the working tree"
-    );
-
-    for path in ["fixtures/data.txt", "src/marked.txt"] {
-        let record = file_record(&records, path);
-        assert_eq!(
-            record["visibility"],
-            serde_json::json!({"collapsed": true, "label": "Fixture · Update fixtures"}),
-            "{path}"
-        );
-        let mut regions = Vec::new();
-        walk(&record["diff"]["lhs"]["regions"], &mut regions);
-        let pieces: Vec<&Value> = regions
-            .into_iter()
-            .filter(|region| {
-                region["visibility"]["label"]
-                    .as_str()
-                    .is_some_and(|label| label.ends_with(" fixture lines"))
-            })
-            .collect();
-        assert_eq!(pieces.len(), 1, "{path}: {record}");
-        assert_eq!(pieces[0]["visibility"]["collapsed"], true);
-    }
-    let plain = file_record(&records, "src/plain.txt");
-    assert!(plain.get("visibility").is_none(), "{plain}");
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(
-        stderr.contains("[fixtures] fixtures/data.txt: last changed in \"Update fixtures\""),
-        "{stderr}"
-    );
-}
-
-#[test]
-fn a_guest_error_aborts_the_run_with_mutation_failed() {
-    build_plugins();
-    let (fixture, base, head) = fixtures_repo();
-    let output = fixture.run(&fixtures_config(&fixture, "fail = true\n"), &base, &head);
-    assert_eq!(output.status.code(), Some(2));
-    let records = records(&output);
-    let aborted = &records.last().unwrap()["aborted"];
-    assert_eq!(aborted["code"], "mutation_failed", "{aborted}");
-    let message = aborted["message"].as_str().unwrap();
-    assert!(
-        message.starts_with("mutation fixtures: asked to fail on "),
-        "{message}"
-    );
-}
-
-#[test]
-fn component_queries_are_validated_before_the_stream_starts() {
-    build_plugins();
-    let (fixture, base, head) = fixtures_repo();
-    let config = fixtures_config(&fixture, "query = '(not_a_rust_node) @fold'\n");
-    let output = fixture.run(&config, &base, &head);
-    assert!(!output.status.success());
-    assert!(
-        output.stdout.is_empty(),
-        "setup must fail before the stream starts"
-    );
-    let error = String::from_utf8_lossy(&output.stderr);
-    assert!(error.contains("fixtures/rust.scm"), "{error}");
-    assert!(error.contains("NodeType"), "{error}");
+    assert_eq!(bundled, wasm);
 }

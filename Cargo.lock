@@ -652,7 +652,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6184e33543162437515c2e2b48714794e37845ec9851711914eec9d308f6ebe8"
 
 [[package]]
-name = "diffr-cli"
+name = "diffr"
 version = "0.1.10"
 dependencies = [
  "anyhow",

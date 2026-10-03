@@ -1,5 +1,5 @@
 [package]
-name = "diffr-cli"
+name = "diffr"
 description = "Structural diffs with a streaming API and interactive terminal frontend."
 repository = "https://github.com/devdotfast/diffr"
 homepage = "https://github.com/devdotfast/diffr"

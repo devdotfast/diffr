@@ -9,16 +9,7 @@ authors = ["dev.fast"]
 keywords = ["diff", "syntax"]
 categories = ["development-tools", "command-line-utilities", "parser-implementations"]
 edition = "2021"
-# Goal: support at least 12 months of Rust versions, and be
-# conservative about upgrades to help packagers.
-#
-# https://releases.rs/ is a useful website to see when different Rust
-# versions were released.
-#
-# For reference, Debian stable is on 1.85 (see
-# https://tracker.debian.org/pkg/rustc) but Debian doesn't currently
-# package difftastic. Other distros are somewhat newer.
-rust-version = "1.85.0"
+rust-version = "1.95.0"
 
 include = [
         "/build.rs",

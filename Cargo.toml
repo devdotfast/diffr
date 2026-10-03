@@ -10,7 +10,7 @@ keywords = ["diff", "syntax"]
 categories = ["development-tools", "command-line-utilities", "parser-implementations"]
 edition = "2021"
 # Wasmtime 48 requires Rust 1.95.
-rust-version = "1.95.0"
+rust-version = "1.99.0"
 
 include = [
         "/build.rs",

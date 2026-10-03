@@ -677,7 +677,6 @@ struct Worker {
 impl Worker {
     /// Instantiate every component and run its constructor.
     async fn make(engine: &Engine, plugins: &[Component], workdir: &Path) -> anyhow::Result<Self> {
-        let started = Instant::now();
         let mut store = Store::new(engine, State::new(workdir)?);
         let mut exports = Vec::new();
         for component in plugins {
@@ -703,7 +702,6 @@ impl Worker {
                 Ok(instances)
             })
             .await??;
-        log::debug!("plugin worker made in {:?}", started.elapsed());
         Ok(Self { store, instances })
     }
 
@@ -784,7 +782,6 @@ async fn run_chain(
     let handle = accessor.with(|mut access| access.data_mut().table.push(cursor))?;
     let mut walked = Ok(());
     for instance in instances {
-        let started = Instant::now();
         walked = async {
             accessor.with(|mut access| -> anyhow::Result<()> {
                 access.data_mut().table.get_mut(&handle)?.rewind();
@@ -800,11 +797,6 @@ async fn run_chain(
         }
         .await
         .with_context(|| MutationFailed(instance.name.to_string()));
-        log::debug!(
-            "plugin {}: walk took {:?}",
-            instance.name,
-            started.elapsed()
-        );
         if walked.is_err() {
             break;
         }

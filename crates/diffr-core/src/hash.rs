@@ -13,4 +13,4 @@ pub(crate) type DftHashMap<K, V> = hashbrown::HashMap<K, V, BuildHasherDefault<F
 
 /// A fast hash set with no hash DoS protection. This is a simple
 /// alias, but added for consistency with `DftHashMap`.
-pub type DftHashSet<V> = FxHashSet<V>;
+pub(crate) type DftHashSet<V> = FxHashSet<V>;

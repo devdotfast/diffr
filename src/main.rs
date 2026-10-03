@@ -51,7 +51,7 @@ mod run;
 mod tags;
 mod version;
 
-use diffr_core::{config, engine, hash, pairing, parse, protocol, summary};
+use diffr_core::{config, engine, pairing, parse, present, protocol, summary};
 
 use crate::config::Params;
 

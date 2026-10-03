@@ -40,20 +40,21 @@
 #![warn(clippy::dbg_macro)]
 
 pub mod config;
-pub mod constants;
-pub mod diff;
+mod constants;
+mod diff;
 pub mod engine;
-pub mod hash;
-pub mod line_layout;
-pub mod line_parser;
-pub mod lines;
+mod hash;
+mod line_layout;
+mod line_parser;
+mod lines;
 pub mod options;
 pub mod pairing;
 pub mod parse;
 pub mod plugin;
+pub mod present;
 pub mod protocol;
 pub mod summary;
-pub mod words;
+mod words;
 
 #[macro_use]
 extern crate log;

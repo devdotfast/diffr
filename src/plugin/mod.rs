@@ -7,11 +7,13 @@
 //! the enabled components and runs them in order on each file.
 pub(crate) mod bindings;
 pub(crate) mod builtin;
+pub(crate) mod classify;
 pub(crate) mod config;
 pub(crate) mod cursor;
 pub(crate) mod queries;
 pub(crate) mod wasm;
 
+pub(crate) use classify::Classifier;
 pub(crate) use wasm::Pipeline;
 
 #[cfg(test)]

@@ -2,7 +2,7 @@
 use crate::config::{self, Config};
 use crate::git::{self, Comparison, FileParams, Operand, Result};
 use crate::options::DebugArgs;
-use crate::plugin::Pipeline;
+use crate::plugin::{Classifier, Pipeline};
 use crate::run;
 use clap::{
     error::ErrorKind, parser::ValueSource, ArgGroup, ArgMatches, Args, CommandFactory,
@@ -212,10 +212,12 @@ pub(crate) fn run(runtime: &tokio::runtime::Runtime) -> Result<i32> {
     }
     let config = args.config()?;
     let params = config.compile()?;
+    let mut classifier =
+        Classifier::from_config(&config, workspace).map_err(|error| format!("{error:#}"))?;
+    let mut listing = git::list(workspace, comparison, &files)?;
+    run::classify(&mut classifier, &mut listing).map_err(|error| format!("{error:#}"))?;
     let pipeline = Pipeline::from_config(&config, workspace, args.jobs)
         .map_err(|error| format!("{error:#}"))?;
-    let mut listing = git::list(workspace, comparison, &files)?;
-    run::classify(&pipeline, &mut listing).map_err(|error| format!("{error:#}"))?;
     let ended = run::stream(
         runtime,
         listing,

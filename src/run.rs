@@ -6,7 +6,7 @@ use crate::git::{self, FileError};
 use crate::hash::DftHashSet;
 use crate::options::DiffOptions;
 use crate::pairing::Pairing;
-use crate::plugin::{MutationFailed, Pipeline};
+use crate::plugin::{Classifier, MutationFailed, Pipeline};
 use crate::protocol::project::{self, Inputs};
 use crate::protocol::{
     Diff, Event, FileChange, LineRange, Node, Outcome, Problem, Region, Source, StructuralChanges,
@@ -38,13 +38,16 @@ pub(crate) struct Ended {
 }
 
 /// Tag every file before any is diffed; the start record needs the tags.
-pub(crate) fn classify(pipeline: &Pipeline, listing: &mut git::Listing) -> anyhow::Result<()> {
+pub(crate) fn classify(
+    classifier: &mut Classifier,
+    listing: &mut git::Listing,
+) -> anyhow::Result<()> {
     let entries: Vec<FileChange> = listing
         .files
         .iter()
         .map(|file| file.change.manifest_entry())
         .collect();
-    for (file, classified) in listing.files.iter_mut().zip(pipeline.classify(&entries)?) {
+    for (file, classified) in listing.files.iter_mut().zip(classifier.classify(&entries)?) {
         file.change.tags = classified.tags;
         file.change.hidden = classified.hidden;
     }

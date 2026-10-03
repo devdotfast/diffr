@@ -381,12 +381,14 @@ fn documentation_relationship_comes_from_query_captures_not_distance() {
 #[test]
 fn a_plugin_configured_as_the_wrong_kind_is_a_setup_error() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let error = configured(&format!(
+    let config = Config::from_toml(&format!(
         "[classifier]\npath = {:?}\n",
         root.join("plugins/shape/context")
     ))
-    .err()
-    .expect("a shape plugin is not a classifier");
+    .unwrap();
+    let error = Classifier::from_config(&config, Path::new("."))
+        .err()
+        .expect("a shape plugin is not a classifier");
     assert!(
         format!("{error:#}").contains("not a classifier"),
         "{error:#}"

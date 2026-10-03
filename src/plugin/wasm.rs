@@ -1,11 +1,11 @@
-//! Plugin workers: each is a thread holding an instance of every plugin. A
-//! file is walked by every plugin on one worker; files interleave while a
-//! plugin awaits I/O.
+//! Plugin workers: each is a thread holding an instance of every shape
+//! plugin. A file is walked by every plugin on one worker; files interleave
+//! while a plugin awaits I/O. The engine, store state and linker are shared
+//! with the [classifier](super::classify).
 use super::bindings::{
     self,
-    classifier::{DiffrClassifier, DiffrClassifierPre},
     exports::diffr::plugin::api::GuestPlugin,
-    types::{self, Attribute, FileEntry, MoveError, RegionIds, RegionView, RowSummary, Side, Tag},
+    types::{self, Attribute, FileEntry, MoveError, RegionIds, RegionView, RowSummary, Side},
     DiffrPlugin, DiffrPluginPre,
 };
 use super::config::{ComponentSource, Entry};
@@ -19,7 +19,6 @@ use gix::attrs::StateRef as AttrState;
 use gix::bstr::ByteSlice;
 use output::Prefixed;
 use serde_json::Value;
-use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,8 +32,8 @@ use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 mod output;
 
-/// The engine every component of one pipeline compiles with.
-fn engine() -> anyhow::Result<Engine> {
+/// The engine every component compiles with.
+pub(super) fn engine() -> anyhow::Result<Engine> {
     let mut config = Config::new();
     config.wasm_component_model(true);
     config.wasm_component_model_async(true);
@@ -45,8 +44,8 @@ fn engine() -> anyhow::Result<Engine> {
     Ok(Engine::new(&config)?)
 }
 
-/// One worker's Store, shared by its plugins.
-struct State {
+/// One Store's state, shared by the plugins in it.
+pub(super) struct State {
     wasi: WasiCtx,
     http: wasmtime_wasi_http::WasiHttpCtx,
     table: ResourceTable,
@@ -56,7 +55,7 @@ struct State {
 }
 
 impl State {
-    fn new(workdir: &Path) -> anyhow::Result<Self> {
+    pub(super) fn new(workdir: &Path) -> anyhow::Result<Self> {
         let mut wasi = WasiCtxBuilder::new();
         wasi.inherit_env()
             .stdout(Prefixed::new("plugins".into()))
@@ -386,63 +385,45 @@ struct Component {
     options: String,
 }
 
-/// The classifier, compiled and linked once and instantiated by every worker.
-struct Classifier {
-    pre: DiffrClassifierPre<State>,
-    /// JSON for the classifier's constructor.
-    options: String,
+/// Walk one file with every shape plugin in order, on whichever worker is
+/// free first.
+struct Job {
+    cursor: Cursor,
+    reply: oneshot::Sender<anyhow::Result<Cursor>>,
 }
 
-/// Every plugin a worker instantiates.
-struct Plugins {
-    classifier: Classifier,
-    shape: Vec<Component>,
-}
-
-/// Work for whichever worker is free first.
-enum Job {
-    /// The classifier's verdict on a file.
-    Classify(FileEntry, oneshot::Sender<anyhow::Result<Classified>>),
-    /// Walk the file with every shape plugin in order.
-    Run(Cursor, oneshot::Sender<anyhow::Result<Cursor>>),
-}
-
-/// The classifier and the enabled shape plugins, run by a pool of workers.
-/// Each worker holds an instance of every plugin; dropping the pipeline
-/// closes the queue and the workers stop once their files are done.
+/// The enabled shape plugins, run by a pool of workers. Each worker holds an
+/// instance of every plugin; dropping the pipeline closes the queue and the
+/// workers stop once their files are done.
 pub(crate) struct Pipeline {
     jobs: async_channel::Sender<Job>,
 }
 
+/// The host's imports: WASI, HTTP, and the `git` and `cursor` interfaces.
+/// The shape world's imports include everything the classifier's do, so one
+/// linker serves both.
+pub(super) fn linker(engine: &Engine) -> anyhow::Result<Linker<State>> {
+    let mut linker = Linker::<State>::new(engine);
+    wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+    wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
+    wasmtime_wasi::p3::add_to_linker(&mut linker)?;
+    wasmtime_wasi_http::p3::add_to_linker(&mut linker)?;
+    bindings::DiffrPlugin::add_to_linker::<State, HasSelf<State>>(&mut linker, |state| state)?;
+    Ok(linker)
+}
+
 impl Pipeline {
-    /// Compile the classifier and every enabled shape plugin once, and start
-    /// `workers` workers. Returns once every worker has made its instances,
-    /// so a plugin that cannot be made fails here.
+    /// Compile every enabled shape plugin once, and start `workers` workers.
+    /// Returns once every worker has made its instances, so a plugin that
+    /// cannot be made fails here.
     pub(crate) fn from_config(
         config: &crate::config::Config,
         workdir: &Path,
         workers: NonZeroUsize,
     ) -> anyhow::Result<Self> {
         let engine = engine()?;
-        let mut linker = Linker::<State>::new(&engine);
-        wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
-        wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
-        wasmtime_wasi::p3::add_to_linker(&mut linker)?;
-        wasmtime_wasi_http::p3::add_to_linker(&mut linker)?;
-        // The shape world's imports include everything the classifier's do.
-        bindings::DiffrPlugin::add_to_linker::<State, HasSelf<State>>(&mut linker, |state| state)?;
-        let classifier = Classifier {
-            pre: DiffrClassifierPre::new(link(
-                &engine,
-                &linker,
-                &config.classifier.folder().component(),
-            )?)
-            .map_err(anyhow::Error::from)
-            .context("not a classifier: it must export diffr:plugin/classify")
-            .context("classifier")?,
-            options: Value::Object(config.classifier.options.clone()).to_string(),
-        };
-        let shape = config
+        let linker = linker(&engine)?;
+        let plugins = config
             .plugins
             .enabled()
             .map(|(reference, entry)| {
@@ -450,7 +431,7 @@ impl Pipeline {
                     .with_context(|| format!("plugins.{reference}"))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
-        let plugins = Arc::new(Plugins { classifier, shape });
+        let plugins = Arc::new(plugins);
         let (jobs, queue) = async_channel::unbounded();
         let started: Vec<_> = (0..workers.get())
             .map(|_| spawn_worker(&engine, plugins.clone(), workdir, queue.clone()))
@@ -462,27 +443,6 @@ impl Pipeline {
         Ok(Self { jobs })
     }
 
-    /// The classifier's verdict on each file, in order.
-    pub(crate) fn classify(
-        &self,
-        files: &[protocol::FileChange],
-    ) -> anyhow::Result<Vec<Classified>> {
-        let replies = files
-            .iter()
-            .map(|file| {
-                let (reply, result) = oneshot::channel();
-                self.jobs
-                    .send_blocking(Job::Classify(file_entry(file), reply))
-                    .map_err(|_| trapped())?;
-                Ok(result)
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        replies
-            .into_iter()
-            .map(|result| result.blocking_recv().map_err(|_| trapped())?)
-            .collect()
-    }
-
     /// Run every shape plugin on one file's sides, on whichever worker is
     /// free. Returns the edited sides.
     pub(crate) async fn run(
@@ -492,7 +452,10 @@ impl Pipeline {
     ) -> anyhow::Result<Pairing<protocol::Source>> {
         let (reply, result) = oneshot::channel();
         self.jobs
-            .send(Job::Run(Cursor::new(file_entry(file), sides), reply))
+            .send(Job {
+                cursor: Cursor::new(file_entry(file), sides),
+                reply,
+            })
             .await
             .map_err(|_| trapped())?;
         let cursor = result.await.map_err(|_| trapped())??;
@@ -508,7 +471,8 @@ fn trapped() -> anyhow::Error {
 }
 
 /// Compile a component and link it against the host's imports.
-fn link(
+/// Compile a component and link it against the host's imports.
+pub(super) fn link(
     engine: &Engine,
     linker: &Linker<State>,
     source: &ComponentSource,
@@ -558,7 +522,7 @@ fn compile(
 /// it could not.
 fn spawn_worker(
     engine: &Engine,
-    plugins: Arc<Plugins>,
+    plugins: Arc<Vec<Component>>,
     workdir: &Path,
     jobs: async_channel::Receiver<Job>,
 ) -> anyhow::Result<oneshot::Receiver<anyhow::Result<()>>> {
@@ -601,34 +565,25 @@ struct Instance {
     configured: ResourceAny,
 }
 
-/// One worker's Store, its classifier and its instance of every shape plugin.
+/// One worker's Store and its instance of every shape plugin.
 struct Worker {
     store: Store<State>,
-    classifier: (DiffrClassifier, ResourceAny),
     instances: Vec<Instance>,
 }
 
 impl Worker {
     /// Instantiate every component and run its constructor.
-    async fn make(engine: &Engine, plugins: &Plugins, workdir: &Path) -> anyhow::Result<Self> {
+    async fn make(engine: &Engine, plugins: &[Component], workdir: &Path) -> anyhow::Result<Self> {
         let started = Instant::now();
         let mut store = Store::new(engine, State::new(workdir)?);
-        let classifier = plugins.classifier.pre.instantiate_async(&mut store).await?;
         let mut exports = Vec::new();
-        for component in &plugins.shape {
+        for component in plugins {
             exports.push(component.pre.instantiate_async(&mut store).await?);
         }
-        let (classifier, instances) = store
+        let instances = store
             .run_concurrent(async |accessor| -> anyhow::Result<_> {
-                let configured = classifier
-                    .diffr_plugin_classify()
-                    .classifier()
-                    .call_constructor(accessor, plugins.classifier.options.clone())
-                    .await?
-                    .map_err(anyhow::Error::msg)
-                    .context("classifier")?;
                 let mut instances = Vec::new();
-                for (component, exports) in plugins.shape.iter().zip(exports) {
+                for (component, exports) in plugins.iter().zip(exports) {
                     let configured = exports
                         .diffr_plugin_api()
                         .plugin()
@@ -642,28 +597,21 @@ impl Worker {
                         configured,
                     });
                 }
-                Ok(((classifier, configured), instances))
+                Ok(instances)
             })
             .await??;
         log::debug!("plugin worker made in {:?}", started.elapsed());
-        Ok(Self {
-            store,
-            classifier,
-            instances,
-        })
+        Ok(Self { store, instances })
     }
 
     /// Serve jobs until the queue closes.
     async fn serve(self, jobs: async_channel::Receiver<Job>) {
         let Self {
             mut store,
-            classifier,
             instances,
-            ..
         } = self;
         let served = store
             .run_concurrent(async |accessor| {
-                let classifier = &classifier;
                 let instances = &instances;
                 let mut pending: FuturesUnordered<futures::future::BoxFuture<'_, ()>> =
                     FuturesUnordered::new();
@@ -676,14 +624,9 @@ impl Worker {
                                 continue;
                             };
                             pending.push(Box::pin(async move {
-                                match job {
-                                    Job::Classify(file, reply) => {
-                                        let _ = reply.send(classify(accessor, classifier, file).await);
-                                    }
-                                    Job::Run(cursor, reply) => {
-                                        let _ = reply.send(run_chain(accessor, instances, cursor).await);
-                                    }
-                                }
+                                let _ = job
+                                    .reply
+                                    .send(run_chain(accessor, instances, job.cursor).await);
                             }));
                             // Wasmtime runs queued guest calls only once this future
                             // yields. Yield before taking another job so a computing job
@@ -699,9 +642,6 @@ impl Worker {
         if let Err(error) = served {
             log::error!("plugin worker trapped: {error:#}");
         }
-        if let Err(error) = classifier.1.resource_drop_async(&mut store).await {
-            log::error!("classifier: dropping configuration: {error:#}");
-        }
         for instance in instances {
             if let Err(error) = instance.configured.resource_drop_async(&mut store).await {
                 log::error!(
@@ -711,51 +651,6 @@ impl Worker {
             }
         }
     }
-}
-
-/// What the classifier decided about one file.
-pub(crate) struct Classified {
-    /// Tag names, sorted and deduplicated.
-    pub(crate) tags: Vec<String>,
-    /// Hide the file behind this reason.
-    pub(crate) hidden: Option<String>,
-}
-
-/// The classifier's verdict on a file, its tags as names.
-async fn classify(
-    accessor: &Accessor<State>,
-    (exports, configured): &(DiffrClassifier, ResourceAny),
-    file: FileEntry,
-) -> anyhow::Result<Classified> {
-    let path = match &file.file {
-        types::FileSides::Both((_, rhs)) | types::FileSides::RightOnly(rhs) => rhs.path.clone(),
-        types::FileSides::LeftOnly(lhs) => lhs.path.clone(),
-    };
-    let classification = exports
-        .diffr_plugin_classify()
-        .classifier()
-        .call_classify(accessor, *configured, file)
-        .await?
-        .map_err(anyhow::Error::msg)
-        .with_context(|| format!("classifier: {path}"))?;
-    let names = classification
-        .tags
-        .into_iter()
-        .map(|tag| match tag {
-            Tag::Generated => Ok(crate::tags::GENERATED.to_owned()),
-            Tag::Vendored => Ok("vendored".to_owned()),
-            Tag::Docs => Ok("docs".to_owned()),
-            Tag::Test => Ok("test".to_owned()),
-            Tag::Custom(name) if crate::tags::is_tag(&name) => Ok(name),
-            Tag::Custom(name) => Err(anyhow::anyhow!(
-                "classifier: {path}: {name:?} is not a tag; use lowercase letters, digits, '-' and '_'"
-            )),
-        })
-        .collect::<anyhow::Result<BTreeSet<String>>>()?;
-    Ok(Classified {
-        tags: names.into_iter().collect(),
-        hidden: classification.hidden,
-    })
 }
 
 /// Walk the file with every plugin in order.

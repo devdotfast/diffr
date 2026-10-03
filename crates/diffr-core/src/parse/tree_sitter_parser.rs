@@ -85,7 +85,6 @@ pub struct TreeSitterConfig {
 }
 
 // TODO: begin/end and object/end.
-#[cfg(feature = "lang-ocaml")]
 const OCAML_ATOM_NODES: [&str; 6] = [
     "character",
     "string",
@@ -131,7 +130,6 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
-        #[cfg(feature = "lang-apex")]
         Apex => {
             let language = tree_sitter::Language::new(diffr_grammars::APEX);
 
@@ -433,7 +431,6 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
-        #[cfg(feature = "lang-fsharp")]
         FSharp => {
             let language = tree_sitter::Language::new(diffr_grammars::FSHARP);
 
@@ -448,7 +445,6 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
-        #[cfg(feature = "lang-fortran")]
         Fortran => {
             let language = tree_sitter::Language::new(diffr_grammars::FORTRAN);
             TreeSitterConfig {
@@ -490,7 +486,6 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
-        #[cfg(feature = "lang-haskell")]
         Haskell => {
             let language = tree_sitter::Language::new(diffr_grammars::HASKELL);
             TreeSitterConfig {
@@ -657,7 +652,6 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
-        #[cfg(feature = "lang-julia")]
         Julia => {
             let language = tree_sitter::Language::new(diffr_grammars::JULIA);
 
@@ -806,7 +800,6 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
-        #[cfg(feature = "lang-ocaml")]
         OCaml => {
             let language = tree_sitter::Language::new(diffr_grammars::OCAML);
             TreeSitterConfig {
@@ -819,7 +812,6 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
-        #[cfg(feature = "lang-ocaml")]
         OCamlInterface => {
             let language = tree_sitter::Language::new(diffr_grammars::OCAML_INTERFACE);
             TreeSitterConfig {
@@ -919,7 +911,6 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
-        #[cfg(feature = "lang-qml")]
         Qml => {
             let language = tree_sitter::Language::new(diffr_grammars::QMLJS);
 
@@ -1193,7 +1184,6 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
-        #[cfg(feature = "lang-verilog")]
         Verilog => {
             let language = tree_sitter::Language::new(diffr_grammars::VERILOG);
             TreeSitterConfig {
@@ -1209,7 +1199,6 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 sub_languages: vec![],
             }
         }
-        #[cfg(feature = "lang-vhdl")]
         Vhdl => {
             let language = tree_sitter::Language::new(diffr_grammars::VHDL);
 

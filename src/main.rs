@@ -42,37 +42,21 @@
 #![warn(clippy::dbg_macro)]
 
 mod cli;
-mod config;
-mod constants;
-mod diff;
-mod engine;
 mod exit_codes;
-use engine::diff_file_content;
 mod files;
 mod git;
-mod gitattributes;
-mod hash;
-mod line_layout;
-mod line_parser;
-mod lines;
 mod options;
-mod pairing;
-mod parse;
 mod plugin;
-pub(crate) mod protocol;
-mod summary;
+mod run;
 mod tags;
 mod version;
-mod words;
 
-#[macro_use]
-extern crate log;
+use diffr_core::{config, engine, pairing, parse, present, protocol, summary};
 
 use crate::config::Params;
 
 use crate::exit_codes::EXIT_BAD_ARGUMENTS;
-use crate::files::{guess_content, read_files_or_die, read_or_die, ProbableFileKind};
-use crate::gitattributes::{check_diff_attr, DiffAttribute};
+use crate::files::read_or_die;
 use crate::parse::guess_language::{
     guess, language_globs, language_name, Language, LanguageOverride,
 };
@@ -106,12 +90,10 @@ use std::path::Path;
 use strum::IntoEnumIterator;
 use typed_arena::Arena;
 
-use crate::engine::QueryConflict;
-use crate::options::{DiffOptions, FileArgument, Mode};
+use crate::options::Mode;
 use crate::parse::folds::Conflict;
 use crate::parse::syntax::init_all_info;
 use crate::parse::tree_sitter_parser as tsp;
-use crate::summary::{DiffResult, FileContent, FileFormat};
 
 extern crate pretty_env_logger;
 
@@ -134,7 +116,11 @@ fn main() {
         .expect("The logger has not been previously initialized");
     reset_sigpipe();
 
-    match cli::run() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("application runtime");
+    match cli::run(&runtime) {
         Ok(code) => std::process::exit(code),
         Err(error) => {
             eprintln!("{error}");
@@ -144,9 +130,7 @@ fn main() {
 }
 
 /// `diffr debug`: syntax dumps and the language list.
-fn run_debug(mode: Mode) {
-    let params = &Params::default();
-
+fn run_debug(mode: Mode, params: &Params) {
     match mode {
         Mode::DumpTreeSitter {
             path,
@@ -239,69 +223,6 @@ fn run_debug(mode: Mode) {
     };
 }
 
-/// Diff two files: `--no-index`.
-fn diff_file(
-    params: &Params,
-    display_path: &str,
-    lhs_path: &FileArgument,
-    rhs_path: &FileArgument,
-    diff_options: &DiffOptions,
-    missing_as_empty: bool,
-    overrides: &[(LanguageOverride, Vec<glob::Pattern>)],
-    binary_overrides: &[glob::Pattern],
-) -> Result<DiffResult, QueryConflict> {
-    let (lhs_bytes, rhs_bytes) = read_files_or_die(lhs_path, rhs_path, missing_as_empty);
-
-    let (mut lhs_src, mut rhs_src) = match (
-        guess_content(&lhs_bytes, lhs_path, binary_overrides),
-        guess_content(&rhs_bytes, rhs_path, binary_overrides),
-        check_diff_attr(Path::new(display_path)),
-    ) {
-        (ProbableFileKind::Binary, _, _)
-        | (_, ProbableFileKind::Binary, _)
-        | (_, _, Some(DiffAttribute::AssumeBinary)) => {
-            return Ok(DiffResult {
-                file_format: FileFormat::Binary,
-                lhs_src: FileContent::Binary,
-                rhs_src: FileContent::Binary,
-                lhs_positions: vec![],
-                rhs_positions: vec![],
-                lhs_folds: vec![],
-                rhs_folds: vec![],
-            });
-        }
-        (ProbableFileKind::Text(lhs_src), ProbableFileKind::Text(rhs_src), _) => (lhs_src, rhs_src),
-    };
-
-    // Ensure that lhs_src and rhs_src both have trailing
-    // newlines.
-    //
-    // This is important when textually diffing files that don't have
-    // a trailing newline, e.g. "foo\n\bar\n" versus "foo". We want to
-    // consider `foo` to be unchanged in this case.
-    //
-    // Theoretically a tree-sitter parser could change its AST due to
-    // the additional trailing newline, but it seems vanishingly
-    // unlikely.
-    if !lhs_src.is_empty() && !lhs_src.ends_with('\n') {
-        lhs_src.push('\n');
-    }
-    if !rhs_src.is_empty() && !rhs_src.ends_with('\n') {
-        rhs_src.push('\n');
-    }
-
-    diff_file_content(
-        params,
-        display_path,
-        lhs_path,
-        rhs_path,
-        &lhs_src,
-        &rhs_src,
-        diff_options,
-        overrides,
-    )
-}
-
 /// The syntax dumps stop at a fold query conflict.
 fn conflict_or_die<T>(result: Result<T, Conflict>) -> T {
     match result {
@@ -321,9 +242,9 @@ fn conflict_or_die<T>(result: Result<T, Conflict>) -> T {
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::OsStr;
-
     use super::*;
+    use crate::engine::diff_file_content;
+    use crate::options::DiffOptions;
 
     #[test]
     fn test_diff_identical_content() {
@@ -331,8 +252,6 @@ mod tests {
         let res = diff_file_content(
             &Params::default(),
             "foo.el",
-            &FileArgument::from_path_argument(OsStr::new("foo.el")),
-            &FileArgument::from_path_argument(OsStr::new("foo.el")),
             s,
             s,
             &DiffOptions::default(),
@@ -343,4 +262,16 @@ mod tests {
         assert_eq!(res.lhs_positions, vec![]);
         assert_eq!(res.rhs_positions, vec![]);
     }
+}
+
+#[cfg(test)]
+pub(crate) fn test_runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap()
+    })
 }

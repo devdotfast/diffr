@@ -1,5 +1,5 @@
 /**
- * Mirrors src/protocol/mod.rs and src/pairing.rs. See ../README.md for sync checks.
+ * Mirrors crates/diffr-core/src/protocol/mod.rs and crates/diffr-core/src/pairing.rs. See ../README.md for sync checks.
  * Import only zod: Review embeds this file in generated source.
  * Defaults are omitted, not null. Lines are zero-based, columns are UTF-8 bytes,
  * and ranges are half-open.
@@ -24,9 +24,7 @@ function structuralPairingSchema<T>(
 
 const structuralU32 = z.number().int().min(0).max(0xffff_ffff);
 
-export const STRUCTURAL_DIFF_WIRE_VERSION = 4;
-/** Base stream version without --stream-annotations. */
-export const STRUCTURAL_DIFF_BASE_WIRE_VERSION = 3;
+export const STRUCTURAL_DIFF_WIRE_VERSION = 3;
 
 export type StructuralDiffEvent =
   | {
@@ -41,12 +39,6 @@ export type StructuralDiffEvent =
       file: StructuralPairing<StructuralFileRef>;
       visibility?: StructuralVisibility;
     } & StructuralOutcome)
-  | {
-      type: "annotations";
-      file: StructuralPairing<StructuralFileRef>;
-      annotations: { region_id: number; label: string }[];
-      error?: StructuralProblem;
-    }
   | {
       type: "complete";
       succeeded: number;
@@ -71,14 +63,6 @@ export const StructuralDiffEventSchema: z.ZodType<StructuralDiffEvent> = z.lazy(
           visibility: StructuralVisibilitySchema.optional(),
         })
         .and(StructuralOutcomeSchema),
-      z.object({
-        type: z.literal("annotations"),
-        file: structuralPairingSchema(StructuralFileRefSchema),
-        annotations: z.array(
-          z.object({ region_id: structuralU32, label: z.string() }),
-        ),
-        error: StructuralProblemSchema.optional(),
-      }),
       z.object({
         type: z.literal("complete"),
         succeeded: structuralU32,

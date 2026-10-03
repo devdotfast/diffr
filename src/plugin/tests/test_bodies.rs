@@ -4,7 +4,7 @@ const TEST: &str = "test-bodies:test";
 
 /// Every fold: whether it is a test body, whether it starts collapsed, and
 /// its label.
-fn folds(source: &tree::Source) -> Vec<(bool, bool, String)> {
+fn folds(source: &Source) -> Vec<(bool, bool, String)> {
     let mut folds = Vec::new();
     walk(&source.regions, &mut |region| {
         if is_fold(region) {
@@ -24,8 +24,7 @@ fn test_bodies_collapse_on_both_sides_and_stay_expandable() {
     let after = "#[test]\nfn t() {\n    a();\n    b();\n    changed();\n}\n\nfn f() {\n    a();\n    b();\n    c();\n}\n";
     let (file, mut sides) = project("a.rs", before, after);
     run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
-    let sides = trees(&sides);
-    let tree::Pairing::Both {
+    let Pairing::Both {
         lhs: before,
         rhs: after,
     } = &sides
@@ -54,7 +53,6 @@ fn test_bodies_collapse_on_both_sides_and_stay_expandable() {
         "#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        a();\n        b();\n        c();\n    }\n}\n",
     );
     run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
-    let sides = trees(&sides);
     let mut labels = Vec::new();
     walk(&rhs(&sides).regions, &mut |region| {
         if is_fold(region) && region.visibility.collapsed {
@@ -65,7 +63,6 @@ fn test_bodies_collapse_on_both_sides_and_stay_expandable() {
     // A tiny test body stays open.
     let (file, mut sides) = project("a.rs", "", "#[test]\nfn t() {\n    a();\n}\n");
     run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
-    let sides = trees(&sides);
     walk(&rhs(&sides).regions, &mut |region| {
         assert!(!region.visibility.collapsed);
     });
@@ -77,8 +74,7 @@ fn a_test_body_links_its_docstring_on_each_side() {
     let after = "/// Stays.\n/// Here.\n#[test]\nfn t() {\n    a();\n    b();\n    d();\n}\n";
     let (file, mut sides) = project("a.rs", before, after);
     run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
-    let sides = trees(&sides);
-    let tree::Pairing::Both { lhs, rhs } = &sides else {
+    let Pairing::Both { lhs, rhs } = &sides else {
         panic!("both sides");
     };
     let mut states = Vec::new();
@@ -106,7 +102,6 @@ fn javascript_test_callbacks_collapse() {
             "it('adds', () => {\n  expect(1).toBe(1);\n  expect(2).toBe(2);\n});\n\nrun('z', () => {\n  go();\n  go();\n});\n",
         );
         run("test-bodies", json!({"min_lines": 2}), &file, &mut sides);
-        let sides = trees(&sides);
         let mut collapsed = Vec::new();
         walk(&rhs(&sides).regions, &mut |region| {
             if region.visibility.collapsed {

@@ -36,7 +36,7 @@ Saved streams use the same reader:
 `--input -` reads a pipe and opens the controlling terminal for keyboard input.
 
 The frontend launches Rust with `--format ndjson --syntax`: the wire is diffr's v3
-protocol (`docs/streaming.md`, `src/protocol/mod.rs`) and `--syntax` adds a tree-sitter
+protocol (`docs/streaming.md`, `crates/diffr-core/src/protocol/mod.rs`) and `--syntax` adds a tree-sitter
 capture name per token, which is the only source of syntax colour here. A file that fell
 back to a line diff has no syntax and renders uncoloured.
 
@@ -156,7 +156,7 @@ mouse/keyboard --> viewer state (collapsed ids, closed files) --> updated projec
 
 - `src/cli.rs` owns argument interpretation and selecting interactive versus explicit
   output. The frontend does not resolve revisions or invoke Git.
-- `src/protocol/mod.rs` is the wire contract: a `start` manifest, one `file` record per file
+- `crates/diffr-core/src/protocol/mod.rs` is the wire contract: a `start` manifest, one `file` record per file
   with `diff` or `error`, and a `complete` footer. Sides are `lhs`/`rhs` by presence.
   Each text side carries its full text, optional `syntax` spans, and a `regions` tree
   whose leaves tile the file; every region has an `id` of its own, a leaf's `alignment_id` on both sides means its rows line up (folds have none), and `fold_state_id` groups what toggles together, across sides too.

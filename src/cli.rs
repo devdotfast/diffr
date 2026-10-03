@@ -1,19 +1,19 @@
 //! Git-style CLI input: the terminal UI, the NDJSON stream, and Git metadata.
 use crate::config::{self, Config};
-use crate::git::{Comparison, DiffSession, FileParams, Operand, Result};
-use crate::options::{DebugArgs, DiffOptions};
-use crate::plugin::Pipeline;
+use crate::git::{self, Comparison, FileParams, Operand, Result};
+use crate::options::DebugArgs;
+use crate::plugin::{Classifier, Pipeline};
+use crate::run;
 use clap::{
     error::ErrorKind, parser::ValueSource, ArgGroup, ArgMatches, Args, CommandFactory,
     FromArgMatches, Parser, Subcommand, ValueEnum,
 };
-use git2::{DiffStatsFormat, Repository};
+use gix::Repository;
 use std::{
     ffi::OsString,
     io::{self, IsTerminal, Write},
     num::NonZeroUsize,
     path::{Component, Path, PathBuf},
-    sync::Arc,
 };
 
 /// The metadata outputs, named one by one in conflicts so clap's error names
@@ -38,9 +38,6 @@ struct Cli {
     /// Concurrent file diffs for --format ndjson; results are emitted as each finishes
     #[arg(short, long, default_value = "16")]
     jobs: NonZeroUsize,
-    /// File tag priority: files carrying an earlier listed tag come first
-    #[arg(long, value_delimiter = ',')]
-    order: Vec<String>,
     /// Compare the index with HEAD, or with the given revision
     #[arg(long, visible_alias = "staged")]
     cached: bool,
@@ -89,9 +86,6 @@ struct Cli {
     /// Write the event stream to stdout instead of opening the terminal UI
     #[arg(long, conflicts_with = "quiet", conflicts_with_all = METADATA)]
     format: Option<Format>,
-    /// Emit initial files followed by deferred annotations (NDJSON v4)
-    #[arg(long, requires = "format", conflicts_with = "quiet", conflicts_with_all = METADATA)]
-    stream_annotations: bool,
     /// Include every token's tree-sitter capture name in --format ndjson output
     #[arg(long, requires = "format", conflicts_with = "quiet", conflicts_with_all = METADATA)]
     syntax: bool,
@@ -168,7 +162,7 @@ enum ConfigCommand {
     Set { key: String, value: String },
 }
 
-pub(crate) fn run() -> Result<i32> {
+pub(crate) fn run(runtime: &tokio::runtime::Runtime) -> Result<i32> {
     let frontend_args: Vec<OsString> = std::env::args_os().skip(1).collect();
     // Git treats an argument before `--` as a revision even when a file shares
     // its name, so a bare trailing `--` still matters.
@@ -179,7 +173,7 @@ pub(crate) fn run() -> Result<i32> {
     match &args.command {
         Some(Command::Config(config)) => return run_config(config),
         Some(Command::Debug(debug)) => {
-            crate::run_debug(debug.mode());
+            crate::run_debug(debug.mode(), &Config::default().compile()?);
             return Ok(0);
         }
         None => {}
@@ -189,64 +183,55 @@ pub(crate) fn run() -> Result<i32> {
     if !streaming && !metadata_or_quiet {
         return launch_tui(&frontend_args, true);
     }
-    let stream_options = crate::protocol::stream::Options {
-        syntax: args.syntax,
-        updates: args.stream_annotations,
-    };
     if args.no_index {
         return no_index(
+            runtime,
             &args,
             args.items.iter().chain(&args.paths).cloned().collect(),
-            stream_options,
         );
     }
     let location = std::fs::canonicalize(&args.repo)?;
-    let repo = Repository::discover(&location)?;
-    let workspace = repo.workdir().unwrap_or(repo.path());
+    let repo = gix::discover(&location)?;
+    let workspace = repo.workdir().unwrap_or(repo.git_dir());
     let (comparison, paths) = select(&repo, &location, &args, has_separator)?;
     let files = FileParams {
         paths,
         // `-M` conflicts with `--no-renames`; renames are on by default.
         renames: args.find_renames || !args.no_renames,
-        order: args.order.clone(),
     };
     if metadata_or_quiet {
         let diff = comparison.resolve(&repo)?.diff(&repo, &files)?;
-        let changed = diff.deltas().len() > 0;
+        let changed = !diff.is_empty();
         if !args.quiet {
             let width = args
                 .width
                 .unwrap_or_else(crate::options::detect_terminal_width);
-            print_metadata(&diff, &args, width)?;
+            print_metadata(&repo, &comparison, &diff, &args, width)?;
         }
         return Ok(i32::from(changed && (args.exit_code || args.quiet)));
     }
-    let mut config = Config::load()?;
-    apply_unified(&args, &mut config);
-    let pipeline =
-        Pipeline::from_config(&config.plugins, workspace).map_err(|error| format!("{error:#}"))?;
-    let params = Arc::new(config.compile_with(&pipeline)?);
-    let diff_options = diff_options(&args, &params);
-    let mut session = DiffSession::open(
-        workspace,
-        comparison,
-        Arc::clone(&params),
-        &files,
-        &pipeline,
-    )?;
-    session.diff_options = diff_options;
-    let changed = session.remaining() > 0;
-    let ended = crate::protocol::stream::write(
-        session,
-        args.jobs.get(),
-        Arc::new(pipeline),
-        stream_options,
+    let config = args.config()?;
+    let params = config.compile()?;
+    let mut classifier =
+        Classifier::from_config(&config, workspace).map_err(|error| format!("{error:#}"))?;
+    let mut listing = git::list(workspace, comparison, &files)?;
+    run::classify(&mut classifier, &mut listing).map_err(|error| format!("{error:#}"))?;
+    let pipeline = Pipeline::from_config(&config, workspace, args.jobs)
+        .map_err(|error| format!("{error:#}"))?;
+    let ended = run::stream(
+        runtime,
+        listing,
+        pipeline,
+        params,
+        args.jobs,
+        args.options(),
         &mut io::stdout().lock(),
-    )?;
+    )
+    .map_err(|error| format!("{error:#}"))?;
     Ok(if ended.failed || ended.aborted {
         2
     } else {
-        i32::from(changed && args.exit_code)
+        i32::from(ended.files > 0 && args.exit_code)
     })
 }
 
@@ -285,7 +270,7 @@ fn select(
         let text = item
             .to_str()
             .ok_or("non-UTF-8 revision/path arguments are unsupported")?;
-        let is_rev = repo.revparse(text).is_ok();
+        let is_rev = repo.rev_parse(text).is_ok();
         let is_path = location.join(item).exists();
         if is_rev && is_path && !has_separator {
             return Err(
@@ -306,7 +291,7 @@ fn select(
     }
     paths.extend(args.paths.iter().cloned());
     // Match canonical path forms, including Windows verbatim path prefixes.
-    let root = std::fs::canonicalize(repo.workdir().unwrap_or(repo.path()))?;
+    let root = std::fs::canonicalize(repo.workdir().unwrap_or(repo.git_dir()))?;
     let prefix = location.strip_prefix(&root)?;
     let paths = paths
         .into_iter()
@@ -315,10 +300,10 @@ fn select(
     let cached = args.cached;
     let mut comparison = match revisions.as_slice() {
         [] if cached => Comparison {
-            before: match repo.head() {
-                Ok(_) => Operand::revision("HEAD"),
-                Err(error) if error.code() == git2::ErrorCode::UnbornBranch => Operand::EmptyTree,
-                Err(error) => return Err(error.into()),
+            before: if repo.head()?.is_unborn() {
+                Operand::EmptyTree
+            } else {
+                Operand::revision("HEAD")
             },
             after: Operand::Index,
         },
@@ -381,8 +366,8 @@ fn select(
 }
 
 fn merge_base(repo: &Repository, a: &str, b: &str) -> Result<Operand> {
-    let a = repo.revparse_single(a)?.peel_to_commit()?.id();
-    let b = repo.revparse_single(b)?.peel_to_commit()?.id();
+    let a = repo.rev_parse_single(a)?.object()?.peel_to_commit()?.id();
+    let b = repo.rev_parse_single(b)?.object()?.peel_to_commit()?.id();
     Ok(Operand::revision(repo.merge_base(a, b)?.to_string()))
 }
 
@@ -402,80 +387,167 @@ fn normalize_path(prefix: &Path, path: &std::ffi::OsStr) -> Result<String> {
     Ok(normalized.to_str().ok_or("non-UTF-8 pathspec")?.to_owned())
 }
 
-fn print_metadata(diff: &git2::Diff<'_>, args: &Cli, width: usize) -> Result<()> {
+fn print_metadata(
+    repo: &Repository,
+    comparison: &Comparison,
+    diff: &crate::git::Diff,
+    args: &Cli,
+    width: usize,
+) -> Result<()> {
+    use crate::git::FileStatus;
     let mut stdout = io::stdout().lock();
     if args.name_only || args.name_status {
         let separator: &[u8] = if args.null { b"\0" } else { b"\t" };
         let terminator: &[u8] = if args.null { b"\0" } else { b"\n" };
-        for delta in diff.deltas() {
+        for change in &diff.changes {
             if args.name_status {
                 write!(
                     stdout,
                     "{}",
-                    match delta.status() {
-                        git2::Delta::Added => 'A',
-                        git2::Delta::Deleted => 'D',
-                        git2::Delta::Renamed => 'R',
-                        git2::Delta::Typechange => 'T',
-                        git2::Delta::Conflicted => 'U',
-                        _ => 'M',
+                    match change.status {
+                        FileStatus::Added => 'A',
+                        FileStatus::Deleted => 'D',
+                        FileStatus::Renamed => 'R',
+                        FileStatus::TypeChanged => 'T',
+                        FileStatus::Conflicted => 'U',
+                        FileStatus::Modified => 'M',
                     }
                 )?;
                 stdout.write_all(separator)?;
-                if delta.status() == git2::Delta::Renamed {
-                    stdout.write_all(delta.old_file().path_bytes().unwrap())?;
+                if matches!(change.status, FileStatus::Renamed) {
+                    stdout.write_all(
+                        change
+                            .before
+                            .as_ref()
+                            .ok_or("missing old path")?
+                            .path
+                            .as_bytes(),
+                    )?;
                     stdout.write_all(separator)?;
                 }
             }
             stdout.write_all(
-                delta
-                    .new_file()
-                    .path_bytes()
-                    .or(delta.old_file().path_bytes())
-                    .ok_or("missing path")?,
+                change
+                    .after
+                    .as_ref()
+                    .or(change.before.as_ref())
+                    .ok_or("missing path")?
+                    .path
+                    .as_bytes(),
             )?;
             stdout.write_all(terminator)?;
         }
         return Ok(());
     }
-    if args.numstat {
-        for (index, delta) in diff.deltas().enumerate() {
-            let patch = git2::Patch::from_diff(diff, index)?;
-            if let Some(patch) = patch {
-                let (_, additions, deletions) = patch.line_stats()?;
-                write!(stdout, "{additions}\t{deletions}\t")?;
-            } else {
-                write!(stdout, "-\t-\t")?;
+    let counts = diff.line_counts(repo, comparison)?;
+    let names: Vec<_> = diff
+        .changes
+        .iter()
+        .map(|change| -> Result<String> {
+            let entry = change
+                .after
+                .as_ref()
+                .or(change.before.as_ref())
+                .ok_or("missing path")?;
+            if !matches!(change.status, FileStatus::Renamed) {
+                return Ok(entry.path.clone());
             }
-            if delta.status() == git2::Delta::Renamed {
-                stdout.write_all(delta.old_file().path_bytes().ok_or("missing old path")?)?;
-                stdout.write_all(b" => ")?;
+            let old = &change.before.as_ref().ok_or("missing old path")?.path;
+            if !args.numstat {
+                let common = old
+                    .bytes()
+                    .zip(entry.path.bytes())
+                    .take_while(|(a, b)| a == b)
+                    .count();
+                if let Some(slash) = old.as_bytes()[..common].iter().rposition(|b| *b == b'/') {
+                    let prefix = slash + 1;
+                    return Ok(format!(
+                        "{}{{{} => {}}}",
+                        &old[..prefix],
+                        &old[prefix..],
+                        &entry.path[prefix..]
+                    ));
+                }
             }
-            stdout.write_all(
-                delta
-                    .new_file()
-                    .path_bytes()
-                    .or(delta.old_file().path_bytes())
-                    .ok_or("missing path")?,
-            )?;
-            stdout.write_all(b"\n")?;
+            Ok(format!("{old} => {}", entry.path))
+        })
+        .collect::<Result<_>>()?;
+    let name_width = names.iter().map(String::len).max().unwrap_or(0);
+    let maximum = counts
+        .iter()
+        .filter_map(|stats| stats.lines)
+        .map(|(a, d)| a + d)
+        .max()
+        .unwrap_or(0) as usize;
+    let digits = maximum.to_string().len();
+    // Preserve the previous stat formatter's shared column widths and graph scale.
+    let mut scale = width;
+    if scale > 0 {
+        if scale > name_width + digits + 5 {
+            scale -= name_width + digits + 5;
         }
-        return Ok(());
+        scale = scale.max(7);
     }
-    let format = if args.shortstat {
-        DiffStatsFormat::SHORT
-    } else {
-        DiffStatsFormat::FULL
-    };
-    stdout.write_all(&diff.stats()?.to_buf(format, width)?)?;
+    if scale > maximum {
+        scale = 0;
+    }
+    let (mut added, mut removed) = (0, 0);
+    for (name, stats) in names.iter().zip(&counts) {
+        if let Some((a, d)) = stats.lines {
+            added += a;
+            removed += d;
+        }
+        if args.numstat {
+            match stats.lines {
+                Some((a, d)) => write!(stdout, "{a}\t{d}\t")?,
+                None => write!(stdout, "-\t-\t")?,
+            }
+            writeln!(stdout, "{name}")?;
+        } else if !args.shortstat {
+            write!(stdout, " {name}{} | ", " ".repeat(name_width - name.len()))?;
+            match stats.lines {
+                Some((a, d)) => {
+                    let total = (a + d) as usize;
+                    write!(stdout, "{total:>digits$}")?;
+                    if total > 0 {
+                        let (plus, minus) = if scale == 0 {
+                            (a as usize, d as usize)
+                        } else {
+                            let bars = (total * scale + maximum / 2) / maximum;
+                            let plus = bars * a as usize / total;
+                            (plus.max(1), (bars - plus).max(1))
+                        };
+                        write!(stdout, " {}{}", "+".repeat(plus), "-".repeat(minus))?;
+                    }
+                    writeln!(stdout)?;
+                }
+                None => writeln!(stdout, "Bin {} -> {} bytes", stats.sizes.0, stats.sizes.1)?,
+            }
+        }
+    }
+    if !args.numstat {
+        let n = diff.changes.len();
+        write!(stdout, " {n} file{} changed", if n == 1 { "" } else { "s" })?;
+        if added > 0 || removed == 0 {
+            write!(
+                stdout,
+                ", {added} insertion{}(+)",
+                if added == 1 { "" } else { "s" }
+            )?;
+        }
+        if removed > 0 || added == 0 {
+            write!(
+                stdout,
+                ", {removed} deletion{}(-)",
+                if removed == 1 { "" } else { "s" }
+            )?;
+        }
+        writeln!(stdout)?;
+    }
     Ok(())
 }
 
-fn no_index(
-    args: &Cli,
-    paths: Vec<OsString>,
-    stream_options: crate::protocol::stream::Options,
-) -> Result<i32> {
+fn no_index(runtime: &tokio::runtime::Runtime, args: &Cli, paths: Vec<OsString>) -> Result<i32> {
     if paths.len() != 2 {
         return Err("--no-index requires two file paths".into());
     }
@@ -489,42 +561,26 @@ fn no_index(
         }
         Ok(std::fs::read(path)?)
     };
-    let before = read(&paths[0])?;
-    let after = read(&paths[1])?;
-    let changed = before != after;
+    let changed = read(&paths[0])? != read(&paths[1])?;
     if args.quiet {
         return Ok(i32::from(changed));
     }
-    let mut config = Config::load()?;
-    apply_unified(args, &mut config);
-    let pipeline = Pipeline::from_config(&config.plugins, &std::env::current_dir()?)
+    // Paths outside a repository have no attributes, and Linguist's rules
+    // are written for repository-relative paths, so they are not classified.
+    let config = args.config()?;
+    let params = config.compile()?;
+    let pipeline = Pipeline::from_config(&config, &std::env::current_dir()?, args.jobs)
         .map_err(|error| format!("{error:#}"))?;
-    let config = config.compile_with(&pipeline)?;
-    let options = &diff_options(args, &config);
-    let lhs = crate::options::FileArgument::from_path_argument(&paths[0]);
-    let rhs = crate::options::FileArgument::from_path_argument(&paths[1]);
-    let compute = || {
-        crate::diff_file(
-            &config,
-            &paths[1].to_string_lossy(),
-            &lhs,
-            &rhs,
-            options,
-            false,
-            &[],
-            &[],
-        )
-    };
-    let ended = crate::protocol::stream::write_file(
-        &paths[0].to_string_lossy(),
-        &paths[1].to_string_lossy(),
-        (before.len() as u64, after.len() as u64),
-        compute,
-        &config,
-        &pipeline,
-        stream_options,
+    let ended = run::stream(
+        runtime,
+        git::standalone(&paths[0].to_string_lossy(), &paths[1].to_string_lossy()),
+        pipeline,
+        params,
+        args.jobs,
+        args.options(),
         &mut io::stdout().lock(),
-    )?;
+    )
+    .map_err(|error| format!("{error:#}"))?;
     Ok(if ended.failed || ended.aborted {
         2
     } else {
@@ -532,31 +588,35 @@ fn no_index(
     })
 }
 
-/// The engine limits: the configured `[diff]` table, then the command-line
-/// flags.
-fn diff_options(args: &Cli, params: &config::Params) -> DiffOptions {
-    let mut options = params.diff.options(args.ignore_comments);
-    if let Some(limit) = args.byte_limit {
-        options.byte_limit = limit;
+impl Cli {
+    /// The configuration file with this run's flags merged in: `-U` is the
+    /// context plugin's `lines`, and the limit flags are `[diff]`.
+    fn config(&self) -> Result<Config> {
+        let mut config = Config::load()?;
+        if let Some(unified) = self.unified {
+            if let Some(entry) = config.plugins.entries.get_mut("bundled.context") {
+                entry
+                    .options
+                    .insert("lines".into(), serde_json::Value::from(unified));
+            }
+        }
+        if let Some(limit) = self.byte_limit {
+            config.diff.byte_limit = limit;
+        }
+        if let Some(limit) = self.graph_limit {
+            config.diff.graph_limit = limit;
+        }
+        if let Some(limit) = self.parse_error_limit {
+            config.diff.parse_error_limit = limit;
+        }
+        Ok(config)
     }
-    if let Some(limit) = args.graph_limit {
-        options.graph_limit = limit;
-    }
-    if let Some(limit) = args.parse_error_limit {
-        options.parse_error_limit = limit;
-    }
-    options
-}
 
-/// `-U` overrides the context plugin's `lines` for this run.
-fn apply_unified(args: &Cli, config: &mut Config) {
-    let Some(unified) = args.unified else {
-        return;
-    };
-    if let Some(entry) = config.plugins.entries.get_mut("bundled.context") {
-        entry
-            .options
-            .insert("lines".into(), serde_json::Value::from(unified));
+    fn options(&self) -> run::Options {
+        run::Options {
+            syntax: self.syntax,
+            ignore_comments: self.ignore_comments,
+        }
     }
 }
 
@@ -645,7 +705,5 @@ fn launch_tui(args: &[OsString], comparison: bool) -> Result<i32> {
     #[cfg(not(unix))]
     let result = command.status().map(|status| status.code().unwrap_or(2));
 
-    result.map_err(|error| {
-        format!("Could not launch terminal frontend: {error}. Run cargo xtask install-tui from the checkout to install the frontend, or use --format ndjson. For source development, set DIFFR_TUI_ENTRY and ensure Bun is available.").into()
-    })
+    result.map_err(|error| format!("Could not launch terminal frontend: {error}.").into())
 }

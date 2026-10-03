@@ -82,7 +82,7 @@ Each example deliberately specifies a small selected set, not every possible fol
 
 ## Checks
 
-`src/parse/fold_tests.rs` diffs these sources through the engine and checks
+`crates/diffr-core/src/parse/fold_tests.rs` diffs these sources through the engine and checks
 that every fold range is valid and every matched fold is reciprocal.
 
 Run from the repository root:

@@ -1,6 +1,5 @@
 use std::fmt;
-
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
 
 pub(crate) struct CommitInfo {
     pub(crate) short_commit_hash: &'static str,
@@ -52,9 +51,7 @@ impl fmt::Display for VersionInfo {
     }
 }
 
-lazy_static! {
-    pub(crate) static ref VERSION: String = version().to_string();
-}
+pub(crate) static VERSION: LazyLock<String> = LazyLock::new(|| version().to_string());
 
 pub(crate) const fn version() -> VersionInfo {
     let version = env!("CARGO_PKG_VERSION");

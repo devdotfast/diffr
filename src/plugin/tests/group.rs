@@ -1,28 +1,29 @@
 use super::*;
-use diffr_plugin_sdk::tree::line_count;
+use crate::protocol::{SourcePos, SourceRange, Visibility};
 use std::collections::BTreeSet;
 
-fn range(start: u32, end: u32) -> types::Range {
-    types::Range {
-        start: types::Position {
+fn range(start: u32, end: u32) -> SourceRange {
+    SourceRange {
+        start: SourcePos {
             line: start,
             column: 0,
         },
-        end: types::Position {
+        end: SourcePos {
             line: end,
             column: 0,
         },
     }
 }
 
-fn leaf(id: u32, alignment: u32, start: u32, end: u32) -> tree::Region {
-    tree::Region {
+fn leaf(id: u32, alignment: u32, start: u32, end: u32) -> Region {
+    Region {
         id,
         fold_state_id: id,
         range: range(start, end),
+        relations: Vec::new(),
         tags: vec![],
-        visibility: types::Visibility::default(),
-        node: tree::Node::Leaf {
+        visibility: Visibility::default(),
+        node: Node::Leaf {
             alignment_id: alignment,
             changed: vec![],
         },
@@ -30,24 +31,26 @@ fn leaf(id: u32, alignment: u32, start: u32, end: u32) -> tree::Region {
 }
 
 /// A fold over one leaf, collapsed or not, in fold state `state`.
-fn fold(id: u32, state: u32, start: u32, end: u32, collapsed: bool, label: &str) -> tree::Region {
-    tree::Region {
+fn fold(id: u32, state: u32, start: u32, end: u32, collapsed: bool, label: &str) -> Region {
+    Region {
         id,
         fold_state_id: state,
         range: range(start, end),
+        relations: Vec::new(),
         tags: vec![],
-        visibility: types::Visibility {
+        visibility: Visibility {
             collapsed,
             label: label.to_owned(),
         },
-        node: tree::Node::Fold {
+        node: Node::Fold {
             children: vec![leaf(id + 100, id + 100, start, end)],
         },
     }
 }
 
-fn source(regions: Vec<tree::Region>) -> tree::Source {
-    tree::Source {
+fn source(regions: Vec<Region>) -> Source {
+    Source {
+        syntax: Vec::new(),
         text: String::new(),
         regions,
     }
@@ -55,7 +58,7 @@ fn source(regions: Vec<tree::Region>) -> tree::Source {
 
 #[test]
 fn collapsed_regions_group_across_short_separators_whatever_their_labels() {
-    let mut sides = tree::Pairing::LeftOnly {
+    let mut sides = Pairing::LeftOnly {
         lhs: source(vec![
             fold(1, 1, 0, 5, true, "5 lines removed"),
             leaf(2, 2, 5, 7),
@@ -65,7 +68,7 @@ fn collapsed_regions_group_across_short_separators_whatever_their_labels() {
         ]),
     };
     let (file, _) = project("m.py", "", "");
-    run_trees("group", json!({}), &file, &mut sides);
+    run("group", json!({}), &file, &mut sides);
     let regions = &lhs(&sides).regions;
     assert_eq!(
         regions.len(),
@@ -77,7 +80,7 @@ fn collapsed_regions_group_across_short_separators_whatever_their_labels() {
         "2 collapsed regions · 12 lines"
     );
     assert!(regions[0].visibility.collapsed);
-    let tree::Node::Fold { children } = &regions[0].node else {
+    let Node::Fold { children } = &regions[0].node else {
         panic!("a group is a fold");
     };
     let ids: Vec<u32> = children.iter().map(|child| child.id).collect();
@@ -95,7 +98,6 @@ fn deleted_bodies_under_their_own_headers_are_not_grouped() {
     let (file, mut sides) = project("m.py", before, after);
     run("deleted-bodies", json!({"min_lines": 3}), &file, &mut sides);
     run("group", json!({}), &file, &mut sides);
-    let sides = trees(&sides);
     assert!(
         !lhs(&sides)
             .regions
@@ -132,15 +134,14 @@ fn documented_test_bodies_group_with_their_docstrings() {
     let (file, mut sides) = project("m.rs", before, after);
     run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
     run("group", json!({}), &file, &mut sides);
-    let sides = trees(&sides);
-    let groups: Vec<&tree::Region> = rhs(&sides)
+    let groups: Vec<&Region> = rhs(&sides)
         .regions
         .iter()
         .filter(|region| region.visibility.label.contains("collapsed regions"))
         .collect();
     assert_eq!(groups.len(), 1, "one group for the three documented tests");
     let group = groups[0];
-    let tree::Node::Fold { children } = &group.node else {
+    let Node::Fold { children } = &group.node else {
         panic!("a group is a fold");
     };
     let mut collapsed = Vec::new();
@@ -171,7 +172,7 @@ fn documented_test_bodies_group_with_their_docstrings() {
 fn matched_runs_are_grouped_on_both_sides_with_one_fold_state() {
     // Two collapsed test bodies moved below `keep`: each matched pair
     // shares its fold state, so the runs match region for region.
-    let mut sides = tree::Pairing::Both {
+    let mut sides = Pairing::Both {
         lhs: source(vec![
             fold(1, 1, 0, 4, true, "test body"),
             fold(2, 2, 4, 8, true, "test body"),
@@ -184,13 +185,7 @@ fn matched_runs_are_grouped_on_both_sides_with_one_fold_state() {
         ]),
     };
     let (file, _) = project("m.py", "", "");
-    let joins: Vec<Move> = moves(&bundled("group", json!({})), &file, &wire(sides.clone()))
-        .unwrap()
-        .into_iter()
-        .filter(|next| matches!(next, Move::JoinFolds(_)))
-        .collect();
-    assert_eq!(joins.len(), 1, "one join lists both runs: {joins:?}");
-    run_trees("group", json!({}), &file, &mut sides);
+    run("group", json!({}), &file, &mut sides);
     assert_eq!(lhs(&sides).regions.len(), 2);
     assert_eq!(rhs(&sides).regions.len(), 2);
     let (lhs_group, rhs_group) = (&lhs(&sides).regions[0], &rhs(&sides).regions[1]);
@@ -204,7 +199,7 @@ fn matched_runs_are_grouped_on_both_sides_with_one_fold_state() {
 fn a_run_paired_with_a_different_run_is_left_alone() {
     // The lhs run's second body is matched with a fold outside any run
     // on the rhs.
-    let sides = tree::Pairing::Both {
+    let sides = Pairing::Both {
         lhs: source(vec![
             fold(1, 1, 0, 4, true, "test body"),
             fold(2, 2, 4, 8, true, "test body"),
@@ -215,9 +210,10 @@ fn a_run_paired_with_a_different_run_is_left_alone() {
         ]),
     };
     let (file, _) = project("m.py", "", "");
-    assert!(moves(&bundled("group", json!({})), &file, &wire(sides))
-        .unwrap()
-        .is_empty());
+    assert_eq!(
+        edited(&bundled("group", json!({})), &file, &sides).unwrap(),
+        sides
+    );
 }
 
 #[test]
@@ -226,7 +222,8 @@ fn a_single_collapsed_fold_is_left_alone() {
     let after = "keep = 1\n";
     let (file, mut sides) = project("m.py", before, after);
     run("deleted-bodies", json!({"min_lines": 3}), &file, &mut sides);
-    assert!(moves(&bundled("group", json!({})), &file, &sides)
-        .unwrap()
-        .is_empty());
+    assert_eq!(
+        edited(&bundled("group", json!({})), &file, &sides).unwrap(),
+        sides.clone()
+    );
 }

@@ -2,7 +2,8 @@
 //! a run cut short by a failing plugin.
 mod support;
 
-use git2::{IndexAddOption, Repository, Signature, Time};
+mod git_fixture;
+use gix::Repository;
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
@@ -18,7 +19,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let repo = Repository::init(dir.path().join("repo")).unwrap();
+        let repo = gix::init(dir.path().join("repo")).unwrap();
         fs::create_dir_all(dir.path().join("config/diffr")).unwrap();
         Self { dir, repo }
     }
@@ -42,34 +43,7 @@ impl Fixture {
     }
 
     fn commit(&self) -> String {
-        let mut index = self.repo.index().unwrap();
-        index.add_all(["*"], IndexAddOption::DEFAULT, None).unwrap();
-        index.update_all(["*"], None).unwrap();
-        index.write().unwrap();
-        let tree = self.repo.find_tree(index.write_tree().unwrap()).unwrap();
-        let signature = Signature::new(
-            "Fixture",
-            "fixture@example.invalid",
-            &Time::new(946684800, 0),
-        )
-        .unwrap();
-        let parent = self
-            .repo
-            .head()
-            .ok()
-            .map(|head| head.peel_to_commit().unwrap());
-        let parents: Vec<_> = parent.iter().collect();
-        self.repo
-            .commit(
-                Some("HEAD"),
-                &signature,
-                &signature,
-                "fixture\n",
-                &tree,
-                &parents,
-            )
-            .unwrap()
-            .to_string()
+        git_fixture::commit(&self.repo, "fixture")
     }
 
     fn run(&self, base: &str, head: &str) -> Output {
@@ -269,9 +243,7 @@ fn git_binary_files_stream_as_diff_records_with_side_sizes() {
     }
     // The working-tree source uses the same binary path as a committed blob.
     fixture.write("plugin.wasm", "\0asm");
-    let mut index = fixture.repo.index().unwrap();
-    index.add_path(std::path::Path::new("plugin.wasm")).unwrap();
-    index.write().unwrap();
+    git_fixture::git(fixture.repo.workdir().unwrap(), &["add", "plugin.wasm"]);
     let events = records(&fixture.diffr(&[&added, "--format", "ndjson"]));
     assert_eq!(
         events[1]["diff"],
@@ -282,12 +254,10 @@ fn git_binary_files_stream_as_diff_records_with_side_sizes() {
 #[test]
 fn working_tree_files_go_through_git_clean_filters() {
     let fixture = Fixture::new();
-    fixture
-        .repo
-        .config()
-        .unwrap()
-        .set_bool("core.autocrlf", true)
-        .unwrap();
+    git_fixture::git(
+        fixture.repo.workdir().unwrap(),
+        &["config", "core.autocrlf", "true"],
+    );
     let lines: Vec<String> = (1..=20).map(|i| format!("doc line {i}")).collect();
     fixture.write("notes.md", &(lines.join("\n") + "\n"));
     let base = fixture.commit();

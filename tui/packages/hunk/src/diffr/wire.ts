@@ -1,5 +1,5 @@
 // Full v3/v4 contract: diffr-ts/src/contract.ts.
-/** Parse diffr's wire v3 (src/protocol/mod.rs, docs/streaming.md): tagged enums, pairings by presence, defaults omitted. The shapes are checked; invariants between records are diffr's and trusted. */
+/** Parse diffr's wire v3 (crates/diffr-core/src/protocol/mod.rs, docs/streaming.md): tagged enums, pairings by presence, defaults omitted. The shapes are checked; invariants between records are diffr's and trusted. */
 import { z } from "zod";
 const uint = z.number().int().nonnegative();
 /** `{lhs, rhs}`, `{lhs}` or `{rhs}`; diffr never sends neither. */

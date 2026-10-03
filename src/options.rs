@@ -1,44 +1,14 @@
 //! CLI option parsing.
 
 use std::env;
-use std::ffi::OsStr;
-use std::fmt::Display;
-use std::path::{Path, PathBuf};
 
 use clap::{error::ErrorKind, Args};
 
 use crate::parse::guess_language::{language_override_from_name, LanguageOverride};
 
-pub(crate) const DEFAULT_BYTE_LIMIT: usize = 1_000_000;
-// Chosen experimentally: this is sufficiently many for all the sample
-// files (the highest is slow_1.rs/slow_2.rs at 1.3M nodes), but
-// small enough to terminate in ~5 seconds like the test file in #306.
-pub(crate) const DEFAULT_GRAPH_LIMIT: usize = 3_000_000;
-pub(crate) const DEFAULT_PARSE_ERROR_LIMIT: usize = 0;
+pub(crate) use diffr_core::options::DiffOptions;
 
 pub(crate) const DEFAULT_TERMINAL_WIDTH: usize = 80;
-
-#[derive(Debug, Clone)]
-pub(crate) struct DiffOptions {
-    pub(crate) graph_limit: usize,
-    pub(crate) byte_limit: usize,
-    pub(crate) parse_error_limit: usize,
-    pub(crate) ignore_comments: bool,
-    /// The file is tagged `generated`: diff it by line without parsing.
-    pub(crate) generated: bool,
-}
-
-impl Default for DiffOptions {
-    fn default() -> Self {
-        Self {
-            graph_limit: DEFAULT_GRAPH_LIMIT,
-            byte_limit: DEFAULT_BYTE_LIMIT,
-            parse_error_limit: DEFAULT_PARSE_ERROR_LIMIT,
-            ignore_comments: false,
-            generated: false,
-        }
-    }
-}
 
 /// `diffr debug`: syntax dumps and the language list.
 #[derive(Args)]
@@ -93,53 +63,6 @@ struct DebugAction {
     /// Print all the languages supported by diffr, along with their recognised extensions.
     #[arg(long)]
     list_languages: bool,
-}
-
-#[derive(Eq, PartialEq, Debug)]
-pub(crate) enum FileArgument {
-    NamedPath(std::path::PathBuf),
-    DevNull,
-}
-
-fn try_canonicalize(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.into())
-}
-
-fn relative_to_current(path: &Path) -> PathBuf {
-    if let Ok(current_path) = std::env::current_dir() {
-        let path = try_canonicalize(path);
-        let current_path = try_canonicalize(&current_path);
-
-        if let Ok(rel_path) = path.strip_prefix(current_path) {
-            return rel_path.into();
-        }
-    }
-
-    path.into()
-}
-
-impl FileArgument {
-    /// Return a `FileArgument` that always represents a path that
-    /// exists, with the exception of `/dev/null`, which is turned into [FileArgument::DevNull].
-    pub(crate) fn from_path_argument(arg: &OsStr) -> Self {
-        // For new and deleted files, Git passes `/dev/null` as the reference file.
-        if arg == "/dev/null" {
-            Self::DevNull
-        } else {
-            Self::NamedPath(PathBuf::from(arg))
-        }
-    }
-}
-
-impl Display for FileArgument {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NamedPath(path) => {
-                write!(f, "{}", relative_to_current(path).display())
-            }
-            Self::DevNull => write!(f, "/dev/null"),
-        }
-    }
 }
 
 pub(crate) enum Mode {

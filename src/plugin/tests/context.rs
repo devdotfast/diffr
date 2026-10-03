@@ -1,4 +1,5 @@
 use super::*;
+use crate::protocol::{SourcePos, SourceRange, Span, Visibility};
 use std::collections::BTreeSet;
 
 /// One rendered line per value, concatenated.
@@ -10,15 +11,15 @@ fn repeated(values: impl Iterator<Item = u32>, render: impl Fn(u32) -> String) -
     out
 }
 
-fn shaped(path: &str, before: &str, after: &str, lines: u32) -> tree::Pairing<tree::Source> {
+fn shaped(path: &str, before: &str, after: &str, lines: u32) -> Pairing<Source> {
     let (file, mut sides) = project(path, before, after);
     run("context", json!({ "lines": lines }), &file, &mut sides);
-    trees(&sides)
+    sides.clone()
 }
 
 /// Every region's lines and whether it starts collapsed, with its label,
 /// in document order.
-fn rows(regions: &[tree::Region]) -> Vec<((u32, u32), bool, String, bool)> {
+fn rows(regions: &[Region]) -> Vec<((u32, u32), bool, String, bool)> {
     let mut out = Vec::new();
     walk(regions, &mut |region| {
         out.push((
@@ -32,8 +33,8 @@ fn rows(regions: &[tree::Region]) -> Vec<((u32, u32), bool, String, bool)> {
 }
 
 /// Lines no collapsed region, or region under one, hides.
-fn open_lines(regions: &[tree::Region]) -> BTreeSet<u32> {
-    fn visit(regions: &[tree::Region], out: &mut BTreeSet<u32>) {
+fn open_lines(regions: &[Region]) -> BTreeSet<u32> {
+    fn visit(regions: &[Region], out: &mut BTreeSet<u32>) {
         for region in regions {
             if region.visibility.collapsed {
                 // The header of a collapsed fold stays visible.
@@ -43,10 +44,8 @@ fn open_lines(regions: &[tree::Region]) -> BTreeSet<u32> {
                 continue;
             }
             match &region.node {
-                tree::Node::Leaf { .. } => {
-                    out.extend(region.range.start.line..region.range.end.line)
-                }
-                tree::Node::Fold { children } => visit(children, out),
+                Node::Leaf { .. } => out.extend(region.range.start.line..region.range.end.line),
+                Node::Fold { children } => visit(children, out),
             }
         }
     }
@@ -83,58 +82,6 @@ fn long_unchanged_runs_collapse_to_the_context_width() {
 }
 
 #[test]
-fn a_stretch_over_whole_folds_collapses_as_one_group() {
-    // Three unchanged functions sit between two changes: their folds,
-    // the lines between them and the cut ends collapse under one row.
-    let unchanged = repeated(0..3, |i| {
-        format!("def f{i}():\n    a = {i}\n    b = {i}\n    return a + b\n\n")
-    });
-    let before = format!("first = 1\n\n{unchanged}last = 1\n");
-    let after = format!("first = 2\n\n{unchanged}last = 2\n");
-    let sides = shaped("a.py", &before, &after, 1);
-    for source in [lhs(&sides), rhs(&sides)] {
-        let top: Vec<_> = source
-            .regions
-            .iter()
-            .filter(|region| region.visibility.collapsed)
-            .map(|region| {
-                (
-                    (region.range.start.line, region.range.end.line),
-                    region.visibility.label.clone(),
-                    is_fold(region),
-                )
-            })
-            .collect();
-        assert_eq!(top, [((2, 16), "14 unchanged lines".to_owned(), true)]);
-    }
-    let tree::Pairing::Both { lhs, rhs } = &sides else {
-        panic!("both sides");
-    };
-    fn group(source: &tree::Source) -> Option<&tree::Region> {
-        source
-            .regions
-            .iter()
-            .find(|region| region.visibility.collapsed)
-    }
-    let (lhs_group, rhs_group) = (group(lhs).unwrap(), group(rhs).unwrap());
-    assert_ne!(lhs_group.id, rhs_group.id);
-    assert_eq!(
-        lhs_group.fold_state_id, rhs_group.fold_state_id,
-        "the two sides' groups open and close together"
-    );
-    assert_eq!(open_lines(&lhs.regions), BTreeSet::from([0, 1, 2, 16, 17]));
-    // Opening the context group reveals its entire unchanged stretch on
-    // either side, rather than another layer of context folds.
-    for source in [lhs, rhs] {
-        let mut regions = source.regions.clone();
-        for region in &mut regions {
-            region.visibility.collapsed = false;
-        }
-        assert_eq!(open_lines(&regions), (0..18).collect());
-    }
-}
-
-#[test]
 fn slivers_cut_from_a_stretch_by_a_fold_edge_stay_open() {
     // The changed function's fold edge lands inside the stretch above the
     // change; the two lines left inside the fold are not worth a row.
@@ -167,8 +114,8 @@ fn the_enclosing_header_stays_open_above_a_deep_change() {
     // Without a context query the whole signature collapses with the
     // unchanged lines above it.
     let config = Config::default();
-    let queries = Pipeline::from_config(&config.plugins, std::path::Path::new("."))
-        .unwrap()
+    let queries = config
+        .plugins
         .queries()
         .unwrap()
         .into_iter()
@@ -178,7 +125,6 @@ fn the_enclosing_header_stays_open_above_a_deep_change() {
     let (file, mut sides) =
         project_compiled("a.rs", &before, &after, &params, DiffOptions::default());
     run("context", json!({"lines": 1}), &file, &mut sides);
-    let sides = trees(&sides);
     assert_eq!(
         open_lines(&rhs(&sides).regions),
         BTreeSet::from([24, 25, 26])
@@ -197,17 +143,16 @@ fn a_file_the_diff_does_not_parse_has_no_enclosing_header() {
         &before,
         &after,
         DiffOptions {
-            generated: true,
+            by_line: Some(crate::summary::FallbackCause::Generated),
             ..DiffOptions::default()
         },
     );
     let mut scopes = 0;
-    walk(&rhs(&trees(&sides)).regions, &mut |region| {
+    walk(&rhs(&sides).regions, &mut |region| {
         scopes += usize::from(has_tag(region, "context:scope"));
     });
     assert_eq!(scopes, 0);
     run("context", json!({"lines": 1}), &file, &mut sides);
-    let sides = trees(&sides);
     assert_eq!(
         open_lines(&rhs(&sides).regions),
         BTreeSet::from([10, 11, 12])
@@ -247,22 +192,22 @@ fn a_stretch_crossing_a_fold_end_collapses_on_each_side_of_it() {
 }
 
 #[test]
-fn identical_files_collapse_whole_and_one_sided_files_stay_open() {
+fn short_unchanged_nodes_and_one_sided_files_stay_open() {
     let sides = shaped("a.py", "x = 1\ny = 2\n", "x = 1\ny = 2\n", 3);
     assert_eq!(
         rows(&lhs(&sides).regions),
-        [((0, 2), true, "2 unchanged lines".to_owned(), false)]
+        [((0, 2), false, String::new(), false)]
     );
     assert_eq!(
         lhs(&sides).regions[0].alignment_id(),
         rhs(&sides).regions[0].alignment_id()
     );
     let (file, sides) = project("a.py", "", "def f():\n    return 1\n");
-    let tree::Pairing::Both { rhs: after, .. } = trees(&sides) else {
+    let Pairing::Both { rhs: after, .. } = sides.clone() else {
         panic!("both sides");
     };
-    let mut sides = tree::Pairing::RightOnly { rhs: after };
-    run_trees("context", json!({"lines": 3}), &file, &mut sides);
+    let mut sides = Pairing::RightOnly { rhs: after };
+    run("context", json!({"lines": 3}), &file, &mut sides);
     assert!(rows(&rhs(&sides).regions)
         .iter()
         .all(|(_, collapsed, ..)| !collapsed));
@@ -282,19 +227,16 @@ fn a_line_diff_fallback_has_unpaired_folds() {
         },
     );
     run("context", json!({"lines": 1}), &file, &mut sides);
-    let sides = trees(&sides);
     let open = open_lines(&rhs(&sides).regions);
     // The parse's folds stand, so the changed function's header does.
     assert!(open.contains(&0), "{open:?}");
     assert!(!open.contains(&2), "{open:?}");
-    // Nothing matched the nodes the folds belong to, so the two sides' folds
-    // are unpaired: the unchanged function below collapses on the side the
-    // stretch is shaped from, and stays open on the other.
-    let tree::Pairing::Both { lhs: before, .. } = &sides else {
-        panic!("both sides");
+    // Unmatched folds are handled independently on each side.
+    let Pairing::Both { lhs: before, .. } = &sides else {
+        panic!("both sides")
     };
-    assert!(!open_lines(&before.regions).contains(&10), "{open:?}");
-    assert!(open.contains(&10), "{open:?}");
+    assert!(!open_lines(&before.regions).contains(&10));
+    assert!(!open.contains(&10));
 }
 
 #[test]
@@ -302,27 +244,28 @@ fn a_fold_whose_matched_partner_holds_changes_stays_open() {
     // Fold 1 on the lhs lies inside an unchanged stretch, but its
     // matched partner on the rhs (fold 5, sharing the fold state) moved
     // below and holds new lines. Collapsing fold 1 would hide it.
-    let range = |start: u32, end: u32| types::Range {
-        start: types::Position {
+    let range = |start: u32, end: u32| SourceRange {
+        start: SourcePos {
             line: start,
             column: 0,
         },
-        end: types::Position {
+        end: SourcePos {
             line: end,
             column: 0,
         },
     };
-    let leaf = |id: u32, alignment: u32, start: u32, end: u32, changed: bool| tree::Region {
+    let leaf = |id: u32, alignment: u32, start: u32, end: u32, changed: bool| Region {
         id,
         fold_state_id: id,
         range: range(start, end),
+        relations: Vec::new(),
         tags: vec![],
-        visibility: types::Visibility::default(),
-        node: tree::Node::Leaf {
+        visibility: Visibility::default(),
+        node: Node::Leaf {
             alignment_id: alignment,
             changed: (start..end)
                 .filter(|_| changed)
-                .map(|line| types::Span {
+                .map(|line| Span {
                     line,
                     start_column: 0,
                     end_column: 1,
@@ -332,25 +275,27 @@ fn a_fold_whose_matched_partner_holds_changes_stays_open() {
     };
     // The rhs leaf paired with the lhs leaf `lhs`, whose id is also its
     // alignment id.
-    let paired = |id: u32, lhs: u32, start: u32, end: u32, changed: bool| tree::Region {
+    let paired = |id: u32, lhs: u32, start: u32, end: u32, changed: bool| Region {
         fold_state_id: lhs,
         ..leaf(id, lhs, start, end, changed)
     };
-    let fold = |id: u32, state: u32, child: tree::Region| tree::Region {
+    let fold = |id: u32, state: u32, child: Region| Region {
         id,
         fold_state_id: state,
         range: child.range,
+        relations: Vec::new(),
         tags: vec![],
-        visibility: types::Visibility::default(),
-        node: tree::Node::Fold {
+        visibility: Visibility::default(),
+        node: Node::Fold {
             children: vec![child],
         },
     };
-    let source = |lines: usize, regions| tree::Source {
+    let source = |lines: usize, regions| Source {
+        syntax: Vec::new(),
         text: "x\n".repeat(lines),
         regions,
     };
-    let mut sides = tree::Pairing::Both {
+    let mut sides = Pairing::Both {
         lhs: source(
             6,
             vec![
@@ -370,8 +315,8 @@ fn a_fold_whose_matched_partner_holds_changes_stays_open() {
         ),
     };
     let (file, _) = project("a.py", "", "");
-    run_trees("context", json!({"lines": 1}), &file, &mut sides);
-    let collapsed = |source: &tree::Source| {
+    run("context", json!({"lines": 1}), &file, &mut sides);
+    let collapsed = |source: &Source| {
         rows(&source.regions)
             .into_iter()
             .filter(|(_, collapsed, _, fold)| *collapsed && *fold)
@@ -381,53 +326,13 @@ fn a_fold_whose_matched_partner_holds_changes_stays_open() {
     assert_eq!(collapsed(rhs(&sides)), 0);
 }
 
-#[test]
-fn predicted_group_ids_match_the_applier() {
-    // The stretch starts inside one leaf and ends inside another, with
-    // folds between: the group names the pieces the cuts before it made,
-    // and the applier accepts it on both sides.
-    let block = repeated(0..8, |i| format!("x{i} = {i}\n"));
-    let functions = repeated(0..2, |i| {
-        format!("def g{i}():\n    a = {i}\n    b = {i}\n\n")
-    });
-    let before = format!("changed = 1\n{block}{functions}{block}changed = 1\n");
-    let after = format!("changed = 2\n{block}{functions}{block}changed = 2\n");
-    let sides = shaped("a.py", &before, &after, 1);
-    for source in [lhs(&sides), rhs(&sides)] {
-        let collapsed: Vec<_> = source
-            .regions
-            .iter()
-            .filter(|region| region.visibility.collapsed)
-            .map(|region| {
-                (
-                    (region.range.start.line, region.range.end.line),
-                    region.visibility.label.clone(),
-                    is_fold(region),
-                )
-            })
-            .collect();
-        assert_eq!(
-            collapsed,
-            [((2, 24), "22 unchanged lines".to_owned(), true)]
-        );
-        assert_eq!(
-            open_lines(&source.regions),
-            BTreeSet::from([0, 1, 2, 24, 25])
-        );
-    }
-}
-
-/// Lines of leaves that no collapsed region hides. Unlike `open_lines`,
-/// a collapsed fold's header does not count: it shows the fold, not
 /// context.
-fn open_leaf_lines(regions: &[tree::Region]) -> BTreeSet<u32> {
-    fn visit(regions: &[tree::Region], out: &mut BTreeSet<u32>) {
+fn open_leaf_lines(regions: &[Region]) -> BTreeSet<u32> {
+    fn visit(regions: &[Region], out: &mut BTreeSet<u32>) {
         for region in regions.iter().filter(|region| !region.visibility.collapsed) {
             match &region.node {
-                tree::Node::Leaf { .. } => {
-                    out.extend(region.range.start.line..region.range.end.line)
-                }
-                tree::Node::Fold { children } => visit(children, out),
+                Node::Leaf { .. } => out.extend(region.range.start.line..region.range.end.line),
+                Node::Fold { children } => visit(children, out),
             }
         }
     }

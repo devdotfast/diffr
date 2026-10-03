@@ -1,38 +1,10 @@
-/// diffr's plugin contract. Every plugin implements it, whether diffr runs it
-/// natively (a bundled plugin compiled in) or as a WASM component: diffr
-/// builds the same records for both and carries out the same moves.
-///
-/// A plugin is created once, then shapes each file at two points of its
-/// life. `new` runs when diffr builds its pipeline, before any file is
-/// listed, and makes the plugin from its options, failing when it cannot run
-/// with them. `classify` runs before the stream starts, once per changed
-/// file, and returns tags to add to the file's manifest entry: the tags
-/// decide how the file is diffed (a `generated` file gets a line diff) and
-/// what later plugins see. `mutate` runs after the file is diffed and its
-/// region trees are built, and returns moves that decide how the file starts
-/// out on screen. `queries` returns named tree-sitter source text once during
-/// setup; diffr assembles and validates it before any file is processed.
-///
-/// diffr makes one instance of each enabled plugin per run and calls it for
-/// every file, so what a plugin keeps from `new` lasts the whole run.
-package diffr:plugin@0.2.0;
+/// Two kinds of plugin. The one classifier tags each changed file before
+/// anything is diffed; shape plugins then walk each diffed file's region trees
+/// and decide how it starts out. Both may read the repository through `git`.
+package diffr:plugin@0.3.0;
 
 interface types {
-    /// Deferred presentation content for an existing region. This cannot
-    /// change topology, alignment, fold identity, or collapsed state.
-    record annotation {
-        region-id: u32,
-        label: string,
-    }
-
-    /// A named query source. diffr compiles all enabled sources per language.
-    /// Names identify sources for imports and diagnostics; shared names must
-    /// have identical text. Relative imports resolve against this name.
-    record query-source {
-        language: string,
-        name: string,
-        text: string,
-    }
+    enum visit { pre, post }
 
     /// The before (`lhs`) or after (`rhs`) side of a comparison.
     enum side {
@@ -75,8 +47,7 @@ interface types {
     record file-entry {
         file: file-sides,
         status: file-status,
-        /// Sorted and deduplicated. During `classify`, the tags so far: the
-        /// bundled rules, git attributes, and the plugins before this one.
+        /// The classifier's tags, as names, sorted and deduplicated.
         tags: list<string>,
     }
 
@@ -121,11 +92,10 @@ interface types {
 
     /// One region of a side's tree.
     record region {
-        /// Unique across both sides of the file, never 0.
+        /// Unique across both sides of the file.
         id: u32,
-        /// The fold that holds this region, or 0 (the file) for a top-level
-        /// region.
-        parent: u32,
+        /// The fold that holds this region; none for a top-level region.
+        parent: option<u32>,
         /// Regions sharing it open and close together, on either side.
         fold-state-id: u32,
         range: range,
@@ -135,119 +105,151 @@ interface types {
         kind: kind,
     }
 
-    /// One side of a diffed file. `regions` lists the tree in preorder: a
-    /// fold comes before its children, and siblings keep their order. A
-    /// binary file's sides have empty text and no regions.
-    record source {
-        text: string,
-        regions: list<region>,
+    /// One shallow region, with child IDs rather than nested subtrees.
+    record region-view {
+        side: side,
+        data: region,
+        children: list<u32>,
     }
 
-    /// The sides a diffed file has, the same sides as its entry's `file`.
-    variant source-sides {
-        both(tuple<source, source>),
-        left-only(source),
-        right-only(source),
+    variant region-ids {
+        both(tuple<u32, u32>),
+        left-only(u32),
+        right-only(u32),
     }
 
-    record cut {
-        /// A leaf's id.
-        region: u32,
-        /// A line offset relative to the leaf's first line, strictly inside
-        /// it.
-        at: u32,
+    /// Visible collapsed rows and open-line runs within a node.
+    record row-summary { collapsed: u32, leading: u32, trailing: u32, longest-gap: u32 }
+
+    enum grouping { link, join }
+    record cut-outside { id: u32, offset: u32, len: u32 }
+    record repeated { grouping: grouping, ids: list<u32> }
+
+    /// Typed failures from host tree operations.
+    variant move-error {
+        no-region(u32),
+        cut-fold(u32),
+        cut-outside(cut-outside),
+        uneven-sides(u32),
+        too-few-regions(grouping),
+        repeated(repeated),
+        one-sided(list<u32>),
+        not-siblings(list<u32>),
+        no-next-sibling(u32),
     }
 
-    /// What a plugin asks for. A region is named by its id, or the file by
-    /// 0 where a move allows it. Moves are carried out in order, and the next
-    /// plugin sees the result; a move that cannot be carried out aborts the
-    /// run with `mutation_failed`.
-    ///
-    /// Fresh ids. When a plugin's moves begin, the next fresh id is one above
-    /// the largest region id in the file (both sides), and the next fresh
-    /// alignment id one above the largest leaf alignment id. Moves take fresh
-    /// ids in order, lhs side before rhs side:
-    ///
-    /// - a `cut` takes the next alignment id, which the second pieces share,
-    ///   then gives the second piece on each side that holds the leaf (or its
-    ///   paired leaf) the next id, lhs first. Both second pieces take the lhs
-    ///   piece's id (or the only piece's) as their fold state id. The first
-    ///   piece keeps the leaf's ids.
-    /// - a `join-folds` gives the new fold on each side that holds the listed
-    ///   regions the next id, lhs first; both share the lhs fold's id as
-    ///   their fold state id.
-    ///
-    /// No other move takes an id. So a plugin that cuts a leaf with id `l`,
-    /// paired on the rhs, when the largest id is `n`, names the lhs second
-    /// piece `n + 1` and the rhs one `n + 2`.
-    variant move {
-        /// Split a leaf, and the leaf paired with it, at a line offset.
-        cut(cut),
-        /// Wrap two or more consecutive siblings on each side that holds
-        /// them in a new open, unlabelled fold without tags.
-        join-folds(list<u32>),
-        /// Every region in the listed regions' fold states takes the first
-        /// region's fold state id and collapsed state.
-        link-fold-state(list<u32>),
-        /// Collapse or open every region sharing the region's fold state, or
-        /// hide or show the file (0).
-        set-collapsed(tuple<u32, bool>),
-        /// Set or clear the label of one region, or of the file (0).
-        set-label(tuple<u32, option<string>>),
-        /// Replace one region's tags. The file's tags cannot be set here.
-        set-tags(tuple<u32, list<string>>),
+    /// What a file is. The well-known kinds are typed; anything else is
+    /// `custom`, a tag name of lowercase letters, digits, `-` and `_`.
+    variant tag {
+        generated,
+        vendored,
+        docs,
+        test,
+        custom(string),
+    }
+
+    /// What `git check-attr` reports for one attribute on one path.
+    variant attribute {
+        unspecified,
+        unset,
+        set,
+        value(string),
     }
 }
 
-/// What diffr gives every plugin. A component also gets WASI, with full
-/// access: the repository's working directory is preopened read-write as
-/// `.`, the environment is inherited, and the network is open. What it
-/// writes to stdout or stderr reaches diffr's stderr, a line at a time and
-/// with the plugin's name in front, since diffr's stdout is the stream.
 interface host {
-    /// Run `git` with these arguments in the repository's working
-    /// directory: its stdout when it exits successfully, its stderr
-    /// otherwise.
-    git: func(args: list<string>) -> result<string, string>;
-}
+    use types.{file-entry, region-view, side, region, region-ids, row-summary, move-error};
+    resource cursor {
+        file: func() -> file-entry;
+        /// Current node, positioned by the host before each callback.
+        id: func() -> u32;
+        /// Same-side siblings in source order, including the target.
+        siblings: func(id: u32) -> result<list<u32>, move-error>;
+        /// Enclosing folds, nearest first.
+        ancestors: func(id: u32) -> result<list<region>, move-error>;
+        get: func(id: u32) -> result<region-view, move-error>;
+        text: func(id: u32) -> result<string, move-error>;
+        display: func(id: u32) -> result<row-summary, move-error>;
+        /// None means conflicting alignment; empty means no opposite-side members.
+        matching-siblings: func(ids: list<u32>) -> result<option<list<u32>>, move-error>;
+        /// Leaves intersecting a half-open source line interval.
+        leaves: func(side: side, start: u32, end: u32) -> list<u32>;
+        /// Changed bytes or unpaired leaves on this region's own side.
+        has-changes: func(id: u32) -> result<bool, move-error>;
+        /// Query-declared named relationships.
+        related: func(id: u32, name: string) -> result<list<u32>, move-error>;
+        /// Opposite-side aligned leaf; none for folds or unmatched leaves.
+        paired-leaf: func(id: u32) -> result<option<u32>, move-error>;
+        /// All members of the shared collapse state, including this region.
+        linked-regions: func(id: u32) -> result<list<u32>, move-error>;
+        /// No leaf in the subtree has an opposite-side alignment.
+        is-one-sided: func(id: u32) -> result<bool, move-error>;
+        /// Original file text; none means that side is absent.
+        source: func(side: side) -> option<string>;
 
-/// What every plugin exports: the plugin itself, as a resource.
-interface guest {
-    use types.{file-entry, source-sides, move, query-source, annotation};
-
-    resource plugin {
-        /// Make the plugin from `options`, its bundled or external config
-        /// entry as a JSON object, defaults filled in and validated against
-        /// the options schema in `plugin.toml`. It runs
-        /// once, when diffr builds its pipeline. An error is a setup error:
-        /// diffr stops before the stream starts and names the plugin. (A
-        /// static function rather than a constructor, since a constructor
-        /// cannot fail.)
-        new: static func(options: string) -> result<plugin, string>;
-
-        /// Query sources, collected once during setup. An error is a setup
-        /// error. Plugins without queries return an empty list.
-        queries: func() -> result<list<query-source>, string>;
-
-        /// Tags to add to the file's manifest entry, before any diff runs.
-        /// Tags are lowercase letters, digits, `-` and `_`. A plugin that
-        /// does not classify returns an empty list. An error stops diffr
-        /// before the stream starts.
-        classify: func(file: file-entry) -> result<list<string>, string>;
-
-        /// The moves that shape how the diffed file starts out. `sides` are
-        /// the sides the file has, the same sides as its entry's `file`. An
-        /// error aborts the run with `mutation_failed`.
-        mutate: func(file: file-entry, sides: source-sides) -> result<list<move>, string>;
-
-        /// Optional slow enrichment after every plugin has shaped the file.
-        /// Errors leave the initial diff usable. Return no annotations when
-        /// this plugin has no deferred work.
-        enrich: func(file: file-entry, sides: source-sides) -> result<list<annotation>, string>;
+        /// Split a leaf and its paired leaf at an interior relative line offset.
+        cut: func(region: u32, offset: u32) -> result<region-ids, move-error>;
+        /// Wrap consecutive siblings on each side in a new open, unlabelled fold.
+        join: func(regions: list<u32>) -> result<region-ids, move-error>;
+        /// Link collapse states, preserving labels and collapse if any input is collapsed.
+        link: func(regions: list<u32>) -> result<_, move-error>;
+        /// Update the entire shared fold state.
+        set-collapsed: func(region: u32, collapsed: bool) -> result<_, move-error>;
+        /// Set or clear one region's label.
+        set-label: func(region: u32, label: option<string>) -> result<_, move-error>;
     }
 }
 
-world plugin {
+/// The repository being diffed, read the way git reads it.
+interface git {
+    use types.{attribute};
+    /// `git check-attr <attributes>... -- <path>`: one state per attribute,
+    /// in the order asked, with git's precedence of attribute files.
+    check-attr: func(attributes: list<string>, path: string) -> result<list<attribute>, string>;
+    /// `git cat-file blob <object>`: the blob's bytes. A working-tree side
+    /// has the null object id and is read from the file system instead.
+    cat-file: func(object: string) -> result<list<u8>, string>;
+}
+interface api {
+    use host.{cursor};
+    use types.{visit};
+    /// A configured plugin.
+    resource plugin {
+        /// Construct a ready plugin from validated JSON options; errors stop setup.
+        constructor(options: string) -> result<plugin, string>;
+        /// One node, one phase. False on Pre skips children and Post.
+        /// Errors end this traversal.
+        visit: async func(cursor: borrow<cursor>, phase: visit) -> result<bool, string>;
+    }
+}
+interface classify {
+    use types.{file-entry, tag};
+    /// What the classifier decided about one file.
+    record classification {
+        /// Every tag the file carries.
+        tags: list<tag>,
+        /// Hide the whole file behind this reason: it is shown collapsed,
+        /// diffed by line and not shaped. None shows it normally.
+        hidden: option<string>,
+    }
+    /// The one classifier.
+    resource classifier {
+        /// Construct a ready classifier from validated JSON options; errors stop setup.
+        constructor(options: string) -> result<classifier, string>;
+        /// Errors stop the run.
+        classify: func(file: file-entry) -> result<classification, string>;
+    }
+}
+
+/// A shape plugin.
+world diffr-plugin {
     import host;
-    export guest;
+    import git;
+    export api;
+}
+
+/// The classifier.
+world diffr-classifier {
+    import git;
+    export classify;
 }

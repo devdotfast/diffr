@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  STRUCTURAL_DIFF_BASE_WIRE_VERSION,
   STRUCTURAL_DIFF_WIRE_VERSION,
   type StructuralDiffEvent,
   decodeStructuralDiffEvent,
@@ -49,7 +48,7 @@ describe("every record the binary writes validates", () => {
   for (const [before, after] of pairs) {
     test(`--no-index ${before} ${after}`, () => {
       const events = run(["--no-index", "--format", "ndjson", "--", before, after]);
-      expect(events[0]).toMatchObject({ type: "start", version: STRUCTURAL_DIFF_BASE_WIRE_VERSION });
+      expect(events[0]).toMatchObject({ type: "start", version: STRUCTURAL_DIFF_WIRE_VERSION });
       expect(events.at(-1)).toMatchObject({ type: "complete", failed: 0 });
       expect(events.some((event) => event.type === "file")).toBe(true);
     });
@@ -61,7 +60,7 @@ describe("every record the binary writes validates", () => {
     expect(file?.diff && file.diff.type === "text" && (file.diff.rhs?.syntax?.length ?? 0) > 0).toBe(true);
   });
 
-  test("--stream-annotations emits version 4 and annotation records", () => {
+  test("repository comparisons emit finished v3 file records", () => {
     const root = tempDir("diffr-contract-repo-");
     git(root, "init", "-q", "-b", "main");
     git(root, "config", "user.email", "test@example.com");
@@ -72,10 +71,10 @@ describe("every record the binary writes validates", () => {
     writeFileSync(join(root, "lib.rs"), "fn a() -> u32 {\n    2\n}\n\nfn b() -> u32 {\n    a() + 1\n}\n");
     git(root, "commit", "-q", "-am", "two");
 
-    const events = run(["--repo", root, "--format", "ndjson", "--stream-annotations", "HEAD~1", "HEAD"], root);
+    const events = run(["--repo", root, "--format", "ndjson", "HEAD~1", "HEAD"], root);
     expect(events[0]).toMatchObject({ type: "start", version: STRUCTURAL_DIFF_WIRE_VERSION });
     expect(events.some((event) => event.type === "file")).toBe(true);
-    expect(events.some((event) => event.type === "annotations")).toBe(true);
+    expect(events.map((event) => event.type)).toEqual(["start", "file", "complete"]);
     expect(events.at(-1)).toMatchObject({ type: "complete", failed: 0 });
   });
 });
@@ -83,12 +82,23 @@ describe("every record the binary writes validates", () => {
 test("the terminal UI's committed v3 fixture still validates", async () => {
   const text = await Bun.file(join(repositoryRoot, "tui/test/fixtures/comparison.ndjson")).text();
   const events = text.split("\n").filter((line) => line.length > 0).map(decodeStructuralDiffEvent);
-  expect(events[0]).toMatchObject({ type: "start", version: STRUCTURAL_DIFF_BASE_WIRE_VERSION });
+  expect(events[0]).toMatchObject({ type: "start", version: STRUCTURAL_DIFF_WIRE_VERSION });
   expect(events.at(-1)).toMatchObject({ type: "complete", failed: 0 });
 });
 
 test("a record missing required fields is rejected", () => {
   expect(() => decodeStructuralDiffEvent('{"type":"complete","succeeded":1}')).toThrow(
+    "Malformed diffr protocol record.",
+  );
+});
+
+test("removed annotation records are rejected", () => {
+  const record = {
+    type: "annotations",
+    file: { rhs: { path: "a.rs", oid: "", mode: "" } },
+    annotations: [{ region_id: 1, label: "do work" }],
+  };
+  expect(() => decodeStructuralDiffEvent(JSON.stringify(record))).toThrow(
     "Malformed diffr protocol record.",
   );
 });

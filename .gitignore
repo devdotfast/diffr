@@ -9,8 +9,9 @@ perf_baseline_*.txt
 __pycache__/
 .env
 
-# WASM plugin builds: scripts/build-wasm-plugins.sh
+# External WASM plugin builds
 plugin.wasm
-# The bundled WASM summarizer ships ready to embed without a WASM toolchain.
-!/plugins/summarize/plugin.wasm
+# Bundled components ship ready to embed without a WASM toolchain.
+!/plugins/*/plugin.wasm
 /crates/*/target
+/plugins/workspace/target

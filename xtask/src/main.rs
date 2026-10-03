@@ -98,7 +98,7 @@ fn install(root: &Path, with_cli: bool) -> Result<()> {
 
 fn build_plugins(root: &Path) -> Result<()> {
     let output = cargo()
-        .current_dir(root)
+        .current_dir(root.join("plugins/workspace"))
         .args(["metadata", "--format-version", "1", "--no-deps", "--locked"])
         .output()?;
     anyhow::ensure!(
@@ -110,49 +110,45 @@ fn build_plugins(root: &Path) -> Result<()> {
     let members = metadata["workspace_members"]
         .as_array()
         .context("workspace members")?;
-    let excluded = metadata["metadata"]["diffr"]["wasm-test-exclude"].as_array();
+    let built = cargo()
+        // Host coverage/target flags must not change the component build.
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .env_remove("CARGO_BUILD_TARGET")
+        .current_dir(root.join("plugins/workspace"))
+        .args([
+            "build",
+            "--locked",
+            "--release",
+            "--workspace",
+            "--message-format=json",
+        ])
+        .output()?;
+    anyhow::ensure!(
+        built.status.success(),
+        "building plugins failed:\n{}\n{}",
+        String::from_utf8_lossy(&built.stderr),
+        String::from_utf8_lossy(&built.stdout)
+    );
     for package in metadata["packages"]
         .as_array()
         .context("workspace packages")?
     {
-        if !members.contains(&package["id"]) || !package["metadata"]["diffr"].is_object() {
-            continue;
-        }
-        if excluded.is_some_and(|names| names.contains(&package["name"])) {
+        if !members.contains(&package["id"]) {
             continue;
         }
         let name = package["name"].as_str().context("package name")?;
         let folder = Path::new(package["manifest_path"].as_str().context("manifest path")?)
             .parent()
-            .context("package directory")?;
-        anyhow::ensure!(
-            folder.join("plugin.toml").is_file(),
-            "{name}: missing plugin.toml"
-        );
-        eprintln!("Building WASM plugin {name}");
-        let output = cargo()
-            .current_dir(root)
-            .args([
-                "rustc",
-                "--locked",
-                "--release",
-                "--target",
-                "wasm32-wasip2",
-                "--lib",
-                "--crate-type",
-                "cdylib",
-                "--package",
-                name,
-                "--message-format=json",
-                "--target-dir",
-            ])
-            .arg(root.join("target/wasm-plugins"))
-            .output()?;
-        if !output.status.success() {
-            bail!("building {name} failed (install the target with `rustup target add wasm32-wasip2`):\n{}\n{}",
-                String::from_utf8_lossy(&output.stderr), String::from_utf8_lossy(&output.stdout));
+            .context("Rust package directory")?
+            .parent()
+            .context("plugin folder")?;
+        // Test-only components have no installable plugin folder.
+        if !folder.join("plugin.toml").is_file() {
+            continue;
         }
-        let artifact = wasm_artifact(&output.stdout, &package["id"])?;
+        let artifact = wasm_artifact(&built.stdout, &package["id"])?;
+        eprintln!("Built plugin {name}");
         std::fs::copy(&artifact, folder.join("plugin.wasm"))
             .with_context(|| format!("copying {}", artifact.display()))?;
     }
@@ -196,14 +192,13 @@ fn main() -> Result<()> {
                 .args([
                     "test",
                     "--locked",
-                    "--features",
-                    "wasm-plugin-tests",
                     "--bin",
                     "diffr",
                     "--test",
                     "wasm",
+                    "--test",
+                    "wasm_concurrency",
                 ])
-                .env("DIFFR_PLUGINS_BUILT", "1")
                 .status()?;
             anyhow::ensure!(status.success(), "plugin tests failed");
             Ok(())

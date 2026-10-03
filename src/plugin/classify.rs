@@ -2,7 +2,6 @@
 //! changed file before any is diffed.
 use super::bindings::classifier::{DiffrClassifier, DiffrClassifierPre};
 use super::bindings::types::{self, FileEntry, Tag};
-use super::file_entry;
 use super::wasm::{engine, link, linker, State};
 use crate::protocol;
 use anyhow::Context as _;
@@ -79,7 +78,7 @@ impl Classifier {
         runtime.block_on(store.run_concurrent(async |accessor| {
             let mut classified = Vec::with_capacity(files.len());
             for file in files {
-                classified.push(classify(accessor, exports, *configured, file_entry(file)).await?);
+                classified.push(classify(accessor, exports, *configured, file.into()).await?);
             }
             Ok(classified)
         }))?

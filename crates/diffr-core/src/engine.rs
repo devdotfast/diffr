@@ -33,7 +33,7 @@ fn by_line_reason(cause: FallbackCause) -> &'static str {
 /// ranges. The file is not diffed; the stream reports it as a
 /// `query_conflict` error.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct QueryConflict {
+pub struct QueryConflict {
     /// The file's display path.
     pub(crate) path: String,
     pub(crate) side: Side,
@@ -88,7 +88,7 @@ impl DiffResult {
         Self::from_sources_with_options(path, lhs, rhs, params, &DiffOptions::default())
     }
 
-    pub(crate) fn from_sources_with_options(
+    pub fn from_sources_with_options(
         path: &str,
         lhs: &str,
         rhs: &str,
@@ -98,7 +98,7 @@ impl DiffResult {
         diff_file_content(params, path, lhs, rhs, options, &[])
     }
 }
-pub(crate) fn diff_file_content(
+pub fn diff_file_content(
     params: &Params,
     display_path: &str,
     lhs_src: &str,

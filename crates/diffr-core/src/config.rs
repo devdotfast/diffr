@@ -19,7 +19,7 @@
 //! Every tag a query sets must be written `<plugin>:<name>`.
 pub(crate) mod prune;
 pub(crate) mod query;
-pub(crate) mod store;
+pub mod store;
 use crate::hash::DftHashMap;
 use crate::options::DiffOptions;
 use crate::parse::{guess_language::Language, tree_sitter_parser};
@@ -40,7 +40,7 @@ fn config_version() -> u32 {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Config {
+pub struct Config {
     /// Configuration format version. Unknown versions require a newer diffr.
     #[serde(default = "config_version")]
     #[schemars(extend("x-settings" = false))]
@@ -50,18 +50,18 @@ pub(crate) struct Config {
     /// plugin's `plugin.toml`; see [`PluginsConfig::schema`].
     #[schemars(skip)]
     #[serde(default)]
-    pub(crate) plugins: PluginsConfig,
+    pub plugins: PluginsConfig,
     /// The one plugin that tags files before diffing; see
     /// [`ClassifierConfig::schema`].
     #[schemars(skip)]
     #[serde(default)]
-    pub(crate) classifier: ClassifierConfig,
+    pub classifier: ClassifierConfig,
     /// Colors for the terminal frontend.
     #[serde(default)]
     pub(crate) theme: ThemeConfig,
     /// Limits on the structural comparison itself.
     #[serde(default)]
-    pub(crate) diff: DiffConfig,
+    pub diff: DiffConfig,
 }
 
 impl Default for Config {
@@ -77,18 +77,18 @@ impl Default for Config {
 /// command-line flags override these for one run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct DiffConfig {
+pub struct DiffConfig {
     /// Files larger than this many bytes on either side get a line diff.
     #[schemars(title = "Largest file to diff structurally (bytes)", extend("x-group" = "Diff limits"))]
-    pub(crate) byte_limit: usize,
+    pub byte_limit: usize,
     /// The largest AST matching graph diffr will explore for one file.
     /// A large change to a large file can exceed it; raising it costs time
     /// and memory on those files only.
     #[schemars(title = "Largest matching graph", extend("x-group" = "Diff limits"))]
-    pub(crate) graph_limit: usize,
+    pub graph_limit: usize,
     /// Files with more tree-sitter parse errors than this get a line diff.
     #[schemars(title = "Parse errors allowed", extend("x-group" = "Diff limits"))]
-    pub(crate) parse_error_limit: usize,
+    pub parse_error_limit: usize,
 }
 
 impl Default for DiffConfig {
@@ -103,7 +103,7 @@ impl Default for DiffConfig {
 
 impl DiffConfig {
     /// The engine options for these limits.
-    pub(crate) fn options(&self, ignore_comments: bool) -> DiffOptions {
+    pub fn options(&self, ignore_comments: bool) -> DiffOptions {
         DiffOptions {
             byte_limit: self.byte_limit,
             graph_limit: self.graph_limit,
@@ -135,7 +135,7 @@ impl Default for ThemeConfig {
 }
 
 #[derive(Debug)]
-pub(crate) struct ConfigError(pub(crate) String);
+pub struct ConfigError(pub(crate) String);
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
@@ -143,13 +143,13 @@ impl std::fmt::Display for ConfigError {
 }
 impl std::error::Error for ConfigError {}
 
-pub(crate) struct Params {
+pub struct Params {
     languages: DftHashMap<Language, OnceLock<Arc<LanguageParams>>>,
-    pub(crate) diff: DiffConfig,
+    pub diff: DiffConfig,
 }
 
-pub(crate) struct LanguageParams {
-    pub(crate) parser: &'static tree_sitter_parser::TreeSitterConfig,
+pub struct LanguageParams {
+    pub parser: &'static tree_sitter_parser::TreeSitterConfig,
     /// The fold and context queries of every enabled plugin, concatenated.
     pub(crate) query: AnnotationQuery,
     sub_languages: OnceLock<
@@ -173,7 +173,7 @@ impl LanguageParams {
 
 /// The user's global file: `$XDG_CONFIG_HOME/diffr/config.toml`, falling
 /// back to `~/.config/diffr/config.toml`.
-pub(crate) fn global_path() -> Result<PathBuf, ConfigError> {
+pub fn global_path() -> Result<PathBuf, ConfigError> {
     let dir = match std::env::var_os("XDG_CONFIG_HOME") {
         Some(dir) if !dir.is_empty() => PathBuf::from(dir),
         _ => dirs::home_dir()
@@ -190,7 +190,7 @@ pub(crate) fn directory_of(file: &Path) -> &Path {
 
 impl Config {
     /// Read the global file; a missing one is the defaults.
-    pub(crate) fn load() -> Result<Self, ConfigError> {
+    pub fn load() -> Result<Self, ConfigError> {
         Self::load_from(&global_path()?)
     }
 
@@ -209,14 +209,14 @@ impl Config {
 
     /// Parse text that is not a file's: a plugin folder's `path` is relative
     /// to the current directory.
-    #[cfg(test)]
-    pub(crate) fn from_toml(source: &str) -> Result<Self, ConfigError> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn from_toml(source: &str) -> Result<Self, ConfigError> {
         Self::from_toml_in(source, Path::new(""))
     }
 
     /// Parse the text of a file in `directory`. Errors lead with the dotted
     /// path of the key they concern, such as `diff.typo`.
-    pub(crate) fn from_toml_in(source: &str, directory: &Path) -> Result<Self, ConfigError> {
+    pub fn from_toml_in(source: &str, directory: &Path) -> Result<Self, ConfigError> {
         let source = prune::forget_legacy(source);
         let mut config: Self = serde_path_to_error::deserialize(toml::Deserializer::new(&source))
             .map_err(|error| {
@@ -241,7 +241,7 @@ impl Config {
     /// The JSON Schema of the configuration, with a description and default
     /// on every setting. `plugins` comes first, built from each bundled
     /// plugin's `plugin.toml`.
-    pub(crate) fn schema() -> serde_json::Value {
+    pub fn schema() -> serde_json::Value {
         let mut schema =
             serde_json::to_value(schemars::schema_for!(Config)).expect("schema serializes");
         let rest = std::mem::take(
@@ -260,16 +260,13 @@ impl Config {
 
     /// Compile the query files the enabled plugins' manifests declare. No
     /// plugin runs to supply them.
-    pub(crate) fn compile(&self) -> Result<Params, ConfigError> {
+    pub fn compile(&self) -> Result<Params, ConfigError> {
         self.compile_queries(self.plugins.queries()?)
     }
 
     /// Compile with `queries`, the enabled plugins' query files in
     /// `plugins.order`.
-    pub(crate) fn compile_queries(
-        &self,
-        queries: Vec<(String, Queries)>,
-    ) -> Result<Params, ConfigError> {
+    pub fn compile_queries(&self, queries: Vec<(String, Queries)>) -> Result<Params, ConfigError> {
         let mut languages: DftHashMap<_, _> = Language::iter()
             .map(|language| (language, OnceLock::new()))
             .collect();
@@ -320,7 +317,7 @@ fn check_tags(query: &AnnotationQuery, order: &[String]) -> Result<(), ConfigErr
 }
 
 impl Params {
-    pub(crate) fn language(&self, language: Language) -> &Arc<LanguageParams> {
+    pub fn language(&self, language: Language) -> &Arc<LanguageParams> {
         let config = self.languages[&language].get_or_init(|| {
             // Languages without annotation rules still support structural diffing.
             // Keep their grammars lazy, as in the existing parser registry.
@@ -343,7 +340,7 @@ impl Params {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Default for Params {
     fn default() -> Self {
         Config::default()

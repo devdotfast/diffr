@@ -1,5 +1,5 @@
 /**
- * Mirrors src/protocol/mod.rs and src/pairing.rs. See ../README.md for sync checks.
+ * Mirrors crates/diffr-core/src/protocol/mod.rs and crates/diffr-core/src/pairing.rs. See ../README.md for sync checks.
  * Import only zod: Review embeds this file in generated source.
  * Defaults are omitted, not null. Lines are zero-based, columns are UTF-8 bytes,
  * and ranges are half-open.

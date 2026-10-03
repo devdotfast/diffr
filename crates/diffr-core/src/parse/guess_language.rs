@@ -18,7 +18,7 @@ use strum::{EnumIter, IntoEnumIterator};
 /// Languages supported by difftastic. Each language here has a
 /// corresponding tree-sitter parser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter)]
-pub(crate) enum Language {
+pub enum Language {
     Ada,
     #[cfg(feature = "lang-apex")]
     Apex,
@@ -100,7 +100,7 @@ pub(crate) enum Language {
 /// as a specific languages, rather than using the normal language
 /// detection logic.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum LanguageOverride {
+pub enum LanguageOverride {
     /// Treat the file as this language regardless of what language
     /// detection thinks.
     Language(Language),
@@ -110,7 +110,7 @@ pub(crate) enum LanguageOverride {
 
 /// If there is a language called `name` (comparing case
 /// insensitively), return it. Treat `"text"` as an additional option.
-pub(crate) fn language_override_from_name(name: &str) -> Option<LanguageOverride> {
+pub fn language_override_from_name(name: &str) -> Option<LanguageOverride> {
     let name = name.trim().to_lowercase();
 
     if name == "text" {
@@ -128,7 +128,7 @@ pub(crate) fn language_override_from_name(name: &str) -> Option<LanguageOverride
 }
 
 /// The language name shown to the user.
-pub(crate) fn language_name(language: Language) -> &'static str {
+pub fn language_name(language: Language) -> &'static str {
     match language {
         Ada => "Ada",
         #[cfg(feature = "lang-apex")]
@@ -213,7 +213,7 @@ use Language::*;
 use crate::lines::split_on_newlines;
 
 /// File globs that identify languages based on the file path.
-pub(crate) fn language_globs(language: Language) -> Vec<glob::Pattern> {
+pub fn language_globs(language: Language) -> Vec<glob::Pattern> {
     let glob_strs: &'static [&'static str] = match language {
         Ada => &["*.ada", "*.adb", "*.ads"],
         Asm => &["*.asm", "*.s", "*.S"],
@@ -496,7 +496,7 @@ fn looks_like_xml(src: &str) -> bool {
     src.starts_with("<?xml")
 }
 
-pub(crate) fn guess(
+pub fn guess(
     path: &Path,
     src: &str,
     overrides: &[(LanguageOverride, Vec<glob::Pattern>)],

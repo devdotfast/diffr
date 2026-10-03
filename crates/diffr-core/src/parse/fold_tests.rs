@@ -214,8 +214,8 @@ mod folds {
 
     #[test]
     fn added_rust_test_body_is_foldable_without_hiding_signature_or_brace() {
-        let lhs = include_str!("../../examples/review/real/08-ripgrep-3496/before.rs");
-        let rhs = include_str!("../../examples/review/real/08-ripgrep-3496/after.rs");
+        let lhs = include_str!("../../../../examples/review/real/08-ripgrep-3496/before.rs");
+        let rhs = include_str!("../../../../examples/review/real/08-ripgrep-3496/after.rs");
         let review = DiffResult::from_sources("walk.rs", lhs, rhs);
         let signature = rhs
             .lines()
@@ -306,8 +306,8 @@ mod matcher {
 
     #[test]
     fn a_reindented_rename_target_stays_an_unchanged_token() {
-        let lhs = include_str!("../../examples/review/real/02-review-175/before.ts");
-        let rhs = include_str!("../../examples/review/real/02-review-175/after.ts");
+        let lhs = include_str!("../../../../examples/review/real/02-review-175/before.ts");
+        let rhs = include_str!("../../../../examples/review/real/02-review-175/after.ts");
         let review = DiffResult::from_sources("parser.ts", lhs, rhs);
         let token = review
             .lhs_positions
@@ -375,7 +375,8 @@ mod results {
 
     #[test]
     fn real_fixture_folds_have_valid_reciprocal_ranges() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/review/real");
+        let root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/review/real");
         for dir in std::fs::read_dir(root).unwrap() {
             let dir = dir.unwrap().path();
             let p: serde_json::Value =

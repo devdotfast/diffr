@@ -76,7 +76,7 @@ pub(crate) struct FoldMetadata {
 ///
 /// (This is deliberately exchanging correctness-by-construction for
 /// performance.)
-pub(crate) struct SyntaxInfo<'a> {
+pub struct SyntaxInfo<'a> {
     /// The fold this node owns, if a query gave it one. A node has at most
     /// one, so two folds align exactly when the matcher paired their nodes.
     pub(crate) fold: RefCell<Option<FoldMetadata>>,
@@ -128,7 +128,7 @@ impl Default for SyntaxInfo<'_> {
     }
 }
 
-pub(crate) enum Syntax<'a> {
+pub enum Syntax<'a> {
     List {
         info: SyntaxInfo<'a>,
         /// The position of the opening token, such as a `(` or `[`.
@@ -450,13 +450,13 @@ pub(crate) fn comment_positions<'a>(nodes: &[&'a Syntax<'a>]) -> Vec<SingleLineS
 }
 
 /// Initialise all the fields in `SyntaxInfo`.
-pub(crate) fn init_all_info<'a>(lhs_roots: &[&'a Syntax<'a>], rhs_roots: &[&'a Syntax<'a>]) {
+pub fn init_all_info<'a>(lhs_roots: &[&'a Syntax<'a>], rhs_roots: &[&'a Syntax<'a>]) {
     init_info(lhs_roots, rhs_roots);
     init_next_prev(lhs_roots);
     init_next_prev(rhs_roots);
 }
 
-pub(crate) fn print_as_dot<'a>(roots: &[&'a Syntax<'a>]) {
+pub fn print_as_dot<'a>(roots: &[&'a Syntax<'a>]) {
     println!("digraph {{");
     print_as_dot_(roots);
     println!("}}");
@@ -687,7 +687,7 @@ impl<'a> Eq for Syntax<'a> {}
 /// Different types of strings. We want to diff these the same way,
 /// but highlight them differently.
 #[derive(PartialEq, Eq, Debug, Clone, Copy, Hash, serde::Serialize)]
-pub(crate) enum StringKind {
+pub enum StringKind {
     /// A string literal, such as `"foo"`.
     StringLiteral,
     /// Plain text, such as the content of `<p>foo</p>`.
@@ -695,7 +695,7 @@ pub(crate) enum StringKind {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy, Hash, serde::Serialize)]
-pub(crate) enum AtomKind {
+pub enum AtomKind {
     /// The kind of this atom when we don't know anything else about
     /// it. This is typically a variable, e.g. `foo`, or a literal
     /// `123`. Note that string literals have a separate kind.
@@ -785,7 +785,7 @@ impl MatchKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MatchedPos {
+pub struct MatchedPos {
     pub(crate) kind: MatchKind,
     pub(crate) pos: SingleLineSpan,
 }

@@ -36,7 +36,7 @@ pub(crate) const COMPONENT_FILE: &str = "plugin.wasm";
 /// A plugin's `plugin.toml`.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Manifest {
+pub struct Manifest {
     /// The plugin's entry name in `[plugins]`, and the prefix of every tag
     /// its queries set: `<name>:<tag>`.
     pub(crate) name: String,
@@ -235,7 +235,7 @@ impl Manifest {
     }
 
     /// Every option that declares a default, with it.
-    pub(crate) fn defaults(&self) -> Map<String, Value> {
+    pub fn defaults(&self) -> Map<String, Value> {
         self.options
             .iter()
             .filter_map(|(key, option)| {
@@ -334,12 +334,12 @@ impl Manifest {
 /// `[plugins]`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(from = "PluginTables", into = "PluginTables")]
-pub(crate) struct PluginsConfig {
+pub struct PluginsConfig {
     /// The plugins in the order they run; each sees the region trees the
     /// ones before it left. Every entry is listed exactly once.
     pub(crate) order: Vec<String>,
     /// Every entry, by plugin name.
-    pub(crate) entries: BTreeMap<String, Entry>,
+    pub entries: BTreeMap<String, Entry>,
 }
 
 /// The on-disk namespaces. An explicit order makes the listed entries
@@ -424,7 +424,7 @@ impl From<PluginsConfig> for PluginTables {
 /// One plugin's entry: diffr's keys, and the plugin's options.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub(crate) struct Entry {
+pub struct Entry {
     /// Whether the plugin runs; once resolved, set, from the file or the
     /// plugin's default.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -438,14 +438,14 @@ pub(crate) struct Entry {
     #[serde(skip)]
     pub(crate) folder: Option<Folder>,
     #[serde(flatten)]
-    pub(crate) options: Map<String, Value>,
+    pub options: Map<String, Value>,
 }
 
 /// `[classifier]`: the one plugin that tags each changed file before
 /// anything is diffed. The bundled classifier unless `path` names another.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub(crate) struct ClassifierConfig {
+pub struct ClassifierConfig {
     /// A classifier folder on disk, as written: relative to the configuration
     /// file's directory, or absolute.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -455,7 +455,7 @@ pub(crate) struct ClassifierConfig {
     folder: Option<Folder>,
     /// The classifier's options, checked against its manifest.
     #[serde(flatten)]
-    pub(crate) options: Map<String, Value>,
+    pub options: Map<String, Value>,
 }
 
 impl ClassifierConfig {
@@ -480,7 +480,7 @@ impl ClassifierConfig {
     }
 
     /// The classifier's folder. Set once the configuration resolves.
-    pub(crate) fn folder(&self) -> &Folder {
+    pub fn folder(&self) -> &Folder {
         self.folder
             .as_ref()
             .expect("a resolved classifier has its folder")
@@ -520,14 +520,14 @@ pub(crate) enum Location {
 }
 
 /// A component loaded from disk or embedded with the executable.
-pub(crate) enum ComponentSource {
+pub enum ComponentSource {
     File(PathBuf),
     Bundled(&'static [u8]),
 }
 
 /// A plugin folder and the `plugin.toml` in it.
 #[derive(Clone, Debug)]
-pub(crate) struct Folder {
+pub struct Folder {
     pub(crate) location: Location,
     pub(crate) manifest: Manifest,
 }
@@ -542,7 +542,7 @@ impl Folder {
     }
 
     /// Every plugin folder supplies a component.
-    pub(crate) fn component(&self) -> ComponentSource {
+    pub fn component(&self) -> ComponentSource {
         match &self.location {
             Location::Bundled => ComponentSource::Bundled(
                 builtin::component(&self.manifest.name)
@@ -619,7 +619,7 @@ impl Folder {
 impl Entry {
     /// The entry's folder. Every entry has one once the configuration
     /// resolves.
-    pub(crate) fn folder(&self) -> &Folder {
+    pub fn folder(&self) -> &Folder {
         self.folder
             .as_ref()
             .expect("a resolved entry has its plugin folder")
@@ -700,7 +700,7 @@ impl PluginsConfig {
     }
 
     /// Each enabled plugin's name and query files, in `order`.
-    pub(crate) fn queries(&self) -> Result<Vec<(String, Queries)>, ConfigError> {
+    pub fn queries(&self) -> Result<Vec<(String, Queries)>, ConfigError> {
         self.enabled()
             .map(|(reference, entry)| {
                 let name = reference
@@ -718,7 +718,7 @@ impl PluginsConfig {
     }
 
     /// The enabled entries, in `order`.
-    pub(crate) fn enabled(&self) -> impl Iterator<Item = (&str, &Entry)> {
+    pub fn enabled(&self) -> impl Iterator<Item = (&str, &Entry)> {
         self.order.iter().filter_map(|name| {
             self.entries
                 .get(name)
@@ -764,7 +764,7 @@ mod tests {
 
     #[test]
     fn the_prompt_description_links_to_its_default_in_the_source() {
-        let source = include_str!("../../plugins/shape/summarize/plugin.toml");
+        let source = include_str!("../../../../plugins/shape/summarize/plugin.toml");
         let lines: Vec<&str> = source.lines().collect();
         let table = lines
             .iter()

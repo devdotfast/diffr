@@ -27,14 +27,14 @@ impl<T> Pairing<T> {
         }
     }
 
-    pub(crate) fn lhs(&self) -> Option<&T> {
+    pub fn lhs(&self) -> Option<&T> {
         match self {
             Self::Both { lhs, .. } | Self::LeftOnly { lhs } => Some(lhs),
             Self::RightOnly { .. } => None,
         }
     }
 
-    pub(crate) fn rhs(&self) -> Option<&T> {
+    pub fn rhs(&self) -> Option<&T> {
         match self {
             Self::Both { rhs, .. } | Self::RightOnly { rhs } => Some(rhs),
             Self::LeftOnly { .. } => None,

@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::pairing::Pairing;
 
-pub(crate) mod project;
+pub mod project;
 
 /// The current wire version. Changes within a version are additive.
 pub const VERSION: u32 = 3;

@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { STRUCTURAL_DIFF_WIRE_VERSION } from "./contract.js";
 import { repositoryRoot } from "./test-binary.js";
 
-test("STRUCTURAL_DIFF_WIRE_VERSION matches src/protocol/mod.rs", () => {
-  const source = readFileSync(join(repositoryRoot, "src/protocol/mod.rs"), "utf8");
+test("STRUCTURAL_DIFF_WIRE_VERSION matches crates/diffr-core/src/protocol/mod.rs", () => {
+  const source = readFileSync(join(repositoryRoot, "crates/diffr-core/src/protocol/mod.rs"), "utf8");
   const match = /pub const VERSION: u32 = (\d+);/.exec(source);
   expect(match).not.toBeNull();
   expect(Number(match![1])).toBe(STRUCTURAL_DIFF_WIRE_VERSION);

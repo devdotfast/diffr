@@ -1,6 +1,6 @@
 use super::*;
-use crate::plugin::bindings::types::{CutOutside, FileRef, FileSides, FileStatus};
 use crate::protocol::Span;
+use crate::protocol::{FileRef, FileStatus};
 
 fn range(start: u32, end: u32) -> SourceRange {
     SourceRange {
@@ -71,14 +71,17 @@ fn source(regions: Vec<Region>) -> Source {
     }
 }
 
-fn entry() -> FileEntry {
+fn entry() -> FileChange {
     let file = FileRef {
         path: "a.rs".into(),
         oid: String::new(),
         mode: "100644".into(),
     };
-    FileEntry {
-        file: FileSides::Both((file.clone(), file)),
+    FileChange {
+        file: Pairing::Both {
+            lhs: file.clone(),
+            rhs: file,
+        },
         status: FileStatus::Modified,
         tags: vec![],
     }
@@ -134,11 +137,11 @@ fn a_rejected_edit_leaves_the_file_unchanged() {
     assert_eq!(file.cut(1, 1).err(), Some(MoveError::CutFold(1)));
     assert_eq!(
         file.cut(2, 4).err(),
-        Some(MoveError::CutOutside(CutOutside {
+        Some(MoveError::CutOutside {
             id: 2,
             offset: 4,
             len: 4,
-        }))
+        })
     );
     assert_eq!(file.cut(999, 1).err(), Some(MoveError::NoRegion(999)));
     assert_eq!(file.join(&[2, 999]).err(), Some(MoveError::NoRegion(999)));
@@ -316,19 +319,19 @@ fn moves_that_cannot_be_carried_out_are_errors() {
     assert_eq!(file.set_collapsed(9, true), Err(MoveError::NoRegion(9)));
     assert_eq!(
         file.cut(3, 3),
-        Err(MoveError::CutOutside(CutOutside {
+        Err(MoveError::CutOutside {
             id: 3,
             offset: 3,
             len: 3
-        }))
+        })
     );
     assert_eq!(
         file.cut(3, 0),
-        Err(MoveError::CutOutside(CutOutside {
+        Err(MoveError::CutOutside {
             id: 3,
             offset: 0,
             len: 3
-        }))
+        })
     );
     assert_eq!(file.cut(2, 1), Err(MoveError::CutFold(2)));
     assert_eq!(file.cut(0, 1), Err(MoveError::NoRegion(0)));
@@ -345,9 +348,9 @@ fn moves_that_cannot_be_carried_out_are_errors() {
     );
     assert_eq!(
         file.link(&[1, 1]),
-        Err(MoveError::Repeated(Repeated {
+        Err(MoveError::Repeated {
             grouping: Grouping::Link,
             ids: vec![1, 1]
-        }))
+        })
     );
 }

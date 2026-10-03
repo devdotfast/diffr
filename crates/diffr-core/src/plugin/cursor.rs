@@ -2,20 +2,86 @@
 //! host walks the trees, positioning the cursor on each node before calling
 //! the plugin; the plugin reads and edits through it, and edits apply
 //! immediately.
-use super::bindings::types::{
-    self, CutOutside, FileEntry, Grouping, Kind, Leaf, MoveError, RegionIds, RegionView, Repeated,
-    RowSummary, Side,
-};
 use crate::pairing::Pairing;
-use crate::protocol::{Node, Region, Source, SourcePos, SourceRange, Visibility};
+use crate::protocol::{FileChange, Node, Region, Source, SourcePos, SourceRange, Span, Visibility};
 use std::collections::BTreeSet;
+
+/// The before (`lhs`) or after (`rhs`) side of a comparison.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Side {
+    Lhs,
+    Rhs,
+}
+
+/// One region as a plugin sees it: shallow, with its parent and its
+/// children's ids rather than nested subtrees.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegionView {
+    pub side: Side,
+    pub id: u32,
+    /// The fold that holds this region; none for a top-level region.
+    pub parent: Option<u32>,
+    pub fold_state_id: u32,
+    pub range: SourceRange,
+    pub tags: Vec<String>,
+    pub visibility: Visibility,
+    pub kind: Kind,
+    pub children: Vec<u32>,
+}
+
+/// A leaf tiles the file; a fold's range is the hull of its children.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Leaf {
+        alignment_id: u32,
+        changed: Vec<Span>,
+    },
+    Fold,
+}
+
+/// Visible collapsed rows and open-line runs within a node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RowSummary {
+    pub collapsed: u32,
+    pub leading: u32,
+    pub trailing: u32,
+    pub longest_gap: u32,
+}
+
+/// The regions a cut or join created, per side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegionIds {
+    Both(u32, u32),
+    LeftOnly(u32),
+    RightOnly(u32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Grouping {
+    Link,
+    Join,
+}
+
+/// Why an edit or a lookup was refused. Nothing changes on a refusal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MoveError {
+    NoRegion(u32),
+    CutFold(u32),
+    CutOutside { id: u32, offset: u32, len: u32 },
+    UnevenSides(u32),
+    TooFewRegions(Grouping),
+    Repeated { grouping: Grouping, ids: Vec<u32> },
+    OneSided(Vec<u32>),
+    NotSiblings(Vec<u32>),
+    NoNextSibling(u32),
+}
 
 /// A file's trees, the next unused IDs, and where the current walk stands.
 pub struct Cursor {
-    pub(crate) file: FileEntry,
-    pub(crate) sides: Pairing<Source>,
+    pub file: FileChange,
+    pub sides: Pairing<Source>,
     /// The region the cursor is on: the one the current callback visits.
-    pub(crate) id: u32,
+    pub id: u32,
     /// IDs from here up were made during the current walk, which skips them.
     limit: u32,
     next_region_id: u32,
@@ -26,7 +92,7 @@ impl Cursor {
     /// A cursor on the file's first region. A file with no regions, such as
     /// an empty one, has nothing to stand on: its sides come back as given.
     #[allow(clippy::result_large_err)] // The sides are handed back, not an error.
-    pub(crate) fn new(file: FileEntry, sides: Pairing<Source>) -> Result<Self, Pairing<Source>> {
+    pub fn new(file: FileChange, sides: Pairing<Source>) -> Result<Self, Pairing<Source>> {
         let Some(first) = sides
             .sides()
             .iter()
@@ -57,7 +123,7 @@ impl Cursor {
     }
 
     /// Start a walk over the nodes that exist now, from the first region.
-    pub(crate) fn rewind(&mut self) {
+    pub fn rewind(&mut self) {
         self.id = self.top_level()[0];
         self.limit = self.next_region_id;
     }
@@ -73,7 +139,7 @@ impl Cursor {
 
     /// The next child of `parent` (none: the next top-level region) after
     /// `after`, skipping nodes this walk created.
-    pub(crate) fn next_child(
+    pub fn next_child(
         &self,
         parent: Option<u32>,
         after: Option<u32>,
@@ -89,7 +155,7 @@ impl Cursor {
                     break index + 1;
                 }
                 // The node was wrapped during this walk: continue after its wrapper.
-                match self.get(previous)?.data.parent {
+                match self.get(previous)?.parent {
                     Some(parent) => previous = parent,
                     None => return Err(MoveError::NoRegion(previous)),
                 }
@@ -112,11 +178,7 @@ impl Cursor {
                         Node::Leaf { .. } => vec![],
                         Node::Fold { children } => children.iter().map(|child| child.id).collect(),
                     };
-                    return Some(RegionView {
-                        side,
-                        data: contract_region(region, parent),
-                        children,
-                    });
+                    return Some(view(region, parent, side, children));
                 }
                 if let Node::Fold { children } = &region.node {
                     if let Some(node) = find(children, Some(region.id), id, side) {
@@ -375,7 +437,7 @@ impl Cursor {
     /// Siblings on this node's side, in source order, including the node itself.
     pub fn siblings(&self, id: u32) -> Result<Vec<u32>, MoveError> {
         let view = self.get(id)?;
-        let children = match view.data.parent {
+        let children = match view.parent {
             Some(parent) => self.get(parent)?.children,
             None => self.top_level(),
         };
@@ -389,12 +451,12 @@ impl Cursor {
     }
 
     /// Enclosing folds, nearest first.
-    pub fn ancestors(&self, id: u32) -> Result<Vec<types::Region>, MoveError> {
+    pub fn ancestors(&self, id: u32) -> Result<Vec<RegionView>, MoveError> {
         let mut ancestors = Vec::new();
         let mut view = self.get(id)?;
-        while let Some(parent) = view.data.parent {
+        while let Some(parent) = view.parent {
             view = self.get(parent)?;
-            ancestors.push(view.data.clone());
+            ancestors.push(view.clone());
         }
         Ok(ancestors)
     }
@@ -422,7 +484,7 @@ impl Cursor {
             (alignment, leaf.range.lines().len() as u32)
         };
         if !(0 < offset && offset < len) {
-            return Err(MoveError::CutOutside(CutOutside { id, offset, len }));
+            return Err(MoveError::CutOutside { id, offset, len });
         }
         // Validate both sides before allocating IDs or changing either tree.
         let paths = trees_ref(sides)
@@ -608,44 +670,63 @@ impl Cursor {
     }
 }
 
-/// A region as the contract shows it: shallow, with its parent.
-fn contract_region(region: &Region, parent: Option<u32>) -> types::Region {
-    let position = |position: SourcePos| types::Position {
-        line: position.line,
-        column: position.column,
-    };
-    types::Region {
+/// A region as a plugin sees it: shallow, with its parent and children.
+fn view(region: &Region, parent: Option<u32>, side: Side, children: Vec<u32>) -> RegionView {
+    RegionView {
+        side,
         id: region.id,
         parent,
         fold_state_id: region.fold_state_id,
-        range: types::Range {
-            start: position(region.range.start),
-            end: position(region.range.end),
-        },
+        range: region.range,
         tags: region.tags.clone(),
-        visibility: types::Visibility {
-            collapsed: region.visibility.collapsed,
-            label: region.visibility.label.clone(),
-        },
+        visibility: region.visibility.clone(),
         kind: match &region.node {
             Node::Leaf {
                 alignment_id,
                 changed,
-            } => Kind::Leaf(Leaf {
+            } => Kind::Leaf {
                 alignment_id: *alignment_id,
-                changed: changed
-                    .iter()
-                    .map(|span| types::Span {
-                        line: span.line,
-                        start_column: span.start_column,
-                        end_column: span.end_column,
-                    })
-                    .collect(),
-            }),
+                changed: changed.clone(),
+            },
             Node::Fold { .. } => Kind::Fold,
         },
+        children,
     }
 }
+
+impl std::fmt::Display for Grouping {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Link => "a link",
+            Self::Join => "a join",
+        })
+    }
+}
+
+impl std::fmt::Display for MoveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoRegion(id) => write!(f, "no region {id}"),
+            Self::CutFold(id) => write!(f, "region {id} is a fold; only a leaf can be cut"),
+            Self::CutOutside { id, offset, len } => write!(
+                f,
+                "line {offset} is not inside region {id}, which has {len} lines"
+            ),
+            Self::UnevenSides(id) => write!(f, "region {id} has a different length on each side"),
+            Self::TooFewRegions(grouping) => write!(f, "{grouping} needs at least two regions"),
+            Self::Repeated { grouping, ids } => {
+                write!(f, "{grouping} lists a region twice: {ids:?}")
+            }
+            Self::OneSided(ids) => write!(f, "a side holds only one of the joined regions {ids:?}"),
+            Self::NotSiblings(ids) => {
+                write!(f, "the joined regions {ids:?} are not consecutive siblings")
+            }
+            Self::NoNextSibling(id) => write!(f, "region {id} has no next sibling"),
+        }
+    }
+}
+
+impl std::error::Error for MoveError {}
 
 fn side_of(sides: &Pairing<Source>, side: Side) -> Option<&Source> {
     match side {
@@ -827,17 +908,17 @@ fn check_regions(ids: &[u32], grouping: Grouping) -> Result<(), MoveError> {
         return Err(MoveError::TooFewRegions(grouping));
     }
     if ids.iter().collect::<BTreeSet<_>>().len() != ids.len() {
-        return Err(MoveError::Repeated(Repeated {
+        return Err(MoveError::Repeated {
             grouping,
             ids: ids.to_vec(),
-        }));
+        });
     }
     Ok(())
 }
 
 fn region_ids(lhs: Option<u32>, rhs: Option<u32>) -> RegionIds {
     match (lhs, rhs) {
-        (Some(lhs), Some(rhs)) => RegionIds::Both((lhs, rhs)),
+        (Some(lhs), Some(rhs)) => RegionIds::Both(lhs, rhs),
         (Some(lhs), None) => RegionIds::LeftOnly(lhs),
         (None, Some(rhs)) => RegionIds::RightOnly(rhs),
         (None, None) => unreachable!("a successful cut/join creates at least one region"),

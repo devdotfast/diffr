@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 /// imports and diagnostics know it by (`builtin:<plugin>/queries/rust.scm`,
 /// or the file's path).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PluginQuery {
+pub struct PluginQuery {
     pub(crate) language: String,
     pub(crate) name: String,
     pub(crate) text: String,

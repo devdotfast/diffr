@@ -11,7 +11,7 @@ use super::bindings::{
 };
 use super::config::{ComponentSource, Entry};
 use super::cursor::Cursor;
-use super::{file_entry, MutationFailed};
+use super::MutationFailed;
 use crate::pairing::Pairing;
 use crate::protocol;
 use anyhow::Context as _;
@@ -173,7 +173,7 @@ fn next_child(
 
 impl bindings::diffr::plugin::host::HostCursor for State {
     fn file(&mut self, c: Resource<Cursor>) -> wasmtime::Result<FileEntry> {
-        Ok(self.table.get(&c)?.file.clone())
+        Ok((&self.table.get(&c)?.file).into())
     }
     fn id(&mut self, c: Resource<Cursor>) -> wasmtime::Result<u32> {
         Ok(self.table.get(&c)?.id)
@@ -183,42 +183,61 @@ impl bindings::diffr::plugin::host::HostCursor for State {
         c: Resource<Cursor>,
         id: u32,
     ) -> wasmtime::Result<Result<Vec<u32>, MoveError>> {
-        Ok(self.table.get(&c)?.siblings(id))
+        Ok(self.table.get(&c)?.siblings(id).map_err(Into::into))
     }
     fn ancestors(
         &mut self,
         c: Resource<Cursor>,
         id: u32,
     ) -> wasmtime::Result<Result<Vec<types::Region>, MoveError>> {
-        Ok(self.table.get(&c)?.ancestors(id))
+        Ok(self
+            .table
+            .get(&c)?
+            .ancestors(id)
+            .map(|regions| regions.into_iter().map(Into::into).collect())
+            .map_err(Into::into))
     }
     fn get(
         &mut self,
         c: Resource<Cursor>,
         id: u32,
     ) -> wasmtime::Result<Result<RegionView, MoveError>> {
-        Ok(self.table.get(&c)?.get(id))
+        Ok(self
+            .table
+            .get(&c)?
+            .get(id)
+            .map(Into::into)
+            .map_err(Into::into))
     }
     fn text(
         &mut self,
         c: Resource<Cursor>,
         id: u32,
     ) -> wasmtime::Result<Result<String, MoveError>> {
-        Ok(self.table.get(&c)?.text(id))
+        Ok(self.table.get(&c)?.text(id).map_err(Into::into))
     }
     fn display(
         &mut self,
         c: Resource<Cursor>,
         id: u32,
     ) -> wasmtime::Result<Result<RowSummary, MoveError>> {
-        Ok(self.table.get(&c)?.display(id))
+        Ok(self
+            .table
+            .get(&c)?
+            .display(id)
+            .map(Into::into)
+            .map_err(Into::into))
     }
     fn matching_siblings(
         &mut self,
         c: Resource<Cursor>,
         ids: Vec<u32>,
     ) -> wasmtime::Result<Result<Option<Vec<u32>>, MoveError>> {
-        Ok(self.table.get(&c)?.matching_siblings(&ids))
+        Ok(self
+            .table
+            .get(&c)?
+            .matching_siblings(&ids)
+            .map_err(Into::into))
     }
     fn leaves(
         &mut self,
@@ -227,14 +246,14 @@ impl bindings::diffr::plugin::host::HostCursor for State {
         start: u32,
         end: u32,
     ) -> wasmtime::Result<Vec<u32>> {
-        Ok(self.table.get(&c)?.leaves(side, start, end))
+        Ok(self.table.get(&c)?.leaves(side.into(), start, end))
     }
     fn has_changes(
         &mut self,
         c: Resource<Cursor>,
         id: u32,
     ) -> wasmtime::Result<Result<bool, MoveError>> {
-        Ok(self.table.get(&c)?.has_changes(id))
+        Ok(self.table.get(&c)?.has_changes(id).map_err(Into::into))
     }
     fn related(
         &mut self,
@@ -242,31 +261,31 @@ impl bindings::diffr::plugin::host::HostCursor for State {
         id: u32,
         name: String,
     ) -> wasmtime::Result<Result<Vec<u32>, MoveError>> {
-        Ok(self.table.get(&c)?.related(id, &name))
+        Ok(self.table.get(&c)?.related(id, &name).map_err(Into::into))
     }
     fn paired_leaf(
         &mut self,
         c: Resource<Cursor>,
         id: u32,
     ) -> wasmtime::Result<Result<Option<u32>, MoveError>> {
-        Ok(self.table.get(&c)?.paired_leaf(id))
+        Ok(self.table.get(&c)?.paired_leaf(id).map_err(Into::into))
     }
     fn linked_regions(
         &mut self,
         c: Resource<Cursor>,
         id: u32,
     ) -> wasmtime::Result<Result<Vec<u32>, MoveError>> {
-        Ok(self.table.get(&c)?.linked_regions(id))
+        Ok(self.table.get(&c)?.linked_regions(id).map_err(Into::into))
     }
     fn is_one_sided(
         &mut self,
         c: Resource<Cursor>,
         id: u32,
     ) -> wasmtime::Result<Result<bool, MoveError>> {
-        Ok(self.table.get(&c)?.is_one_sided(id))
+        Ok(self.table.get(&c)?.is_one_sided(id).map_err(Into::into))
     }
     fn source(&mut self, c: Resource<Cursor>, side: Side) -> wasmtime::Result<Option<String>> {
-        Ok(self.table.get(&c)?.source(side))
+        Ok(self.table.get(&c)?.source(side.into()))
     }
     fn cut(
         &mut self,
@@ -274,21 +293,31 @@ impl bindings::diffr::plugin::host::HostCursor for State {
         region: u32,
         offset: u32,
     ) -> wasmtime::Result<Result<RegionIds, MoveError>> {
-        Ok(self.table.get_mut(&c)?.cut(region, offset))
+        Ok(self
+            .table
+            .get_mut(&c)?
+            .cut(region, offset)
+            .map(Into::into)
+            .map_err(Into::into))
     }
     fn join(
         &mut self,
         c: Resource<Cursor>,
         regions: Vec<u32>,
     ) -> wasmtime::Result<Result<RegionIds, MoveError>> {
-        Ok(self.table.get_mut(&c)?.join(&regions))
+        Ok(self
+            .table
+            .get_mut(&c)?
+            .join(&regions)
+            .map(Into::into)
+            .map_err(Into::into))
     }
     fn link(
         &mut self,
         c: Resource<Cursor>,
         regions: Vec<u32>,
     ) -> wasmtime::Result<Result<(), MoveError>> {
-        Ok(self.table.get_mut(&c)?.link(&regions))
+        Ok(self.table.get_mut(&c)?.link(&regions).map_err(Into::into))
     }
     fn set_collapsed(
         &mut self,
@@ -296,7 +325,11 @@ impl bindings::diffr::plugin::host::HostCursor for State {
         region: u32,
         collapsed: bool,
     ) -> wasmtime::Result<Result<(), MoveError>> {
-        Ok(self.table.get_mut(&c)?.set_collapsed(region, collapsed))
+        Ok(self
+            .table
+            .get_mut(&c)?
+            .set_collapsed(region, collapsed)
+            .map_err(Into::into))
     }
     fn set_label(
         &mut self,
@@ -304,7 +337,11 @@ impl bindings::diffr::plugin::host::HostCursor for State {
         region: u32,
         label: Option<String>,
     ) -> wasmtime::Result<Result<(), MoveError>> {
-        Ok(self.table.get_mut(&c)?.set_label(region, label))
+        Ok(self
+            .table
+            .get_mut(&c)?
+            .set_label(region, label)
+            .map_err(Into::into))
     }
     fn drop(&mut self, c: Resource<Cursor>) -> wasmtime::Result<()> {
         self.table.delete(c)?;
@@ -470,7 +507,7 @@ impl Pipeline {
         file: &protocol::FileChange,
         sides: Pairing<protocol::Source>,
     ) -> anyhow::Result<Pairing<protocol::Source>> {
-        let cursor = match Cursor::new(file_entry(file), sides) {
+        let cursor = match Cursor::new(file.clone(), sides) {
             Ok(cursor) => cursor,
             Err(sides) => return Ok(sides),
         };

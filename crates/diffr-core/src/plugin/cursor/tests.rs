@@ -1,12 +1,12 @@
 use super::*;
-use crate::plugin::bindings::types::{FileRef, FileSides, FileStatus};
+use crate::protocol::{FileRef, FileStatus};
 
-fn data(view: RegionView) -> types::Region {
-    view.data
+fn data(view: RegionView) -> RegionView {
+    view
 }
 
-fn entry(sides: FileSides) -> FileEntry {
-    FileEntry {
+fn entry(sides: Pairing<FileRef>) -> FileChange {
+    FileChange {
         file: sides,
         status: FileStatus::Modified,
         tags: vec![],
@@ -24,7 +24,7 @@ fn file_ref() -> FileRef {
 /// The new region on the first side that has one.
 fn first(ids: &RegionIds) -> u32 {
     match *ids {
-        RegionIds::Both((lhs, _)) | RegionIds::LeftOnly(lhs) => lhs,
+        RegionIds::Both(lhs, _) | RegionIds::LeftOnly(lhs) => lhs,
         RegionIds::RightOnly(rhs) => rhs,
     }
 }
@@ -32,9 +32,12 @@ fn first(ids: &RegionIds) -> u32 {
 /// A cursor over `sides`, with a manifest entry naming the same sides.
 fn cursor(sides: Pairing<Source>) -> Cursor {
     let file = match &sides {
-        Pairing::Both { .. } => FileSides::Both((file_ref(), file_ref())),
-        Pairing::LeftOnly { .. } => FileSides::LeftOnly(file_ref()),
-        Pairing::RightOnly { .. } => FileSides::RightOnly(file_ref()),
+        Pairing::Both { .. } => Pairing::Both {
+            lhs: file_ref(),
+            rhs: file_ref(),
+        },
+        Pairing::LeftOnly { .. } => Pairing::LeftOnly { lhs: file_ref() },
+        Pairing::RightOnly { .. } => Pairing::RightOnly { rhs: file_ref() },
     };
     Cursor::new(entry(file), sides).expect("a region")
 }
@@ -144,7 +147,7 @@ fn relationships_follow_edits_without_confusing_linking_with_alignment() {
     c.link(&[1, 2]).unwrap();
     assert_eq!(c.linked_regions(1).unwrap(), vec![1, 2, 3]);
     assert_eq!(c.paired_leaf(1).unwrap(), None);
-    let RegionIds::Both((left, right)) = c.cut(2, 2).unwrap() else {
+    let RegionIds::Both(left, right) = c.cut(2, 2).unwrap() else {
         panic!("both sides were cut");
     };
     assert_eq!(c.paired_leaf(left).unwrap(), Some(right));

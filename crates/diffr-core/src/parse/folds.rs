@@ -18,7 +18,7 @@ use streaming_iterator::StreamingIterator as _;
 use tree_sitter::{QueryCursor, Tree};
 
 #[derive(Debug)]
-pub(crate) struct Fold {
+pub struct Fold {
     pub(crate) relations: Vec<(String, SourceRange)>,
     pub(crate) tags: Vec<String>,
     /// Source on this side; may span multiple syntax nodes.
@@ -48,13 +48,13 @@ pub(crate) enum FoldMatch {
 /// ranges. Which range wins would depend on query order, so the file is not
 /// diffed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Conflict {
+pub struct Conflict {
     /// 0-based line the node starts on.
-    pub(crate) line: usize,
+    pub line: usize,
     /// The node's tree-sitter kind, such as `function_item`.
-    pub(crate) kind: String,
+    pub kind: String,
     /// The two query sources, sorted.
-    pub(crate) sources: (String, String),
+    pub sources: (String, String),
 }
 
 /// Interpret configurable fold captures in their own query traversal.

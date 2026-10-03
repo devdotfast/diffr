@@ -182,7 +182,7 @@ test("regions sharing a fold_state_id collapse and expand as one bundle", () => 
 });
 
 /**
- * The shape diffr emits for a new, summarized function (src/tags/mod.rs, src/protocol/project.rs
+ * The shape diffr emits for a new, summarized function (src/tags/mod.rs, crates/diffr-core/src/protocol/project.rs
  * `syntax_spans`): a one-line docstring region tagged `summarize:docstring`, collapsed
  * with an empty label, sharing fold state 4 with the collapsed function fold after it, right side only.
  */

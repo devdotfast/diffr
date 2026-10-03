@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 // Manifests, queries and components from plugins/shape/, and the classifier.
 include!(concat!(env!("OUT_DIR"), "/bundled_assets.rs"));
 
-pub(crate) fn component(name: &str) -> Option<&'static [u8]> {
+pub fn component(name: &str) -> Option<&'static [u8]> {
     COMPONENTS
         .iter()
         .find(|(own, _)| *own == name)
@@ -43,7 +43,7 @@ pub(crate) fn manifests() -> &'static [Manifest] {
     })
 }
 
-pub(crate) fn manifest(name: &str) -> Option<&'static Manifest> {
+pub fn manifest(name: &str) -> Option<&'static Manifest> {
     manifests().iter().find(|manifest| manifest.name == name)
 }
 
@@ -69,7 +69,7 @@ mod tests {
 
     #[test]
     fn every_plugin_folder_is_embedded_and_described() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/shape");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/shape");
         let mut on_disk = BTreeSet::new();
         let mut folders = BTreeSet::new();
         for folder in std::fs::read_dir(&root).unwrap() {

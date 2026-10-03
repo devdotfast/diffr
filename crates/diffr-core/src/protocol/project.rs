@@ -42,16 +42,16 @@ use crate::summary::{DiffResult, FallbackCause, FileContent, FileFormat};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Everything the projection needs besides the diff itself.
-pub(crate) struct Inputs<'a> {
+pub struct Inputs<'a> {
     /// Which sides the file exists on; a one-sided file gets one source.
-    pub(crate) file: &'a Pairing<FileRef>,
+    pub file: &'a Pairing<FileRef>,
     /// Byte length of each side's content, for binary files.
-    pub(crate) sizes: (u64, u64),
+    pub sizes: (u64, u64),
     /// Highlight spans per side; empty when the run did not ask for syntax.
-    pub(crate) syntax: (Vec<SyntaxSpan>, Vec<SyntaxSpan>),
+    pub syntax: (Vec<SyntaxSpan>, Vec<SyntaxSpan>),
 }
 
-pub(crate) fn diff(result: &DiffResult, inputs: Inputs<'_>) -> Diff {
+pub fn diff(result: &DiffResult, inputs: Inputs<'_>) -> Diff {
     let (lhs_src, rhs_src) = match (&result.lhs_src, &result.rhs_src) {
         (FileContent::Text(lhs), FileContent::Text(rhs)) => (lhs.as_str(), rhs.as_str()),
         _ => {
@@ -139,7 +139,7 @@ fn fallback_code(cause: FallbackCause) -> &'static str {
 
 /// Highlight spans for one side, per line, sorted, non-overlapping. Where
 /// captures nest the innermost wins.
-pub(crate) fn syntax_spans(src: &str, parser: &'static TreeSitterConfig) -> Vec<SyntaxSpan> {
+pub fn syntax_spans(src: &str, parser: &'static TreeSitterConfig) -> Vec<SyntaxSpan> {
     let mut captures = highlight_captures(src, parser);
     // Paint larger captures first so smaller (inner) ones overwrite them.
     captures.sort_by_key(|(start, end, _)| std::cmp::Reverse(end - start));

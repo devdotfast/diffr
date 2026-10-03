@@ -42,30 +42,16 @@
 #![warn(clippy::dbg_macro)]
 
 mod cli;
-mod config;
-mod constants;
-mod diff;
-mod engine;
 mod exit_codes;
 mod files;
 mod git;
-mod hash;
-mod line_layout;
-mod line_parser;
-mod lines;
 mod options;
-mod pairing;
-mod parse;
 mod plugin;
-pub(crate) mod protocol;
 mod run;
-mod summary;
 mod tags;
 mod version;
-mod words;
 
-#[macro_use]
-extern crate log;
+use diffr_core::{config, engine, hash, pairing, parse, protocol, summary};
 
 use crate::config::Params;
 

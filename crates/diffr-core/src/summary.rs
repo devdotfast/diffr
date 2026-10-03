@@ -7,13 +7,13 @@ use crate::parse::guess_language::{self, language_name};
 use crate::parse::syntax::MatchedPos;
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum FileContent {
+pub enum FileContent {
     Text(String),
     Binary,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum FileFormat {
+pub enum FileFormat {
     SupportedLanguage(guess_language::Language),
     PlainText,
     /// A file in a supported language diffed by line: `cause` says why, and
@@ -27,7 +27,7 @@ pub(crate) enum FileFormat {
 
 /// Why a file in a supported language was diffed by line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FallbackCause {
+pub enum FallbackCause {
     /// A side is larger than the byte limit.
     ByteLimit,
     /// The AST matching graph grew past the graph limit.
@@ -52,13 +52,13 @@ impl Display for FileFormat {
 }
 
 #[derive(Debug)]
-pub(crate) struct DiffResult {
-    pub(crate) file_format: FileFormat,
-    pub(crate) lhs_src: FileContent,
-    pub(crate) rhs_src: FileContent,
-    pub(crate) lhs_folds: Vec<Fold>,
-    pub(crate) rhs_folds: Vec<Fold>,
+pub struct DiffResult {
+    pub file_format: FileFormat,
+    pub lhs_src: FileContent,
+    pub rhs_src: FileContent,
+    pub lhs_folds: Vec<Fold>,
+    pub rhs_folds: Vec<Fold>,
 
-    pub(crate) lhs_positions: Vec<MatchedPos>,
-    pub(crate) rhs_positions: Vec<MatchedPos>,
+    pub lhs_positions: Vec<MatchedPos>,
+    pub rhs_positions: Vec<MatchedPos>,
 }

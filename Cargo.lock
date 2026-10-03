@@ -657,24 +657,48 @@ version = "0.1.10"
 dependencies = [
  "anyhow",
  "assert_cmd",
- "bumpalo",
  "bytes",
- "cc",
  "clap",
- "dirs",
+ "diffr-core",
  "gix",
+ "glob",
+ "libc",
+ "log",
+ "predicates",
+ "pretty_env_logger",
+ "rayon",
+ "serde",
+ "serde_json",
+ "strum",
+ "tempfile",
+ "terminal_size",
+ "tikv-jemallocator",
+ "tokio",
+ "toml 0.8.23",
+ "typed-arena",
+ "version_check",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
+]
+
+[[package]]
+name = "diffr-core"
+version = "0.1.10"
+dependencies = [
+ "anyhow",
+ "bumpalo",
+ "cc",
+ "dirs",
  "glob",
  "hashbrown 0.17.1",
  "humansize",
  "imara-diff",
  "jsonschema",
  "lazy_static",
- "libc",
  "line-numbers",
  "log",
- "predicates",
  "pretty_assertions",
- "pretty_env_logger",
  "radix-heap",
  "rayon",
  "regex",
@@ -683,15 +707,11 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
- "serde_yaml_ng",
  "smallvec",
  "streaming-iterator",
  "strsim",
  "strum",
  "tempfile",
- "terminal_size",
- "tikv-jemallocator",
- "tokio",
  "toml 0.8.23",
  "toml_edit 0.25.15+spec-1.1.0",
  "tree-sitter",
@@ -724,7 +744,6 @@ dependencies = [
  "tree-sitter-javascript",
  "tree-sitter-json",
  "tree-sitter-julia",
- "tree-sitter-language",
  "tree-sitter-lua",
  "tree-sitter-make",
  "tree-sitter-newick",
@@ -755,10 +774,6 @@ dependencies = [
  "tree-sitter-zig",
  "ts-parser-perl",
  "typed-arena",
- "version_check",
- "wasmtime",
- "wasmtime-wasi",
- "wasmtime-wasi-http",
 ]
 
 [[package]]
@@ -3300,19 +3315,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde_yaml_ng"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b4db627b98b36d4203a7b458cf3573730f2bb591b28871d916dfa9efabfd41f"
-dependencies = [
- "indexmap",
- "itoa",
- "ryu",
- "serde",
- "unsafe-libyaml",
-]
-
-[[package]]
 name = "sha1dc"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4396,12 +4398,6 @@ checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
 dependencies = [
  "tinyvec",
 ]
-
-[[package]]
-name = "unsafe-libyaml"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

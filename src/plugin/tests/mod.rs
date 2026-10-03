@@ -11,8 +11,9 @@ mod test_bodies;
 use super::*;
 use crate::config::{Config, Params};
 use crate::options::DiffOptions;
+use crate::pairing::Pairing;
 use crate::plugin::cursor::Cursor;
-use crate::protocol::{project, Diff, FileRef, Node, Region, Source};
+use crate::protocol::{self, project, Diff, FileChange, FileRef, FileStatus, Node, Region, Source};
 use serde_json::json;
 use std::num::NonZeroUsize;
 use std::path::Path;
@@ -172,7 +173,7 @@ fn edited(
 fn documented(path: &str, after: &str) -> Vec<(u32, Option<(u32, u32)>)> {
     let (file, sides) = project(path, "", after);
     let source = rhs(&sides);
-    let cursor = Cursor::new(file_entry(&file), sides.clone()).expect("a region");
+    let cursor = Cursor::new(file.clone(), sides.clone()).expect("a region");
     let mut bodies = Vec::new();
     walk(&source.regions, &mut |region| {
         if is_fold(region) && has_tag(region, "deleted-bodies:function") {

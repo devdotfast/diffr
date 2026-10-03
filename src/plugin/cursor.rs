@@ -14,8 +14,8 @@ use std::collections::BTreeSet;
 pub struct Cursor {
     pub(crate) file: FileEntry,
     pub(crate) sides: Pairing<Source>,
-    /// The node the current callback is on; none between callbacks.
-    pub(crate) id: Option<u32>,
+    /// The region the cursor is on: the one the current callback visits.
+    pub(crate) id: u32,
     /// IDs from here up were made during the current walk, which skips them.
     limit: u32,
     next_region_id: u32,
@@ -23,7 +23,19 @@ pub struct Cursor {
 }
 
 impl Cursor {
-    pub(crate) fn new(file: FileEntry, sides: Pairing<Source>) -> Self {
+    /// A cursor on the file's first region. A file with no regions, such as
+    /// an empty one, has nothing to stand on: its sides come back as given.
+    #[allow(clippy::result_large_err)] // The sides are handed back, not an error.
+    pub(crate) fn new(file: FileEntry, sides: Pairing<Source>) -> Result<Self, Pairing<Source>> {
+        let Some(first) = sides
+            .sides()
+            .iter()
+            .flat_map(|source| source.regions.first())
+            .map(|region| region.id)
+            .next()
+        else {
+            return Err(sides);
+        };
         let mut next_region_id = 1;
         let mut next_alignment_id = 0;
         for source in sides.sides() {
@@ -34,19 +46,19 @@ impl Cursor {
                 }
             });
         }
-        Self {
+        Ok(Self {
             file,
             sides,
-            id: None,
+            id: first,
             limit: next_region_id,
             next_region_id,
             next_alignment_id,
-        }
+        })
     }
 
-    /// Start a walk over the nodes that exist now.
+    /// Start a walk over the nodes that exist now, from the first region.
     pub(crate) fn rewind(&mut self) {
-        self.id = None;
+        self.id = self.top_level()[0];
         self.limit = self.next_region_id;
     }
 

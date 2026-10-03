@@ -172,7 +172,7 @@ fn edited(
 fn documented(path: &str, after: &str) -> Vec<(u32, Option<(u32, u32)>)> {
     let (file, sides) = project(path, "", after);
     let source = rhs(&sides);
-    let cursor = Cursor::new(file_entry(&file), sides.clone());
+    let cursor = Cursor::new(file_entry(&file), sides.clone()).expect("a region");
     let mut bodies = Vec::new();
     walk(&source.regions, &mut |region| {
         if is_fold(region) && has_tag(region, "deleted-bodies:function") {

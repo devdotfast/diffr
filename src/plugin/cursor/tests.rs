@@ -36,7 +36,7 @@ fn cursor(sides: Pairing<Source>) -> Cursor {
         Pairing::LeftOnly { .. } => FileSides::LeftOnly(file_ref()),
         Pairing::RightOnly { .. } => FileSides::RightOnly(file_ref()),
     };
-    Cursor::new(entry(file), sides)
+    Cursor::new(entry(file), sides).expect("a region")
 }
 
 fn leaf(id: u32, alignment: u32, start: u32, end: u32) -> Region {
@@ -85,11 +85,11 @@ fn file_state() -> Cursor {
 #[test]
 fn source_is_original_text_and_distinguishes_absent_from_empty() {
     for side in [Side::Lhs, Side::Rhs] {
-        for text in ["", "a", "a\n", "π\r\nlast"] {
+        for text in ["a", "a\n", "π\r\nlast"] {
             let source = Source {
                 text: text.into(),
                 syntax: Vec::new(),
-                regions: vec![],
+                regions: vec![leaf(1, 1, 0, 1)],
             };
             let sides = match side {
                 Side::Lhs => Pairing::LeftOnly { lhs: source },

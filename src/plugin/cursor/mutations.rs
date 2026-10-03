@@ -92,6 +92,7 @@ fn both(lhs: Vec<Region>, rhs: Vec<Region>) -> Cursor {
             rhs: source(rhs),
         },
     )
+    .expect("a region")
 }
 
 type Shape = (u32, Option<u32>, u32, u32, u32, bool, String);

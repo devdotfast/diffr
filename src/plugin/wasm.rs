@@ -133,7 +133,7 @@ async fn subtree(
 ) -> anyhow::Result<()> {
     let visit = async |phase| -> anyhow::Result<bool> {
         accessor.with(|mut access| -> anyhow::Result<()> {
-            access.data_mut().table.get_mut(cursor)?.id = Some(node);
+            access.data_mut().table.get_mut(cursor)?.id = node;
             Ok(())
         })?;
         let borrowed = Resource::new_borrow(cursor.rep());
@@ -174,11 +174,7 @@ impl bindings::diffr::plugin::host::HostCursor for State {
         Ok(self.table.get(&c)?.file.clone())
     }
     fn id(&mut self, c: Resource<Cursor>) -> wasmtime::Result<u32> {
-        Ok(self
-            .table
-            .get(&c)?
-            .id
-            .expect("the cursor is positioned during a callback"))
+        Ok(self.table.get(&c)?.id)
     }
     fn siblings(
         &mut self,
@@ -450,12 +446,13 @@ impl Pipeline {
         file: &protocol::FileChange,
         sides: Pairing<protocol::Source>,
     ) -> anyhow::Result<Pairing<protocol::Source>> {
+        let cursor = match Cursor::new(file_entry(file), sides) {
+            Ok(cursor) => cursor,
+            Err(sides) => return Ok(sides),
+        };
         let (reply, result) = oneshot::channel();
         self.jobs
-            .send(Job {
-                cursor: Cursor::new(file_entry(file), sides),
-                reply,
-            })
+            .send(Job { cursor, reply })
             .await
             .map_err(|_| trapped())?;
         let cursor = result.await.map_err(|_| trapped())??;

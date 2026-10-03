@@ -49,6 +49,7 @@ mod options;
 mod plugin;
 mod pprint;
 mod run;
+mod search;
 mod tags;
 mod version;
 

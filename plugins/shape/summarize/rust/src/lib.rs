@@ -242,6 +242,9 @@ fn docstring(cursor: &Cursor, id: u32) -> Result<Option<u32>, String> {
 
 impl Summarize {
     fn eligible(&self, cursor: &Cursor, data: &Region) -> Result<bool, String> {
+        if cursor.has_search_highlights(data.id)? {
+            return Ok(false);
+        }
         if !matches!(data.kind, Kind::Fold) {
             return Ok(false);
         }

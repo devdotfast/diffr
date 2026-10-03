@@ -62,4 +62,4 @@ impl GuestPlugin for DeletedBodies {
     }
 }
 
-export!(DeletedBodies);
+export_shape!(DeletedBodies);

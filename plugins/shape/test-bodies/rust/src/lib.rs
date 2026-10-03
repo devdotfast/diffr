@@ -67,4 +67,4 @@ impl GuestPlugin for TestBodies {
     }
 }
 
-export!(TestBodies);
+export_shape!(TestBodies);

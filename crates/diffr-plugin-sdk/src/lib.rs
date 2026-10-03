@@ -7,6 +7,7 @@ pub mod bindings {
         path: "wit",
         world: "diffr-plugin",
         pub_export_macro: true,
+        export_macro_name: "export_shape",
         default_bindings_module: "diffr_plugin_sdk::bindings",
         additional_derives: [PartialEq, Eq],
     });
@@ -34,16 +35,18 @@ pub use bindings::diffr::plugin::types::{
     Attribute, FileEntry, FileRef, FileSides, FileStatus, Kind, MoveError, Region, RegionIds,
     RegionView, Side, Tag, Visit,
 };
+pub use bindings::export_shape;
 pub use bindings::exports::diffr::plugin::api::{Guest, GuestPlugin};
+pub use classifier::export_classifier;
 pub use classifier::exports::diffr::plugin::classify::{
     Classification, Guest as ClassifierGuest, GuestClassifier,
 };
 
-/// Common imports for shape plugins.
+/// Common imports for either kind of plugin.
 pub mod prelude {
-    pub use crate::bindings::export;
     pub use crate::{
-        Cursor, FileEntry, FileSides, FileStatus, Guest, GuestPlugin, Kind, Region, RegionIds,
-        RegionView, Side, Visit,
+        export_classifier, export_shape, git, Attribute, Classification, ClassifierGuest, Cursor,
+        FileEntry, FileRef, FileSides, FileStatus, Guest, GuestClassifier, GuestPlugin, Kind,
+        Region, RegionIds, RegionView, Side, Tag, Visit,
     };
 }

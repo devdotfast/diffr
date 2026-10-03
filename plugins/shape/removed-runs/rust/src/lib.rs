@@ -79,4 +79,4 @@ impl GuestPlugin for RemovedRuns {
     }
 }
 
-export!(RemovedRuns);
+export_shape!(RemovedRuns);

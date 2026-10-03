@@ -100,4 +100,4 @@ fn run(cursor: &Cursor, id: u32) -> Result<Option<(Vec<u32>, u32)>, String> {
     Ok((ids.len() >= 2 && count >= 2).then_some((ids, count)))
 }
 
-export!(Group);
+export_shape!(Group);

@@ -333,4 +333,4 @@ impl Summarize {
     }
 }
 
-export!(Summarize);
+export_shape!(Summarize);

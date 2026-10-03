@@ -14,10 +14,7 @@
 //! shows it collapsed behind the reason, "Generated file · hidden by default".
 mod generated;
 
-use diffr_plugin_sdk::{
-    git, Attribute, Classification, ClassifierGuest, FileEntry, FileRef, FileSides, FileStatus,
-    GuestClassifier, Tag,
-};
+use diffr_plugin_sdk::prelude::*;
 use generated::Prefix;
 use regex::Regex;
 use serde::Deserialize;
@@ -328,4 +325,4 @@ impl GuestClassifier for Classify {
     }
 }
 
-diffr_plugin_sdk::classifier::export_classifier!(Classify);
+export_classifier!(Classify);

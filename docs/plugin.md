@@ -1,6 +1,6 @@
 # Plugin Architecture
 
-`diffr` has a powerful, wasm-based plugin API which customizes how it presents changed files. For more details, read the [docs](./docs/plugin.md).
+`diffr` has a powerful, wasm-based plugin API which customizes how it presents changed files.
 
 For example, the following are all implemented as plugins:
 
@@ -14,25 +14,58 @@ For example, the following are all implemented as plugins:
 When you run `diffr ${commit_range_exp}`, the following happens:
 
 1. Commits loaded from git
-2. Plugins (explained in more detail later) load
-3. The classifier tags each changed file: generated, vendored, docs, test, or a custom tag
-4. Each file is parsed via tree-sitter & diffed using difftastic's ast/ast diffing algorithm
+2. Plugins (explained in more detail later) load. There are two types of plugins: classifier + shape.
+3. A classifier plugin tags a file as `generated`, `test`-only, etc. These are not put through expensive structural diffing
+   and, by default, are collapsed in diff viewer clients like the TUI.
+4. Each remaining file is parsed via tree-sitter & diffed using difftastic's ast/ast diffing algorithm
   - This produces an alignment of file / file
   - Note: because of known upstream limitations, the diffing algorithm is quite CPU/Mem intensive.
     We fall back to a textual diffing algorithm in case of issue
 5. Shape plugins define which AST nodes are present in the API + folded by default.
 
+```mermaid
+sequenceDiagram
+    participant C as UI / API consumer
+    participant D as diffr
+    participant G as git
+    participant K as Classifier plugin
+    participant E as Diff engine
+    participant S as Shape plugins
+
+    D->>G: List the comparison's changed files
+    G-->>D: Paths, blobs, statuses
+    loop Each changed file
+        D->>K: classify(file)
+        K-->>D: Tags, and whether to hide the file
+    end
+    D-->>C: start record: the tagged manifest
+    par Each file, on --jobs workers
+        D->>G: Read both sides
+        D->>E: Diff
+        alt Hidden or generated
+            E->>E: Line diff
+        else
+            E->>E: Parse with tree-sitter, diff ASTs (difftastic)
+        end
+        E-->>D: Aligned regions and folds
+        loop Each shape plugin, in plugins.order
+            D->>S: visit(cursor, pre | post), once per region
+            S->>D: cursor edits: cut, join, link, collapse, label
+        end
+        D-->>C: file record, as soon as it is done
+    end
+    D-->>C: complete record
+```
+
 ## Plugin Interface
 
-The WASM interface is defined in
+Plugins are defined by a WASM interface is defined in
 [`crates/diffr-plugin-sdk/wit/plugin.wit`](../crates/diffr-plugin-sdk/wit/plugin.wit).
-It has two kinds of plugin: one classifier, which tags each changed file, and
-shape plugins, which run in order on each diffed file.
 
-A classifier implements the generated `GuestClassifier` trait:
+The classifier plugin implements the generated `GuestClassifier` trait; it determines if and how an entire file is (1) collapsed and (2) skips structural diffing:
 
 ```rust
-use diffr_plugin_sdk::{Classification, ClassifierGuest, FileEntry, GuestClassifier, Tag};
+use diffr_plugin_sdk::prelude::*;
 
 struct MyClassifier;
 impl ClassifierGuest for MyClassifier {
@@ -44,10 +77,10 @@ impl GuestClassifier for MyClassifier {
         Ok(Classification { tags: vec![Tag::Custom("schema".into())], hidden: None })
     }
 }
-diffr_plugin_sdk::export_classifier!(MyClassifier);
+export_classifier!(MyClassifier);
 ```
 
-A shape plugin implements the generated `GuestPlugin` trait:
+A shape plugin implements the generated `GuestPlugin` trait; it will be reminiscent of golang's [astutil.Apply](https://pkg.go.dev/golang.org/x/tools/go/ast/astutil#Apply), for those familiar. Shape plugins determine the presentation of individual AST folds in an open file (e.g. collapsing + replacing w pseudocode, or them grouping together, and so on):
 
 ```rust
 use diffr_plugin_sdk::prelude::*;
@@ -58,15 +91,12 @@ impl Guest for MyPlugin {
 }
 impl GuestPlugin for MyPlugin {
     fn new(options: String) -> Result<Self, String> { Ok(Self) }
+    // cursor is a host-provided interface over the matched ast tree(s); phase indicates preorder/postorder.
     async fn visit(&self, cursor: &Cursor, phase: Visit) -> Result<bool, String> {
         // Inspect this node and edit it through the host cursor.
         Ok(true)
     }
 }
-export!(MyPlugin);
+export_shape!(MyPlugin);
 ```
 
-The [host](../src/plugin/wasm.rs) constructs the plugin and drives traversal.
-See the [context plugin](../plugins/shape/context/rust/src/lib.rs) and its
-[Rust query](../plugins/shape/context/queries/rust.scm) for a concrete
-implementation, and the [classifier](../plugins/classify/rust/src/lib.rs).

@@ -212,7 +212,7 @@ fn worktree(repo: &Repository, state: &mut State) -> Result<()> {
     {
         let Item::Modification {
             entry_index,
-            rela_path,
+            rela_path: relative_path,
             status,
             ..
         } = item?
@@ -247,13 +247,13 @@ fn worktree(repo: &Repository, state: &mut State) -> Result<()> {
             }
             EntryStatus::Conflict { .. } | EntryStatus::NeedsUpdate(_) => continue,
         }
-        let path = root.join(gix::path::from_bstr(rela_path.as_bstr()));
+        let path = root.join(gix::path::from_bstr(relative_path.as_bstr()));
         let bytes = if entry.mode == Mode::SYMLINK {
             gix::path::into_bstr(std::fs::read_link(path)?)
                 .into_owned()
                 .to_vec()
         } else {
-            let relative = gix::path::from_bstr(rela_path.as_bstr());
+            let relative = gix::path::from_bstr(relative_path.as_bstr());
             let mut bytes = Vec::new();
             filter
                 .convert_to_git(std::fs::File::open(path)?, &relative, &filter_index)?

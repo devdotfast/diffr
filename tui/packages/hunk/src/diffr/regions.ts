@@ -1,5 +1,6 @@
 /** Flatten diffr's per-side region trees; collapsed state belongs to the viewer. */
-import type { Region, Source, Span, TextDiff } from "./wire";
+import type { FoldRegion, Region, Source, Span, TextDiff } from "./wire";
+import { measureTextWidth } from "../ui/lib/text";
 export type Side = 0 | 1;
 /** A leaf tiles its side; the same alignmentId on the other side is the leaf its rows line up with. */
 export interface Leaf {
@@ -17,6 +18,8 @@ export interface Leaf {
   tags: string[];
   collapsed: boolean;
   label: string;
+  /** Terminal column of the enclosing fold's content, where a collapsed row starts. */
+  parentColumn: number;
 }
 export interface Fold {
   /** The region's own name, unique across both sides. */
@@ -33,6 +36,9 @@ export interface Fold {
   collapsed: boolean;
   /** Ids of folds nested inside, for recursive fold commands. */
   nested: number[];
+  syntax?: FoldRegion["syntax"];
+  /** Terminal column of the enclosing fold's content, where a collapsed row and guide start. */
+  parentColumn: number;
 }
 /** The change tint of a fold: a one-sided region takes its side's change colour, a paired one stays neutral. */
 export type FoldTint = "inserted" | "removed" | "neutral";
@@ -69,6 +75,13 @@ export function pairedIds(diff: TextDiff): readonly [Set<number>, Set<number>] {
 export const sourceLines = (text: string) =>
   text === "" ? [] : text.replace(/\n$/, "").split("\n");
 const encoder = new TextEncoder();
+/** Wire columns are UTF-8 bytes; terminal columns include tab stops and wide characters. */
+export function byteColumn(text: string, byte: number): number {
+  const prefix = new TextDecoder().decode(encoder.encode(text).slice(0, byte));
+  let column = 0;
+  for (const part of prefix.split(/(\t)/)) column += part === "\t" ? 4 - column % 4 : measureTextWidth(part);
+  return column;
+}
 /** Lines a leaf covers, half-open: an end at column zero does not touch its end line. */
 export function leafLines(region: Region): [number, number] {
   return [region.start.line, region.end.column === 0 ? region.end.line : region.end.line + 1];
@@ -77,14 +90,14 @@ export function flattenSide(source: Source, side: Side): { leaves: Leaf[]; folds
   const lines = sourceLines(source.text);
   const leaves: Leaf[] = [];
   const folds: Fold[] = [];
-  const visit = (region: Region, ancestors: Fold[]) => {
+  const visit = (region: Region, ancestors: Fold[], parentColumn: number) => {
     if (region.kind === "leaf") {
       const [startLine, endLine] = leafLines(region);
       const changed = new Map<number, Span[]>();
       for (const span of region.changed) changed.set(span.line, [...(changed.get(span.line) ?? []), span]);
       leaves.push({ id: region.id, alignmentId: region.alignment_id, foldStateId: region.fold_state_id, side, startLine, endLine,
         changed, tags: region.tags,
-        collapsed: region.visibility.collapsed, label: region.visibility.label });
+        collapsed: region.visibility.collapsed, label: region.visibility.label, parentColumn });
       return;
     }
     const { start, end } = region;
@@ -94,27 +107,20 @@ export function flattenSide(source: Source, side: Side): { leaves: Leaf[]; folds
     const fold: Fold = { id: region.id, foldStateId: region.fold_state_id, side,
       startLine: start.line,
       lastHidden: end.line - (hideEnd ? 0 : 1), label: region.visibility.label, tags: region.tags,
-      collapsed: region.visibility.collapsed, nested: [] };
+      collapsed: region.visibility.collapsed, nested: [], syntax: region.syntax, parentColumn };
     for (const ancestor of ancestors) ancestor.nested.push(fold.foldStateId);
     folds.push(fold);
-    for (const child of region.children) visit(child, [...ancestors, fold]);
+    const indent = lines[region.indent.line];
+    if (indent === undefined) throw new Error(`Fold ${region.id} indents past the end of its file`);
+    for (const child of region.children) visit(child, [...ancestors, fold], byteColumn(indent, region.indent.column));
   };
-  for (const region of source.root.children) visit(region, []);
+  for (const region of source.root.children) visit(region, [], 0);
   return { leaves, folds };
 }
 export function flatten(diff: TextDiff) {
   const lhs = diff.lhs ? flattenSide(diff.lhs, 0) : { leaves: [], folds: [] };
   const rhs = diff.rhs ? flattenSide(diff.rhs, 1) : { leaves: [], folds: [] };
   return { leaves: [lhs.leaves, rhs.leaves] as const, folds: [lhs.folds, rhs.folds] as const };
-}
-/** A leaf is novel when it carries change spans or has no counterpart on the other side. */
-export function novelLeaves(leaves: readonly [Leaf[], Leaf[]]): Set<Leaf> {
-  const alignments = [new Set(leaves[0].map((l) => l.alignmentId)), new Set(leaves[1].map((l) => l.alignmentId))];
-  const novel = new Set<Leaf>();
-  for (const side of [0, 1] as const)
-    for (const leaf of leaves[side])
-      if (leaf.changed.size > 0 || !alignments[side ? 0 : 1].has(leaf.alignmentId)) novel.add(leaf);
-  return novel;
 }
 /** Fold-state ids diffr asks to start collapsed: context gaps and folded bodies, on either side. */
 export function defaultCollapsed(diff: TextDiff): Set<number> {
@@ -205,12 +211,10 @@ export function collapsedFolds(folds: Fold[], collapsed: ReadonlySet<number>): M
  * (`"12 unchanged lines"`), the middle of a removed stretch, or a docstring bundled with its
  * function, which arrives collapsed with an empty label. */
 export const foldableLeaf = (leaf: Leaf) => leaf.collapsed || leaf.label !== "";
-/** An empty label renders as a bare `⋯`. */
-export const leafLabel = (leaf: Leaf) => leaf.label;
 /**
  * The chevron each source line carries, one map per side. An open fold puts one on the first
- * line it covers, so the reader can collapse it; a collapsed fold has a row of its own instead
- * (see `collapsedFolds`) and never marks a source line. Folds can start on one line — the fold
+ * syntax opener (or its first covered line without syntax). Collapsed syntax bodies join
+ * opener and closer; other collapsed folds have a standalone band. Folds can start on one line — the fold
  * the context plugin wraps around its first member — and the outermost wins.
  */
 export function foldHeaders(
@@ -222,12 +226,13 @@ export function foldHeaders(
   const headers = new Map<number, RowFold>();
   for (const leaf of leaves)
     if (foldableLeaf(leaf))
-      headers.set(leaf.startLine, { id: leaf.foldStateId, label: leafLabel(leaf), collapsed: collapsed.has(leaf.foldStateId),
+      headers.set(leaf.startLine, { id: leaf.foldStateId, label: leaf.label, collapsed: collapsed.has(leaf.foldStateId),
         tint: foldTint(leaf.id, leaf.side, paired) });
   const byLine = new Map<number, Fold[]>();
   for (const fold of folds) {
     if (collapsed.has(fold.foldStateId)) continue;
-    byLine.set(fold.startLine, [...(byLine.get(fold.startLine) ?? []), fold]);
+    const header = fold.syntax?.start.line ?? fold.startLine;
+    byLine.set(header, [...(byLine.get(header) ?? []), fold]);
   }
   for (const [line, sharing] of byLine) {
     const fold = [...sharing].sort((a, b) => b.lastHidden - a.lastHidden)[0];

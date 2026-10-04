@@ -163,10 +163,10 @@ test("context gaps come from collapsed unchanged leaves, one row per gap", () =>
     fold?.collapsed ? fold.label : line;
   expect(split.slice(1).map(r => shown(r.left?.fold, r.left?.lineNumber)))
     .toEqual(["1 unchanged lines", 2, 3, "5 unchanged lines", 9, 10, "2 unchanged lines"]);
-  // Unified shows the novel leaf's lines once per side, removals first.
+  // Unified repeats changed lines; unchanged lines inside the same leaf appear once.
   const unified = rowsForFile(file, 0, "unified", dark, new Set([1, 3, 5]));
   expect(unified.slice(1).map(r => shown(r.cell?.fold, r.cell?.newLineNumber ?? r.cell?.oldLineNumber)))
-    .toEqual(["1 unchanged lines", 2, 3, 2, 3, "5 unchanged lines", 9, 10, "2 unchanged lines"]);
+    .toEqual(["1 unchanged lines", 2, 2, 3, "5 unchanged lines", 9, 10, "2 unchanged lines"]);
   for (const layout of ["split", "unified"] as const) {
     expect(rowsForFile(file, 0, layout, dark, new Set([1, 3, 5])).filter(r => r.hunkStart)).toHaveLength(1);
     expect(rowsForFile(file, 0, layout, dark, new Set()).length).toBeGreaterThanOrEqual(13);

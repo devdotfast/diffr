@@ -1,4 +1,5 @@
 /** Load Helix themes (TOML keyed by tree-sitter capture names) into the painter's palette. */
+import type { FoldTint } from "./regions";
 import { readFileSync } from "node:fs";
 import onedark from "../../../../themes/onedark.toml" with { type: "text" };
 import onelight from "../../../../themes/onelight.toml" with { type: "text" };
@@ -36,6 +37,7 @@ export interface Palette {
   /** VS Code's editor.foldBackground and foldPlaceholderForeground. */
   foldBackground: string;
   foldPlaceholder: string;
+  guide: string;
   /** Foreground for a tree-sitter capture such as `keyword.return`; undefined when the theme has no scope for it. */
   syntax: (capture: string) => string | undefined;
 }
@@ -128,15 +130,16 @@ export function paletteFromHelix(theme: HelixTheme): Palette {
     muted,
     chrome: scopeBg(theme, "ui.statusline") ?? mix(bg, fg, 0.06),
     highlight: selection,
-    addition: mix(bg, plus, 0.18),
-    deletion: mix(bg, minus, 0.18),
-    addWord: mix(bg, plus, 0.42),
-    deleteWord: mix(bg, minus, 0.42),
+    addition: mix(bg, plus, 0.12),
+    deletion: mix(bg, minus, 0.12),
+    addWord: mix(bg, plus, 0.28),
+    deleteWord: mix(bg, minus, 0.28),
     addedText: plus,
     removedText: minus,
     accent: scopeFg(theme, "function") ?? scopeFg(theme, "ui.text.focus") ?? fg,
     foldBackground: scopeBg(theme, "ui.cursorline.primary") ?? mix(bg, fg, 0.1),
-    foldPlaceholder: muted,
+    foldPlaceholder: mix(muted, fg, 0.45),
+    guide: scopeFg(theme, "ui.virtual.indent-guide") ?? mix(bg, fg, 0.22),
     syntax: (capture) => scopeFg(theme, capture),
   };
 }
@@ -174,4 +177,9 @@ export function themeConfig(show: unknown): { name: string; path: string | null 
   if (!theme || typeof theme.name !== "string" || (theme.path !== null && theme.path !== undefined && typeof theme.path !== "string"))
     throw new Error("diffr config show did not include a theme section");
   return { name: theme.name, path: theme.path ?? null };
+}
+
+/** Paired folds are neutral; only one-sided folds carry a change tint. */
+export function foldBackground(theme: Palette, tint: FoldTint) {
+  return tint === "inserted" ? theme.addition : tint === "removed" ? theme.deletion : theme.foldBackground;
 }

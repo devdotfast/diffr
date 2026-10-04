@@ -54,6 +54,7 @@ export function App({
     [theme, setTheme] = useState<Palette>(themes.initial);
   const [scroll, setScroll] = useState(0),
     [horizontal, setHorizontal] = useState(0);
+  const [hoveredFold, setHoveredFold] = useState<{file: number; id: number} | null>(null);
   // Files the user closed or opened; unset files follow the visibility on their file record.
   const [closed, setClosed] = useState<Map<number, boolean>>(new Map());
   const [selection, setSelection] = useState<SourceSelection | null>(null),
@@ -365,6 +366,8 @@ export function App({
               if (dragging.current)
                 setSelection((s) => (s ? { ...s, end: row.key } : s));
             }}
+            activeFold={hoveredFold?.file === row.fileIndex ? hoveredFold.id : undefined}
+            onHover={id => setHoveredFold(old => old?.file === row.fileIndex && old.id === id ? old : id === undefined ? null : {file: row.fileIndex, id})}
             onFold={(fold, recursive) => toggleFold(row.fileIndex, fold, recursive)}
           />,
         );

@@ -15,6 +15,7 @@ function appendRenderSpan(target: RenderSpan[], span: RenderSpan) {
   const previous = target.at(-1);
   if (
     previous &&
+    previous.guide === span.guide &&
     previous.fg === span.fg &&
     previous.bg === span.bg &&
     previous.transformFg === span.transformFg

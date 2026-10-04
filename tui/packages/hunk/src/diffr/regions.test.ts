@@ -3,7 +3,7 @@ import { createTestDiffFile, fold, leaf, line, root } from "./fixture";
 import { collapsedFolds, defaultCollapsed, flatten, foldHeaders, foldIds, foldTint, gapIds, hiddenLines, pairedIds } from "./regions";
 import { dark, rowsForFile } from "./rows";
 import type { DiffFile, Region } from "./wire";
-import { foldBackground } from "../ui/diff/CodeRowView";
+import { foldBackground } from "./theme";
 /** Rust-style body folds: each covers its body alone, so the lines that open and close a
  * construct are leaves around it, like VS Code's rows. */
 export function createFoldedDiffFile(): DiffFile {
@@ -106,7 +106,7 @@ test("rows carry fold headers on both layouts and drop hidden lines", () => {
   expect(unified.map((r) => r.cell!.newLineNumber)).toEqual([1, undefined, 8]);
   expect(unified[1].cell!.fold?.id).toBe(10);
 });
-test("a multi-line label hangs under the collapsed header inside the fold tint", () => {
+test("a multi-line label uses the declared enclosing indent inside the fold tint", () => {
   const file = createFoldedDiffFile();
   if (file.diff.type !== "text") throw new Error();
   const pseudocode = "call a\ncall b\nreturn";
@@ -114,8 +114,8 @@ test("a multi-line label hangs under the collapsed header inside the fold tint",
   file.diff.lhs!.root.children[1].children[1].visibility = { collapsed: false, label: pseudocode };
   const rows = rowsForFile(file, 0, "split", dark, new Set([11]));
   const labels = rows.filter((r) => r.right?.foldLabel);
-  expect(labels.map((r) => r.right!.spans[0].text)).toEqual(["        call a", "        call b", "        return"]);
-  expect(labels.map((r) => r.left!.spans[0].text)).toEqual(["        call a", "        call b", "        return"]);
+  expect(labels.map((r) => r.right!.spans.map(s => s.text).join(""))).toEqual(["call a", "call b", "return"]);
+  expect(labels.map((r) => r.left!.spans.map(s => s.text).join(""))).toEqual(["call a", "call b", "return"]);
   expect(rows.indexOf(labels[0])).toBe(rows.findIndex((r) => r.right?.fold?.id === 11) + 1);
   const unified = rowsForFile(file, 0, "unified", dark, new Set([11]));
   expect(unified.filter((r) => r.cell?.foldLabel)).toHaveLength(3);
@@ -236,7 +236,7 @@ test("a collapsed fold takes its side's change tint when one-sided and stays neu
   const inserted = rowsFor(undefined, [body(7, "x = 1\nreturn x")]);
   const header = inserted.find((r) => r.right?.fold)!.right!;
   expect(header.fold!.tint).toBe("inserted");
-  expect(inserted.filter((r) => r.right?.foldLabel).map((r) => r.right!.foldTint)).toEqual(["inserted", "inserted"]);
+  expect(inserted.filter((r) => r.right?.foldLabel).map((r) => r.right!.band)).toEqual(["inserted", "inserted"]);
   expect(foldBackground(dark, "inserted")).toBe(dark.addition);
   // Removed: the same body only on the left.
   const removed = rowsFor([body(7, "2 lines removed")], undefined);

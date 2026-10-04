@@ -4,7 +4,7 @@
 //! order. Every pattern remembers which source it came from, so errors and
 //! conflicts can name the file that wrote it.
 use super::ConfigError;
-use tree_sitter::Query;
+use tree_sitter::{CaptureQuantifier, Query};
 
 pub(crate) struct AnnotationQuery {
     pub(crate) query: Query,
@@ -60,7 +60,7 @@ impl AnnotationQuery {
         for name in query.capture_names() {
             if name.starts_with("related.")
                 || name.starts_with('_')
-                || matches!(*name, "fold" | "fold.open" | "fold.close")
+                || matches!(*name, "fold" | "fold.open" | "fold.close" | "fold.indent")
             {
                 continue;
             }
@@ -79,6 +79,30 @@ impl AnnotationQuery {
                 tags: Vec::new(),
                 source: owner(query.start_byte_for_pattern(index)),
             };
+            // Every match with `@fold.open` has exactly one `@fold.indent`.
+            let quantifier = |name: &str| {
+                query
+                    .capture_index_for_name(name)
+                    .map_or(CaptureQuantifier::Zero, |capture| {
+                        query.capture_quantifiers(index)[capture as usize]
+                    })
+            };
+            match (quantifier("fold.open"), quantifier("fold.indent")) {
+                (CaptureQuantifier::Zero, _) | (CaptureQuantifier::One, CaptureQuantifier::One) => {
+                }
+                (CaptureQuantifier::One, _) => {
+                    return Err(named(
+                        index,
+                        "@fold.open needs exactly one @fold.indent".into(),
+                    ))
+                }
+                _ => {
+                    return Err(named(
+                        index,
+                        "@fold.open must be in every branch of its pattern".into(),
+                    ))
+                }
+            }
             if !query.property_predicates(index).is_empty() {
                 return Err(named(index, "#is? and #is-not? are not supported".into()));
             }

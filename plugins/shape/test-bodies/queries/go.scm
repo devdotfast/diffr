@@ -1,4 +1,8 @@
 ; inherits: builtin:shared/queries/go.scm, builtin:shared/queries/go-docstrings.scm
-((function_declaration name: (identifier) @_name body: (block "{" @fold.open "}" @fold.close) @fold)
+((function_declaration name: (identifier) @_name body: (block "{" @fold.open (statement_list . [
+    (labeled_statement (label_name) . (_) @fold.indent)
+    (_) @fold.indent
+  ]) "}" @fold.close) @fold)
+  (#not-match? @fold.indent "^[A-Za-z_][A-Za-z0-9_]*:\\s*\n")
   (#match? @_name "^Test")
   (#set! tag "test-bodies:test"))

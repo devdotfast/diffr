@@ -49,10 +49,10 @@
 ; Keep the complete function header up to the body, including destructured
 ; parameters and multiline return types.
 ([
-  (function_declaration body: (statement_block "{" @fold.open "}" @fold.close) @fold)
-  (generator_function_declaration body: (statement_block "{" @fold.open "}" @fold.close) @fold)
-  (method_definition body: (statement_block "{" @fold.open "}" @fold.close) @fold)
-  (arrow_function body: (statement_block "{" @fold.open "}" @fold.close) @fold)
+  (function_declaration body: (statement_block "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold)
+  (generator_function_declaration body: (statement_block "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold)
+  (method_definition body: (statement_block "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold)
+  (arrow_function body: (statement_block "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold)
 ] (#set! tag "context:body"))
 
 ; Blocks with a closing line of their own: a change inside keeps it.

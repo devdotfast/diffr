@@ -28,7 +28,7 @@
   (#set! tag "context:scope"))
 
 ; Function items can begin at doc comments. Keep the full declaration header.
-((function_item body: (block "{" @fold.open "}" @fold.close) @fold)
+((function_item body: (block "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold)
   (#set! tag "context:body"))
 
 ; A binding is a scope when its value is a block of its own: an array or a

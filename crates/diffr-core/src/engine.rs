@@ -45,7 +45,7 @@ impl fmt::Display for QueryConflict {
         let (first, second) = &self.conflict.sources;
         write!(
             f,
-            "{}:{}{}: {first} and {second} capture the same {} with different fold ranges",
+            "{}:{}{}: {first} and {second} capture the same {} with different fold ranges or indents",
             self.path,
             self.conflict.line + 1,
             match self.side {

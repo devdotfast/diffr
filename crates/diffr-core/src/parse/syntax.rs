@@ -17,7 +17,7 @@ use crate::diff::changes::ChangeKind::*;
 use crate::diff::changes::{ChangeKind, ChangeMap};
 use crate::diff::lcs_diff;
 use crate::hash::DftHashMap;
-use crate::lines::{is_all_whitespace, split_on_newlines, SourceRange};
+use crate::lines::{is_all_whitespace, split_on_newlines, SourcePosition, SourceRange};
 use crate::words::split_words_and_numbers;
 
 /// A Debug implementation that does not recurse into the
@@ -59,6 +59,10 @@ pub(crate) struct FoldMetadata {
     pub(crate) tags: Vec<String>,
     /// Query-selected boundary, retained when flattening removes its owner.
     pub(crate) range_override: Option<SourceRange>,
+    /// The start of the `@fold.indent` node, else of the `@fold` node.
+    pub(crate) indent: SourcePosition,
+    /// The range between `@fold.open` and `@fold.close`. None without an opener.
+    pub(crate) syntax: Option<SourceRange>,
 }
 
 /// Fields that are common to both `Syntax::List` and `Syntax::Atom`.
@@ -1261,6 +1265,11 @@ mod tests {
             relations: Vec::new(),
             tags: vec![tag.to_owned()],
             range_override: Some(folds::interior_range(&[point(0)], &[point(10)])),
+            indent: SourcePosition {
+                line: 0.into(),
+                byte_column: 0,
+            },
+            syntax: None,
         };
         let atom = |fold| {
             Syntax::new_atom_with_fold(

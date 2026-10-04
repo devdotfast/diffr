@@ -256,6 +256,51 @@ mod folds {
     }
 
     #[test]
+    fn a_body_fold_indents_at_its_first_statement_and_keeps_its_exact_span() {
+        // Each body's (indent line, column) and the text between its opener
+        // and closer; Go's label is outdented, so the statement it labels
+        // gives the indent.
+        for (path, src, indent, span) in [
+            (
+                "a.rs",
+                "fn run() {\n    work();\n    rest();\n}\n",
+                (1, 4),
+                "\n    work();\n    rest();\n",
+            ),
+            (
+                "a.py",
+                "def run():\n    work()\n    rest()\n",
+                (1, 4),
+                "\n    work()\n    rest()",
+            ),
+            (
+                "a.js",
+                "function run() {\n  work();\n  rest();\n}\n",
+                (1, 2),
+                "\n  work();\n  rest();\n",
+            ),
+            (
+                "a.go",
+                "package main\nfunc run() {\nretry:\n\tif try() {\n\t\tgoto retry\n\t}\n\trest()\n}\n",
+                (3, 1),
+                "\nretry:\n\tif try() {\n\t\tgoto retry\n\t}\n\trest()\n",
+            ),
+        ] {
+            let review = DiffResult::from_sources(path, "", src);
+            let body = review
+                .rhs_folds
+                .iter()
+                .find(|fold| fold.syntax.is_some_and(|syntax| text(src, &syntax) == span))
+                .unwrap_or_else(|| panic!("no body fold in {path}"));
+            assert_eq!(
+                (body.indent.line.as_usize(), body.indent.byte_column),
+                indent,
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
     fn two_queries_folding_the_same_lines_make_one_fold() {
         // A function whose body is one `match`: the block the shared query
         // folds and the `match` the context query folds cover the same

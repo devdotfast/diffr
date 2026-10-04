@@ -1,13 +1,13 @@
-//! Link the pinned grammars with their largest parse tables compressed.
+//! Link the pinned grammars with their parse tables compressed.
 //!
 //! Tree-sitter generates each grammar as one `parser.c`: constant tables plus a
-//! lexer. The four largest tables hold most of the bytes. This script moves them
-//! out of `parser.c` into zstd byte arrays and leaves empty arrays in their
-//! place. A generated C function, `diffr_unpack_<symbol>`, fills them, and
+//! lexer. This script moves every table that holds no pointers out of
+//! `parser.c` into zstd byte arrays and leaves empty arrays in their place. A generated C function, `diffr_unpack_<symbol>`, fills them, and
 //! `src/lib.rs` runs it once before the grammar's first use.
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -178,14 +178,6 @@ const VENDORED: &[(&str, &str)] = &[
     ("tree_sitter_smali", "tree-sitter-smali-src"),
 ];
 
-// The tables every generated parser defines, largest first.
-const PACKED_TABLES: [&str; 4] = [
-    "ts_parse_table",
-    "ts_small_parse_table",
-    "ts_parse_actions",
-    "ts_small_parse_table_map",
-];
-
 fn main() {
     // Table bytes are dumped by a host program and used on the target.
     let target_endian = std::env::var("CARGO_CFG_TARGET_ENDIAN").unwrap();
@@ -270,17 +262,23 @@ fn package_roots() -> BTreeMap<String, PathBuf> {
 fn pack(symbol: &str, source: &Path, out: &Path) {
     std::fs::create_dir_all(out).unwrap();
     let parser = std::fs::read_to_string(source.join("parser.c")).unwrap();
-    let tables = dump_tables(symbol, source, out, &parser);
+    let tables = tables(&parser);
+    let bytes = dump_tables(symbol, source, out, &parser, &tables);
 
     let mut grammar = format!(
         "#include <stdlib.h>\n\
          size_t ZSTD_decompress(void *dst, size_t dst_capacity, const void *src, size_t src_size);\n\
          #define {symbol} diffr_{symbol}\n"
     );
-    grammar.push_str(&empty_tables(&parser, &tables));
-    for (name, bytes) in PACKED_TABLES.iter().zip(&tables) {
+    grammar.push_str(&empty_tables(&parser, &tables, &bytes));
+    for (table, bytes) in tables.iter().zip(&bytes) {
         let packed = zstd::bulk::compress(bytes, 19).unwrap();
-        write!(grammar, "\nstatic const unsigned char packed_{name}[] = {{").unwrap();
+        write!(
+            grammar,
+            "\nstatic const unsigned char packed_{}[] = {{",
+            table.name
+        )
+        .unwrap();
         for byte in packed {
             write!(grammar, "{byte},").unwrap();
         }
@@ -292,7 +290,7 @@ fn pack(symbol: &str, source: &Path, out: &Path) {
          }\n",
     );
     writeln!(grammar, "\nvoid diffr_unpack_{symbol}(void) {{").unwrap();
-    for name in PACKED_TABLES {
+    for Table { name, .. } in &tables {
         writeln!(
             grammar,
             "  unpack({name}, sizeof {name}, packed_{name}, sizeof packed_{name});"
@@ -317,8 +315,14 @@ fn pack(symbol: &str, source: &Path, out: &Path) {
     build.compile(symbol);
 }
 
-/// Compile and run a host program that writes the packed tables' bytes.
-fn dump_tables(symbol: &str, source: &Path, out: &Path, parser: &str) -> Vec<Vec<u8>> {
+/// Compile and run a host program that writes each table's bytes.
+fn dump_tables(
+    symbol: &str,
+    source: &Path,
+    out: &Path,
+    parser: &str,
+    tables: &[Table],
+) -> Vec<Vec<u8>> {
     let mut dump = String::from("#include <stdio.h>\n#include \"parser.c\"\n");
     // The constructor refers to the external scanner; the dump never calls it.
     if parser.contains(&format!("{symbol}_external_scanner_create")) {
@@ -332,17 +336,19 @@ fn dump_tables(symbol: &str, source: &Path, out: &Path, parser: &str) -> Vec<Vec
         )
         .unwrap();
     }
-    dump.push_str("int main(int argc, char **argv) {\n  (void)argc;\n");
-    for (index, name) in PACKED_TABLES.iter().enumerate() {
+    // Write the tables back to back into argv[1] and print each one's size.
+    dump.push_str(
+        "int main(int argc, char **argv) {\n  (void)argc;\n  FILE *file = fopen(argv[1], \"wb\");\n  if (!file) return 1;\n",
+    );
+    for Table { name, .. } in tables {
         writeln!(
             dump,
-            "  FILE *file{index} = fopen(argv[{}], \"wb\");\n  \
-             if (!file{index} || fwrite({name}, 1, sizeof {name}, file{index}) != sizeof {name} || fclose(file{index})) return 1;",
-            index + 1
+            "  if (fwrite({name}, 1, sizeof {name}, file) != sizeof {name}) return 1;\n  \
+             printf(\"%zu\\n\", sizeof {name});"
         )
         .unwrap();
     }
-    dump.push_str("  return 0;\n}\n");
+    dump.push_str("  return fclose(file);\n}\n");
     let dump_c = out.join("dump.c");
     std::fs::write(&dump_c, dump).unwrap();
 
@@ -372,69 +378,86 @@ fn dump_tables(symbol: &str, source: &Path, out: &Path, parser: &str) -> Vec<Vec
         command.status().unwrap().success(),
         "compiling the {symbol} table dump"
     );
-    let files: Vec<PathBuf> = PACKED_TABLES
-        .iter()
-        .map(|name| out.join(format!("{name}.bin")))
-        .collect();
+    let file = out.join("tables.bin");
+    let output = Command::new(&program).arg(&file).output().unwrap();
+    assert!(output.status.success(), "dumping the {symbol} tables");
+    let mut bytes = std::fs::read(&file).unwrap();
+    let mut tables = Vec::new();
+    for size in String::from_utf8(output.stdout).unwrap().lines() {
+        let rest = bytes.split_off(size.trim().parse().unwrap());
+        tables.push(std::mem::replace(&mut bytes, rest));
+    }
     assert!(
-        Command::new(&program)
-            .args(&files)
-            .status()
-            .unwrap()
-            .success(),
-        "dumping the {symbol} tables"
+        bytes.is_empty(),
+        "the {symbol} table dump has trailing bytes"
     );
-    files
-        .iter()
-        .map(|file| std::fs::read(file).unwrap())
-        .collect()
+    tables
 }
 
-/// Replace each packed table's definition with an empty, writable array of the same size.
-fn empty_tables(parser: &str, tables: &[Vec<u8>]) -> String {
+/// A top-level array definition in `parser.c`, `T name[...] = {...};`, whose elements hold no pointers.
+struct Table<'a> {
+    name: &'a str,
+    element: &'a str,
+    /// The array declarator when it states its size; `None` for `name[]`.
+    sized_declarator: Option<&'a str>,
+    definition: Range<usize>,
+}
+
+/// Find the tables to pack. Arrays of pointers, such as `ts_symbol_names`, parse
+/// with a pointer declarator and are left in place.
+fn tables(parser: &str) -> Vec<Table<'_>> {
     let mut c = tree_sitter::Parser::new();
     c.set_language(&tree_sitter_c::LANGUAGE.into()).unwrap();
     let tree = c.parse(parser, None).unwrap();
     let text = |node: tree_sitter::Node| &parser[node.byte_range()];
-    let mut edits = Vec::new();
     let mut cursor = tree.walk();
-    for definition in tree.root_node().children(&mut cursor) {
-        // `static const T name[...] = {...};`
-        let Some(array) = definition
-            .child_by_field_name("declarator")
-            .filter(|init| definition.kind() == "declaration" && init.kind() == "init_declarator")
-            .and_then(|init| init.child_by_field_name("declarator"))
-            .filter(|array| array.kind() == "array_declarator")
-        else {
-            continue;
-        };
-        let mut name = array;
-        while name.kind() == "array_declarator" {
-            name = name.child_by_field_name("declarator").unwrap();
-        }
-        let Some(index) = PACKED_TABLES.iter().position(|table| *table == text(name)) else {
-            continue;
-        };
-        let element = text(definition.child_by_field_name("type").unwrap());
-        let declarator = if array.child_by_field_name("size").is_some() {
-            text(array).to_owned()
-        } else {
-            let length = tables[index].len();
-            format!("{}[{length} / sizeof({element})]", text(name))
-        };
-        edits.push((
-            definition.byte_range(),
-            format!("static {element} {declarator};"),
-        ));
+    tree.root_node()
+        .children(&mut cursor)
+        .filter_map(|definition| {
+            let init = definition
+                .child_by_field_name("declarator")
+                .filter(|init| {
+                    definition.kind() == "declaration" && init.kind() == "init_declarator"
+                })?;
+            init.child_by_field_name("value")
+                .filter(|value| value.kind() == "initializer_list")?;
+            let array = init
+                .child_by_field_name("declarator")
+                .filter(|array| array.kind() == "array_declarator")?;
+            let mut name = array;
+            while name.kind() == "array_declarator" {
+                name = name.child_by_field_name("declarator").unwrap();
+            }
+            (name.kind() == "identifier").then_some(())?;
+            Some(Table {
+                name: text(name),
+                element: text(definition.child_by_field_name("type").unwrap()),
+                sized_declarator: array.child_by_field_name("size").map(|_| text(array)),
+                definition: definition.byte_range(),
+            })
+        })
+        .collect()
+}
+
+/// Replace each table's definition with an empty, writable array of the same size.
+fn empty_tables(parser: &str, tables: &[Table], bytes: &[Vec<u8>]) -> String {
+    let mut emptied = parser.to_owned();
+    for (table, bytes) in tables.iter().zip(bytes).rev() {
+        let declarator = table.sized_declarator.map_or_else(
+            || {
+                format!(
+                    "{}[{} / sizeof({})]",
+                    table.name,
+                    bytes.len(),
+                    table.element
+                )
+            },
+            str::to_owned,
+        );
+        emptied.replace_range(
+            table.definition.clone(),
+            &format!("static {} {declarator};", table.element),
+        );
     }
-    assert_eq!(
-        edits.len(),
-        PACKED_TABLES.len(),
-        "expected one definition per packed table"
-    );
-    let mut parser = parser.to_owned();
-    for (range, declaration) in edits.into_iter().rev() {
-        parser.replace_range(range, &declaration);
-    }
-    parser
+    emptied
 }

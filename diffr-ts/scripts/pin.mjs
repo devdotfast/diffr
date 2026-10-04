@@ -22,6 +22,6 @@ async function hashes(artifact) {
   }
   return sha256;
 }
-const pins = { version, artifact: "diffr-cli", sha256: await hashes("diffr-cli"), full: { sha256: await hashes("diffr-cli-full") } };
+const pins = { version, artifact: "diffr-cli", sha256: await hashes("diffr-cli") };
 writeFileSync(join(root, "pins.json"), `${JSON.stringify(pins, null, 2)}\n`);
 console.log(`wrote pins.json for ${version}`);

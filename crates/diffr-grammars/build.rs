@@ -6,6 +6,7 @@
 //! Plain data is derived from the C types: integers, `bool`, enums, and structs
 //! or unions of them, resolved through the grammar's `tree_sitter/parser.h`. A generated C function, `diffr_unpack_<symbol>`, fills them, and
 //! `src/lib.rs` runs it once before the grammar's first use.
+use object::{Object, ObjectSection, ObjectSymbol};
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -181,17 +182,6 @@ const VENDORED: &[(&str, &str)] = &[
 ];
 
 fn main() {
-    // Table bytes are dumped by a host program and used on the target.
-    let target_endian = std::env::var("CARGO_CFG_TARGET_ENDIAN").unwrap();
-    assert_eq!(
-        target_endian,
-        if cfg!(target_endian = "little") {
-            "little"
-        } else {
-            "big"
-        },
-        "packed grammar tables need the host and target to share byte order"
-    );
     let roots = package_roots();
     let mut sources: Vec<(&str, PathBuf)> = PACKAGES
         .iter()
@@ -266,10 +256,7 @@ fn pack(symbol: &str, source: &Path, out: &Path) {
     let parser = std::fs::read_to_string(source.join("parser.c")).unwrap();
     let header = std::fs::read_to_string(source.join("tree_sitter/parser.h")).unwrap();
     let tables = tables(&parser, &header);
-    let (bytes, element_sizes): (Vec<_>, Vec<_>) =
-        dump_tables(symbol, source, out, &parser, &tables)
-            .into_iter()
-            .unzip();
+    let bytes = table_bytes(symbol, source, out, &parser, &tables);
 
     let mut grammar = format!(
         "#include <stdlib.h>\n\
@@ -277,19 +264,6 @@ fn pack(symbol: &str, source: &Path, out: &Path) {
          #define {symbol} diffr_{symbol}\n"
     );
     grammar.push_str(&empty_tables(&parser, &tables, &bytes));
-    // The bytes came from the host; fail the target build if an element type's size differs.
-    let layouts: BTreeMap<&str, usize> = tables
-        .iter()
-        .zip(element_sizes)
-        .map(|(table, size)| (table.element, size))
-        .collect();
-    for (index, (element, size)) in layouts.iter().enumerate() {
-        writeln!(
-            grammar,
-            "typedef char diffr_layout_{index}[sizeof({element}) == {size} ? 1 : -1];"
-        )
-        .unwrap();
-    }
     for (table, bytes) in tables.iter().zip(&bytes) {
         let packed = zstd::bulk::compress(bytes, 19).unwrap();
         write!(
@@ -319,103 +293,90 @@ fn pack(symbol: &str, source: &Path, out: &Path) {
     grammar.push_str("}\n");
     std::fs::write(out.join("grammar.c"), grammar).unwrap();
 
-    let mut build = cc::Build::new();
-    build
-        .include(source)
-        .warnings(false)
-        .out_dir(out)
-        .file(out.join("grammar.c"));
-    if std::env::var("CARGO_CFG_TARGET_ENV").unwrap() == "msvc" {
-        build.flag("/utf-8");
-    }
+    let mut build = compiler(source, out);
+    build.file(out.join("grammar.c"));
     if source.join("scanner.c").is_file() {
         build.file(source.join("scanner.c"));
     }
     build.compile(symbol);
 }
 
-/// Compile and run a host program that writes each table's bytes, and returns
-/// them with the size of the table's element type on the host.
-fn dump_tables(
+/// Compile the tables for the target and read each one's bytes out of the object file.
+fn table_bytes(
     symbol: &str,
     source: &Path,
     out: &Path,
     parser: &str,
     tables: &[Table],
-) -> Vec<(Vec<u8>, usize)> {
-    let mut dump = String::from("#include <stdio.h>\n#include \"parser.c\"\n");
-    // The constructor refers to the external scanner; the dump never calls it.
-    if parser.contains(&format!("{symbol}_external_scanner_create")) {
-        write!(
-            dump,
-            "void *{symbol}_external_scanner_create(void) {{ return NULL; }}\n\
-             void {symbol}_external_scanner_destroy(void *p) {{ (void)p; }}\n\
-             bool {symbol}_external_scanner_scan(void *p, TSLexer *l, const bool *v) {{ (void)p; (void)l; (void)v; return false; }}\n\
-             unsigned {symbol}_external_scanner_serialize(void *p, char *b) {{ (void)p; (void)b; return 0; }}\n\
-             void {symbol}_external_scanner_deserialize(void *p, const char *b, unsigned n) {{ (void)p; (void)b; (void)n; }}\n"
-        )
-        .unwrap();
+) -> Vec<Vec<u8>> {
+    // Global symbols can be found by name. Mach-O and COFF symbols carry no
+    // size, so each table's size is compiled in beside it.
+    let mut globals = parser.to_owned();
+    for storage in tables
+        .iter()
+        .rev()
+        .filter_map(|table| table.storage.clone())
+    {
+        globals.replace_range(storage, "");
     }
-    // Write the tables back to back into argv[1]; print each one's size and its element's size.
-    dump.push_str(
-        "int main(int argc, char **argv) {\n  (void)argc;\n  FILE *file = fopen(argv[1], \"wb\");\n  if (!file) return 1;\n",
-    );
-    for Table { name, element, .. } in tables {
+    for Table { name, .. } in tables {
         writeln!(
-            dump,
-            "  if (fwrite({name}, 1, sizeof {name}, file) != sizeof {name}) return 1;\n  \
-             printf(\"%zu %zu\\n\", sizeof {name}, sizeof({element}));"
+            globals,
+            "const unsigned long long diffr_size_{name} = sizeof {name};"
         )
         .unwrap();
     }
-    dump.push_str("  return fclose(file);\n}\n");
-    let dump_c = out.join("dump.c");
-    std::fs::write(&dump_c, dump).unwrap();
+    let tables_c = out.join("tables.c");
+    std::fs::write(&tables_c, globals).unwrap();
+    let [object_path] = <[PathBuf; 1]>::try_from(
+        compiler(source, out)
+            .file(&tables_c)
+            .opt_level(0)
+            .compile_intermediates(),
+    )
+    .unwrap();
 
-    let host = std::env::var("HOST").unwrap();
-    let tool = cc::Build::new()
-        .host(&host)
-        .target(&host)
-        .opt_level(0)
-        .debug(false)
-        .warnings(false)
-        .cargo_metadata(false)
-        .include(source)
-        .get_compiler();
-    let program = out
-        .join("dump")
-        .with_extension(std::env::consts::EXE_EXTENSION);
-    let mut command = tool.to_command();
-    if tool.is_like_msvc() {
-        command
-            .arg(&dump_c)
-            .arg(format!("/Fe{}", program.display()))
-            .arg(format!("/Fo{}\\", out.display()));
+    let data = std::fs::read(object_path).unwrap();
+    let file = object::File::parse(&*data).unwrap();
+    let prefix = if file.format() == object::BinaryFormat::MachO {
+        "_"
     } else {
-        command.arg(&dump_c).arg("-o").arg(&program);
-    }
-    assert!(
-        command.status().unwrap().success(),
-        "compiling the {symbol} table dump"
-    );
-    let file = out.join("tables.bin");
-    let output = Command::new(&program).arg(&file).output().unwrap();
-    assert!(output.status.success(), "dumping the {symbol} tables");
-    let mut bytes = std::fs::read(&file).unwrap();
-    let mut tables = Vec::new();
-    for line in String::from_utf8(output.stdout).unwrap().lines() {
-        let (size, element_size) = line.trim().split_once(' ').unwrap();
-        let rest = bytes.split_off(size.parse().unwrap());
-        tables.push((
-            std::mem::replace(&mut bytes, rest),
-            element_size.parse().unwrap(),
-        ));
-    }
-    assert!(
-        bytes.is_empty(),
-        "the {symbol} table dump has trailing bytes"
-    );
+        ""
+    };
+    let read = |name: &str, size: usize| -> Vec<u8> {
+        let symbol = file
+            .symbol_by_name(&format!("{prefix}{name}"))
+            .unwrap_or_else(|| panic!("{name} is missing from the {symbol} tables object"));
+        let section = file
+            .section_by_index(symbol.section_index().unwrap())
+            .unwrap();
+        if section.kind() == object::SectionKind::UninitializedData {
+            return vec![0; size];
+        }
+        let start = usize::try_from(symbol.address() - section.address()).unwrap();
+        section.data().unwrap()[start..start + size].to_vec()
+    };
     tables
+        .iter()
+        .map(|Table { name, .. }| {
+            let size: [u8; 8] = read(&format!("diffr_size_{name}"), 8).try_into().unwrap();
+            let size = if file.is_little_endian() {
+                u64::from_le_bytes(size)
+            } else {
+                u64::from_be_bytes(size)
+            };
+            read(name, usize::try_from(size).unwrap())
+        })
+        .collect()
+}
+
+fn compiler(source: &Path, out: &Path) -> cc::Build {
+    let mut build = cc::Build::new();
+    build.include(source).warnings(false).out_dir(out);
+    if std::env::var("CARGO_CFG_TARGET_ENV").unwrap() == "msvc" {
+        build.flag("/utf-8");
+    }
+    build
 }
 
 /// A top-level array definition in `parser.c`, `T name[...] = {...};`, whose
@@ -425,6 +386,8 @@ struct Table<'a> {
     element: &'a str,
     /// The array declarator when it states its size; `None` for `name[]`.
     sized_declarator: Option<&'a str>,
+    /// The `static` keyword, if any.
+    storage: Option<Range<usize>>,
     definition: Range<usize>,
 }
 
@@ -483,10 +446,16 @@ fn tables<'a>(parser: &'a str, header: &str) -> Vec<Table<'a>> {
                 name = name.child_by_field_name("declarator").unwrap();
             }
             let ty = definition.child_by_field_name("type").unwrap();
+            let mut cursor = definition.walk();
+            let storage = definition
+                .children(&mut cursor)
+                .find(|child| child.kind() == "storage_class_specifier" && text(*child) == "static")
+                .map(|keyword| keyword.byte_range());
             plain_data(ty, parser, header, &typedefs).then(|| Table {
                 name: text(name),
                 element: text(ty),
                 sized_declarator: array.child_by_field_name("size").map(|_| text(array)),
+                storage,
                 definition: definition.byte_range(),
             })
         })

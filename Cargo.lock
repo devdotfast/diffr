@@ -780,6 +780,7 @@ name = "diffr-grammars"
 version = "0.1.10"
 dependencies = [
  "cc",
+ "object",
  "rayon",
  "serde_json",
  "tree-sitter",

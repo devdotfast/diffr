@@ -92,15 +92,3 @@ assets = [
 	[ "diffr.1", "usr/share/man/man1/", "644" ],
 	[ "CHANGELOG.md", "usr/share/doc/difftastic/", "644" ],
 ]
-
-[features]
-all-languages = ["lang-fortran", "lang-fsharp", "lang-verilog", "lang-ocaml", "lang-julia", "lang-haskell", "lang-vhdl", "lang-apex", "lang-qml"]
-lang-fortran = ["diffr-core/lang-fortran"]
-lang-fsharp = ["diffr-core/lang-fsharp"]
-lang-verilog = ["diffr-core/lang-verilog"]
-lang-ocaml = ["diffr-core/lang-ocaml"]
-lang-julia = ["diffr-core/lang-julia"]
-lang-haskell = ["diffr-core/lang-haskell"]
-lang-vhdl = ["diffr-core/lang-vhdl"]
-lang-apex = ["diffr-core/lang-apex"]
-lang-qml = ["diffr-core/lang-qml"]

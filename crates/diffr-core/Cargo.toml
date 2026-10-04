@@ -65,28 +65,28 @@ tree-sitter-elixir = "0.3.4"
 tree-sitter-elm = "5.8.0"
 tree-sitter-erlang = "0.20.0"
 tree-sitter-fish = "3.6.0"
-tree-sitter-fortran = { version = "0.6.0", optional = true }
-tree-sitter-fsharp = { version = "0.3.0", optional = true }
+tree-sitter-fortran = "0.6.0"
+tree-sitter-fsharp = "0.3.0"
 tree-sitter-gleam = "1.0.0"
 tree-sitter-go = "0.25.0"
-tree-sitter-haskell = { version = "0.23.1", optional = true }
+tree-sitter-haskell = "0.23.1"
 tree-sitter-hcl = "1.1.0"
 tree-sitter-html = "0.23.2"
 tree-sitter-java-orchard = "0.5.9"
 tree-sitter-javascript = "0.25.0"
 tree-sitter-json = "0.24.8"
-tree-sitter-julia = { version = "0.23.1", optional = true }
+tree-sitter-julia = "0.23.1"
 tree-sitter-lua = "0.5"
 tree-sitter-make = "1.1.1"
 tree-sitter-newick = "1.1.0"
 tree-sitter-nix = "0.3.0"
 tree-sitter-objc = "3.0.2"
-tree-sitter-ocaml = { version = "0.25.0", optional = true }
+tree-sitter-ocaml = "0.25.0"
 tree-sitter-pascal = "0.10.0"
 tree-sitter-php = "0.24.0"
 tree-sitter-proto = "0.4.0"
 tree-sitter-python = "0.25.0"
-tree-sitter-qmljs = { version = "0.3.0", optional = true }
+tree-sitter-qmljs = "0.3.0"
 tree-sitter-r = "1.2.0"
 tree-sitter-racket = "0.24.7"
 tree-sitter-ruby = "0.23.1"
@@ -94,13 +94,13 @@ tree-sitter-rust-orchard = "0.16.6"
 tree-sitter-scala = "0.26.2"
 tree-sitter-scheme = "0.24.7"
 tree-sitter-sequel = "0.3.11"
-tree-sitter-sfapex = { version = "2.4.0", optional = true }
+tree-sitter-sfapex = "2.4.0"
 tree-sitter-solidity = "1.2.13"
 tree-sitter-swift = "0.7.1"
 tree-sitter-toml-ng = "0.7.0"
 tree-sitter-typescript = "0.23.2"
-tree-sitter-verilog = { version = "1.0.3", optional = true }
-tree-sitter-vhdl = { version = "1.4.0", optional = true }
+tree-sitter-verilog = "1.0.3"
+tree-sitter-vhdl = "1.4.0"
 tree-sitter-xml = "0.7.0"
 tree-sitter-yaml = "0.7.0"
 tree-sitter-zig = "1.1.2"
@@ -122,15 +122,5 @@ tempfile = "3.27.0"
 toml = "0.8"
 
 [features]
-all-languages = ["lang-fortran", "lang-fsharp", "lang-verilog", "lang-ocaml", "lang-julia", "lang-haskell", "lang-vhdl", "lang-apex", "lang-qml"]
-lang-fortran = ["dep:tree-sitter-fortran", "diffr-grammars/lang-fortran"]
-lang-fsharp = ["dep:tree-sitter-fsharp", "diffr-grammars/lang-fsharp"]
-lang-verilog = ["dep:tree-sitter-verilog", "diffr-grammars/lang-verilog"]
-lang-ocaml = ["dep:tree-sitter-ocaml", "diffr-grammars/lang-ocaml"]
-lang-julia = ["dep:tree-sitter-julia", "diffr-grammars/lang-julia"]
-lang-haskell = ["dep:tree-sitter-haskell", "diffr-grammars/lang-haskell"]
-lang-vhdl = ["dep:tree-sitter-vhdl", "diffr-grammars/lang-vhdl"]
-lang-apex = ["dep:tree-sitter-sfapex", "diffr-grammars/lang-apex"]
-lang-qml = ["dep:tree-sitter-qmljs", "diffr-grammars/lang-qml"]
 # Constructors and helpers the diffr package's tests build on.
 test-support = []

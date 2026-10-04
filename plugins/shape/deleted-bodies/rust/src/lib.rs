@@ -31,7 +31,7 @@ impl GuestPlugin for DeletedBodies {
     }
 
     async fn visit(&self, cursor: &Cursor, phase: Visit) -> Result<bool, String> {
-        if phase == Visit::Post {
+        if phase != Visit::Pre {
             return Ok(true);
         }
         let RegionView {

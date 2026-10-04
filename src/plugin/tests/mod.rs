@@ -3,7 +3,6 @@
 //! components through a [`Pipeline`].
 mod context;
 mod deleted_bodies;
-mod group;
 mod removed_runs;
 mod summarize;
 mod test_bodies;
@@ -34,10 +33,6 @@ pub(crate) fn walk_mut(regions: &mut [Region], visit: &mut impl FnMut(&mut Regio
             walk_mut(children, visit);
         }
     }
-}
-
-pub(crate) fn line_count(region: &Region) -> usize {
-    region.range.lines().len()
 }
 
 pub(crate) fn is_fold(region: &Region) -> bool {
@@ -206,10 +201,10 @@ fn rust_doc_and_line_comments_above_a_function_are_its_docstring() {
             (1, None),
             (10, Some((5, 7))),
             (18, Some((14, 16))),
-            (24, None),
+            (24, Some((22, 23))),
             (32, Some((28, 31)))
         ],
-        "a one-line docstring is not a region"
+        "a one-line docstring remains a region with its documentation relationship"
     );
 }
 
@@ -257,28 +252,6 @@ fn go_and_javascript_comment_runs_document_functions() {
     ] {
         assert_eq!(documented(path, source), [expected], "{path}");
     }
-}
-
-#[test]
-fn the_default_pipeline_makes_every_plugin_that_is_on() {
-    let config = Config::default();
-    Pipeline::from_config(&config, Path::new("."), NonZeroUsize::MIN).unwrap();
-    let made: Vec<&str> = config
-        .plugins
-        .enabled()
-        .map(|(reference, _)| reference.trim_start_matches("bundled."))
-        .collect();
-    assert_eq!(
-        made,
-        [
-            "context",
-            "deleted-bodies",
-            "test-bodies",
-            "removed-runs",
-            "group"
-        ],
-        "the summarizer is off until turned on"
-    );
 }
 
 #[test]

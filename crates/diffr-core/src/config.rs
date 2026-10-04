@@ -799,8 +799,8 @@ mod format_tests {
             .to_string()
             .contains("unsupported config version 2"));
         let config =
-            Config::from_toml("version = 1\n[plugins]\norder = ['bundled.group']\n").unwrap();
+            Config::from_toml("version = 1\n[plugins]\norder = ['bundled.context']\n").unwrap();
         assert_eq!(config.plugins.entries.len(), 1);
-        assert!(config.plugins.entries.contains_key("bundled.group"));
+        assert!(config.plugins.entries.contains_key("bundled.context"));
     }
 }

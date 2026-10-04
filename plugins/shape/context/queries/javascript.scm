@@ -14,6 +14,16 @@
 ; An arrow function is a scope whether its body is a block or an expression.
 ((arrow_function) @fold
   (#set! tag "context:scope"))
+; Inline callbacks share their header and closer with the enclosing statement.
+; Capturing just the arrow would project inward to its body-only lines.
+((expression_statement
+  (call_expression arguments: (arguments (arrow_function))))
+  @fold (#set! tag "context:scope"))
+((lexical_declaration
+  (variable_declarator value: [
+    (arrow_function)
+    (call_expression arguments: (arguments (arrow_function)))
+  ])) @fold (#set! tag "context:scope"))
 ((class_declaration) @fold
   (#set! tag "context:scope"))
 ((for_statement) @fold

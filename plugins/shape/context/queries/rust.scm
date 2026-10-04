@@ -26,3 +26,7 @@
 ((function_item body: (block (_expression) @fold .))
   (#not-match? @fold "^(\\{|\\[|b?r?#*\")")
   (#set! tag "context:scope"))
+
+; Function items can begin at doc comments. Keep the full declaration header.
+((function_item body: (block "{" @fold.open "}" @fold.close) @fold)
+  (#set! tag "context:body"))

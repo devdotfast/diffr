@@ -37,10 +37,6 @@ fn open_lines(regions: &[Region]) -> BTreeSet<u32> {
     fn visit(regions: &[Region], out: &mut BTreeSet<u32>) {
         for region in regions {
             if region.visibility.collapsed {
-                // The header of a collapsed fold stays visible.
-                if is_fold(region) {
-                    out.insert(region.range.start.line);
-                }
                 continue;
             }
             match &region.node {
@@ -60,49 +56,26 @@ fn long_unchanged_runs_collapse_to_the_context_width() {
     let before = format!("{body}changed = 1\n{body}");
     let after = format!("{body}changed = 2\n{body}");
     let sides = shaped("a.py", &before, &after, 3);
-    let leaves: Vec<_> = rows(&lhs(&sides).regions)
-        .into_iter()
-        .map(|(lines, collapsed, label, _)| (lines, collapsed, label))
-        .collect();
-    assert_eq!(
-        leaves,
-        vec![
-            ((0, 17), true, "17 unchanged lines".to_owned()),
-            ((17, 20), false, String::new()),
-            ((20, 21), false, String::new()),
-            ((21, 24), false, String::new()),
-            ((24, 41), true, "17 unchanged lines".to_owned()),
-        ]
-    );
+    assert_eq!(open_lines(&lhs(&sides).regions), (17..24).collect());
+    assert_eq!(outer_gaps(lhs(&sides)), [0..17, 24..41]);
     let sides = shaped("a.py", &before, &after, 1);
-    assert_eq!(
-        rows(&rhs(&sides).regions)[0],
-        ((0, 19), true, "19 unchanged lines".to_owned(), false)
-    );
+    assert_eq!(open_lines(&rhs(&sides).regions), (19..22).collect());
+    assert_eq!(outer_gaps(rhs(&sides)), [0..19, 22..41]);
 }
 
 #[test]
-fn slivers_cut_from_a_stretch_by_a_fold_edge_stay_open() {
-    // The changed function's fold edge lands inside the stretch above the
-    // change; the two lines left inside the fold are not worth a row.
+fn short_gaps_inside_a_scope_fold_too() {
+    // Fold length is not a readability heuristic: even this two-line gap folds.
     let head = repeated(0..8, |i| format!("x{i} = {i}\n"));
     let before = format!("{head}\ndef f():\n    a = 1\n    b = 1\n    c = 1\n    return 1\n");
     let after = format!("{head}\ndef f():\n    a = 1\n    b = 1\n    c = 1\n    return 2\n");
     let sides = shaped("a.py", &before, &after, 1);
-    let collapsed: Vec<_> = rows(&rhs(&sides).regions)
-        .into_iter()
-        .filter(|(_, collapsed, ..)| *collapsed)
-        .map(|(lines, ..)| lines)
-        .collect();
-    assert_eq!(collapsed, [(0, 9)]);
+    assert_eq!(outer_gaps(rhs(&sides)), [0..9, 10..12]);
 }
 
 #[test]
 fn the_enclosing_header_stays_open_above_a_deep_change() {
-    // A change ten lines into a function whose signature runs to three
-    // lines, under ten unchanged lines of its own. The scope is the whole
-    // `fn`, so the line it starts on is shown even though it is far outside
-    // the padding and its body fold opens two lines below it.
+    // The whole multiline signature remains readable above a distant change.
     let head = repeated(0..10, |i| format!("const C{i}: u32 = {i};\n"));
     let body = repeated(0..10, |i| format!("    let a{i} = {i};\n"));
     let signature = "fn outer(\n    a: u32,\n    b: u32,\n    c: u32,\n) -> u32 {\n";
@@ -110,7 +83,7 @@ fn the_enclosing_header_stays_open_above_a_deep_change() {
     let after = format!("{head}{signature}{body}    2\n}}\n");
     let sides = shaped("a.rs", &before, &after, 1);
     let open = open_lines(&rhs(&sides).regions);
-    assert_eq!(open, BTreeSet::from([10, 24, 25, 26]));
+    assert_eq!(open, BTreeSet::from([10, 11, 12, 13, 14, 24, 25, 26]));
     // Without a context query the whole signature collapses with the
     // unchanged lines above it.
     let config = Config::default();
@@ -160,47 +133,28 @@ fn a_file_the_diff_does_not_parse_has_no_enclosing_header() {
 }
 
 #[test]
-fn a_stretch_crossing_a_fold_end_collapses_on_each_side_of_it() {
-    // The inner block's closer sits inside a long unchanged stretch that
-    // continues in the enclosing function. Regions are not refitted
-    // around it, so the part inside the block and the part after it
-    // collapse separately.
+fn a_stretch_crossing_a_fold_end_is_one_root_interval() {
+    // The gap crosses the inner block's boundary and still has one outer fold.
     let body = repeated(1..=7, |n| format!("        u{n}();\n"));
     let tail = repeated(1..=5, |n| format!("    v{n}();\n"));
     let before = format!("fn f() {{\n    if a {{\n        x();\n{body}    }}\n{tail}}}\n");
     let after = format!("fn f() {{\n    if a {{\n        y();\n{body}    }}\n{tail}}}\n");
     let sides = shaped("a.rs", &before, &after, 1);
     for source in [lhs(&sides), rhs(&sides)] {
-        let collapsed: Vec<_> = rows(&source.regions)
-            .into_iter()
-            .filter(|(_, collapsed, ..)| *collapsed)
-            .map(|(lines, _, label, _)| (lines, label))
-            .collect();
-        assert_eq!(
-            collapsed,
-            [
-                ((4, 10), "6 unchanged lines".to_owned()),
-                ((10, 16), "6 unchanged lines".to_owned())
-            ]
-        );
-        // The inner block ends before the line its `}` sits on, and the
-        // function's scope runs to the brace that closes it: the scope keeps
-        // the line it opens on and the line it closes on.
+        assert_eq!(outer_gaps(source), [4..16]);
         let open = open_lines(&source.regions);
         assert!(open.contains(&0) && open.contains(&16), "{open:?}");
     }
 }
 
 #[test]
-fn short_unchanged_nodes_and_one_sided_files_stay_open() {
+fn short_unchanged_files_fold_and_one_sided_changes_stay_open() {
     let sides = shaped("a.py", "x = 1\ny = 2\n", "x = 1\ny = 2\n", 3);
+    assert_eq!(outer_gaps(lhs(&sides)), [0..2]);
+    assert!(open_lines(&lhs(&sides).regions).is_empty());
     assert_eq!(
-        rows(&lhs(&sides).regions),
-        [((0, 2), false, String::new(), false)]
-    );
-    assert_eq!(
-        lhs(&sides).regions[0].alignment_id(),
-        rhs(&sides).regions[0].alignment_id()
+        lhs(&sides).regions[0].fold_state_id,
+        rhs(&sides).regions[0].fold_state_id
     );
     let (file, sides) = project("a.py", "", "def f():\n    return 1\n");
     let Pairing::Both { rhs: after, .. } = sides.clone() else {
@@ -316,14 +270,7 @@ fn a_fold_whose_matched_partner_holds_changes_stays_open() {
     };
     let (file, _) = project("a.py", "", "");
     run("context", json!({"lines": 1}), &file, &mut sides);
-    let collapsed = |source: &Source| {
-        rows(&source.regions)
-            .into_iter()
-            .filter(|(_, collapsed, _, fold)| *collapsed && *fold)
-            .count()
-    };
-    assert_eq!(collapsed(lhs(&sides)), 0);
-    assert_eq!(collapsed(rhs(&sides)), 0);
+    assert!((6..10).all(|line| open_lines(&rhs(&sides).regions).contains(&line)));
 }
 
 /// context.
@@ -495,5 +442,210 @@ fn exported_tsx_functions_keep_complete_headers_above_distant_changes() {
         );
         assert!(!open.contains(&10), "unrelated body should collapse");
         assert!(open.contains(&34), "changed JSX should stay visible");
+    }
+}
+
+/// Context puts every initially hidden interval at the root.
+fn outer_gaps(source: &Source) -> Vec<std::ops::Range<u32>> {
+    source
+        .regions
+        .iter()
+        .filter(|r| r.visibility.collapsed)
+        .map(|r| r.range.lines())
+        .collect()
+}
+
+#[test]
+fn opposite_insertions_split_zero_context_gaps() {
+    for (before, after) in [
+        ("a\nb\nc\nd\n", "a\nb\ninserted\nc\nd\n"),
+        ("a\nb\ninserted\nc\nd\n", "a\nb\nc\nd\n"),
+    ] {
+        let sides = shaped("a.txt", before, after, 0);
+        for source in [lhs(&sides), rhs(&sides)] {
+            let short = source.text.lines().count() == 4;
+            assert_eq!(
+                outer_gaps(source),
+                if short {
+                    vec![0..2, 2..4]
+                } else {
+                    vec![0..2, 3..5]
+                }
+            );
+            assert_eq!(
+                open_lines(&source.regions),
+                if short {
+                    BTreeSet::new()
+                } else {
+                    BTreeSet::from([2])
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn an_interval_starting_inside_an_arrow_keeps_nested_callback_bodies() {
+    let before = "export function render() {\n  const changed = 1;\n  const view = useState(() =>\n    normalizeView(\n      \"review\",\n      enabled,\n      active,\n    ),\n  );\n\n  useEffect(() => {\n    refresh();\n  }, []);\n\n}\n";
+    let after = before.replace("changed = 1", "changed = 2");
+    let sides = shaped("view.tsx", before, &after, 2);
+    for source in [lhs(&sides), rhs(&sides)] {
+        assert_eq!(outer_gaps(source), [4..14]);
+        let root = source
+            .regions
+            .iter()
+            .find(|r| r.visibility.collapsed)
+            .unwrap();
+        let Node::Fold { children } = &root.node else {
+            panic!("outer fold")
+        };
+        let visible = open_lines(children);
+        assert!(
+            visible.contains(&4),
+            "opening the gap reveals the arguments"
+        );
+        assert!(visible.contains(&10), "the callback header stays visible");
+        assert!(!visible.contains(&11), "the callback body stays folded");
+    }
+}
+
+#[test]
+fn expanding_an_outer_gap_reveals_headers_with_collapsed_ast_bodies() {
+    let before = "def changed():\n    return 1\n\ndef spare():\n    for item in items:\n        visit(item)\n    finish()\n";
+    let after = before.replace("return 1", "return 2");
+    let mut sides = shaped("a.py", before, &after, 0);
+    let Pairing::Both { rhs, .. } = &mut sides else {
+        panic!("both sides")
+    };
+    let root = rhs
+        .regions
+        .iter_mut()
+        .find(|r| r.range.lines().contains(&3))
+        .unwrap();
+    assert!(root.visibility.collapsed);
+    root.visibility.collapsed = false;
+    let visible = open_lines(&rhs.regions);
+    assert!(
+        visible.contains(&3),
+        "function header must be readable on first expansion: {visible:?}"
+    );
+    assert!(!visible.contains(&5), "nested body remains folded");
+    walk_mut(&mut rhs.regions, &mut |r| {
+        if r.range.lines() == (4..7) {
+            r.visibility.collapsed = false;
+        }
+    });
+    let visible = open_lines(&rhs.regions);
+    assert!(
+        visible.contains(&4),
+        "opening the function reveals its for-loop header"
+    );
+    assert!(
+        !visible.contains(&5),
+        "the for-loop body remains collapsed for the next expansion"
+    );
+}
+
+#[test]
+fn descriptive_summaries_remain_visible_between_outer_gaps() {
+    let before = "def changed():\n    return 1\n\ndef spare():\n    first()\n    second()\n    third()\n\ndef last():\n    finish()\n";
+    let after = before.replace("return 1", "return 2");
+    let (file, mut sides) = project("a.py", before, &after);
+    let Pairing::Both { lhs, rhs } = &mut sides else {
+        panic!("both sides")
+    };
+    for source in [lhs, rhs] {
+        walk_mut(&mut source.regions, &mut |r| {
+            if has_tag(r, "deleted-bodies:function") && r.range.start.line == 4 {
+                r.visibility.collapsed = true;
+                r.visibility.label = "Prepare and save results".into();
+            }
+        });
+    }
+    run("context", json!({"lines": 0}), &file, &mut sides);
+    fn labels(regions: &[Region], out: &mut Vec<String>) {
+        for r in regions {
+            if r.visibility.collapsed {
+                out.push(r.visibility.label.clone());
+            } else if let Node::Fold { children } = &r.node {
+                labels(children, out);
+            }
+        }
+    }
+    for source in [super::lhs(&sides), super::rhs(&sides)] {
+        let mut visible = Vec::new();
+        labels(&source.regions, &mut visible);
+        assert!(
+            visible.iter().any(|s| s == "Prepare and save results"),
+            "{visible:?}"
+        );
+        assert!(
+            visible
+                .iter()
+                .filter(|s| s.ends_with("unchanged lines"))
+                .count()
+                >= 2
+        );
+    }
+}
+
+#[test]
+fn expanding_context_preserves_single_and_multiline_tsx_callback_folds() {
+    let before = "const changed = 1;\nuseEffect(() => {\n  first();\n}, []);\nuseEffect(() => {\n  second();\n  third();\n}, []);\n";
+    let after = before.replace("changed = 1", "changed = 2");
+    let mut sides = shaped("effects.tsx", before, &after, 0);
+    let Pairing::Both { lhs, rhs } = &mut sides else {
+        panic!("both sides")
+    };
+    for source in [lhs, rhs] {
+        for root in &mut source.regions {
+            root.visibility.collapsed = false;
+        }
+        let visible = open_lines(&source.regions);
+        assert!(
+            visible.contains(&1) && visible.contains(&4),
+            "callback headers: {visible:?}"
+        );
+        assert!(
+            !visible.contains(&2) && !visible.contains(&5),
+            "callback bodies stay folded: {visible:?}"
+        );
+        walk_mut(&mut source.regions, &mut |r| {
+            if r.range.lines() == (2..3) {
+                r.visibility.collapsed = false;
+            }
+        });
+        let visible = open_lines(&source.regions);
+        assert!(
+            visible.contains(&2),
+            "the one-line callback expands independently"
+        );
+        assert!(
+            !visible.contains(&5),
+            "the neighboring callback remains collapsed"
+        );
+    }
+}
+
+#[test]
+fn changed_inline_callbacks_keep_the_statement_header_and_closer_with_zero_context() {
+    for (header, closer) in [
+        ("useEffect(() => {", "});"),
+        ("const result = useMemo(() => {", "}, []);"),
+        ("const callback = () => {", "};"),
+    ] {
+        let before = format!(
+            "{header}\n  const x = 1;\n  const y = 1;\n  const z = 1;\n  work(1);\n  other();\n{closer}\n"
+        );
+        let after = before.replace("work(1)", "work(2)");
+        let sides = shaped("callback.tsx", &before, &after, 0);
+        for source in [lhs(&sides), rhs(&sides)] {
+            assert_eq!(
+                open_lines(&source.regions),
+                BTreeSet::from([0, 4, 6]),
+                "callback header, change and closer: {header}"
+            );
+            assert_eq!(outer_gaps(source), [1..4, 5..6]);
+        }
     }
 }

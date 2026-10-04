@@ -1,10 +1,10 @@
 name = "context"
 title = "Context"
-description = "Collapse unchanged stretches far from any change, keeping `lines` around every change and the headers of the syntax that encloses it."
+description = "Keep changes, nearby lines and enclosing headers visible; fold every remaining interval once, with collapsed syntax folds inside."
 
 [enabled]
 title = "Collapse unchanged lines"
-description = "Collapse unchanged lines that are neither near a change nor the header of the function, type or block a change sits in."
+description = "Show one fold per hidden interval. Expanding it reveals the original syntax folds."
 
 [options.lines]
 type = "integer"

@@ -166,6 +166,17 @@ impl From<cursor::MoveError> for types::MoveError {
             cursor::MoveError::CutOutside { id, offset, len } => {
                 Self::CutOutside(types::CutOutside { id, offset, len })
             }
+            cursor::MoveError::RangeOutside {
+                side,
+                start,
+                end,
+                len,
+            } => Self::RangeOutside(types::RangeOutside {
+                side: side.into(),
+                start,
+                end,
+                len,
+            }),
             cursor::MoveError::UnevenSides(id) => Self::UnevenSides(id),
             cursor::MoveError::TooFewRegions(grouping) => Self::TooFewRegions(grouping.into()),
             cursor::MoveError::Repeated { grouping, ids } => Self::Repeated(types::Repeated {

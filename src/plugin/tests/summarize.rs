@@ -578,7 +578,7 @@ fn suites_select_individual_tests_and_preserve_nested_summary_folds() {
         shape(&summarizer_with(json!({"api_key": "test", "endpoint": endpoint, "test_min_lines": 3})), &file, &mut sides).unwrap();
         run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
         server.join().unwrap();
-        run("group", json!({}), &file, &mut sides);
+        run("context", json!({"lines": 3}), &file, &mut sides);
         let mut found = 0;
         let mut outer_state = None;
         walk(&rhs(&sides).regions, &mut |region| {

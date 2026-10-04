@@ -18,6 +18,10 @@ impl From<MoveError> for String {
                 "line {} is not inside region {}, which has {} lines",
                 e.offset, e.id, e.len
             ),
+            MoveError::RangeOutside(e) => format!(
+                "range {}..{} is not inside {:?}, which has {} lines",
+                e.start, e.end, e.side, e.len
+            ),
             MoveError::UnevenSides(id) => {
                 format!("region {id} has a different length on each side")
             }

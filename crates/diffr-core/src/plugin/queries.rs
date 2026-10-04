@@ -274,11 +274,11 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "builtin:shared/queries/rust.scm",
-                "builtin:context/queries/rust.scm",
                 "builtin:shared/queries/rust-docstrings.scm",
                 "builtin:deleted-bodies/queries/rust.scm",
                 "builtin:test-bodies/queries/rust.scm",
                 "builtin:removed-runs/queries/rust.scm",
+                "builtin:context/queries/rust.scm",
             ]
         );
         config.compile().unwrap();

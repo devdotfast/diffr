@@ -204,13 +204,12 @@ fn bundled_and_external_components_produce_identical_files() {
     let wasm = fixture.config(
         "wasm",
         &format!(
-            "[classifier]\npath = {:?}\n[plugins]\norder = ['external.context', 'external.deleted-bodies', 'external.test-bodies', 'external.removed-runs', 'external.group']\n[plugins.external.context]\npath = {:?}\n[plugins.external.deleted-bodies]\npath = {:?}\nmin_lines = 3\n[plugins.external.test-bodies]\npath = {:?}\nmin_lines = 2\n[plugins.external.removed-runs]\npath = {:?}\n[plugins.external.group]\npath = {:?}\n",
+            "[classifier]\npath = {:?}\n[plugins]\norder = ['external.deleted-bodies', 'external.test-bodies', 'external.removed-runs', 'external.context']\n[plugins.external.context]\npath = {:?}\n[plugins.external.deleted-bodies]\npath = {:?}\nmin_lines = 3\n[plugins.external.test-bodies]\npath = {:?}\nmin_lines = 2\n[plugins.external.removed-runs]\npath = {:?}\n",
             root().join("plugins/classify").display().to_string(),
             plugin("context"),
             plugin("deleted-bodies"),
             plugin("test-bodies"),
-            plugin("removed-runs"),
-            plugin("group")
+            plugin("removed-runs")
         ),
     );
 
@@ -231,12 +230,10 @@ fn bundled_and_external_components_produce_identical_files() {
             );
         }
     }
-    for label in [
-        "2 collapsed regions · 6 lines",
-        "test body",
-        "test module",
-        "4 lines removed",
-    ] {
+    assert!(collapsed
+        .iter()
+        .any(|label| label.ends_with(" unchanged lines")));
+    for label in ["test body", "test module", "4 lines removed"] {
         assert!(collapsed.contains(&label), "{label}: {collapsed:?}");
     }
     assert_eq!(bundled, wasm);

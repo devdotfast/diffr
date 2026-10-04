@@ -368,7 +368,7 @@ mod tests {
         )
         .unwrap();
         let path = dir.path().join("config.toml");
-        let order = "order = ['bundled.context', 'bundled.deleted-bodies', 'bundled.test-bodies', 'bundled.removed-runs', 'bundled.summarize', 'bundled.group', 'external.mine']";
+        let order = "order = ['bundled.context', 'bundled.deleted-bodies', 'bundled.test-bodies', 'bundled.removed-runs', 'bundled.summarize', 'external.mine']";
         std::fs::write(
             &path,
             format!("[plugins]\n{order}\n[plugins.external.mine]\npath = 'plugins/mine'\n"),
@@ -673,15 +673,15 @@ mod sparse_tests {
         let path = dir.path().join("config.toml");
         std::fs::write(
             &path,
-            "# just grouping\n[plugins]\norder = ['bundled.group']\n",
+            "# just context\n[plugins]\norder = ['bundled.context']\n",
         )
         .unwrap();
         set(&path, "diff.graph_limit", "42").unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         let config = Config::from_toml(&text).unwrap();
         assert_eq!(config.plugins.entries.len(), 1);
-        assert!(text.contains("# just grouping\n[plugins]"), "{text}");
-        assert!(!text.contains("bundled.context"));
+        assert!(text.contains("# just context\n[plugins]"), "{text}");
+        assert!(!text.contains("bundled.deleted-bodies"));
     }
 
     const LEGACY: &str = "For each listed fold, rewrite that function body as short pseudocode. Keep the names. No prose, no comments, no code fences. Use as few lines as possible: about one pseudocode line per five source lines, and never more than a third of the body's lines. When a fold lists a doc, also set \"summary\" to one sentence copied verbatim from that doc; otherwise leave it empty. Answer with a JSON array of {\"id\", \"summary\", \"pseudocode\"} objects, one per fold.";

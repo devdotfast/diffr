@@ -22,8 +22,8 @@ pub mod classifier {
         export_macro_name: "export_classifier",
         default_bindings_module: "diffr_plugin_sdk::classifier",
         with: {
-            "diffr:plugin/types@0.3.0": crate::bindings::diffr::plugin::types,
-            "diffr:plugin/git@0.3.0": crate::bindings::diffr::plugin::git,
+            "diffr:plugin/types@0.4.0": crate::bindings::diffr::plugin::types,
+            "diffr:plugin/git@0.4.0": crate::bindings::diffr::plugin::git,
         },
     });
 }

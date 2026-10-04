@@ -92,31 +92,28 @@ mod folds {
         let lhs = "def test_doc():\n    \"\"\"some shared words before\"\"\"\n";
         let rhs = "def test_doc():\n    \"\"\"some shared words after\"\"\"\n";
         let result = DiffResult::from_sources("a.py", lhs, rhs);
-        // The body and the docstring it holds are one flattened node, which
-        // keeps both folds, the body's first.
-        assert_eq!(result.lhs_folds.len(), 2);
-        assert_eq!(result.rhs_folds.len(), 2);
+        // The body and its one-line docstring cover the same complete line.
+        // Merge their metadata while retaining the inner string's identity.
+        assert_eq!(result.lhs_folds.len(), 1);
+        assert_eq!(result.rhs_folds.len(), 1);
         let fold = &result.lhs_folds[0];
         assert_eq!(
             fold.tags,
             [
+                "deleted-bodies:docstring",
                 "deleted-bodies:function",
                 "removed-runs:function",
+                "summarize:docstring",
                 "summarize:function",
                 "summarize:test",
+                "test-bodies:docstring",
                 "test-bodies:test"
             ]
         );
         let (left, right) =
             paired(fold, &result.rhs_folds).expect("reuse the replaced-string correspondence");
-        assert_eq!(
-            text(lhs, left),
-            "\n    \"\"\"some shared words before\"\"\""
-        );
-        assert_eq!(
-            text(rhs, right),
-            "\n    \"\"\"some shared words after\"\"\""
-        );
+        assert_eq!(text(lhs, left), "\"\"\"some shared words before\"\"\"");
+        assert_eq!(text(rhs, right), "\"\"\"some shared words after\"\"\"");
     }
 
     #[test]

@@ -67,10 +67,23 @@ pub enum Grouping {
 pub enum MoveError {
     NoRegion(u32),
     CutFold(u32),
-    CutOutside { id: u32, offset: u32, len: u32 },
+    CutOutside {
+        id: u32,
+        offset: u32,
+        len: u32,
+    },
+    RangeOutside {
+        side: Side,
+        start: u32,
+        end: u32,
+        len: u32,
+    },
     UnevenSides(u32),
     TooFewRegions(Grouping),
-    Repeated { grouping: Grouping, ids: Vec<u32> },
+    Repeated {
+        grouping: Grouping,
+        ids: Vec<u32>,
+    },
     OneSided(Vec<u32>),
     NotSiblings(Vec<u32>),
     NoNextSibling(u32),
@@ -174,11 +187,7 @@ impl Cursor {
         ) -> Option<RegionView> {
             for region in regions {
                 if region.id == id {
-                    let children = match &region.node {
-                        Node::Leaf { .. } => vec![],
-                        Node::Fold { children } => children.iter().map(|child| child.id).collect(),
-                    };
-                    return Some(view(region, parent, side, children));
+                    return Some(view(region, parent, side));
                 }
                 if let Node::Fold { children } = &region.node {
                     if let Some(node) = find(children, Some(region.id), id, side) {
@@ -194,6 +203,25 @@ impl Cursor {
             }
         }
         Err(MoveError::NoRegion(id))
+    }
+
+    /// A snapshot of both trees, in preorder, lhs before rhs.
+    pub fn regions(&self) -> Vec<RegionView> {
+        fn visit(regions: &[Region], side: Side, parent: Option<u32>, out: &mut Vec<RegionView>) {
+            for region in regions {
+                out.push(view(region, parent, side));
+                if let Node::Fold { children } = &region.node {
+                    visit(children, side, Some(region.id), out);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        for (side, source) in [(Side::Lhs, self.sides.lhs()), (Side::Rhs, self.sides.rhs())] {
+            if let Some(source) = source {
+                visit(&source.regions, side, None, &mut out);
+            }
+        }
+        out
     }
 
     /// Original text covered by this region's whole-line range.
@@ -602,6 +630,88 @@ impl Cursor {
         Ok(region_ids(lhs, rhs))
     }
 
+    /// Wrap an interval at the root. Only folds that cross its boundaries are
+    /// dissolved; contained AST subtrees and leaf identities survive intact.
+    /// This invalidates the live walk, so callers use it in the file phase.
+    pub fn wrap_range(&mut self, side: Side, start: u32, end: u32) -> Result<u32, MoveError> {
+        let len = side_of(&self.sides, side)
+            .and_then(|s| s.regions.last())
+            .map_or(0, |r| r.range.end.line);
+        if start >= end || end > len {
+            return Err(MoveError::RangeOutside {
+                side,
+                start,
+                end,
+                len,
+            });
+        }
+        // Validate all paired cuts before editing anything.
+        for boundary in [start, end] {
+            for id in self.leaves(side, boundary, boundary.saturating_add(1)) {
+                let own = self.get(id)?;
+                if own.range.start.line < boundary && boundary < own.range.end.line {
+                    if let Some(peer) = self.paired_leaf(id)? {
+                        if self.get(peer)?.range.lines().len() != own.range.lines().len() {
+                            return Err(MoveError::UnevenSides(id));
+                        }
+                    }
+                }
+            }
+        }
+        for boundary in [end, start] {
+            for id in self.leaves(side, boundary, boundary.saturating_add(1)) {
+                let range = self.get(id)?.range;
+                if range.start.line < boundary && boundary < range.end.line {
+                    self.cut(id, boundary - range.start.line)?;
+                }
+            }
+        }
+        fn expose(regions: Vec<Region>, start: u32, end: u32, out: &mut Vec<Region>) {
+            for region in regions {
+                let range = region.range.lines();
+                let crosses = range.start < start && start < range.end
+                    || range.start < end && end < range.end;
+                if crosses {
+                    let Node::Fold { children } = region.node else {
+                        unreachable!("boundary leaves were cut above");
+                    };
+                    expose(children, start, end, out);
+                } else {
+                    out.push(region);
+                }
+            }
+        }
+        let source = match (&mut self.sides, side) {
+            (Pairing::Both { lhs, .. } | Pairing::LeftOnly { lhs }, Side::Lhs) => lhs,
+            (Pairing::Both { rhs, .. } | Pairing::RightOnly { rhs }, Side::Rhs) => rhs,
+            _ => unreachable!("validated source interval"),
+        };
+        let mut roots = Vec::new();
+        expose(std::mem::take(&mut source.regions), start, end, &mut roots);
+        let first = roots.partition_point(|r| r.range.end.line <= start);
+        let last = roots.partition_point(|r| r.range.start.line < end);
+        let children: Vec<_> = roots.drain(first..last).collect();
+        let id = self.next_region_id;
+        self.next_region_id += 1;
+        roots.insert(
+            first,
+            Region {
+                id,
+                fold_state_id: id,
+                range: SourceRange {
+                    start: children[0].range.start,
+                    end: children.last().unwrap().range.end,
+                },
+                tags: Vec::new(),
+                relations: Vec::new(),
+                visibility: Visibility::default(),
+                node: Node::Fold { children },
+            },
+        );
+        source.regions = roots;
+        Ok(id)
+    }
+
     /// Merge the fold states of `ids` into the first's; all collapse if any was.
     pub fn link(&mut self, ids: &[u32]) -> Result<(), MoveError> {
         let sides = &mut self.sides;
@@ -671,7 +781,7 @@ impl Cursor {
 }
 
 /// A region as a plugin sees it: shallow, with its parent and children.
-fn view(region: &Region, parent: Option<u32>, side: Side, children: Vec<u32>) -> RegionView {
+fn view(region: &Region, parent: Option<u32>, side: Side) -> RegionView {
     RegionView {
         side,
         id: region.id,
@@ -690,7 +800,10 @@ fn view(region: &Region, parent: Option<u32>, side: Side, children: Vec<u32>) ->
             },
             Node::Fold { .. } => Kind::Fold,
         },
-        children,
+        children: match &region.node {
+            Node::Leaf { .. } => Vec::new(),
+            Node::Fold { children } => children.iter().map(|child| child.id).collect(),
+        },
     }
 }
 
@@ -711,6 +824,15 @@ impl std::fmt::Display for MoveError {
             Self::CutOutside { id, offset, len } => write!(
                 f,
                 "line {offset} is not inside region {id}, which has {len} lines"
+            ),
+            Self::RangeOutside {
+                side,
+                start,
+                end,
+                len,
+            } => write!(
+                f,
+                "range {start}..{end} is not inside {side:?}, which has {len} lines"
             ),
             Self::UnevenSides(id) => write!(f, "region {id} has a different length on each side"),
             Self::TooFewRegions(grouping) => write!(f, "{grouping} needs at least two regions"),

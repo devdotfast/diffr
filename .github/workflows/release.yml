@@ -54,9 +54,7 @@ jobs:
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
           cargo xtask install --root "$RUNNER_TEMP/install"
-          cargo install --path . --locked --features all-languages --root "$RUNNER_TEMP/full"
           "$PYTHON" scripts/release.py pack --version "$version" --target "$TARGET" --install "$RUNNER_TEMP/install" --output dist
-          "$PYTHON" scripts/release.py pack --version "$version" --target "$TARGET" --install "$RUNNER_TEMP/full" --edition full --output dist
       - name: Verify extracted archives without Bun or checkout assets
         run: |
           # The TUI smoke test drives a Unix PTY.
@@ -66,7 +64,6 @@ jobs:
             "$PYTHON" xtask/tests/smoke_install.py "$RUNNER_TEMP/extracted"
           fi
           "$PYTHON" scripts/smoke_cli_archive.py "dist/diffr-cli-$VERSION-$TARGET.tar.gz" "$VERSION"
-          "$PYTHON" scripts/smoke_cli_archive.py "dist/diffr-cli-full-$VERSION-$TARGET.tar.gz" "$VERSION"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.target }}

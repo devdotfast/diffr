@@ -21,14 +21,14 @@ import {
   type ViewerRow,
 } from "../diffr/rows";
 import type { Palette, ThemeSet } from "../diffr/theme";
-import { measureRows, visibleRows } from "../diffr/geometry";
+import { measureRows, visibleRows, positionAt, positionTop, rowFold, type ViewPosition } from "../diffr/geometry";
 import {
   copySelection,
   selectionBounds,
   type SourceSelection,
 } from "../diffr/selection";
-import { fileIdentity, filePath, fileVisibility, type DiffFile } from "../diffr/wire";
-import { defaultCollapsed, foldIds, gapIds, nestedIds, type RowFold } from "../diffr/regions";
+import { filePath, fileVisibility, type DiffFile, type TextDiff } from "../diffr/wire";
+import { defaultCollapsed, foldIds, gapIds, nestedIds, sourceLines, type RowFold } from "../diffr/regions";
 import { placeholderRows } from "../diffr/rows";
 import { add, blockBar, comparisonLabel, zero, type LineCounts } from "../diffr/counts";
 import type { DiffStore } from "../diffr/store";
@@ -52,14 +52,21 @@ export function App({
     [showSidebar, setShowSidebar] = useState(true),
     [wrap, setWrap] = useState(false),
     [theme, setTheme] = useState<Palette>(themes.initial);
-  const [scroll, setScroll] = useState(0),
-    [horizontal, setHorizontal] = useState(0);
+  const [position, setPosition] = useState<ViewPosition | null>(null);
+  const [horizontal, setHorizontal] = useState(0);
   const [hoveredFold, setHoveredFold] = useState<{file: number; id: number} | null>(null);
+  const [spinner, setSpinner] = useState(0);
+  useEffect(() => {
+    if (snapshot.complete) return;
+    const timer = setInterval(() => setSpinner(n => (n + 1) % 10), 80);
+    return () => clearInterval(timer);
+  }, [snapshot.complete]);
+  const loadingGlyph = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[spinner];
   // Files the user closed or opened; unset files follow the visibility on their file record.
   const [closed, setClosed] = useState<Map<number, boolean>>(new Map());
   const [selection, setSelection] = useState<SourceSelection | null>(null),
     [message, setMessage] = useState("");
-  // Fold ids collapsed per loaded file; unset files start where diffr's visibility says.
+  // Fold ids collapsed per manifest file; unset files start where diffr's visibility says.
   const [collapsed, setCollapsed] = useState<Map<number, ReadonlySet<number>>>(new Map());
   // Vim's z prefix: the next key names the fold command.
   const pendingZ = useRef(false);
@@ -67,7 +74,6 @@ export function App({
   const [treeScroll, setTreeScroll] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(28);
   const sidebarDrag = useRef<{ x: number; width: number } | null>(null);
-  const [pendingFile, setPendingFile] = useState<string | null>(null);
   const [menu, setMenu] = useState<string | null>(null);
   const [showBreakdown, setShowBreakdown] = useState(false);
   const dragging = useRef(false),
@@ -79,36 +85,38 @@ export function App({
     viewportHeight = Math.max(1, height - 3);
   const layout =
     mode === "auto" ? (contentWidth >= 100 ? "split" : "unified") : mode;
-  const loadedByIdentity = useMemo(() => new Map(snapshot.files.map((f, i) => [fileIdentity(f.file), i])), [snapshot.files]);
-  const inventory = snapshot.inventory;
-  const foldsOf = (index: number): ReadonlySet<number> => {
-    const file = snapshot.files[index];
-    return collapsed.get(index) ?? (file.diff.type === "text" ? defaultCollapsed(file.diff) : new Set());
-  };
-  const isClosed = (index: number) => closed.get(index) ?? fileVisibility(snapshot.files[index]).collapsed;
+  // Viewer state is keyed by manifest index; `files[i]` is undefined until file i arrives.
+  const { inventory, files, failures } = snapshot;
+  const textDiffs = useMemo(() => files.flatMap((file, index) =>
+    file?.diff.type === "text" ? [{ index, diff: file.diff }] : []), [files]);
+  const foldsOf = (index: number, diff: TextDiff): ReadonlySet<number> => collapsed.get(index) ?? defaultCollapsed(diff);
+  const isClosed = (index: number, file: DiffFile) => closed.get(index) ?? fileVisibility(file).collapsed;
+  // The file's mark in the tree and on its header while it has no diff.
+  const statusGlyph = (index: number) => failures[index] || snapshot.complete ? "!" : loadingGlyph;
   const tree = useMemo(() => buildFileTree(inventory), [inventory]);
-  // Keep loaded indexes stable for row keys, selections and file expansion.
-  // Present arriving diffs in tree order throughout loading.
-  const fileOrder = useMemo(() => flattenFileTree(tree, new Set()).flatMap(({node}) => {
-        if (node.fileIndex === undefined) return [];
-        const loaded = loadedByIdentity.get(fileIdentity(snapshot.inventory[node.fileIndex].file));
-        return loaded === undefined ? [] : [loaded];
-      }),
-    [snapshot.inventory, tree, loadedByIdentity]);
+  const fileOrder = useMemo(() => flattenFileTree(tree, new Set()).flatMap(({node}) =>
+    node.fileIndex === undefined ? [] : [node.fileIndex]), [tree]);
   const rowCache = useRef(
     new WeakMap<DiffFile, { key: string; rows: ViewerRow[] }>(),
   );
   const rows = useMemo(() => {
-    const all = fileOrder.flatMap(index => {
-      const file = snapshot.files[index];
-      const folds = foldsOf(index);
+    const all = fileOrder.flatMap((index): ViewerRow[] => {
+      const file = files[index];
+      if (!file) {
+        const failure = failures[index];
+        const status = failure ?? (snapshot.complete ? "File did not load" : "Computing diff…");
+        return [{ key: `${index}:header`, fileIndex: index, label: filePath(inventory[index].file) },
+          ...["", status, "", ""].map((label, line) => ({ key: `${index}:pending:${line}`, fileIndex: index,
+            label, pending: line === 1 && !failure && !snapshot.complete }))];
+      }
+      const folds = file.diff.type === "text" ? foldsOf(index, file.diff) : new Set<number>();
       const key = `${index}:${layout}:${theme.name}:${[...folds].sort((a, b) => a - b).join(",")}`;
       let cached = rowCache.current.get(file);
       if (cached?.key !== key) {
         cached = { key, rows: rowsForFile(file, index, layout, theme, folds) };
         rowCache.current.set(file, cached);
       }
-      if (!isClosed(index)) return cached.rows;
+      if (!isClosed(index, file)) return cached.rows;
       return fileVisibility(file).collapsed
         ? [cached.rows[0], ...placeholderRows(index, fileVisibility(file).label)]
         : cached.rows.slice(0, 1);
@@ -116,64 +124,59 @@ export function App({
     for (const [i, error] of snapshot.errors.entries())
       all.push({ key: `error:${i}`, fileIndex: -1, label: error });
     return all;
-  }, [snapshot.files, snapshot.errors, snapshot.inventory, layout, theme, closed, fileOrder, collapsed]);
+  }, [files, failures, snapshot.errors, snapshot.complete, inventory, layout, theme, closed, fileOrder, collapsed]);
+  const maxLine = useMemo(() => Math.max(1, ...textDiffs.flatMap(({ diff }) =>
+    [diff.lhs, diff.rhs].map(source => source ? sourceLines(source.text).length : 0))), [textDiffs]);
   const geometry = useMemo(
-    () => measureRows(rows, contentWidth, wrap, horizontal),
-    [rows, contentWidth, wrap, horizontal],
+    () => measureRows(rows, contentWidth, wrap, horizontal, maxLine),
+    [rows, contentWidth, wrap, horizontal, maxLine],
   );
   const lastFileTop = useMemo(() =>
     geometry.rows.findLast(r => r.row.key.endsWith(":header"))?.top ?? 0, [geometry]);
-  const maxScroll = Math.max(lastFileTop, geometry.height - viewportHeight),
-    top = Math.min(scroll, maxScroll);
-  // Reconcile the offset before committing new geometry. An effect would first
-  // mount the new rows at the old offset, exposing a wrong viewport for one frame.
-  const [previousGeometry, setPreviousGeometry] = useState(geometry);
-  if (previousGeometry !== geometry) {
-    const anchor = visibleRows(previousGeometry, scroll, 1)[0];
-    const next = anchor && geometry.rows.find(r => r.row.key === anchor.row.key);
-    const nextScroll = next && anchor
-      ? next.top + Math.min(scroll - anchor.top, next.height - 1)
-      : scroll;
-    setPreviousGeometry(geometry);
-    setScroll(Math.max(0, Math.min(nextScroll, maxScroll)));
-  } else if (scroll > maxScroll) {
-    setScroll(maxScroll);
-  }
+  // One past the end, since the sticky file header takes the viewport's first row.
+  const maxScroll = Math.max(lastFileTop, geometry.height - viewportHeight + 1);
+  const clamp = (value: number) => Math.max(0, Math.min(maxScroll, value));
+  const top = Math.min(positionTop(geometry, position), maxScroll);
+  const scrollTo = (value: number) => setPosition(positionAt(geometry, clamp(value)));
+  // Relative to the latest position, so key repeats within one frame add up.
   const move = (amount: number) =>
-    setScroll((current) => Math.max(0, Math.min(maxScroll, current + amount)));
-  const toggleFile = (index: number) =>
-    setClosed((old) => new Map(old).set(index, !isClosed(index)));
-  const setFolds = (fileIndex: number, ids: number[], collapse: boolean) =>
+    setPosition(current => positionAt(geometry, clamp(Math.min(positionTop(geometry, current), maxScroll) + amount)));
+  const toggleFile = (index: number) => {
+    const file = files[index];
+    if (!file) return;
+    // Toggling the file being read moves to its header; the rows above it stay put.
+    const header = geometry.rows.find(r => r.row.key === `${index}:header`)!;
+    if (header.top < top) setPosition({ key: header.row.key, fileIndex: index, offset: 0, side: "right" });
+    setClosed(old => new Map(old).set(index, !(old.get(index) ?? fileVisibility(file).collapsed)));
+  };
+  // "toggle" reads the current state inside the update, so quick repeated clicks alternate.
+  const setFolds = (fileIndex: number, diff: TextDiff, ids: number[], collapse: boolean | "toggle") =>
     setCollapsed((old) => {
-      const next = new Set(foldsOf(fileIndex));
-      for (const id of ids) if (collapse) next.add(id); else next.delete(id);
+      const next = new Set(old.get(fileIndex) ?? defaultCollapsed(diff));
+      const close = collapse === "toggle" ? !next.has(ids[0]) : collapse;
+      for (const id of ids) if (close) next.add(id); else next.delete(id);
       return new Map(old).set(fileIndex, next);
     });
   // Recursive commands (Alt-click, zC, zO, zA) include every fold nested inside.
-  const setFold = (fileIndex: number, fold: RowFold, collapse: boolean, recursive: boolean) => {
-    const file = snapshot.files[fileIndex];
-    if (file.diff.type !== "text") throw new Error("Binary files have no folds");
-    const ids = recursive ? [fold.id, ...nestedIds(file.diff, fold.id)] : [fold.id];
-    setFolds(fileIndex, ids, collapse);
+  const setFold = (fileIndex: number, fold: RowFold, collapse: boolean | "toggle", recursive: boolean) => {
+    const diff = files[fileIndex]?.diff;
+    if (diff?.type !== "text") throw new Error(`File ${fileIndex} has no folds`);
+    setFolds(fileIndex, diff, recursive ? [fold.id, ...nestedIds(diff, fold.id)] : [fold.id], collapse);
   };
   // `c`: reveal every context gap, or hide them again.
   const toggleContext = () => {
-    const opened = snapshot.files.some((file, index) =>
-      file.diff.type === "text" && gapIds(file.diff).some((id) => !foldsOf(index).has(id)));
-    snapshot.files.forEach((file, index) => {
-      if (file.diff.type === "text") setFolds(index, gapIds(file.diff), opened);
-    });
+    const opened = textDiffs.some(({ index, diff }) => gapIds(diff).some((id) => !foldsOf(index, diff).has(id)));
+    textDiffs.forEach(({ index, diff }) => setFolds(index, diff, gapIds(diff), opened));
   };
   const toggleFold = (fileIndex: number, fold: RowFold, recursive: boolean) =>
-    setFold(fileIndex, fold, !fold.collapsed, recursive);
-  const rowFold = (row: ViewerRow) => row.cell?.fold ?? row.right?.fold ?? row.left?.fold;
+    setFold(fileIndex, fold, "toggle", recursive);
   const navigateFold = (direction: number) => {
     const headers = geometry.rows.filter((r) => rowFold(r.row));
     const target =
       direction > 0
         ? headers.find((r) => r.top > top)
         : headers.findLast((r) => r.top < top);
-    if (target) setScroll(Math.min(maxScroll, target.top));
+    if (target) scrollTo(target.top);
   };
   // Vim fold commands act on the fold whose header is the top visible row.
   const foldCommand = (command: string) => {
@@ -191,24 +194,19 @@ export function App({
     else if (letter === "c") setFold(current.fileIndex, fold, true, recursive);
   };
   const foldAll = (collapse: boolean) =>
-    snapshot.files.forEach((file, index) => {
-      if (file.diff.type === "text") setFolds(index, foldIds(file.diff), collapse);
-    });
-  const jump = (index: number) => {
-    const row = geometry.rows.find((r) => r.row.fileIndex === index);
-    if (row) setScroll(Math.min(maxScroll, row.top));
-  };
+    textDiffs.forEach(({ index, diff }) => setFolds(index, diff, foldIds(diff), collapse));
+  const jump = (index: number) => scrollTo(geometry.rows.find((r) => r.row.fileIndex === index)!.top);
   const navigateHunk = (direction: number) => {
     const headers = geometry.rows.filter((r) => r.row.hunkStart);
     const target =
       direction > 0
         ? headers.find((r) => r.top > top)
         : headers.findLast((r) => r.top < top);
-    if (target) setScroll(Math.min(maxScroll, target.top));
+    if (target) scrollTo(target.top);
   };
   const copy = () => {
     if (!selection) return;
-    const text = copySelection(snapshot.files, rows, selection);
+    const text = copySelection(files, rows, selection);
     if (text) {
       renderer.copyToClipboardOSC52(text);
       setMessage("Copied source lines");
@@ -234,9 +232,9 @@ export function App({
     else if (is("pageup", "b", "shift+space", "ctrl+b")) move(-viewportHeight);
     else if (is("down", "j")) move(1);
     else if (is("up", "k")) move(-1);
-    else if (is("g")) setScroll(0);
-    else if (is("home")) setScroll(0);
-    else if (is("G", "end")) setScroll(maxScroll);
+    else if (is("g")) scrollTo(0);
+    else if (is("home")) scrollTo(0);
+    else if (is("G", "end")) scrollTo(maxScroll);
     else if (is("right", "shift+right", "l")) setHorizontal(n => n + (key.shift ? 16 : 4));
     else if (is("left", "shift+left", "h")) setHorizontal(n => Math.max(0, n - (key.shift ? 16 : 4)));
     else if (key.name === "]") navigateHunk(1);
@@ -266,53 +264,50 @@ export function App({
   );
   const viewport = visibleRows(geometry, top, viewportHeight);
   const currentFile = viewport[0]?.row.fileIndex ?? 0;
-  const activeIdentity = pendingFile ?? (snapshot.files[currentFile] ? fileIdentity(snapshot.files[currentFile].file) : null);
-  const currentTreeFile = snapshot.inventory.findIndex(entry => fileIdentity(entry.file) === activeIdentity);
-  useEffect(() => {
-    if (pendingFile === null) return;
-    const index = loadedByIdentity.get(pendingFile);
-    if (index !== undefined) {
-      const row = geometry.rows.find(r => r.row.fileIndex === index);
-      if (row) { setScroll(Math.min(maxScroll, row.top)); setPendingFile(null); setMessage(""); }
-    } else if (snapshot.failedFiles.has(pendingFile) || snapshot.complete) {
-      setMessage(snapshot.failedFiles.get(pendingFile) ?? "File did not load");
-      setPendingFile(null);
-    }
-  }, [pendingFile, loadedByIdentity, geometry, maxScroll, snapshot.failedFiles, snapshot.complete]);
+  const sticky = !!viewport.length && !viewport[0].row.key.endsWith(":header");
+  // Shortcuts past a file that is still loading.
+  const place = fileOrder.indexOf(currentFile);
+  const previousLoaded = fileOrder.slice(0, place).findLast(index => files[index]);
+  const nextLoaded = fileOrder.slice(place + 1).find(index => files[index]);
   const treeRows = useMemo(() => flattenFileTree(tree, closedDirectories), [tree, closedDirectories]);
-  const counts = useMemo(() => snapshot.files.map(lineCounts), [snapshot.files]);
+  const counts = useMemo(() => files.map(file => file && lineCounts(file)), [files]);
   // Headline numbers are diffr's stats.visible, verbatim: folding never changes them.
-  const totals = useMemo(() => ({
-    visible: counts.reduce((sum, c) => add(sum, c.visible), zero),
-    textual: counts.reduce((sum, c) => add(sum, c.textual), zero),
-    fallbacks: counts.filter((c) => c.fallback).length,
-  }), [counts]);
+  const totals = useMemo(() => {
+    const loaded = counts.filter(c => c !== undefined);
+    return {
+      visible: loaded.reduce((sum, c) => add(sum, c.visible), zero),
+      textual: loaded.reduce((sum, c) => add(sum, c.textual), zero),
+      fallbacks: loaded.filter((c) => c.fallback).length,
+    };
+  }, [counts]);
   const plusMinus = (c: LineCounts) => `+${c.added} −${c.removed}`;
   useEffect(() => {
-    const file = inventory[currentTreeFile];
+    const file = inventory[currentFile];
     if (!file) return;
     setClosedDirectories(old => {
       const next = new Set(old);
       parentDirectories(file).forEach(path => next.delete(path));
       return next.size === old.size ? old : next;
     });
-  }, [currentTreeFile, inventory]);
+  }, [currentFile, inventory]);
   useEffect(() => {
-    const index = treeRows.findIndex(r => r.node.fileIndex === currentTreeFile);
+    const index = treeRows.findIndex(r => r.node.fileIndex === currentFile);
     if (index >= 0) setTreeScroll(old => index < old ? index
       : index >= old + viewportHeight ? index - viewportHeight + 1 : old);
-  }, [currentTreeFile, treeRows, viewportHeight]);
+  }, [currentFile, treeRows, viewportHeight]);
   const sidebarStart = Math.min(treeScroll, Math.max(0, treeRows.length - viewportHeight));
   const fileHeader = (fileIndex: number, key: string) => {
-    const file = snapshot.files[fileIndex], count = counts[fileIndex]?.visible;
-    if (!file || !count) return null;
-    const path = filePath(file.file);
+    const file = files[fileIndex], count = counts[fileIndex]?.visible;
+    const path = filePath(inventory[fileIndex].file);
+    if (!file || !count) return <text key={key} height={1} width={contentWidth} fg={theme.muted} bg={theme.chrome} selectable={false}>
+      {fit(sanitizeTerminalLine(` ${statusGlyph(fileIndex)} ${path}`), contentWidth)}
+    </text>;
     const statsWidth = String(count.added).length + String(count.removed).length + 5;
     return <box key={key} height={1} width={contentWidth} flexDirection="row"
       backgroundColor={theme.chrome}
       onMouseUp={() => toggleFile(fileIndex)}>
       <text width={Math.max(1, contentWidth - statsWidth)} fg={theme.fg} selectable={false}>
-        {fit(sanitizeTerminalLine(`${isClosed(fileIndex) ? "▸" : "▾"} ${path}`), Math.max(1, contentWidth - statsWidth))}
+        {fit(sanitizeTerminalLine(`${isClosed(fileIndex, file) ? "▸" : "▾"} ${path}`), Math.max(1, contentWidth - statsWidth))}
       </text>
       <text fg={theme.addedText} selectable={false}>{` +${count.added}`}</text>
       <text fg={theme.removedText} selectable={false}>{` −${count.removed} `}</text>
@@ -325,7 +320,7 @@ export function App({
       index = indices.get(row.key)!;
     for (
       let line = Math.max(0, top - measured.top);
-      line < measured.height && measured.top + line < top + viewportHeight;
+      line < measured.height && measured.top + line < top + viewportHeight - (sticky ? 1 : 0);
       line++
     ) {
       if (row.key.endsWith(":header"))
@@ -342,7 +337,7 @@ export function App({
               if (row.loadDiff) toggleFile(row.fileIndex);
             }}
           >
-            {fit(sanitizeTerminalLine(row.loadDiff ? `    ${row.label}` : row.label), contentWidth)}
+            {fit(sanitizeTerminalLine(row.pending ? `    ${loadingGlyph} ${row.label}` : row.loadDiff ? `    ${row.label}` : row.label), contentWidth)}
           </text>,
         );
       else
@@ -373,9 +368,9 @@ export function App({
         );
     }
   }
-  // Overlay the active file header while its original header is above the viewport.
-  if (currentFile >= 0 && viewport.length && !viewport[0].row.key.endsWith(":header")) {
-    rendered[0] = fileHeader(currentFile, "sticky-header");
+  // Reserve a row for the active file header once its original is above the viewport.
+  if (currentFile >= 0 && sticky) {
+    rendered.unshift(fileHeader(currentFile, "sticky-header"));
   }
   const thumbHeight = Math.max(
     1,
@@ -388,9 +383,9 @@ export function App({
     ? Math.round((top / maxScroll) * (viewportHeight - thumbHeight))
     : 0;
   function scrub(y: number) {
-    setScroll(
+    scrollTo(
       Math.round(
-        Math.max(0, Math.min(1, (y - 1) / Math.max(1, viewportHeight - 1))) *
+        Math.max(0, Math.min(1, (y - 2) / Math.max(1, viewportHeight - 1))) *
           maxScroll,
       ),
     );
@@ -402,7 +397,7 @@ export function App({
       ["Toggle context gaps  c", () => { toggleContext(); setSelection(null); }],
       ["Fold all  zM", () => foldAll(true)], ["Unfold all  zR", () => foldAll(false)]],
     Navigate: [["Previous change  [", () => navigateHunk(-1)], ["Next change  ]", () => navigateHunk(1)],
-      ["First file  Home", () => setScroll(0)], ["Last file  End", () => setScroll(maxScroll)]],
+      ["First file  Home", () => scrollTo(0)], ["Last file  End", () => scrollTo(maxScroll)]],
     Theme: [[`Dark (${themes.dark.name})  t`, () => setTheme(themes.dark)], [`Light (${themes.light.name})  t`, () => setTheme(themes.light)]],
     Help: [["Scroll: j/k · h/l · gg/G", () => setMessage("j/k scroll · h/l pan · gg first · G last")],
       ["Half page: Ctrl-D / Ctrl-U", () => setMessage("d / Ctrl-D: half down · u / Ctrl-U: half up")],
@@ -422,10 +417,10 @@ export function App({
           setSidebarWidth(resizeSidebarWidth(sidebarDrag.current.width,
             sidebarDrag.current.x, event.x, 16, width - 40));
         } else if (thumbDragging.current) scrub(event.y);
-        else if (dragging.current && !(event.y === 1 && !viewport[0]?.row.key.endsWith(":header"))) {
+        else if (dragging.current && !(event.y === 2 && !viewport[0]?.row.key.endsWith(":header"))) {
           const target = visibleRows(
             geometry,
-            Math.max(0, top + event.y - 1),
+            Math.max(0, top + event.y - 2 - (sticky ? 1 : 0)),
             1,
           )[0]?.row;
           if (target && target.label === undefined)
@@ -440,7 +435,7 @@ export function App({
     >
       <box height={1} flexDirection="row" backgroundColor={theme.chrome}>
         {["File", "View", "Navigate", "Theme", "Help"].map(name => (
-          <text key={name} fg={menu === name ? theme.fg : theme.muted} selectable={false}
+          <text key={name} fg={menu === name ? theme.accent : theme.fg} selectable={false}
             onMouseUp={() => setMenu(old => old === name ? null : name)}>
             {` ${name} `}
           </text>
@@ -453,7 +448,7 @@ export function App({
         <text fg={theme.fg} selectable={false}>
           {` ${snapshot.comparison ? comparisonLabel(snapshot.comparison.lhs, snapshot.comparison.rhs) : "diffr"}`}
         </text>
-        <text fg={theme.muted} selectable={false}>{` · ${snapshot.total || snapshot.inventory.length} files · `}</text>
+        <text fg={theme.muted} selectable={false}>{` · ${inventory.length} files · `}</text>
         <text fg={theme.addedText} selectable={false} onMouseUp={() => setShowBreakdown((v) => !v)}>{`+${totals.visible.added}`}</text>
         <text fg={theme.removedText} selectable={false} onMouseUp={() => setShowBreakdown((v) => !v)}>{` −${totals.visible.removed}`}</text>
         <text fg={theme.muted} selectable={false}>{snapshot.complete ? " " : "… "}</text>
@@ -488,16 +483,12 @@ export function App({
           }}>
             {treeRows.slice(sidebarStart, sidebarStart + viewportHeight).map(({node, depth}) => (
               <text key={node.key} height={1} width={sidebar - 1}
-                fg={node.fileIndex === currentTreeFile ? theme.fg : theme.muted}
-                bg={node.fileIndex === currentTreeFile ? theme.highlight : theme.bg}
+                fg={node.fileIndex === currentFile ? theme.accent : node.fileIndex === undefined ? theme.muted : theme.fg}
+                bg={node.fileIndex === currentFile ? theme.highlight : theme.bg}
                 selectable={false}
                 onMouseUp={() => {
                   if (node.fileIndex !== undefined) {
-                    const identity = fileIdentity(snapshot.inventory[node.fileIndex].file);
-                    const loaded = loadedByIdentity.get(identity);
-                    if (loaded !== undefined) { setPendingFile(null); setMessage(""); jump(loaded); }
-                    else if (snapshot.failedFiles.has(identity)) setMessage(snapshot.failedFiles.get(identity)!);
-                    else { setPendingFile(identity); setMessage("Waiting for " + node.name + "…"); }
+                    setMessage(""); jump(node.fileIndex);
                   }
                   else setClosedDirectories(old => {
                     const next = new Set(old);
@@ -506,8 +497,8 @@ export function App({
                   });
                 }}>
                 {fit(sanitizeTerminalLine("  ".repeat(depth) + (node.fileIndex === undefined
-                  ? (closedDirectories.has(node.key) ? "▸ " : "▾ ") : snapshot.failedFiles.has(fileIdentity(snapshot.inventory[node.fileIndex].file)) ? "! "
-                    : loadedByIdentity.has(fileIdentity(snapshot.inventory[node.fileIndex].file)) ? "  " : "◌ ") + node.name), sidebar - 1)}
+                  ? (closedDirectories.has(node.key) ? "▸ " : "▾ ")
+                  : `▤ ${files[node.fileIndex] ? " " : statusGlyph(node.fileIndex)} `) + node.name), sidebar - 1)}
               </text>
             ))}
           </box>
@@ -530,11 +521,16 @@ export function App({
           flexDirection="column"
           overflow="hidden"
         >
+          {currentFile >= 0 && !files[currentFile] && !snapshot.complete &&
+            <box position="absolute" top={Math.min(3, viewportHeight - 1)} right={2} height={1} flexDirection="row" zIndex={5} backgroundColor={theme.chrome}>
+              {previousLoaded !== undefined && <text fg={theme.accent} selectable={false} onMouseUp={event => { event.stopPropagation(); jump(previousLoaded); }}> ↑ previous loaded </text>}
+              {nextLoaded !== undefined && <text fg={theme.accent} selectable={false} onMouseUp={event => { event.stopPropagation(); jump(nextLoaded); }}> ↓ next loaded </text>}
+            </box>}
           {rendered.length ? (
             rendered
           ) : (
             <text fg={theme.muted}>
-              {snapshot.complete ? "No changed files" : "Loading diffr…"}
+              {snapshot.complete ? "No changed files" : `${loadingGlyph} Starting comparison…`}
             </text>
           )}
         </box>
@@ -562,11 +558,12 @@ export function App({
         </box>
       </box>
       {showBreakdown && (() => {
-        const file = snapshot.files[currentFile];
-        const fallback = file && counts[currentFile].fallback;
+        const file = files[currentFile];
+        const count = counts[currentFile];
+        const fallback = count?.fallback;
         const sections: [string, LineCounts, LineCounts, string | null][] = [
           ["All files", totals.visible, totals.textual, totals.fallbacks ? `line diff: ${totals.fallbacks} files` : null],
-          ...(file ? [[filePath(file.file), counts[currentFile].visible, counts[currentFile].textual,
+          ...(file && count ? [[filePath(file.file), count.visible, count.textual,
             fallback ? `line diff: ${fallback.code}` : null] as [string, LineCounts, LineCounts, string | null]] : []),
         ];
         const boxWidth = Math.min(width, 44);
@@ -594,7 +591,7 @@ export function App({
       </box>}
       <text height={1} fg={theme.muted} selectable={false}>
         {fit(
-          `${snapshot.files.length}/${snapshot.total} files ${snapshot.complete ? "" : "loading…"} ${snapshot.errors.length ? `${snapshot.errors.length} errors` : ""}  [/] hunks · za fold · i breakdown · drag selects lines · y copy · q quit ${message}`,
+          `${snapshot.loaded}/${inventory.length} files ${snapshot.complete ? "" : "loading…"} ${snapshot.errors.length ? `${snapshot.errors.length} errors` : ""}  [/] hunks · za fold · i breakdown · drag selects lines · y copy · q quit ${message}`,
           width,
         )}
       </text>

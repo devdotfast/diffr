@@ -123,7 +123,7 @@ test("the innermost syntax capture colours a nested span", () => {
 });
 test("wrapping adds equal split heights and windowing mounts only intersecting rows", () => {
   const rows = rowsForFile(createTestDiffFile(), 0, "split", dark);
-  const geometry = measureRows(rows, 20, true, 0);
+  const geometry = measureRows(rows, 20, true, 0, 3);
   expect(geometry.rows[2].height).toBeGreaterThan(1);
   expect(geometry.rows[2].height).toBe(
     Math.max(geometry.rows[2].left.length, geometry.rows[2].right.length),
@@ -143,7 +143,7 @@ test("selection copies one source side and excludes padding and added lines", ()
 });
 test("large file mounts a bounded viewport", () => {
   const file = withIdenticalLines(createTestDiffFile(), 20000);
-  const geometry = measureRows(rowsForFile(file, 0, "split", dark), 120, false, 0);
+  const geometry = measureRows(rowsForFile(file, 0, "split", dark), 120, false, 0, 20000);
   expect(visibleRows(geometry, 10000, 40)).toHaveLength(40);
 });
 test("context gaps come from collapsed unchanged leaves, one row per gap", () => {

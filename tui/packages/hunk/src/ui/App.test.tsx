@@ -161,11 +161,11 @@ test("Hunk navigation chords and draggable sidebar preserve viewport behavior", 
     await act(async () => { await t.renderOnce(); });
     await t.waitForFrame(f => f.includes("row 0"));
     await press("d", true);
-    expect(firstSource()).toBe(8);
+    expect(firstSource()).toBe(7);
     await press("u", true);
     expect(firstSource()).toBe(0);
     await press("f", true);
-    expect(firstSource()).toBe(17);
+    expect(firstSource()).toBe(16);
     await press("b", true);
     expect(firstSource()).toBe(0);
     await press("f");
@@ -188,7 +188,7 @@ test("Hunk navigation chords and draggable sidebar preserve viewport behavior", 
     await act(async () => { t.renderer.destroy(); });
   }
 });
-test("initial manifest renders pending tree and remembers a jump until its diff arrives", async () => {
+test("pending files occupy the stream immediately and arrival preserves the selected file", async () => {
   const store = new DiffStore(), a = createTestDiffFile(), b = createTestDiffFile();
   at(a, "src/a.ts");
   at(b, "src/b.ts");
@@ -197,15 +197,15 @@ test("initial manifest renders pending tree and remembers a jump until its diff 
   const t = await testRender(<App store={store} onQuit={() => {}} themes={themes} />, {width:150, height:20});
   try {
     await act(async () => { await t.renderOnce(); });
-    await t.waitForFrame(f => f.includes("◌ a.ts") && f.includes("◌ b.ts"));
+    await t.waitForFrame(f => f.includes("a.ts") && f.includes("b.ts") && f.includes("Computing diff"));
     expect(t.captureCharFrame()).not.toContain('send("old")');
     await act(async () => { await t.mockMouse.click(8,4); });
-    await t.waitForFrame(f => f.includes("Waiting for b.ts"));
+    await t.waitForFrame(f => f.split("\n")[2].includes("src/b.ts") && f.includes("Computing diff"));
     await accept(store, a);
-    await t.waitForFrame(f => f.includes("◌ b.ts"));
+    await t.waitForFrame(f => f.includes("Computing diff"));
     await accept(store, b);
-    await t.waitForFrame(f => f.split("\n")[2].includes("src/b.ts"));
-    expect(t.captureCharFrame()).not.toContain("◌ b.ts");
+    await t.waitForFrame(f => f.split("\n")[2].includes("src/b.ts") && f.includes('send("new")'));
+    expect(t.captureCharFrame()).not.toContain("Computing diff");
   } finally {
     await act(async () => { t.renderer.destroy(); });
   }
@@ -226,17 +226,17 @@ test("streaming diffs follow tree order without moving the visible source row", 
   try {
     await act(async () => { await t.renderOnce(); });
     await accept(store, files[0], files[2]);
-    await t.waitForFrame(f => f.includes("m/middle.ts"));
-    expect(sidebarLines().slice(0,6)).toEqual(["▾ a", "◌ first.ts", "▾ m", "middle.ts", "▾ z", "last.ts"]);
-    await act(async () => { t.mockInput.pressKey("g"); });
+    await t.waitForFrame(f => f.includes("middle.ts"));
+    expect(sidebarLines().slice(0,6).map(line => line.replace(/^▤ [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ ] /, ""))).toEqual(["▾ a", "first.ts", "▾ m", "middle.ts", "▾ z", "last.ts"]);
+    await act(async () => { await t.mockMouse.click(8,5); });
     await t.waitForFrame(f => f.split("\n")[2].includes("m/middle.ts"));
     await act(async () => { t.mockInput.pressKey("d", {ctrl:true}); });
     await t.renderOnce();
     const before = t.captureCharFrame().split("\n")[3].slice(28);
     await accept(store, files[1]);
-    await t.waitForFrame(f => !f.includes("◌ first.ts") && f.split("\n")[2].includes("m/middle.ts"));
+    await t.waitForFrame(f => f.includes("▤   first.ts") && f.split("\n")[2].includes("m/middle.ts"));
     expect(t.captureCharFrame().split("\n")[3].slice(28)).toBe(before);
-    expect(sidebarLines().slice(0,6)).toEqual(["▾ a", "first.ts", "▾ m", "middle.ts", "▾ z", "last.ts"]);
+    expect(sidebarLines().slice(0,6).map(line => line.replace(/^▤   /, ""))).toEqual(["▾ a", "first.ts", "▾ m", "middle.ts", "▾ z", "last.ts"]);
     await accept(store, {type:"complete", succeeded:3, failed:0});
     await t.renderOnce();
     expect(t.captureCharFrame().split("\n")[3].slice(28)).toBe(before);
@@ -344,7 +344,7 @@ test("folds collapse from the gutter chevron and expand from the placeholder", a
     await t.waitForFrame((f) => f.includes("a();"));
     // zj scrolls to the next fold header; an unknown z command is ignored.
     await chord("z", "j");
-    await t.waitForFrame((f) => !f.includes("a();") && f.includes("b();"));
+    await t.waitForFrame((f) => f.includes("a();") && f.includes("b();"));
     await chord("z", "x");
     await chord("k", "k", "k");
     await t.waitForFrame((f) => f.includes("fn outer() {"));

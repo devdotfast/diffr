@@ -31,7 +31,6 @@ export function createTestDiffFile(): DiffFile {
       lhs: { path: "demo.ts", oid: "1111111", mode: "100644" },
       rhs: { path: "demo.ts", oid: "2222222", mode: "100644" },
     },
-    visibility: { collapsed: false, label: "" },
     diff: {
       type: "text",
       lhs: {
@@ -40,7 +39,7 @@ export function createTestDiffFile(): DiffFile {
           { line: 1, start_column: 0, end_column: 4, capture: "function.call" },
           { line: 1, start_column: 5, end_column: 10, capture: "string" },
         ],
-        regions: [leaf(1, 0, 1), leaf(2, 1, 2, [line(1, 6, 9)]), leaf(4, 2, 3)],
+        root: root([leaf(1, 0, 1), leaf(2, 1, 2, [line(1, 6, 9)]), leaf(4, 2, 3)]),
       },
       rhs: {
         text: 'start();\nsend("new");\nextra();\nfinish();\n',
@@ -48,16 +47,22 @@ export function createTestDiffFile(): DiffFile {
           { line: 1, start_column: 0, end_column: 4, capture: "function.call" },
           { line: 1, start_column: 5, end_column: 10, capture: "string" },
         ],
-        regions: [
+        root: root([
           leaf(1, 0, 1),
           leaf(2, 1, 2, [line(1, 6, 9)]),
           leaf(3, 2, 3, [line(2, 0, 8)]),
           leaf(4, 3, 4),
-        ],
+        ], 1001),
       },
       stats: { textual: { added: 2, removed: 1 }, visible: { added: 2, removed: 1 } },
     },
   };
+}
+/** A side's root: one fold over the whole file. Roots share fold state 1000, clear of the tests' ids. */
+export function root(children: Region[], id = 1000, visibility = { collapsed: false, label: "" }): FoldRegion {
+  const end = children.at(-1)?.end ?? pos(0);
+  return { id, fold_state_id: 1000, start: pos(0), end, tags: [], visibility, kind: "fold", changed: [],
+    children, indent: pos(0) };
 }
 /** The manifest entry a file record answers. */
 export const manifestEntry = (file: DiffFile): FileChange => ({ file: file.file, status: "modified", tags: [] });
@@ -68,9 +73,8 @@ export const startFor = (files: DiffFile[]): DiffEvent =>
 export function withIdenticalLines(file: DiffFile, count: number): DiffFile {
   const lines = Array.from({ length: count }, (_, i) => `line ${i}`);
   const text = lines.join("\n");
-  const source = () => ({ text, syntax: [], regions: [leaf(1, 0, count)] });
   if (file.diff.type !== "text") throw new Error("fixture is not a text diff");
-  file.diff.lhs = source();
-  file.diff.rhs = source();
+  file.diff.lhs = { text, syntax: [], root: root([leaf(1, 0, count)]) };
+  file.diff.rhs = { text, syntax: [], root: root([leaf(1, 0, count)], 1001) };
   return file;
 }

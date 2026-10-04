@@ -5,7 +5,7 @@ import { TextRenderable, type BaseRenderable } from "@opentui/core";
 
 import { App } from "./App";
 import { DiffStore } from "../diffr/store";
-import { createTestDiffFile, leaf, line, manifestEntry, startFor, withIdenticalLines } from "../diffr/fixture";
+import { createTestDiffFile, leaf, line, manifestEntry, startFor, withIdenticalLines, root } from "../diffr/fixture";
 import type { DiffEvent, DiffFile } from "../diffr/wire";
 import { createBundledDiffFile, createFoldedDiffFile } from "../diffr/regions.test";
 import { loadBundledTheme } from "../diffr/theme";
@@ -115,8 +115,8 @@ test("hierarchical tree navigation, sticky counts, sidebar toggle and menus", as
     const file = at(createTestDiffFile(), path);
     const lines = Array.from({length: 60}, (_, i) => `code ${i}`);
     if (file.diff.type !== "text") throw new Error();
-    file.diff.lhs = { text: lines.join("\n"), syntax: [], regions: [leaf(1, 0, 20), leaf(2, 20, 21, [line(20, 0, 7)]), leaf(3, 21, 60)] };
-    file.diff.rhs = { text: lines.join("\n"), syntax: [], regions: [leaf(1, 0, 20), leaf(2, 20, 21, [line(20, 0, 7)]), leaf(4, 21, 22, [line(21, 0, 7)]), leaf(3, 22, 60)] };
+    file.diff.lhs = { text: lines.join("\n"), syntax: [], root: root([leaf(1, 0, 20), leaf(2, 20, 21, [line(20, 0, 7)]), leaf(3, 21, 60)])};
+    file.diff.rhs = { text: lines.join("\n"), syntax: [], root: root([leaf(1, 0, 20), leaf(2, 20, 21, [line(20, 0, 7)]), leaf(4, 21, 22, [line(21, 0, 7)]), leaf(3, 22, 60)])};
     store.accept(file);
   }
   const t = await testRender(<App store={store} onQuit={() => {}} themes={themes} />, {width:150, height:20});
@@ -148,7 +148,7 @@ test("Hunk navigation chords and draggable sidebar preserve viewport behavior", 
   const store = new DiffStore(), file = createTestDiffFile();
   const lines = Array.from({length: 150}, (_, i) => `row ${i}`);
   if (file.diff.type !== "text") throw new Error();
-  file.diff.lhs = file.diff.rhs = { text: lines.join("\n"), syntax: [], regions: [leaf(1, 0, 150)] };
+  file.diff.lhs = file.diff.rhs = { text: lines.join("\n"), syntax: [], root: root([leaf(1, 0, 150)])};
   store.accept(startFor([file]));
   store.accept(file);
   const t = await testRender(<App store={store} onQuit={() => {}} themes={themes} />, {width:150, height:20});
@@ -216,7 +216,7 @@ test("streaming diffs follow tree order without moving the visible source row", 
     const file = at(createTestDiffFile(), path);
     if (file.diff.type !== "text") throw new Error();
     const lines = Array.from({length:50}, (_, i) => `code ${i}`);
-    file.diff.lhs = file.diff.rhs = { text: lines.join("\n"), syntax: [], regions: [leaf(1, 0, 50)] };
+    file.diff.lhs = file.diff.rhs = { text: lines.join("\n"), syntax: [], root: root([leaf(1, 0, 50)])};
     return file;
   });
   const entry = manifestEntry;
@@ -256,7 +256,7 @@ test(`stream arrivals preserve code in every commit (wrap=${wrap}, unified=${uni
     const file = at(createTestDiffFile(), path);
     if (file.diff.type !== "text") throw new Error();
     const lines = Array.from({length:50}, (_, i) => `source ${path} ${i} ${"word ".repeat(20)}`);
-    file.diff.lhs = file.diff.rhs = { text: lines.join("\n"), syntax: [], regions: [leaf(1, 0, 50)] };
+    file.diff.lhs = file.diff.rhs = { text: lines.join("\n"), syntax: [], root: root([leaf(1, 0, 50)])};
     return file;
   });
   const entry = manifestEntry;
@@ -302,7 +302,7 @@ test("folds collapse from the gutter chevron and expand from the placeholder", a
   const tail = Array.from({ length: 20 }, (_, i) => `tail ${i}`);
   for (const source of [file.diff.lhs!, file.diff.rhs!]) {
     source.text += tail.join("\n") + "\n";
-    source.regions.push(leaf(99, 8, 28));
+    source.root.children.push(leaf(99, 8, 28));
   }
   store.accept(startFor([file]));
   store.accept(file);
@@ -416,7 +416,7 @@ test("a docstring and its function sharing a fold_state_id open and close togeth
   // Pad past the viewport so z chords can act on a row scrolled to the top.
   const tail = Array.from({ length: 20 }, (_, i) => `tail ${i}`);
   file.diff.rhs!.text += tail.join("\n") + "\n";
-  file.diff.rhs!.regions.push(leaf(99, 5, 25));
+  file.diff.rhs!.root.children.push(leaf(99, 5, 25));
   store.accept(startFor([file]));
   store.accept(file);
   const t = await testRender(<App store={store} onQuit={() => {}} themes={themes} />, { width: 150, height: 20 });
@@ -459,7 +459,9 @@ test("a docstring and its function sharing a fold_state_id open and close togeth
 
 test("a file record's visibility hides the file behind its reason until it is opened", async () => {
   const store = new DiffStore(), file = createTestDiffFile();
-  file.visibility = { collapsed: true, label: "Generated file · hidden by default" };
+  if (file.diff.type !== "text") throw new Error("fixture is not a text diff");
+  for (const side of [file.diff.lhs!, file.diff.rhs!])
+    side.root.visibility = { collapsed: true, label: "Generated file · hidden by default" };
   store.accept(startFor([file]));
   store.accept(file);
   const t = await testRender(<App store={store} onQuit={() => {}} themes={themes} />, { width: 150, height: 20 });

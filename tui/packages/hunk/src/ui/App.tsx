@@ -27,7 +27,7 @@ import {
   selectionBounds,
   type SourceSelection,
 } from "../diffr/selection";
-import { fileIdentity, filePath, type DiffFile } from "../diffr/wire";
+import { fileIdentity, filePath, fileVisibility, type DiffFile } from "../diffr/wire";
 import { defaultCollapsed, foldIds, gapIds, nestedIds, type RowFold } from "../diffr/regions";
 import { placeholderRows } from "../diffr/rows";
 import { add, blockBar, comparisonLabel, zero, type LineCounts } from "../diffr/counts";
@@ -84,7 +84,7 @@ export function App({
     const file = snapshot.files[index];
     return collapsed.get(index) ?? (file.diff.type === "text" ? defaultCollapsed(file.diff) : new Set());
   };
-  const isClosed = (index: number) => closed.get(index) ?? snapshot.files[index].visibility.collapsed;
+  const isClosed = (index: number) => closed.get(index) ?? fileVisibility(snapshot.files[index]).collapsed;
   const tree = useMemo(() => buildFileTree(inventory), [inventory]);
   // Keep loaded indexes stable for row keys, selections and file expansion.
   // Present arriving diffs in tree order throughout loading.
@@ -108,8 +108,8 @@ export function App({
         rowCache.current.set(file, cached);
       }
       if (!isClosed(index)) return cached.rows;
-      return file.visibility.collapsed
-        ? [cached.rows[0], ...placeholderRows(index, file.visibility.label)]
+      return fileVisibility(file).collapsed
+        ? [cached.rows[0], ...placeholderRows(index, fileVisibility(file).label)]
         : cached.rows.slice(0, 1);
     });
     for (const [i, error] of snapshot.errors.entries())

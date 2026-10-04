@@ -99,7 +99,7 @@ export function flattenSide(source: Source, side: Side): { leaves: Leaf[]; folds
     folds.push(fold);
     for (const child of region.children) visit(child, [...ancestors, fold]);
   };
-  for (const region of source.regions) visit(region, []);
+  for (const region of source.root.children) visit(region, []);
   return { leaves, folds };
 }
 export function flatten(diff: TextDiff) {
@@ -147,7 +147,7 @@ export function nestedIds(diff: TextDiff, id: number): number[] {
  * same definition, and revealing it shows only unchanged lines.
  */
 export function gapIds(diff: TextDiff): number[] {
-  const sides = [diff.lhs?.regions ?? [], diff.rhs?.regions ?? []];
+  const sides = [diff.lhs?.root.children ?? [], diff.rhs?.root.children ?? []];
   const walk = (regions: Region[], visit: (region: Region) => void) => {
     for (const region of regions) {
       visit(region);

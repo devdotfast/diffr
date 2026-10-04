@@ -68,21 +68,25 @@ pub fn diff(result: &DiffResult, inputs: Inputs<'_>) -> Diff {
             return Diff::Binary { sides };
         }
     };
-    let (lhs_regions, rhs_regions) = regions(result, lhs_src, rhs_src);
+    let (lhs_root, rhs_root) = regions(result, lhs_src, rhs_src);
     let (lhs_syntax, rhs_syntax) = inputs.syntax;
-    let sides = pair(
+    let mut sides = pair(
         inputs.file,
         Source {
             text: lhs_src.to_owned(),
             syntax: lhs_syntax,
-            regions: lhs_regions,
+            root: lhs_root,
         },
         Source {
             text: rhs_src.to_owned(),
             syntax: rhs_syntax,
-            regions: rhs_regions,
+            root: rhs_root,
         },
     );
+    // The two roots are one file: they open and close together.
+    if let Pairing::Both { lhs, rhs } = &mut sides {
+        rhs.root.fold_state_id = lhs.root.fold_state_id;
+    }
     Diff::Text {
         sides,
         stats: stats(result, lhs_src, rhs_src),
@@ -200,7 +204,7 @@ struct SideFold<'a> {
     lines: (usize, usize),
 }
 
-fn regions(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> (Vec<Region>, Vec<Region>) {
+fn regions(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> (Region, Region) {
     let lhs_lines: Vec<&str> = lhs_src.split_terminator('\n').collect();
     let rhs_lines: Vec<&str> = rhs_src.split_terminator('\n').collect();
     let lhs_novel = novel_lines(&result.lhs_positions);
@@ -235,7 +239,10 @@ fn regions(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> (Vec<Region>, V
         &rhs_lines,
         &mut ids,
     );
-    (lhs, rhs)
+    (
+        Region::root(ids.fresh_id(), lhs),
+        Region::root(ids.fresh_id(), rhs),
+    )
 }
 
 /// One side's folds as nested line spans.
@@ -736,7 +743,7 @@ mod tests {
 
     fn assert_tiles(source: &Source) {
         let mut at = 0;
-        for leaf in leaves(&source.regions) {
+        for leaf in leaves(source.root.children()) {
             assert_eq!(leaf.range.start.line, at, "gap before {leaf:?}");
             assert_eq!(leaf.range.start.column, 0);
             assert_eq!(leaf.range.end.column, 0);
@@ -774,7 +781,7 @@ mod tests {
     const RUST_RHS: &str = "fn f(a: u32, b: u32) -> u32 {\n    let x = a + b;\n    let y = x * 2;\n    x + y\n}\n\nfn keep() -> u32 {\n    let k = 1;\n    let m = 2;\n    k + m\n}\n\nfn added() -> u32 {\n    let p = 3;\n    let q = 4;\n    p + q\n}\n";
 
     fn fold_ids(source: &Source) -> BTreeMap<u32, u32> {
-        all(&source.regions)
+        all(source.root.children())
             .into_iter()
             .filter(|r| matches!(r.node, Node::Fold { .. }))
             .map(|r| (r.range.start.line, r.id))
@@ -782,7 +789,7 @@ mod tests {
     }
 
     fn fold_states(source: &Source) -> BTreeMap<u32, u32> {
-        all(&source.regions)
+        all(source.root.children())
             .into_iter()
             .filter(|r| matches!(r.node, Node::Fold { .. }))
             .map(|r| (r.range.start.line, r.fold_state_id))
@@ -797,8 +804,8 @@ mod tests {
         let (lhs, rhs) = sources(&diff);
         for source in [lhs.unwrap(), rhs.unwrap()] {
             assert_tiles(source);
-            assert_folds_hold_children(&source.regions);
-            let folds: Vec<&Region> = all(&source.regions)
+            assert_folds_hold_children(source.root.children());
+            let folds: Vec<&Region> = all(source.root.children())
                 .into_iter()
                 .filter(|region| matches!(region.node, Node::Fold { .. }))
                 .collect();
@@ -927,7 +934,10 @@ mod tests {
         let (lhs, rhs) = sources(&diff);
         let lhs_folds = fold_ids(lhs.unwrap());
         let (lhs_states, rhs_states) = (fold_states(lhs.unwrap()), fold_states(rhs.unwrap()));
-        let rhs_ids: BTreeSet<u32> = all(&rhs.unwrap().regions).iter().map(|r| r.id).collect();
+        let rhs_ids: BTreeSet<u32> = all(rhs.unwrap().root.children())
+            .iter()
+            .map(|r| r.id)
+            .collect();
         let rhs_states: BTreeSet<u32> = rhs_states.values().copied().collect();
         let lhs_lines: Vec<&str> = RUST_LHS.split_terminator('\n').collect();
         for fold in &result.lhs_folds {
@@ -979,8 +989,11 @@ mod tests {
         let diff = project("a.rs", lhs, rhs);
         let (lhs, rhs) = sources(&diff);
         let (lhs, rhs) = (lhs.unwrap(), rhs.unwrap());
-        let lhs_states: BTreeSet<u32> = all(&lhs.regions).iter().map(|r| r.fold_state_id).collect();
-        let array = all(&rhs.regions)
+        let lhs_states: BTreeSet<u32> = all(lhs.root.children())
+            .iter()
+            .map(|r| r.fold_state_id)
+            .collect();
+        let array = all(rhs.root.children())
             .into_iter()
             .find(|r| matches!(r.node, Node::Fold { .. }) && r.range.start.line == 2)
             .expect("the rhs array is a region");
@@ -1029,7 +1042,7 @@ mod tests {
         let (lhs_src, rhs_src) = sources(&diff);
         let (lhs_src, rhs_src) = (lhs_src.unwrap(), rhs_src.unwrap());
         let folds = |source: &Source| -> BTreeMap<String, (u32, u32)> {
-            all(&source.regions)
+            all(source.root.children())
                 .into_iter()
                 .filter(|region| matches!(region.node, Node::Fold { .. }))
                 .map(|region| {
@@ -1055,10 +1068,10 @@ mod tests {
         // Leaves still tile, and every leaf pair still mirrors its splits.
         for source in [lhs_src, rhs_src] {
             assert_tiles(source);
-            assert_folds_hold_children(&source.regions);
+            assert_folds_hold_children(source.root.children());
         }
         let lengths = |source: &Source| -> BTreeMap<u32, u32> {
-            leaves(&source.regions)
+            leaves(source.root.children())
                 .into_iter()
                 .map(|leaf| {
                     let (start, end) = leaf.range.lines_spanned();
@@ -1091,7 +1104,7 @@ mod tests {
         assert_eq!(stats.fallback.as_ref().unwrap().code, "too_complex");
         let (_, rhs) = sources(&diff);
         let rhs = rhs.unwrap();
-        let bodies: Vec<_> = all(&rhs.regions)
+        let bodies: Vec<_> = all(rhs.root.children())
             .into_iter()
             .filter(|r| r.tags.iter().any(|tag| tag == "deleted-bodies:function"))
             .map(|r| r.range.start.line)
@@ -1099,7 +1112,7 @@ mod tests {
         // Nothing is collapsed before the plugins run, so the untouched `keep`
         // is a fold like the changed `f` and the new `added`.
         assert_eq!(bodies, vec![1, 7, 13]);
-        assert!(leaves(&rhs.regions)
+        assert!(leaves(rhs.root.children())
             .iter()
             .all(|leaf| !leaf.visibility.collapsed && leaf.tags.is_empty()));
     }
@@ -1114,21 +1127,21 @@ mod tests {
         let (lhs, rhs) = (lhs.unwrap(), rhs.unwrap());
         assert_tiles(lhs);
         assert_tiles(rhs);
-        assert_folds_hold_children(&lhs.regions);
-        assert_folds_hold_children(&rhs.regions);
+        assert_folds_hold_children(lhs.root.children());
+        assert_folds_hold_children(rhs.root.children());
         // Ids are dense, assigned lhs first, and never shared across sides.
-        let lhs_ids: Vec<u32> = all(&lhs.regions).iter().map(|r| r.id).collect();
-        let rhs_ids: Vec<u32> = all(&rhs.regions).iter().map(|r| r.id).collect();
+        let lhs_ids: Vec<u32> = all(lhs.root.children()).iter().map(|r| r.id).collect();
+        let rhs_ids: Vec<u32> = all(rhs.root.children()).iter().map(|r| r.id).collect();
         let mut ids: Vec<u32> = lhs_ids.iter().chain(&rhs_ids).copied().collect();
         ids.sort_unstable();
         assert_eq!(ids, (1..=ids.len() as u32).collect::<Vec<_>>());
         assert!(lhs_ids.iter().max() < rhs_ids.iter().min());
         // Leaf alignment ids are dense on their own counter.
-        let lhs_leaves: BTreeMap<u32, &Region> = leaves(&lhs.regions)
+        let lhs_leaves: BTreeMap<u32, &Region> = leaves(lhs.root.children())
             .into_iter()
             .map(|leaf| (alignment(leaf), leaf))
             .collect();
-        let rhs_leaves: BTreeMap<u32, &Region> = leaves(&rhs.regions)
+        let rhs_leaves: BTreeMap<u32, &Region> = leaves(rhs.root.children())
             .into_iter()
             .map(|leaf| (alignment(leaf), leaf))
             .collect();
@@ -1156,13 +1169,16 @@ mod tests {
         assert!(paired > 0);
         // Python's body fold covers the body alone: it starts on the line
         // after the `def` line, which the leaf before it holds.
-        let new_fold = all(&rhs.regions)
+        let new_fold = all(rhs.root.children())
             .into_iter()
             .find(|r| matches!(r.node, Node::Fold { .. }) && r.range.start.line == 7)
             .expect("the added function is a fold");
         // The new function exists on the rhs only: nothing on the lhs opens
         // with it or aligns with its rows.
-        let lhs_states: BTreeSet<u32> = all(&lhs.regions).iter().map(|r| r.fold_state_id).collect();
+        let lhs_states: BTreeSet<u32> = all(lhs.root.children())
+            .iter()
+            .map(|r| r.fold_state_id)
+            .collect();
         assert!(!lhs_states.contains(&new_fold.fold_state_id));
         assert!(leaves(std::slice::from_ref(new_fold))
             .into_iter()
@@ -1187,7 +1203,7 @@ mod tests {
         let (lhs, rhs) = sources(&diff);
         let (lhs, rhs) = (lhs.unwrap(), rhs.unwrap());
         let fold = |source: &Source| {
-            let folds: Vec<_> = all(&source.regions)
+            let folds: Vec<_> = all(source.root.children())
                 .into_iter()
                 .filter(|r| matches!(r.node, Node::Fold { .. }))
                 .collect();
@@ -1199,7 +1215,7 @@ mod tests {
         assert_ne!(lhs_fold.id, rhs_fold.id);
         assert_eq!(lhs_fold.fold_state_id, rhs_fold.fold_state_id);
         assert_eq!(lhs_fold.range.lines_spanned(), (1, 4));
-        let novel: Vec<_> = leaves(&rhs.regions)
+        let novel: Vec<_> = leaves(rhs.root.children())
             .into_iter()
             .filter(|leaf| matches!(&leaf.node, Node::Leaf { changed, .. } if !changed.is_empty()))
             .collect();
@@ -1252,7 +1268,7 @@ mod tests {
         let diff = project("a.py", lhs, rhs);
         let (lhs, rhs) = sources(&diff);
         let fold = |source: &Source| {
-            all(&source.regions)
+            all(source.root.children())
                 .into_iter()
                 .find(|r| matches!(r.node, Node::Fold { .. }))
                 .expect("the body is a fold")
@@ -1267,7 +1283,7 @@ mod tests {
     fn a_fully_new_line_is_painted_whole_and_blank_lines_not_at_all() {
         let diff = project("a.py", "x = 1\n", "x = 1\n\ny = 2\n");
         let (_, rhs) = sources(&diff);
-        let changed: Vec<Span> = leaves(&rhs.unwrap().regions)
+        let changed: Vec<Span> = leaves(rhs.unwrap().root.children())
             .into_iter()
             .filter_map(|leaf| match &leaf.node {
                 Node::Leaf { changed, .. } => Some(changed.clone()),
@@ -1296,13 +1312,13 @@ mod tests {
         let (lhs, rhs) = (lhs.unwrap(), rhs.unwrap());
         assert_tiles(lhs);
         assert_tiles(rhs);
-        assert_folds_hold_children(&lhs.regions);
-        assert_folds_hold_children(&rhs.regions);
-        let lhs_leaves: Vec<_> = leaves(&lhs.regions)
+        assert_folds_hold_children(lhs.root.children());
+        assert_folds_hold_children(rhs.root.children());
+        let lhs_leaves: Vec<_> = leaves(lhs.root.children())
             .iter()
             .map(|l| (alignment(l), l.range.lines_spanned()))
             .collect();
-        let rhs_leaves: Vec<_> = leaves(&rhs.regions)
+        let rhs_leaves: Vec<_> = leaves(rhs.root.children())
             .iter()
             .map(|l| (alignment(l), l.range.lines_spanned()))
             .collect();
@@ -1340,7 +1356,7 @@ mod tests {
         assert!(lhs.is_none());
         let rhs = rhs.unwrap();
         assert_tiles(rhs);
-        assert!(leaves(&rhs.regions)
+        assert!(leaves(rhs.root.children())
             .iter()
             .all(|leaf| !leaf.visibility.collapsed));
     }

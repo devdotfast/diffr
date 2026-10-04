@@ -67,11 +67,16 @@ fn in_state(mut region: Region, state: u32) -> Region {
     region
 }
 
-fn source(regions: Vec<Region>) -> Source {
+/// A side whose root is `root`. Roots 100 and 101 sit clear of the
+/// regions' ids, so new regions are numbered from 102.
+fn source(root: u32, regions: Vec<Region>) -> Source {
     Source {
         text: String::new(),
         syntax: Vec::new(),
-        regions,
+        root: Region {
+            fold_state_id: 100,
+            ..Region::root(root, regions)
+        },
     }
 }
 
@@ -95,8 +100,8 @@ fn both(lhs: Vec<Region>, rhs: Vec<Region>) -> Cursor {
     Cursor::new(
         entry(),
         Pairing::Both {
-            lhs: source(lhs),
-            rhs: source(rhs),
+            lhs: source(100, lhs),
+            rhs: source(101, rhs),
         },
     )
     .expect("a region")
@@ -170,30 +175,30 @@ fn cutting_a_paired_leaf_cuts_both_sides_with_fresh_ids_and_a_shared_alignment()
             ],
         );
         sides.cut(target, 2).unwrap();
-        sides.cut(5, 2).unwrap();
+        sides.cut(102, 2).unwrap();
         let (lhs, rhs) = sides_of(&sides);
         let open = String::new;
         assert_eq!(
-            shape(&lhs.regions),
+            shape(lhs.root.children()),
             [
                 (1, Some(0), 1, 0, 2, false, open()),
                 (2, Some(1), 2, 2, 4, false, open()),
-                (5, Some(3), 5, 4, 6, false, open()),
-                (7, Some(4), 7, 6, 8, false, open()),
+                (102, Some(3), 102, 4, 6, false, open()),
+                (104, Some(4), 104, 6, 8, false, open()),
             ],
             "target {target}"
         );
         assert_eq!(
-            shape(&rhs.regions),
+            shape(rhs.root.children()),
             [
                 (3, Some(1), 2, 0, 2, false, open()),
-                (6, Some(3), 5, 2, 4, false, open()),
-                (8, Some(4), 7, 4, 6, false, open()),
+                (103, Some(3), 102, 2, 4, false, open()),
+                (105, Some(4), 104, 4, 6, false, open()),
                 (4, Some(2), 4, 6, 7, false, open()),
             ],
             "target {target}"
         );
-        let Node::Leaf { changed, .. } = &lhs.regions[3].node else {
+        let Node::Leaf { changed, .. } = &lhs.root.children()[3].node else {
             panic!("a leaf");
         };
         assert_eq!(
@@ -218,7 +223,7 @@ fn set_collapsed_reaches_every_region_in_the_fold_state_and_labels_reach_one() {
     sides.set_label(2, Some("summary".to_owned())).unwrap();
     let (lhs, rhs) = sides_of(&sides);
     assert_eq!(
-        shape(&lhs.regions),
+        shape(lhs.root.children()),
         [
             (1, Some(0), 2, 0, 2, true, String::new()),
             (2, None, 2, 2, 5, true, "summary".to_owned()),
@@ -226,17 +231,18 @@ fn set_collapsed_reaches_every_region_in_the_fold_state_and_labels_reach_one() {
         ]
     );
     assert_eq!(
-        shape(&rhs.regions)[0],
+        shape(rhs.root.children())[0],
         (4, None, 2, 0, 4, true, String::new())
     );
     sides.set_collapsed(1, false).unwrap();
     sides.set_label(2, None).unwrap();
     let (lhs, rhs) = sides_of(&sides);
     assert!(lhs
-        .regions
+        .root
+        .children()
         .iter()
         .all(|region| region.visibility == Visibility::default()));
-    assert!(!rhs.regions[0].visibility.collapsed);
+    assert!(!rhs.root.children()[0].visibility.collapsed);
 }
 
 #[test]
@@ -258,14 +264,22 @@ fn a_link_takes_the_first_regions_fold_state_and_collapsed_state() {
     let mut sides = tree();
     sides.link(&[7, 5]).unwrap();
     let (lhs, rhs) = sides_of(&sides);
-    assert_eq!(lhs.regions[0].fold_state_id, 7, "the pair stays together");
-    assert_eq!(rhs.regions[1].fold_state_id, 7);
-    assert_eq!(rhs.regions[0].fold_state_id, 3);
+    assert_eq!(
+        lhs.root.children()[0].fold_state_id,
+        7,
+        "the pair stays together"
+    );
+    assert_eq!(rhs.root.children()[1].fold_state_id, 7);
+    assert_eq!(rhs.root.children()[0].fold_state_id, 3);
 
     let mut sides = tree();
     sides.link(&[8, 1]).unwrap();
     let (lhs, rhs) = sides_of(&sides);
-    for region in [&lhs.regions[0], &lhs.regions[1], &rhs.regions[1]] {
+    for region in [
+        &lhs.root.children()[0],
+        &lhs.root.children()[1],
+        &rhs.root.children()[1],
+    ] {
         assert_eq!(
             (region.fold_state_id, region.visibility.collapsed),
             (3, true)
@@ -292,15 +306,15 @@ fn a_join_listing_both_sides_runs_wraps_each_with_one_fold_state() {
     );
     sides.join(&[1, 2, 3, 5, 7, 6]).unwrap();
     let (lhs, rhs) = sides_of(&sides);
-    assert_eq!(lhs.regions.len(), 1);
+    assert_eq!(lhs.root.children().len(), 1);
     assert_eq!(
-        shape(&lhs.regions)[0],
-        (14, None, 14, 0, 7, false, String::new())
+        shape(lhs.root.children())[0],
+        (102, None, 102, 0, 7, false, String::new())
     );
-    assert_eq!(rhs.regions.len(), 2);
+    assert_eq!(rhs.root.children().len(), 2);
     assert_eq!(
-        shape(&rhs.regions[1..])[0],
-        (15, None, 14, 1, 8, false, String::new())
+        shape(&rhs.root.children()[1..])[0],
+        (103, None, 102, 1, 8, false, String::new())
     );
 }
 
@@ -314,7 +328,7 @@ fn a_joined_fold_takes_its_parents_indent() {
     let mut sides = both(vec![body, leaf(4, 2, 2, 3, &[])], Vec::new());
     sides.join(&[2, 3]).unwrap();
     let (lhs, _) = sides_of(&sides);
-    let Node::Fold { children, .. } = &lhs.regions[0].node else {
+    let Node::Fold { children, .. } = &lhs.root.children()[0].node else {
         unreachable!("a fold");
     };
     let Node::Fold { indent, .. } = children[0].node else {

@@ -94,7 +94,7 @@ fn regions(record: &Value, side: &str) -> Vec<Value> {
         }
     }
     let mut out = Vec::new();
-    walk(&record["diff"][side]["regions"], &mut out);
+    walk(&record["diff"][side]["root"]["children"], &mut out);
     out
 }
 
@@ -119,7 +119,7 @@ fn the_default_view_hides_links_and_collapses() {
 
     let lock = record(&records, "Cargo.lock");
     assert_eq!(
-        lock["visibility"],
+        lock["diff"]["rhs"]["root"]["visibility"],
         serde_json::json!({"collapsed": true, "label": "Generated file · hidden by default"})
     );
     let start = &records[0];
@@ -130,7 +130,7 @@ fn the_default_view_hides_links_and_collapses() {
         .all(|file| file.get("visibility").is_none()));
 
     let lib = record(&records, "src/lib.rs");
-    assert!(lib.get("visibility").is_none());
+    assert!(lib["diff"]["rhs"]["root"].get("visibility").is_none());
     let lhs = regions(lib, "lhs");
     let body = lhs
         .iter()

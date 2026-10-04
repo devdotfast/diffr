@@ -75,7 +75,7 @@ fn deleted_bodies_skip_folds_with_paired_content() {
     let source = |regions| Source {
         syntax: Vec::new(),
         text: String::new(),
-        regions,
+        root: test_root(regions),
     };
     let mut sides = Pairing::Both {
         lhs: source(vec![rewritten, removed]),
@@ -87,7 +87,7 @@ fn deleted_bodies_skip_folds_with_paired_content() {
         &modified(),
         &mut sides,
     );
-    let lhs = &lhs(&sides).regions;
+    let lhs = lhs(&sides).root.children();
     assert!(!lhs[0].visibility.collapsed, "a rewrite stays open");
     assert!(lhs[1].visibility.collapsed);
     assert_eq!(lhs[1].visibility.label, "20 lines removed");
@@ -108,7 +108,7 @@ fn a_matched_function_whose_lines_all_went_away_is_a_removal() {
     let source = |regions| Source {
         syntax: Vec::new(),
         text: String::new(),
-        regions,
+        root: test_root(regions),
     };
     let mut sides = Pairing::Both {
         lhs: source(vec![moved, kept]),
@@ -120,7 +120,7 @@ fn a_matched_function_whose_lines_all_went_away_is_a_removal() {
         &modified(),
         &mut sides,
     );
-    let lhs = &lhs(&sides).regions;
+    let lhs = lhs(&sides).root.children();
     assert!(lhs[0].visibility.collapsed);
     assert_eq!(lhs[0].visibility.label, "20 lines removed");
     assert!(
@@ -133,7 +133,7 @@ fn a_matched_function_whose_lines_all_went_away_is_a_removal() {
 /// collapsed state and label.
 fn docstrings(source: &Source) -> Vec<(u32, u32, bool, String)> {
     let mut out = Vec::new();
-    walk(&source.regions, &mut |region| {
+    walk(source.root.children(), &mut |region| {
         if has_tag(region, "deleted-bodies:docstring") {
             out.push((
                 region.range.start.line,
@@ -149,7 +149,7 @@ fn docstrings(source: &Source) -> Vec<(u32, u32, bool, String)> {
 /// The collapsed function body on one side: its fold state.
 fn collapsed_body(source: &Source) -> u32 {
     let mut states = Vec::new();
-    walk(&source.regions, &mut |region| {
+    walk(source.root.children(), &mut |region| {
         if has_tag(region, FUNCTION) && region.visibility.collapsed {
             states.push(region.fold_state_id);
         }
@@ -182,7 +182,7 @@ fn deleted_bodies_collapse_when_large_and_one_sided() {
     let (file, mut sides) = project("m.py", before, after);
     run("deleted-bodies", json!({"min_lines": 3}), &file, &mut sides);
     let mut collapsed = Vec::new();
-    walk(&lhs(&sides).regions, &mut |region| {
+    walk(lhs(&sides).root.children(), &mut |region| {
         if is_fold(region) && region.visibility.collapsed {
             collapsed.push((region.range.start.line, region.visibility.label.clone()));
         }

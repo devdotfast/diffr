@@ -15,6 +15,13 @@ use crate::plugin::cursor::Cursor;
 use crate::protocol::{self, project, Diff, FileChange, FileRef, FileStatus, Node, Region, Source};
 use serde_json::json;
 use std::num::NonZeroUsize;
+
+/// A test side's root. Its id stays clear of the regions' ids and differs
+/// between sides, which never share region ids.
+pub(crate) fn test_root(regions: Vec<Region>) -> Region {
+    let id = 1000 + regions.iter().map(|region| region.id).min().unwrap_or(0);
+    Region::root(id, regions)
+}
 use std::path::Path;
 
 pub(crate) fn walk(regions: &[Region], visit: &mut impl FnMut(&Region)) {
@@ -170,7 +177,7 @@ fn documented(path: &str, after: &str) -> Vec<(u32, Option<(u32, u32)>)> {
     let source = rhs(&sides);
     let cursor = Cursor::new(file.clone(), sides.clone()).expect("a region");
     let mut bodies = Vec::new();
-    walk(&source.regions, &mut |region| {
+    walk(source.root.children(), &mut |region| {
         if is_fold(region) && has_tag(region, "deleted-bodies:function") {
             let docstring = cursor
                 .related(region.id, "documentation")
@@ -178,7 +185,7 @@ fn documented(path: &str, after: &str) -> Vec<(u32, Option<(u32, u32)>)> {
                 .first()
                 .map(|id| {
                     let mut lines = None;
-                    walk(&source.regions, &mut |docstring| {
+                    walk(source.root.children(), &mut |docstring| {
                         if docstring.id == *id {
                             lines = Some(docstring.range.lines());
                         }

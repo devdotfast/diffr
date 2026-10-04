@@ -6,7 +6,7 @@ const TEST: &str = "test-bodies:test";
 /// its label.
 fn folds(source: &Source) -> Vec<(bool, bool, String)> {
     let mut folds = Vec::new();
-    walk(&source.regions, &mut |region| {
+    walk(source.root.children(), &mut |region| {
         if is_fold(region) {
             folds.push((
                 has_tag(region, TEST),
@@ -54,7 +54,7 @@ fn test_bodies_collapse_on_both_sides_and_stay_expandable() {
     );
     run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
     let mut labels = Vec::new();
-    walk(&rhs(&sides).regions, &mut |region| {
+    walk(rhs(&sides).root.children(), &mut |region| {
         if is_fold(region) && region.visibility.collapsed {
             labels.push(region.visibility.label.clone());
         }
@@ -63,7 +63,7 @@ fn test_bodies_collapse_on_both_sides_and_stay_expandable() {
     // A tiny test body stays open.
     let (file, mut sides) = project("a.rs", "", "#[test]\nfn t() {\n    a();\n}\n");
     run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
-    walk(&rhs(&sides).regions, &mut |region| {
+    walk(rhs(&sides).root.children(), &mut |region| {
         assert!(!region.visibility.collapsed);
     });
 }
@@ -79,7 +79,7 @@ fn a_test_body_links_its_docstring_on_each_side() {
     };
     let mut states = Vec::new();
     for source in [lhs, rhs] {
-        walk(&source.regions, &mut |region| {
+        walk(source.root.children(), &mut |region| {
             if has_tag(region, TEST) || has_tag(region, "test-bodies:docstring") {
                 assert!(region.visibility.collapsed);
                 states.push(region.fold_state_id);
@@ -103,7 +103,7 @@ fn javascript_test_callbacks_collapse() {
         );
         run("test-bodies", json!({"min_lines": 2}), &file, &mut sides);
         let mut collapsed = Vec::new();
-        walk(&rhs(&sides).regions, &mut |region| {
+        walk(rhs(&sides).root.children(), &mut |region| {
             if region.visibility.collapsed {
                 collapsed.push(region.range.start.line);
             }

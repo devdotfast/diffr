@@ -43,7 +43,7 @@ function indents(source: Source | undefined): Map<number, number> {
       walk(region.children, own);
     }
   };
-  walk(source.regions, 0);
+  walk(source.root.children, 0);
   return out;
 }
 

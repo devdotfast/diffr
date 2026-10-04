@@ -7,7 +7,7 @@ use crate::options::DiffOptions;
 use crate::plugin::{Classifier, MutationFailed, Pipeline};
 use crate::present::present;
 use crate::protocol::project::{self, Inputs};
-use crate::protocol::{Diff, Event, FileChange, Outcome, Problem, SyntaxSpan, Visibility, VERSION};
+use crate::protocol::{Diff, Event, FileChange, Outcome, Problem, SyntaxSpan, VERSION};
 use crate::summary::{DiffResult, FallbackCause, FileContent, FileFormat};
 use crate::tags;
 use std::io::{BufWriter, Write};
@@ -177,25 +177,21 @@ async fn record(file: git::File, shared: Arc<Shared>) -> anyhow::Result<Event> {
     shared.pool.spawn(move || {
         let _ = send.send(project(&file, &projecting));
     });
-    let (visibility, outcome) = match receive.await.expect("Rayon task returns its result") {
+    let outcome = match receive.await.expect("Rayon task returns its result") {
         Ok(diff) => {
             let entry = change.manifest_entry();
-            let (visibility, diff) = present(change.hidden.as_deref(), diff, async |sides| {
+            let diff = present(change.hidden.as_deref(), diff, async |sides| {
                 shared.pipeline.run(&entry, sides).await
             })
             .await?;
-            (visibility, Outcome::Diff { diff })
+            Outcome::Diff { diff }
         }
-        Err(error) => (
-            Visibility::default(),
-            Outcome::Error {
-                error: wire_error(&error),
-            },
-        ),
+        Err(error) => Outcome::Error {
+            error: wire_error(&error),
+        },
     };
     Ok(Event::File {
         file: change.sides,
-        visibility,
         outcome,
     })
 }

@@ -56,7 +56,7 @@ fn source(regions: Vec<Region>) -> Source {
     Source {
         syntax: Vec::new(),
         text: String::new(),
-        regions,
+        root: test_root(regions),
     }
 }
 
@@ -120,11 +120,12 @@ fn removed_runs_keep_the_first_and_last_line_open() {
         &mut sides,
     );
     assert_eq!(
-        shape(&lhs(&sides).regions),
+        shape(lhs(&sides).root.children()),
         vec![
             (1, 0, 10, 11, false, String::new(), vec![10]),
+            // New pieces are numbered after the test root, 1001.
             (
-                2,
+                1002,
                 1,
                 11,
                 16,
@@ -132,7 +133,7 @@ fn removed_runs_keep_the_first_and_last_line_open() {
                 "5 lines removed".to_owned(),
                 vec![11, 12, 13, 14, 15]
             ),
-            (3, 2, 16, 17, false, String::new(), vec![16]),
+            (1003, 2, 16, 17, false, String::new(), vec![16]),
         ]
     );
 }
@@ -148,7 +149,7 @@ fn removed_runs_respect_the_threshold() {
         &deleted(),
         &mut sides,
     );
-    assert_eq!(lhs(&sides).regions.len(), 1);
+    assert_eq!(lhs(&sides).root.children().len(), 1);
     // A tiny threshold still needs three lines.
     let mut sides = Pairing::LeftOnly {
         lhs: source(vec![removed_leaf(1, 0, 0, 2, &[0, 1])]),
@@ -159,7 +160,7 @@ fn removed_runs_respect_the_threshold() {
         &deleted(),
         &mut sides,
     );
-    assert_eq!(lhs(&sides).regions.len(), 1);
+    assert_eq!(lhs(&sides).root.children().len(), 1);
 }
 
 #[test]
@@ -196,7 +197,7 @@ fn removed_runs_skip_paired_leaves_and_collapsed_ancestors() {
         &deleted(),
         &mut sides,
     );
-    let lhs = &lhs(&sides).regions;
+    let lhs = lhs(&sides).root.children();
     assert_eq!(lhs.len(), 5, "paired leaf, collapsed fold, three pieces");
     assert_eq!(lhs[0].id, 7);
     let Node::Fold { children, .. } = &lhs[1].node else {
@@ -211,8 +212,9 @@ fn removed_runs_skip_paired_leaves_and_collapsed_ancestors() {
         shape(&lhs[2..]),
         vec![
             (3, 3, 20, 21, false, String::new(), vec![]),
-            (11, 8, 21, 29, true, "8 lines removed".to_owned(), vec![]),
-            (12, 9, 29, 30, false, String::new(), vec![]),
+            // New pieces are numbered after the test roots, 1002 and 1010.
+            (1011, 8, 21, 29, true, "8 lines removed".to_owned(), vec![]),
+            (1012, 9, 29, 30, false, String::new(), vec![]),
         ]
     );
 }
@@ -253,7 +255,7 @@ fn removed_runs_stay_open_under_a_paired_function() {
         &deleted(),
         &mut sides,
     );
-    let lhs = &lhs(&sides).regions;
+    let lhs = lhs(&sides).root.children();
     let Node::Fold { children, .. } = &lhs[0].node else {
         panic!("fold expected");
     };
@@ -266,8 +268,9 @@ fn removed_runs_stay_open_under_a_paired_function() {
         shape(children),
         vec![
             (5, 5, 20, 21, false, String::new(), vec![20]),
+            // New pieces are numbered after the test roots, 1001 and 1006.
             (
-                7,
+                1007,
                 6,
                 21,
                 39,
@@ -275,7 +278,7 @@ fn removed_runs_stay_open_under_a_paired_function() {
                 "18 lines removed".to_owned(),
                 (21..28).collect()
             ),
-            (8, 7, 39, 40, false, String::new(), vec![]),
+            (1008, 7, 39, 40, false, String::new(), vec![]),
         ]
     );
 }

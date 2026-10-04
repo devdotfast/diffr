@@ -97,7 +97,7 @@ fn serve(responses: Vec<(u16, String)>) -> (String, std::thread::JoinHandle<Vec<
 /// the context queries wrap around it is not one.
 fn fold_label(sides: &Pairing<Source>) -> String {
     let mut labels = Vec::new();
-    walk(&rhs(sides).regions, &mut |region| {
+    walk(std::slice::from_ref(&rhs(sides).root), &mut |region| {
         if is_fold(region) && has_tag(region, FUNCTION) {
             labels.push(region.visibility.label.clone());
         }
@@ -200,7 +200,7 @@ fn select(
         .map(|(id, start, end)| {
             let source = sides.rhs().unwrap();
             let mut doc = None;
-            walk(&source.regions, &mut |region| {
+            walk(source.root.children(), &mut |region| {
                 if region.id == id {
                     doc = region
                         .relations
@@ -269,7 +269,7 @@ fn selection_skips_test_bodies_and_collapsed_folds() {
     let (Pairing::Both { rhs, .. } | Pairing::RightOnly { rhs }) = &mut sides else {
         panic!("an after side");
     };
-    walk_mut(&mut rhs.regions, &mut |region| {
+    walk_mut(std::slice::from_mut(&mut rhs.root), &mut |region| {
         if region.range.start.line == 8 {
             region.visibility.collapsed = true;
         }
@@ -285,7 +285,7 @@ fn long_summaries_are_discarded_without_changing_initial_folding() {
     shape(&summarizer(&endpoint, 0), &file, &mut sides).unwrap();
     server.join().unwrap();
     let mut folds = Vec::new();
-    walk(&rhs(&sides).regions, &mut |region| {
+    walk(rhs(&sides).root.children(), &mut |region| {
         if is_fold(region) && has_tag(region, FUNCTION) {
             folds.push((region.visibility.collapsed, region.visibility.label.clone()));
         }
@@ -306,7 +306,7 @@ fn summaries_collapse_selected_folds_behind_pseudocode() {
     // `g` is a one-line function, whose body is not a region.
     assert_eq!(fold_label(&sides), "call a, b, c");
     let mut collapsed = Vec::new();
-    walk(&rhs(&sides).regions, &mut |region| {
+    walk(rhs(&sides).root.children(), &mut |region| {
         if is_fold(region) && has_tag(region, FUNCTION) {
             collapsed.push(region.visibility.collapsed);
         }
@@ -324,7 +324,7 @@ fn a_docstring_is_sent_and_only_a_verbatim_sentence_from_it_is_kept() {
     };
     let body_label = |sides: &Pairing<Source>| {
         let mut labels = Vec::new();
-        walk(&rhs(sides).regions, &mut |region| {
+        walk(std::slice::from_ref(&rhs(sides).root), &mut |region| {
             if is_fold(region) && has_tag(region, FUNCTION) {
                 labels.push(region.visibility.label.clone());
             }
@@ -358,13 +358,13 @@ fn a_docstring_is_sent_and_only_a_verbatim_sentence_from_it_is_kept() {
 fn assert_linked(sides: &Pairing<Source>, body: u32) {
     let rhs = rhs(sides);
     let mut state = None;
-    walk(&rhs.regions, &mut |region| {
+    walk(rhs.root.children(), &mut |region| {
         if region.id == body {
             state = Some(region.fold_state_id);
         }
     });
     let mut docstrings = Vec::new();
-    walk(&rhs.regions, &mut |region| {
+    walk(rhs.root.children(), &mut |region| {
         if has_tag(region, "summarize:docstring") {
             docstrings.push((
                 region.fold_state_id,
@@ -389,7 +389,7 @@ fn newness_is_the_lines_inside_the_body() {
     let (_, sides) = project("a.rs", &one_liner, &after);
     let states = |source: &Source| {
         let mut states = Vec::new();
-        walk(&source.regions, &mut |region| {
+        walk(source.root.children(), &mut |region| {
             if is_fold(region) && region.range.start.line == 2 {
                 states.push(region.fold_state_id);
             }
@@ -408,13 +408,13 @@ fn newness_is_the_lines_inside_the_body() {
     // The one-liner it replaced had no body fold to match, and no line of
     // the new body pairs: the body is new.
     let mut body = None;
-    walk(&replaced.regions, &mut |region| {
+    walk(replaced.root.children(), &mut |region| {
         if is_fold(region) && has_tag(region, FUNCTION) {
             body = Some(region.fold_state_id);
         }
     });
     let mut lhs_states = Vec::new();
-    walk(&lhs.regions, &mut |region| {
+    walk(lhs.root.children(), &mut |region| {
         lhs_states.push(region.fold_state_id)
     });
     assert!(!lhs_states.contains(&body.expect("a function body on the after side")));
@@ -581,7 +581,7 @@ fn suites_select_individual_tests_and_preserve_nested_summary_folds() {
         run("context", json!({"lines": 3}), &file, &mut sides);
         let mut found = 0;
         let mut outer_state = None;
-        walk(&rhs(&sides).regions, &mut |region| {
+        walk(rhs(&sides).root.children(), &mut |region| {
             if has_tag(region, outer_tag) && !selected.iter().any(|s| s.0 == region.id) {
                 assert!(region.visibility.collapsed);
                 outer_state = Some(region.fold_state_id);

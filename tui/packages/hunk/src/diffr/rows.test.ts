@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createTestDiffFile, fold, leaf, line, withIdenticalLines } from "./fixture";
+import { createTestDiffFile, fold, leaf, line, withIdenticalLines, root } from "./fixture";
 import type { Region, Span } from "./wire";
 import { captureColor, dark, light, lineSpans, rowsForFile } from "./rows";
 import { pairedIds } from "./regions";
@@ -37,9 +37,9 @@ test("matched folds zip nothing themselves: rows come from leaves, and the pair 
   const matched = (id: number, start: number, leafId: number, novel: Span[]) =>
     ({ ...fold(id, [start, 0], [start + 2, 0], [leaf(leafId, start, start + 2, novel)]), fold_state_id: 3 });
   file.diff.lhs = { text: "a {\n}\nb {\n}\n", syntax: [],
-    regions: [fold(1, [0, 0], [2, 0], [leaf(2, 0, 2)]), matched(3, 2, 4, [line(2, 0, 3), line(3, 0, 1)])] };
+    root: root([fold(1, [0, 0], [2, 0], [leaf(2, 0, 2)]), matched(3, 2, 4, [line(2, 0, 3), line(3, 0, 1)])])};
   file.diff.rhs = { text: "b {\n}\na {\n}\n", syntax: [],
-    regions: [matched(5, 0, 6, [line(0, 0, 3), line(1, 0, 1)]), { ...fold(7, [2, 0], [4, 0], [leaf(2, 2, 4)]), fold_state_id: 1 }] };
+    root: root([matched(5, 0, 6, [line(0, 0, 3), line(1, 0, 1)]), { ...fold(7, [2, 0], [4, 0], [leaf(2, 2, 4)]), fold_state_id: 1 }])};
   const lines = (collapsed: Set<number>) => rowsForFile(file, 0, "split", dark, collapsed).filter((r) => r.left)
     .map((r) => [r.left!.lineNumber, r.right!.lineNumber]);
   expect(lines(new Set())).toEqual([[undefined, 1], [undefined, 2], [1, 3], [2, 4], [3, undefined], [4, undefined]]);
@@ -57,14 +57,14 @@ test("rows zip leaves by alignment_id, and a paired leaf's tint follows its own 
   // As diffr numbers them: ids are unique across sides, alignments and fold states are not ids.
   const leafOf = (id: number, alignment: number, state: number, start: number, end: number, changed: Span[] = []): Region =>
     ({ ...leaf(id, start, end, changed), alignment_id: alignment, fold_state_id: state });
-  file.diff.lhs = { text: "a\nb\n", syntax: [], regions: [leafOf(0, 0, 0, 0, 1), leafOf(1, 1, 1, 1, 2)] };
+  file.diff.lhs = { text: "a\nb\n", syntax: [], root: root([leafOf(0, 0, 0, 0, 1), leafOf(1, 1, 1, 1, 2)])};
   file.diff.rhs = { text: "a\nnew\nb\n", syntax: [],
-    regions: [leafOf(2, 0, 0, 0, 1), leafOf(3, 2, 3, 1, 2, [line(1, 0, 3)]), leafOf(4, 1, 1, 2, 3)] };
+    root: root([leafOf(2, 0, 0, 0, 1), leafOf(3, 2, 3, 1, 2, [line(1, 0, 3)]), leafOf(4, 1, 1, 2, 3)])};
   const rows = rowsForFile(file, 0, "split", dark).filter((r) => r.left);
   expect(rows.map((r) => [r.left!.lineNumber, r.right!.lineNumber])).toEqual([[1, 1], [undefined, 2], [2, 3]]);
   expect(pairedIds(file.diff).map((ids) => [...ids].sort())).toEqual([[0, 1], [2, 4]]);
   // A collapsed paired leaf stays neutral on both sides; a collapsed one-sided leaf takes the added tint.
-  for (const region of [file.diff.lhs.regions[1]!, file.diff.rhs.regions[2]!, file.diff.rhs.regions[1]!])
+  for (const region of [file.diff.lhs.root.children[1]!, file.diff.rhs.root.children[2]!, file.diff.rhs.root.children[1]!])
     region.visibility = { collapsed: true, label: "hidden" };
   const collapsed = rowsForFile(file, 0, "split", dark, new Set([1, 3]));
   const tints = collapsed.flatMap((r) => [r.left?.fold?.tint, r.right?.fold?.tint]).filter((tint) => tint);
@@ -84,9 +84,9 @@ test("changed spans paint the darker word tint, distinct from the line tint", ()
 test("every line of a novel leaf is tinted, even without a span", () => {
   const file = createTestDiffFile();
   if (file.diff.type !== "text") throw new Error();
-  file.diff.lhs = { text: "a\n", syntax: [], regions: [leaf(1, 0, 1)] };
+  file.diff.lhs = { text: "a\n", syntax: [], root: root([leaf(1, 0, 1)])};
   // A new block: one changed word, a blank line, and an unpaired leaf with no spans at all.
-  file.diff.rhs = { text: "a\nb = 1\n\nc\n", syntax: [], regions: [leaf(1, 0, 1), leaf(2, 1, 3, [line(1, 4, 5)]), leaf(3, 3, 4)] };
+  file.diff.rhs = { text: "a\nb = 1\n\nc\n", syntax: [], root: root([leaf(1, 0, 1), leaf(2, 1, 3, [line(1, 4, 5)]), leaf(3, 3, 4)])};
   const rows = rowsForFile(file, 0, "split", dark).filter((r) => r.right);
   expect(rows.map((r) => [r.right!.kind, r.right!.spans.some((s) => s.bg)])).toEqual([
     ["context", false], ["addition", true], ["addition", false], ["addition", false],
@@ -156,8 +156,8 @@ test("context gaps come from collapsed unchanged leaves, one row per gap", () =>
     return region;
   };
   const regions = () => [gap(1, 0, 1), leaf(2, 1, 3, [line(1, 0, 6)]), gap(3, 3, 8), leaf(4, 8, 10), gap(5, 10, 12)];
-  file.diff.lhs = { text: lines.join("\n"), syntax: [], regions: regions() };
-  file.diff.rhs = { text: lines.join("\n"), syntax: [], regions: regions() };
+  file.diff.lhs = { text: lines.join("\n"), syntax: [], root: root(regions())};
+  file.diff.rhs = { text: lines.join("\n"), syntax: [], root: root(regions())};
   const split = rowsForFile(file, 0, "split", dark, new Set([1, 3, 5]));
   const shown = (fold: { label: string; collapsed: boolean } | undefined, line: number | undefined) =>
     fold?.collapsed ? fold.label : line;
@@ -175,8 +175,8 @@ test("context gaps come from collapsed unchanged leaves, one row per gap", () =>
 test("unified trusts diffr's changed spans despite different source indentation", () => {
   const file = createTestDiffFile();
   if (file.diff.type !== "text") throw new Error();
-  file.diff.lhs = { text: "  call();\n", syntax: [], regions: [leaf(1, 0, 1)] };
-  file.diff.rhs = { text: "    call();\n", syntax: [], regions: [leaf(1, 0, 1)] };
+  file.diff.lhs = { text: "  call();\n", syntax: [], root: root([leaf(1, 0, 1)])};
+  file.diff.rhs = { text: "    call();\n", syntax: [], root: root([leaf(1, 0, 1)])};
   const rows = rowsForFile(file, 0, "unified", dark);
   expect(rows).toHaveLength(2);
   expect(rows[1].cell).toMatchObject({kind: "context", sign: " ", oldLineNumber: 1, newLineNumber: 1});
@@ -186,7 +186,7 @@ test("unified trusts diffr's changed spans despite different source indentation"
       .toBe(side === "left" ? "  call();" : "    call();");
   }
   // Only the side with a changed span may receive change styling.
-  file.diff.rhs.regions = [leaf(1, 0, 1, [line(0, 0, 11)])];
+  file.diff.rhs.root.children = [leaf(1, 0, 1, [line(0, 0, 11)])];
   const changed = rowsForFile(file, 0, "unified", dark).slice(1);
   expect(changed.map(r => r.cell!.kind)).toEqual(["context", "addition"]);
 });
@@ -197,7 +197,7 @@ test("binary and one-sided files render without a second side", () => {
   const added = createTestDiffFile();
   added.file = { rhs: added.file.rhs };
   if (added.diff.type !== "text") throw new Error();
-  added.diff = { type: "text", rhs: { text: "new\n", syntax: [], regions: [leaf(1, 0, 1, [line(0, 0, 3)])] },
+  added.diff = { type: "text", rhs: { text: "new\n", syntax: [], root: root([leaf(1, 0, 1, [line(0, 0, 3)])])},
     stats: { textual: { added: 1, removed: 0 }, visible: { added: 1, removed: 0 } } };
   const rows = rowsForFile(added, 0, "split", dark).filter((r) => r.left);
   expect(rows.map((r) => [r.left!.kind, r.right!.lineNumber])).toEqual([["empty", 1]]);

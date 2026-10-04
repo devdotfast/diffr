@@ -37,7 +37,6 @@ export type StructuralDiffEvent =
   | ({
       type: "file";
       file: StructuralPairing<StructuralFileRef>;
-      visibility?: StructuralVisibility;
     } & StructuralOutcome)
   | {
       type: "complete";
@@ -60,7 +59,6 @@ export const StructuralDiffEventSchema: z.ZodType<StructuralDiffEvent> = z.lazy(
         .object({
           type: z.literal("file"),
           file: structuralPairingSchema(StructuralFileRefSchema),
-          visibility: StructuralVisibilitySchema.optional(),
         })
         .and(StructuralOutcomeSchema),
       z.object({
@@ -217,14 +215,15 @@ export const StructuralDiffSchema: z.ZodType<StructuralDiff> = z.lazy(() =>
 export type StructuralSource = {
   text: string;
   syntax?: StructuralSyntaxSpan[];
-  regions?: StructuralRegion[];
+  /** The whole file, as one fold. Both sides' roots share a fold_state_id; its visibility is the file's. */
+  root: StructuralRegion;
 };
 
 export const StructuralSourceSchema: z.ZodType<StructuralSource> = z.lazy(() =>
   z.object({
     text: z.string(),
     syntax: z.array(StructuralSyntaxSpanSchema).optional(),
-    regions: z.array(StructuralRegionSchema).optional(),
+    root: StructuralRegionSchema,
   }),
 );
 

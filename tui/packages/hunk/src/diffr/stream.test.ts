@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readDiffStream } from "./stream";
-import { createTestDiffFile, fold, leaf } from "./fixture";
-import type { FileChange } from "./wire";
+import { createTestDiffFile, fold, leaf, root } from "./fixture";
+import { fileVisibility, type FileChange } from "./wire";
 const manifest = (file: ReturnType<typeof createTestDiffFile>): FileChange =>
   ({ file: file.file, status: "modified", tags: [] });
 const start = {
@@ -23,20 +23,22 @@ test("decode byte-fragmented Unicode stream and preserve region trees", async ()
   const file = createTestDiffFile();
   file.file = { lhs: { ...file.file.lhs!, path: "变量.ts" }, rhs: { ...file.file.rhs!, path: "变量.ts" } };
   if (file.diff.type !== "text") throw new Error();
-  file.diff.lhs!.regions = [fold(9, [0, 0], [2, 8], [leaf(1, 0, 3)], "Body", ["function"], true)];
+  file.diff.lhs!.root.children = [fold(9, [0, 0], [2, 8], [leaf(1, 0, 3)], "Body", ["function"], true)];
   const events = [{...start, files: [manifest(file)]}, file, { type: "complete", succeeded: 1, failed: 0 }];
   expect((await decode(events)) as unknown).toEqual(events);
 });
 test("omitted defaults are filled in", async () => {
   const file = createTestDiffFile();
   const bare = { type: "file", file: file.file, diff: { type: "text",
-    lhs: { text: "a\n", regions: [{ id: 1, fold_state_id: 1, kind: "leaf", alignment_id: 0, start: { line: 0, column: 0 }, end: { line: 1, column: 0 } }] },
-    rhs: { text: "a\n", regions: [{ id: 2, fold_state_id: 1, kind: "leaf", alignment_id: 0, start: { line: 0, column: 0 }, end: { line: 1, column: 0 } }] },
+    lhs: { text: "a\n", root: { id: 3, fold_state_id: 3, kind: "fold", start: { line: 0, column: 0 }, end: { line: 1, column: 0 },
+      indent: { line: 0, column: 0 }, children: [{ id: 1, fold_state_id: 1, kind: "leaf", alignment_id: 0, start: { line: 0, column: 0 }, end: { line: 1, column: 0 } }] } },
+    rhs: { text: "a\n", root: { id: 4, fold_state_id: 3, kind: "fold", start: { line: 0, column: 0 }, end: { line: 1, column: 0 },
+      indent: { line: 0, column: 0 }, children: [{ id: 2, fold_state_id: 1, kind: "leaf", alignment_id: 0, start: { line: 0, column: 0 }, end: { line: 1, column: 0 } }] } },
     stats: { textual: { added: 0, removed: 0 }, visible: { added: 0, removed: 0 } } } };
   const [, decoded] = await decode([{ ...start, files: [{ file: file.file, status: "modified" }] }, bare,
     { type: "complete", succeeded: 1, failed: 0 }]);
-  expect(decoded).toMatchObject({ diff: { lhs: { syntax: [], regions: [{ tags: [], changed: [], children: [],
-    visibility: { collapsed: false, label: "" } }] } } });
+  expect(decoded).toMatchObject({ diff: { lhs: { syntax: [], root: { visibility: { collapsed: false, label: "" },
+    children: [{ tags: [], changed: [], children: [], visibility: { collapsed: false, label: "" } }] } } } });
 });
 test("reject a stream without completion, an unknown version and malformed records", async () => {
   for (const events of [
@@ -95,8 +97,8 @@ test("a stream recorded from diffr parses, with manifest tags and each record's 
     ["src/greet.ts", []],
     ["tests/greet.test.ts", ["test"]],
   ]);
-  expect(source.visibility).toEqual({ collapsed: false, label: "" });
-  expect(test.visibility).toEqual({ collapsed: true, label: "Test file · hidden by default" });
+  expect(fileVisibility(source)).toEqual({ collapsed: false, label: "" });
+  expect(fileVisibility(test)).toEqual({ collapsed: true, label: "Test file · hidden by default" });
   expect(source.diff?.type === "text" && source.diff.rhs!.syntax.length).toBeGreaterThan(0);
   expect(complete).toEqual({ type: "complete", succeeded: 2, failed: 0 });
 });

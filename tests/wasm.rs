@@ -227,7 +227,7 @@ fn bundled_and_external_components_produce_identical_files() {
     for record in &bundled.1 {
         for side in ["lhs", "rhs"] {
             let mut regions = Vec::new();
-            walk(&record["diff"][side]["regions"], &mut regions);
+            walk(&record["diff"][side]["root"]["children"], &mut regions);
             collapsed.extend(
                 regions
                     .into_iter()

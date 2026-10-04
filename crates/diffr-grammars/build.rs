@@ -29,7 +29,6 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "tree-sitter-typescript",
         "typescript/src",
     ),
-    ("tree_sitter_tsx", "tree-sitter-typescript", "tsx/src"),
     ("tree_sitter_ada", "tree-sitter-ada", "src"),
     ("tree_sitter_apex", "tree-sitter-sfapex", "apex/src"),
     ("tree_sitter_asm", "tree-sitter-asm", "src"),
@@ -116,6 +115,8 @@ const VENDORED: &[(&str, &str)] = &[
     ("tree_sitter_kotlin", "tree-sitter-kotlin-src"),
     ("tree_sitter_latex", "tree-sitter-latex-src"),
     ("tree_sitter_smali", "tree-sitter-smali-src"),
+    // TSX patched so arrays of imported types parse.
+    ("tree_sitter_tsx_diffr", "tree-sitter-tsx-src"),
 ];
 
 fn main() {

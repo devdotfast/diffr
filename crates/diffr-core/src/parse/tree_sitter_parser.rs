@@ -1175,7 +1175,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = if language == TypeScript {
                 diffr_grammars::TYPESCRIPT
             } else {
-                diffr_grammars::TSX
+                diffr_grammars::TSX_DIFFR
             };
             let language = tree_sitter::Language::new(language_fn);
 
@@ -2142,6 +2142,32 @@ mod tests {
 
     use super::*;
     use crate::config::Params;
+
+    #[test]
+    fn tsx_import_type_arrays_parse_without_errors() {
+        let params = Params::default();
+        let config = params.language(guess::Language::TypeScriptTsx);
+        for source in [
+            "interface Props { entries?: import('./types').Entry[]; }",
+            "type Entries = import('./types').Entry[][];",
+            "const entries: import('./types').Namespace.Entry[] = [];",
+            "type Entries = Array<import('./types').Entry[]>;",
+        ] {
+            assert!(
+                !to_tree(source, config.parser).root_node().has_error(),
+                "{source}"
+            );
+        }
+        assert!(
+            to_tree(
+                "interface Props { entries?: import('./types').Entry[; }",
+                config.parser
+            )
+            .root_node()
+            .has_error(),
+            "invalid syntax must still report an error"
+        );
+    }
 
     /// Simple smoke test for tree-sitter parsing. Having a test also
     /// ensures that this file has its coverage measured.

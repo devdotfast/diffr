@@ -28,13 +28,3 @@ tree-sitter = "0.26.10"
 tree-sitter-c = "0.24"
 zstd = { version = "0.13.3", default-features = false }
 
-[features]
-lang-apex = []
-lang-fortran = []
-lang-fsharp = []
-lang-haskell = []
-lang-julia = []
-lang-ocaml = []
-lang-qml = []
-lang-verilog = []
-lang-vhdl = []

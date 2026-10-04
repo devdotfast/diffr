@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,10 @@ import {
   decodeStructuralDiffEvent,
 } from "./index.js";
 import { diffrBinary, repositoryRoot } from "./test-binary.js";
+
+// These tests run the debug binary. Its first run compiles the bundled plugins
+// into an empty wasmtime cache, which is slow on CI runners.
+setDefaultTimeout(30_000);
 
 const dirs: string[] = [];
 function tempDir(prefix: string): string {

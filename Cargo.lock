@@ -688,7 +688,7 @@ version = "0.1.10"
 dependencies = [
  "anyhow",
  "bumpalo",
- "cc",
+ "diffr-grammars",
  "dirs",
  "glob",
  "hashbrown 0.17.1",
@@ -700,7 +700,6 @@ dependencies = [
  "log",
  "pretty_assertions",
  "radix-heap",
- "rayon",
  "regex",
  "rustc-hash",
  "schemars",
@@ -774,6 +773,21 @@ dependencies = [
  "tree-sitter-zig",
  "ts-parser-perl",
  "typed-arena",
+]
+
+[[package]]
+name = "diffr-grammars"
+version = "0.1.10"
+dependencies = [
+ "cc",
+ "object",
+ "rayon",
+ "serde_json",
+ "tree-sitter",
+ "tree-sitter-c",
+ "tree-sitter-language",
+ "zstd",
+ "zstd-sys",
 ]
 
 [[package]]

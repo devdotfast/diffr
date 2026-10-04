@@ -84,13 +84,6 @@ pub struct TreeSitterConfig {
     pub(crate) sub_languages: Vec<TreeSitterSubLanguage>,
 }
 
-extern "C" {
-    fn tree_sitter_janet_simple() -> ts::Language;
-    fn tree_sitter_kotlin() -> ts::Language;
-    fn tree_sitter_latex() -> ts::Language;
-    fn tree_sitter_smali() -> ts::Language;
-}
-
 // TODO: begin/end and object/end.
 #[cfg(feature = "lang-ocaml")]
 const OCAML_ATOM_NODES: [&str; 6] = [
@@ -122,8 +115,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
     use guess::Language::*;
     match language {
         Ada => {
-            let language_fn = tree_sitter_ada::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::ADA);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["string_literal", "character_literal"]
@@ -141,8 +133,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
         }
         #[cfg(feature = "lang-apex")]
         Apex => {
-            let language_fn = tree_sitter_sfapex::apex::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::APEX);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -168,8 +159,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Asm => {
-            let language_fn = tree_sitter_asm::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::ASM);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -182,8 +172,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Bash => {
-            let language_fn = tree_sitter_bash::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::BASH);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -198,8 +187,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         C => {
-            let language_fn = tree_sitter_c::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::C);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["string_literal", "char_literal"].into_iter().collect(),
@@ -210,8 +198,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         CPlusPlus => {
-            let language_fn = tree_sitter_cpp::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::CPP);
 
             let mut highlight_query = tree_sitter_c::HIGHLIGHT_QUERY.to_owned();
             highlight_query.push_str(tree_sitter_cpp::HIGHLIGHT_QUERY);
@@ -230,8 +217,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Clojure => {
-            let language_fn = tree_sitter_clojure_orchard::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::CLOJURE_ORCHARD);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -249,8 +235,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         CMake => {
-            let language_fn = tree_sitter_cmake::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::CMAKE);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["argument"].into_iter().collect(),
@@ -265,8 +250,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         CommonLisp => {
-            let language_fn = tree_sitter_commonlisp::LANGUAGE_COMMONLISP;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::COMMONLISP);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -278,8 +262,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         CSharp => {
-            let language_fn = tree_sitter_c_sharp::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::C_SHARP);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: [
@@ -301,8 +284,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Css => {
-            let language_fn = tree_sitter_css::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::CSS);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -322,8 +304,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Dart => {
-            let language_fn = tree_sitter_dart_orchard::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::DART_ORCHARD);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["string_literal", "script_tag"].into_iter().collect(),
@@ -338,8 +319,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         DeviceTree => {
-            let language_fn = tree_sitter_devicetree::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::DEVICETREE);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["byte_string_literal", "string_literal"]
@@ -356,8 +336,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Dockerfile => {
-            let language_fn = tree_sitter_containerfile::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::CONTAINERFILE);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: [
@@ -383,8 +362,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Elixir => {
-            let language_fn = tree_sitter_elixir::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::ELIXIR);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -399,8 +377,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Elm => {
-            let language_fn = tree_sitter_elm::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::ELM);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -413,8 +390,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         EmacsLisp => {
-            let language_fn = tree_sitter_elisp::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::ELISP);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -429,8 +405,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Erlang => {
-            let language_fn = tree_sitter_erlang::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::ERLANG);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -443,7 +418,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Fish => {
-            let language = tree_sitter_fish::language();
+            let language = tree_sitter::Language::new(diffr_grammars::FISH);
             let highlight_query =
                 ts::Query::new(&language, tree_sitter_fish::HIGHLIGHTS_QUERY).unwrap();
 
@@ -460,8 +435,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
         }
         #[cfg(feature = "lang-fsharp")]
         FSharp => {
-            let language_fn = tree_sitter_fsharp::LANGUAGE_FSHARP;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::FSHARP);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -476,8 +450,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
         }
         #[cfg(feature = "lang-fortran")]
         Fortran => {
-            let language_fn = tree_sitter_fortran::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::FORTRAN);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["string_literal", "number_literal"].into_iter().collect(),
@@ -489,8 +462,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Gleam => {
-            let language_fn = tree_sitter_gleam::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::GLEAM);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["string"].into_iter().collect(),
@@ -502,8 +474,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Go => {
-            let language_fn = tree_sitter_go::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::GO);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -521,8 +492,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
         }
         #[cfg(feature = "lang-haskell")]
         Haskell => {
-            let language_fn = tree_sitter_haskell::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::HASKELL);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["qualified_variable"].into_iter().collect(),
@@ -534,8 +504,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Hcl => {
-            let language_fn = tree_sitter_hcl::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::HCL);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["string_lit", "heredoc_template"].into_iter().collect(),
@@ -557,8 +526,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Html => {
-            let language_fn = tree_sitter_html::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::HTML);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -592,7 +560,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Janet => {
-            let language = unsafe { tree_sitter_janet_simple() };
+            let language = tree_sitter::Language::new(diffr_grammars::JANET_SIMPLE);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: [].into_iter().collect(),
@@ -616,8 +584,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Java => {
-            let language_fn = tree_sitter_java_orchard::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::JAVA_ORCHARD);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: [
@@ -649,8 +616,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         JavaScript | JavascriptJsx => {
-            let language_fn = tree_sitter_javascript::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::JAVASCRIPT);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -679,8 +645,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Json => {
-            let language_fn = tree_sitter_json::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::JSON);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -694,8 +659,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
         }
         #[cfg(feature = "lang-julia")]
         Julia => {
-            let language_fn = tree_sitter_julia::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::JULIA);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -718,7 +682,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Kotlin => {
-            let language = unsafe { tree_sitter_kotlin() };
+            let language = tree_sitter::Language::new(diffr_grammars::KOTLIN);
             TreeSitterConfig {
                 language: language.clone(),
                 // Flattening nullable type means we can't diff the
@@ -746,7 +710,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         LaTeX => {
-            let language = unsafe { tree_sitter_latex() };
+            let language = tree_sitter::Language::new(diffr_grammars::LATEX);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: [].into_iter().collect(),
@@ -761,8 +725,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Lua => {
-            let language_fn = tree_sitter_lua::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::LUA);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -777,8 +740,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Make => {
-            let language_fn = tree_sitter_make::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::MAKE);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -795,8 +757,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Newick => {
-            let language_fn = tree_sitter_newick::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::NEWICK);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -812,8 +773,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Nix => {
-            let language_fn = tree_sitter_nix::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::NIX);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -828,8 +788,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         ObjC => {
-            let language_fn = tree_sitter_objc::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::OBJC);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["string_literal"].into_iter().collect(),
@@ -849,8 +808,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
         }
         #[cfg(feature = "lang-ocaml")]
         OCaml => {
-            let language_fn = tree_sitter_ocaml::LANGUAGE_OCAML;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::OCAML);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: OCAML_ATOM_NODES.iter().copied().collect(),
@@ -863,8 +821,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
         }
         #[cfg(feature = "lang-ocaml")]
         OCamlInterface => {
-            let language_fn = tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::OCAML_INTERFACE);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: OCAML_ATOM_NODES.iter().copied().collect(),
@@ -876,8 +833,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Pascal => {
-            let language_fn = tree_sitter_pascal::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::PASCAL);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -893,8 +849,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Perl => {
-            let language_fn = ts_parser_perl::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::PERL);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: [
@@ -917,8 +872,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Php => {
-            let language_fn = tree_sitter_php::LANGUAGE_PHP;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::PHP);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -931,8 +885,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Proto => {
-            let language_fn = tree_sitter_proto::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::PROTO);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["string"].into_iter().collect(),
@@ -947,8 +900,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Python => {
-            let language_fn = tree_sitter_python::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::PYTHON);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["string"].into_iter().collect(),
@@ -969,8 +921,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
         }
         #[cfg(feature = "lang-qml")]
         Qml => {
-            let language_fn = tree_sitter_qmljs::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::QMLJS);
 
             let mut highlight_query = tree_sitter_javascript::HIGHLIGHT_QUERY.to_owned();
             highlight_query.push_str(tree_sitter_typescript::HIGHLIGHTS_QUERY);
@@ -986,8 +937,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         R => {
-            let language_fn = tree_sitter_r::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::R);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["string", "special"].into_iter().collect(),
@@ -999,8 +949,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Racket => {
-            let language_fn = tree_sitter_racket::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::RACKET);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["string", "byte_string", "regex", "here_string"]
@@ -1014,8 +963,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Ruby => {
-            let language_fn = tree_sitter_ruby::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::RUBY);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["string", "heredoc_body", "regex"].into_iter().collect(),
@@ -1035,8 +983,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Rust => {
-            let language_fn = tree_sitter_rust_orchard::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::RUST_ORCHARD);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -1068,8 +1015,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Scala => {
-            let language_fn = tree_sitter_scala::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::SCALA);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["string", "interpolated_string_expression"]
@@ -1094,8 +1040,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Scheme => {
-            let language_fn = tree_sitter_scheme::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::SCHEME);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["string"].into_iter().collect(),
@@ -1107,7 +1052,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Smali => {
-            let language = unsafe { tree_sitter_smali() };
+            let language = tree_sitter::Language::new(diffr_grammars::SMALI);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["string"].into_iter().collect(),
@@ -1122,8 +1067,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Solidity => {
-            let language_fn = tree_sitter_solidity::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::SOLIDITY);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["string", "hex_string_literal", "unicode_string_literal"]
@@ -1137,8 +1081,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Sql => {
-            let language_fn = tree_sitter_sequel::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::SQL);
             TreeSitterConfig {
                 language: language.clone(),
                 atom_nodes: ["string", "identifier"].into_iter().collect(),
@@ -1150,8 +1093,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Swift => {
-            let language_fn = tree_sitter_swift::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::SWIFT);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -1168,8 +1110,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Toml => {
-            let language_fn = tree_sitter_toml_ng::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::TOML);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -1188,12 +1129,11 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         TypeScript | TypeScriptTsx => {
-            let language_fn = if language == TypeScript {
-                tree_sitter_typescript::LANGUAGE_TYPESCRIPT
+            let language = if language == TypeScript {
+                tree_sitter::Language::new(diffr_grammars::TYPESCRIPT)
             } else {
-                tree_sitter_typescript::LANGUAGE_TSX
+                tree_sitter::Language::new(diffr_grammars::TSX)
             };
-            let language = tree_sitter::Language::new(language_fn);
 
             let mut highlight_query = tree_sitter_javascript::HIGHLIGHT_QUERY.to_owned();
             highlight_query.push_str(tree_sitter_typescript::HIGHLIGHTS_QUERY);
@@ -1218,8 +1158,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Xml => {
-            let language_fn = tree_sitter_xml::LANGUAGE_XML;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::XML);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -1235,8 +1174,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Yaml => {
-            let language_fn = tree_sitter_yaml::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::YAML);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -1257,8 +1195,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
         }
         #[cfg(feature = "lang-verilog")]
         Verilog => {
-            let language_fn = tree_sitter_verilog::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::VERILOG);
             TreeSitterConfig {
                 ignore_trailing_tokens: vec![],
                 language: language.clone(),
@@ -1274,8 +1211,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
         }
         #[cfg(feature = "lang-vhdl")]
         Vhdl => {
-            let language_fn = tree_sitter_vhdl::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::VHDL);
 
             TreeSitterConfig {
                 language: language.clone(),
@@ -1288,8 +1224,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             }
         }
         Zig => {
-            let language_fn = tree_sitter_zig::LANGUAGE;
-            let language = tree_sitter::Language::new(language_fn);
+            let language = tree_sitter::Language::new(diffr_grammars::ZIG);
 
             TreeSitterConfig {
                 language: language.clone(),

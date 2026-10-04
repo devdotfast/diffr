@@ -17,6 +17,7 @@ include = [
 ]
 
 [dependencies]
+diffr-grammars = { path = "../diffr-grammars", version = "0.1.10" }
 regex = "1.10.4"
 typed-arena = "2.0.2"
 rustc-hash = "2.0.0"
@@ -119,21 +120,17 @@ tempfile = "3.27.0"
 
 [build-dependencies]
 toml = "0.8"
-# TODO: enable parallel mode, see discussion in
-# https://github.com/rust-lang/cc-rs/pull/849
-cc = "1.2.48"
-rayon = "1.7.0"
 
 [features]
 all-languages = ["lang-fortran", "lang-fsharp", "lang-verilog", "lang-ocaml", "lang-julia", "lang-haskell", "lang-vhdl", "lang-apex", "lang-qml"]
-lang-fortran = ["dep:tree-sitter-fortran"]
-lang-fsharp = ["dep:tree-sitter-fsharp"]
-lang-verilog = ["dep:tree-sitter-verilog"]
-lang-ocaml = ["dep:tree-sitter-ocaml"]
-lang-julia = ["dep:tree-sitter-julia"]
-lang-haskell = ["dep:tree-sitter-haskell"]
-lang-vhdl = ["dep:tree-sitter-vhdl"]
-lang-apex = ["dep:tree-sitter-sfapex"]
-lang-qml = ["dep:tree-sitter-qmljs"]
+lang-fortran = ["dep:tree-sitter-fortran", "diffr-grammars/lang-fortran"]
+lang-fsharp = ["dep:tree-sitter-fsharp", "diffr-grammars/lang-fsharp"]
+lang-verilog = ["dep:tree-sitter-verilog", "diffr-grammars/lang-verilog"]
+lang-ocaml = ["dep:tree-sitter-ocaml", "diffr-grammars/lang-ocaml"]
+lang-julia = ["dep:tree-sitter-julia", "diffr-grammars/lang-julia"]
+lang-haskell = ["dep:tree-sitter-haskell", "diffr-grammars/lang-haskell"]
+lang-vhdl = ["dep:tree-sitter-vhdl", "diffr-grammars/lang-vhdl"]
+lang-apex = ["dep:tree-sitter-sfapex", "diffr-grammars/lang-apex"]
+lang-qml = ["dep:tree-sitter-qmljs", "diffr-grammars/lang-qml"]
 # Constructors and helpers the diffr package's tests build on.
 test-support = []

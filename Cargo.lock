@@ -688,7 +688,7 @@ version = "0.1.10"
 dependencies = [
  "anyhow",
  "bumpalo",
- "cc",
+ "diffr-grammars",
  "dirs",
  "glob",
  "hashbrown 0.17.1",
@@ -700,7 +700,6 @@ dependencies = [
  "log",
  "pretty_assertions",
  "radix-heap",
- "rayon",
  "regex",
  "rustc-hash",
  "schemars",

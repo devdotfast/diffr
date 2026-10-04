@@ -166,7 +166,13 @@ fn bundled_and_external_components_produce_identical_files() {
         "it('adds', () => {\n  expect(1).toBe(1);\n  expect(2).toBe(2);\n});\n\nit('subtracts', () => {\n  expect(1).toBe(1);\n  expect(2).toBe(2);\n});\n",
     );
     fixture.write("src/gone.go", "package a\n\n// Gone.\n// Really.\nfunc Gone() int {\n\ta := 1\n\tb := 2\n\treturn a + b\n}\n");
+    let settings = |value: u32| {
+        let lines: String = (0..20).map(|i| format!("setting_{i} = {i}\n")).collect();
+        format!("{lines}changed = {value}\n")
+    };
+    fixture.write("src/settings.py", &settings(1));
     let base = fixture.commit("base\n");
+    fixture.write("src/settings.py", &settings(2));
     fixture.write("src/removed.py", "keep = 1\n");
     fixture.write(
         "src/lib.rs",
@@ -215,7 +221,7 @@ fn bundled_and_external_components_produce_identical_files() {
 
     let bundled = sorted(&fixture.run(&bundled, &base, &head));
     let wasm = sorted(&fixture.run(&wasm, &base, &head));
-    assert_eq!(bundled.1.len(), 6);
+    assert_eq!(bundled.1.len(), 7);
     // The runs shape something, so that equal streams mean something.
     let mut collapsed = Vec::new();
     for record in &bundled.1 {

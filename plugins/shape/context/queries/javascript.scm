@@ -14,16 +14,21 @@
 ; An arrow function is a scope whether its body is a block or an expression.
 ((arrow_function) @fold
   (#set! tag "context:scope"))
-; Inline callbacks share their header and closer with the enclosing statement.
-; Capturing just the arrow would project inward to its body-only lines.
+; A binding is a scope when its value is a block of its own: an array, an
+; object, a function or a call taking one. A statement that passes a callback
+; is the callback's scope. Both share its header and closer.
+([
+  (lexical_declaration (variable_declarator value: [
+    (array) (object) (arrow_function) (function_expression)
+    (call_expression arguments: (arguments [(arrow_function) (function_expression)]))]))
+  (variable_declaration (variable_declarator value: [
+    (array) (object) (arrow_function) (function_expression)
+    (call_expression arguments: (arguments [(arrow_function) (function_expression)]))]))
+] @fold
+  (#set! tag "context:scope"))
 ((expression_statement
-  (call_expression arguments: (arguments (arrow_function))))
-  @fold (#set! tag "context:scope"))
-((lexical_declaration
-  (variable_declarator value: [
-    (arrow_function)
-    (call_expression arguments: (arguments (arrow_function)))
-  ])) @fold (#set! tag "context:scope"))
+  (call_expression arguments: (arguments (arrow_function)))) @fold
+  (#set! tag "context:scope"))
 ((class_declaration) @fold
   (#set! tag "context:scope"))
 ((for_statement) @fold
@@ -49,3 +54,22 @@
   (method_definition body: (statement_block "{" @fold.open "}" @fold.close) @fold)
   (arrow_function body: (statement_block "{" @fold.open "}" @fold.close) @fold)
 ] (#set! tag "context:body"))
+
+; Blocks with a closing line of their own: a change inside keeps it.
+((if_statement) @fold
+  (#set! tag "context:scope"))
+((while_statement) @fold
+  (#set! tag "context:scope"))
+((do_statement) @fold
+  (#set! tag "context:scope"))
+((try_statement) @fold
+  (#set! tag "context:scope"))
+((for_in_statement) @fold
+  (#set! tag "context:scope"))
+
+; A comment run reads as the header of the code below it, so it stays open
+; when a row of unchanged code opens.
+((comment)+ @fold
+  .
+  (_)
+  (#set! tag "context:comment"))

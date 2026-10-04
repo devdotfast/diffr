@@ -43,7 +43,7 @@ impl GuestPlugin for Probe {
         })
     }
     async fn visit(&self, cursor: &Cursor, phase: Visit) -> Result<bool, String> {
-        if phase != Visit::Pre {
+        if phase == Visit::Post {
             unreachable!("Pre false must skip Post");
         }
         if self.options.spin_ms > 0 {

@@ -201,10 +201,10 @@ fn rust_doc_and_line_comments_above_a_function_are_its_docstring() {
             (1, None),
             (10, Some((5, 7))),
             (18, Some((14, 16))),
-            (24, Some((22, 23))),
+            (24, None),
             (32, Some((28, 31)))
         ],
-        "a one-line docstring remains a region with its documentation relationship"
+        "a one-line docstring is not a region"
     );
 }
 
@@ -252,6 +252,22 @@ fn go_and_javascript_comment_runs_document_functions() {
     ] {
         assert_eq!(documented(path, source), [expected], "{path}");
     }
+}
+
+#[test]
+fn the_default_pipeline_makes_every_plugin_that_is_on() {
+    let config = Config::default();
+    Pipeline::from_config(&config, Path::new("."), NonZeroUsize::MIN).unwrap();
+    let made: Vec<&str> = config
+        .plugins
+        .enabled()
+        .map(|(reference, _)| reference.trim_start_matches("bundled."))
+        .collect();
+    assert_eq!(
+        made,
+        ["deleted-bodies", "test-bodies", "removed-runs", "context"],
+        "the summarizer is off until turned on"
+    );
 }
 
 #[test]

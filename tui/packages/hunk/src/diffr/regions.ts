@@ -34,7 +34,7 @@ export interface Fold {
   /** Ids of folds nested inside, for recursive fold commands. */
   nested: number[];
 }
-/** Folds containing paired content stay neutral; wholly one-sided content takes its side's change colour. */
+/** The change tint of a fold: a one-sided region takes its side's change colour, a paired one stays neutral. */
 export type FoldTint = "inserted" | "removed" | "neutral";
 export interface RowFold {
   /** The fold-state id: what toggling this header toggles. */
@@ -43,9 +43,9 @@ export interface RowFold {
   collapsed: boolean;
   tint: FoldTint;
 }
-/** `neutral` includes matched regions and folds containing matched descendants (see `foldTintIds`). */
-export function foldTint(id: number, side: Side, neutral: ReadonlySet<number>): FoldTint {
-  if (neutral.has(id)) return "neutral";
+/** One-sided means the region is not among its side's `paired` ids (see `pairedIds`). */
+export function foldTint(id: number, side: Side, paired: ReadonlySet<number>): FoldTint {
+  if (paired.has(id)) return "neutral";
   return side ? "inserted" : "removed";
 }
 /**
@@ -65,20 +65,6 @@ export function pairedIds(diff: TextDiff): readonly [Set<number>, Set<number>] {
       ...folds[side].filter((fold) => states[other]!.has(fold.foldStateId)).map((fold) => fold.id),
     ]);
   }) as unknown as readonly [Set<number>, Set<number>];
-}
-/** Neutral fold tint follows paired content, even when group wrappers toggle independently. */
-export function foldTintIds(diff: TextDiff): readonly [Set<number>, Set<number>] {
-  const neutral = pairedIds(diff);
-  for (const side of [0, 1] as const) {
-    const visit = (region: Region): boolean => {
-      if (region.kind === "leaf") return neutral[side].has(region.id);
-      const children = region.children.map(visit);
-      if (children.some(Boolean)) neutral[side].add(region.id);
-      return neutral[side].has(region.id);
-    };
-    for (const region of (side ? diff.rhs : diff.lhs)?.regions ?? []) visit(region);
-  }
-  return neutral;
 }
 export const sourceLines = (text: string) =>
   text === "" ? [] : text.replace(/\n$/, "").split("\n");
@@ -151,8 +137,15 @@ export function nestedIds(diff: TextDiff, id: number): number[] {
   if (!leaves.flat().some((leaf) => leaf.foldStateId === id)) throw new Error(`Unknown region ${id}`);
   return [];
 }
-/** Initial context intervals are collapsed, untagged roots with unchanged paired content.
- * Only the outer interval is a gap: `c` must preserve the AST folds inside for gradual expansion. */
+/**
+ * Context gaps: the stretches of unchanged lines diffr collapsed far from any change, for `c`.
+ * The wire has no gap kind, so a gap is derived from what defines one: a region that starts
+ * collapsed, carries no tags (context gaps are cut from leaves or wrapped in a new untagged
+ * fold; syntax folds that other plugins collapse are tagged), is paired with the other side
+ * (see `pairedIds`), and holds no change on either side: every leaf under it is paired and has no
+ * `changed` span. The fold the context plugin wraps around a run of unchanged siblings meets the
+ * same definition, and revealing it shows only unchanged lines.
+ */
 export function gapIds(diff: TextDiff): number[] {
   const sides = [diff.lhs?.regions ?? [], diff.rhs?.regions ?? []];
   const walk = (regions: Region[], visit: (region: Region) => void) => {
@@ -172,10 +165,10 @@ export function gapIds(diff: TextDiff): number[] {
       region.kind === "leaf"
         ? paired[side]!.has(region.id) && !changed.has(region.alignment_id)
         : region.children.every(unchanged);
-    for (const region of regions) {
-      if (region.visibility.collapsed && region.tags.length === 0 && unchanged(region))
+    walk(regions, (region) => {
+      if (region.visibility.collapsed && region.tags.length === 0 && paired[side]!.has(region.id) && unchanged(region))
         gaps.add(region.fold_state_id);
-    }
+    });
   });
   return [...gaps];
 }
@@ -217,20 +210,20 @@ export const leafLabel = (leaf: Leaf) => leaf.label;
 /**
  * The chevron each source line carries, one map per side. An open fold puts one on the first
  * line it covers, so the reader can collapse it; a collapsed fold has a row of its own instead
- * (see `collapsedFolds`) and never marks a source line. Folds can start on one line — a group
- * the `group` plugin wraps around its first member — and the outermost wins.
+ * (see `collapsedFolds`) and never marks a source line. Folds can start on one line — the fold
+ * the context plugin wraps around its first member — and the outermost wins.
  */
 export function foldHeaders(
   folds: Fold[],
   leaves: Leaf[],
   collapsed: ReadonlySet<number>,
-  neutral: ReadonlySet<number>,
+  paired: ReadonlySet<number>,
 ): Map<number, RowFold> {
   const headers = new Map<number, RowFold>();
   for (const leaf of leaves)
     if (foldableLeaf(leaf))
       headers.set(leaf.startLine, { id: leaf.foldStateId, label: leafLabel(leaf), collapsed: collapsed.has(leaf.foldStateId),
-        tint: foldTint(leaf.id, leaf.side, neutral) });
+        tint: foldTint(leaf.id, leaf.side, paired) });
   const byLine = new Map<number, Fold[]>();
   for (const fold of folds) {
     if (collapsed.has(fold.foldStateId)) continue;
@@ -239,7 +232,7 @@ export function foldHeaders(
   for (const [line, sharing] of byLine) {
     const fold = [...sharing].sort((a, b) => b.lastHidden - a.lastHidden)[0];
     headers.set(line, { id: fold.foldStateId, label: fold.label, collapsed: false,
-      tint: foldTint(fold.id, fold.side, neutral) });
+      tint: foldTint(fold.id, fold.side, paired) });
   }
   return headers;
 }

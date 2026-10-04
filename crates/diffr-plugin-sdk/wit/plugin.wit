@@ -1,11 +1,10 @@
 /// Two kinds of plugin. The one classifier tags each changed file before
 /// anything is diffed; shape plugins then walk each diffed file's region trees
 /// and decide how it starts out. Both may read the repository through `git`.
-package diffr:plugin@0.4.0;
+package diffr:plugin@0.3.0;
 
 interface types {
-    /// File runs once before traversal. False skips the node walk entirely.
-    enum visit { pre, post, file }
+    enum visit { pre, post }
 
     /// The before (`lhs`) or after (`rhs`) side of a comparison.
     enum side {
@@ -124,7 +123,6 @@ interface types {
 
     enum grouping { link, join }
     record cut-outside { id: u32, offset: u32, len: u32 }
-    record range-outside { side: side, start: u32, end: u32, len: u32 }
     record repeated { grouping: grouping, ids: list<u32> }
 
     /// Typed failures from host tree operations.
@@ -132,7 +130,6 @@ interface types {
         no-region(u32),
         cut-fold(u32),
         cut-outside(cut-outside),
-        range-outside(range-outside),
         uneven-sides(u32),
         too-few-regions(grouping),
         repeated(repeated),
@@ -164,8 +161,6 @@ interface host {
     use types.{file-entry, region-view, side, region, region-ids, row-summary, move-error};
     resource cursor {
         file: func() -> file-entry;
-        /// Snapshot of both region trees, in preorder, lhs before rhs.
-        regions: func() -> list<region-view>;
         /// Current node, positioned by the host before each callback.
         id: func() -> u32;
         /// Same-side siblings in source order, including the target.
@@ -196,11 +191,6 @@ interface host {
         cut: func(region: u32, offset: u32) -> result<region-ids, move-error>;
         /// Wrap consecutive siblings on each side in a new open, unlabelled fold.
         join: func(regions: list<u32>) -> result<region-ids, move-error>;
-        /// Wrap a nonempty source interval in one top-level, open fold. Cut
-        /// boundary leaves with their partners; retain contained subtrees and
-        /// dissolve ancestors crossing the boundaries. Use during File, before
-        /// the node walk: IDs of dissolved folds no longer exist.
-        wrap-range: func(side: side, start: u32, end: u32) -> result<u32, move-error>;
         /// Link collapse states, preserving labels and collapse if any input is collapsed.
         link: func(regions: list<u32>) -> result<_, move-error>;
         /// Update the entire shared fold state.
@@ -227,8 +217,7 @@ interface api {
     resource plugin {
         /// Construct a ready plugin from validated JSON options; errors stop setup.
         constructor(options: string) -> result<plugin, string>;
-        /// File first, then one node per Pre/Post. False on File skips the walk;
-        /// false on Pre skips children and Post.
+        /// One node, one phase. False on Pre skips children and Post.
         /// Errors end this traversal.
         visit: async func(cursor: borrow<cursor>, phase: visit) -> result<bool, string>;
     }

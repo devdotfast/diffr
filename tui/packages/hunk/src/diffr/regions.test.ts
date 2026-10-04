@@ -54,7 +54,7 @@ test("a fold covers its body, so collapsing it hides every line it holds", () =>
   expect(foldHeaders(folds[1], leaves[1], new Set([11]), pairedIds(file.diff)[1]).get(1))
     .toEqual({ id: 10, label: "Body", collapsed: false, tint: "neutral" });
 });
-test("visibility seeds all collapsed ids, while context toggling selects only outer unchanged gaps", () => {
+test("visibility seeds collapsed ids, and context gaps are collapsed untagged regions holding no change", () => {
   const file = createFoldedDiffFile();
   if (file.diff.type !== "text") throw new Error();
   const collapse = (region: Region, label: string) => { region.visibility = { collapsed: true, label }; };
@@ -62,7 +62,7 @@ test("visibility seeds all collapsed ids, while context toggling selects only ou
     const outer = side.regions[1];
     // Leaf 6: paired and unchanged, cut out by the context plugin.
     collapse(side.regions[2], "1 unchanged line");
-    // Fold 12: an untagged AST fold nested inside the outer body.
+    // Fold 12: an untagged fold wrapping unchanged lines, as context groups several siblings.
     outer.children[3].tags = [];
     collapse(outer.children[3], "2 unchanged lines");
     // Leaf 3: collapsed, but the right side paints a change in it.
@@ -71,7 +71,7 @@ test("visibility seeds all collapsed ids, while context toggling selects only ou
   // Fold 10: collapsed by a plugin that tagged it, so not a gap even where nothing changed.
   file.diff.rhs!.regions[1].visibility = { collapsed: true, label: "Body" };
   expect([...defaultCollapsed(file.diff)].sort((a, b) => a - b)).toEqual([3, 6, 10, 12]);
-  expect(gapIds(file.diff).sort((a, b) => a - b)).toEqual([6]);
+  expect(gapIds(file.diff).sort((a, b) => a - b)).toEqual([6, 12]);
   // A collapsed stretch on one side only (a removed run) is not a gap either.
   const removed = createFoldedDiffFile();
   if (removed.diff.type !== "text") throw new Error();
@@ -257,7 +257,7 @@ test("a collapsed fold takes its side's change tint when one-sided and stays neu
 });
 
 test("a group is one row that stands for every collapsed region under it", () => {
-  // An outer wrapper around three deleted functions, left side only.
+  // The shape of three adjacent deleted functions after the group plugin, left side only.
   const text = Array.from({ length: 12 }, (_, i) => `line ${i}`).join("\n") + "\n";
   const body = (id: number, start: number) =>
     fold(id, [start, 0], [start + 3, 0], [leaf(id + 100, start, start + 3)], "3 lines removed", ["deleted-bodies:function"], true);
@@ -282,18 +282,4 @@ test("a group is one row that stands for every collapsed region under it", () =>
   expect(rowsForFile(file, 0, "split", dark, new Set()).find((r) => r.left?.lineNumber === 2)!.left!.fold)
     .toMatchObject({ id: 20, collapsed: false });
   expect(gapIds(file.diff)).toEqual([]);
-});
-
-test("independent group wrappers over paired content have neutral tint", () => {
-  const file = createTestDiffFile();
-  if (file.diff.type !== "text") throw new Error();
-  file.diff.lhs = { text: "same\n", syntax: [], regions: [
-    fold(100, [0, 0], [1, 0], [leaf(10, 0, 1)], "Group", [], true),
-  ] };
-  file.diff.rhs = { text: "same\n", syntax: [], regions: [
-    fold(200, [0, 0], [1, 0], [{ ...leaf(20, 0, 1), alignment_id: 10 }], "Group", [], true),
-  ] };
-  const rows = rowsForFile(file, 0, "split", dark, defaultCollapsed(file.diff));
-  const header = rows.find((r) => r.left?.fold && r.right?.fold)!;
-  expect([header.left!.fold!.tint, header.right!.fold!.tint]).toEqual(["neutral", "neutral"]);
 });

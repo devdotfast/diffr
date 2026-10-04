@@ -3,7 +3,7 @@ import type { DiffFile, Span, SyntaxSpan } from "./wire";
 import { filePath } from "./wire";
 import type { RenderSpan, SplitLineCell, UnifiedLineCell } from "../ui/diff/diffRowModel";
 import { measureTextWidth } from "../ui/lib/text";
-import { collapsedFolds, flatten, foldHeaders, foldTint, hiddenLines, leafLabel, novelLeaves, foldTintIds, sourceLines, type Fold, type Leaf, type RowFold } from "./regions";
+import { collapsedFolds, flatten, foldHeaders, foldTint, hiddenLines, leafLabel, novelLeaves, pairedIds, sourceLines, type Fold, type Leaf, type RowFold } from "./regions";
 import { loadBundledTheme, type Palette } from "./theme";
 export { sourceLines };
 export type Layout = "split" | "unified";
@@ -102,8 +102,8 @@ export function rowsForFile(
   const hidden = [hiddenLines(folds[0], collapsed), hiddenLines(folds[1], collapsed)];
   // A collapsed fold is a row of its own, where its first line would have been.
   const bands = [collapsedFolds(folds[0], collapsed), collapsedFolds(folds[1], collapsed)];
-  const neutral = foldTintIds(d);
-  const headers = [foldHeaders(folds[0], leaves[0], collapsed, neutral[0]), foldHeaders(folds[1], leaves[1], collapsed, neutral[1])];
+  const paired = pairedIds(d);
+  const headers = [foldHeaders(folds[0], leaves[0], collapsed, paired[0]), foldHeaders(folds[1], leaves[1], collapsed, paired[1])];
   const caches = [new Map<number, RenderSpan[]>(), new Map<number, RenderSpan[]>()];
   // Every line of a novel leaf is tinted; the spans inside get the darker word tint on top.
   const novelSet = novelLeaves(leaves);
@@ -136,7 +136,7 @@ export function rowsForFile(
   // fold or a leaf the context plugin cut out.
   const foldedCell = (region: Leaf | Fold | null, label: string): SplitLineCell => region
     ? { kind: "context", sign: " ", spans: [], fold: { id: region.foldStateId, label, collapsed: true,
-        tint: foldTint(region.id, region.side, neutral[region.side]) } }
+        tint: foldTint(region.id, region.side, paired[region.side]) } }
     : { kind: "empty", sign: " ", spans: [] };
   const collapsedRow = (kind: string, left: SplitLineCell, right: SplitLineCell, state: number) => {
     flush();

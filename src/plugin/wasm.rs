@@ -120,23 +120,6 @@ async fn walk(
     configured: ResourceAny,
     cursor: &Resource<Cursor>,
 ) -> anyhow::Result<()> {
-    if !plugin
-        .call_visit(
-            accessor,
-            configured,
-            Resource::new_borrow(cursor.rep()),
-            types::Visit::File,
-        )
-        .await?
-        .map_err(anyhow::Error::msg)?
-    {
-        return Ok(());
-    }
-    // File-wide edits may have replaced the cursor's first node.
-    accessor.with(|mut access| -> anyhow::Result<()> {
-        access.data_mut().table.get_mut(cursor)?.rewind();
-        Ok(())
-    })?;
     let mut after = None;
     while let Some(node) = next_child(accessor, cursor, None, after)? {
         subtree(accessor, plugin, configured, cursor, node).await?;
@@ -194,15 +177,6 @@ fn next_child(
 impl bindings::diffr::plugin::host::HostCursor for State {
     fn file(&mut self, c: Resource<Cursor>) -> wasmtime::Result<FileEntry> {
         Ok((&self.table.get(&c)?.file).into())
-    }
-    fn regions(&mut self, c: Resource<Cursor>) -> wasmtime::Result<Vec<RegionView>> {
-        Ok(self
-            .table
-            .get(&c)?
-            .regions()
-            .into_iter()
-            .map(Into::into)
-            .collect())
     }
     fn id(&mut self, c: Resource<Cursor>) -> wasmtime::Result<u32> {
         Ok(self.table.get(&c)?.id)
@@ -339,19 +313,6 @@ impl bindings::diffr::plugin::host::HostCursor for State {
             .get_mut(&c)?
             .join(&regions)
             .map(Into::into)
-            .map_err(Into::into))
-    }
-    fn wrap_range(
-        &mut self,
-        c: Resource<Cursor>,
-        side: Side,
-        start: u32,
-        end: u32,
-    ) -> wasmtime::Result<Result<u32, MoveError>> {
-        Ok(self
-            .table
-            .get_mut(&c)?
-            .wrap_range(side.into(), start, end)
             .map_err(Into::into))
     }
     fn link(

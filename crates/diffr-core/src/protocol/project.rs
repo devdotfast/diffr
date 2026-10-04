@@ -248,7 +248,7 @@ fn side_folds<'a>(side: &'a [Fold], lines: &[&str]) -> Vec<SideFold<'a>> {
         .collect();
     side.iter()
         .zip(folds::nested_spans(&spans))
-        // Only empty whole-line spans are absent; a one-line body is a region.
+        // A fold on a single line hides nothing; it is not a region.
         .filter_map(|(fold, span)| Some(SideFold { fold, lines: span? }))
         .collect()
 }
@@ -937,8 +937,8 @@ mod tests {
 
     #[test]
     fn a_fold_dropped_on_one_side_leaves_its_partner_unshared() {
-        // The matcher pairs the arrays, but the inline lhs array covers no
-        // complete source line: surrounding code keeps that line visible.
+        // The matcher pairs the two arrays, but the lhs array sits on one
+        // line: it hides nothing and is not a region.
         let lhs = "fn f() {\n    let v = [1, 2];\n    work(v);\n}\n";
         let rhs = "fn f() {\n    let v = [\n        1,\n        2,\n    ];\n    work(v);\n}\n";
         let result = DiffResult::from_sources("a.rs", lhs, rhs);

@@ -13,3 +13,10 @@
   (#set! tag "context:scope"))
 ((return_statement) @fold
   (#set! tag "context:scope"))
+
+; A comment run reads as the header of the code below it, so it stays open
+; when a row of unchanged code opens.
+((comment)+ @fold
+  .
+  (_)
+  (#set! tag "context:comment"))

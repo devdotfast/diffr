@@ -49,11 +49,8 @@ sequenceDiagram
         end
         E-->>D: Aligned regions and folds
         loop Each shape plugin, in plugins.order
-            D->>S: visit(cursor, file), once for both trees
-            opt Plugin requests the node walk
-                D->>S: visit(cursor, pre | post), once per region
-            end
-            S->>D: cursor edits: cut, join, wrap-range, link, collapse, label
+            D->>S: visit(cursor, pre | post), once per region
+            S->>D: cursor edits: cut, join, link, collapse, label
         end
         D-->>C: file record, as soon as it is done
     end
@@ -94,12 +91,12 @@ impl Guest for MyPlugin {
 }
 impl GuestPlugin for MyPlugin {
     fn new(options: String) -> Result<Self, String> { Ok(Self) }
-    // File runs once, followed by Pre/Post for each node if File returns true.
+    // cursor is a host-provided interface over the matched ast tree(s); phase indicates preorder/postorder.
     async fn visit(&self, cursor: &Cursor, phase: Visit) -> Result<bool, String> {
-        if phase != Visit::Pre { return Ok(true); }
         // Inspect this node and edit it through the host cursor.
         Ok(true)
     }
 }
 export_shape!(MyPlugin);
 ```
+

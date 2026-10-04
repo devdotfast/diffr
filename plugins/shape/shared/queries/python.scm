@@ -31,5 +31,8 @@
   (import_statement)
   (import_from_statement)
 ] @fold
-(comment) @fold
+; A comment run above code is one fold.
+((comment)+ @fold
+  .
+  (_))
 (string) @fold

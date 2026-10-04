@@ -12,7 +12,10 @@
   (field_initializer_list "{" @fold.open "}" @fold.close)
 ] @fold
 (use_declaration) @fold
-(block_comment) @fold
+; A comment run above code is one fold.
+([(line_comment) (block_comment)]+ @fold
+  .
+  (_))
 [
   (string_literal)
   (raw_string_literal)

@@ -15,6 +15,7 @@ use crate::hash::{DftHashMap, DftHashSet};
 use crate::options::DiffOptions;
 use crate::parse::guess_language as guess;
 use crate::parse::syntax::{AtomKind, Syntax};
+use crate::summary::Highlight;
 
 /// A language may contain certain nodes that are in other languages
 /// and should be parsed as such (e.g. HTML `<script>` nodes
@@ -1463,14 +1464,14 @@ fn tree_highlights(
     })
 }
 
-/// Every highlight capture in `src` as byte intervals with the capture
-/// name from the language's highlights query. Intervals may nest; the
-/// caller decides precedence.
+/// Every highlight capture in a parsed side as byte intervals with the
+/// capture name from the language's highlights query. Intervals may nest;
+/// the caller decides precedence.
 pub(crate) fn highlight_captures(
+    tree: &tree_sitter::Tree,
     src: &str,
     config: &'static TreeSitterConfig,
-) -> Vec<(usize, usize, &'static str)> {
-    let tree = to_tree(src, config);
+) -> Vec<Highlight> {
     let names = config.highlight_query.capture_names();
     let mut cursor = ts::QueryCursor::new();
     let mut matches = cursor.matches(&config.highlight_query, tree.root_node(), src.as_bytes());

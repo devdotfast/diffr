@@ -7,7 +7,7 @@ use crate::options::DiffOptions;
 use crate::plugin::{Classifier, MutationFailed, Pipeline};
 use crate::present::present;
 use crate::protocol::project::{self, Inputs};
-use crate::protocol::{Diff, Event, FileChange, Outcome, Problem, SyntaxSpan, VERSION};
+use crate::protocol::{Diff, Event, FileChange, Outcome, Problem, VERSION};
 use crate::summary::{DiffResult, FallbackCause, FileContent, FileFormat};
 use crate::tags;
 use std::io::{BufWriter, Write};
@@ -79,9 +79,11 @@ pub(crate) fn stream(
             .thread_name(|index| format!("diffr-worker-{index}"))
             .build()?,
         pipeline,
-        diff_options: params.diff.options(options.ignore_comments),
+        diff_options: DiffOptions {
+            syntax: options.syntax,
+            ..params.diff.options(options.ignore_comments)
+        },
         params,
-        syntax: options.syntax,
     });
     let (sender, receiver) = channel();
     let worker = runtime.spawn(produce(start, files, shared, sender));
@@ -125,7 +127,6 @@ struct Shared {
     pipeline: Pipeline,
     params: Params,
     diff_options: DiffOptions,
-    syntax: bool,
 }
 
 /// The start record, each file's record as it finishes, then the footer. A
@@ -211,6 +212,8 @@ fn project(file: &git::File, shared: &Shared) -> anyhow::Result<Diff> {
             rhs_positions: vec![],
             lhs_folds: vec![],
             rhs_folds: vec![],
+            lhs_highlights: vec![],
+            rhs_highlights: vec![],
         }
     } else {
         let before = std::str::from_utf8(&before).map_err(|_| FileError::NotUtf8)?;
@@ -234,13 +237,11 @@ fn project(file: &git::File, shared: &Shared) -> anyhow::Result<Diff> {
             &options,
         )?
     };
-    let syntax = syntax_spans(&result, shared);
     Ok(project::diff(
         &result,
         Inputs {
             file: &file.change.sides,
             sizes,
-            syntax,
         },
     ))
 }
@@ -261,21 +262,4 @@ fn wire_error(error: &anyhow::Error) -> Problem {
         code: code.to_owned(),
         message: format!("{error:#}"),
     }
-}
-
-/// Highlight spans for both sides of a structurally parsed file, when the run
-/// asked for them. A file that fell back to a line diff has none.
-fn syntax_spans(diff: &DiffResult, shared: &Shared) -> (Vec<SyntaxSpan>, Vec<SyntaxSpan>) {
-    let FileFormat::SupportedLanguage(language) = &diff.file_format else {
-        return (Vec::new(), Vec::new());
-    };
-    if !shared.syntax {
-        return (Vec::new(), Vec::new());
-    }
-    let parser = shared.params.language(*language).parser;
-    let spans = |content: &FileContent| match content {
-        FileContent::Text(src) => project::syntax_spans(src, parser),
-        FileContent::Binary => Vec::new(),
-    };
-    (spans(&diff.lhs_src), spans(&diff.rhs_src))
 }

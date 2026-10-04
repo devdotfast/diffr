@@ -51,6 +51,10 @@ impl Display for FileFormat {
     }
 }
 
+/// A highlight capture: a byte interval and its capture name, such as
+/// `keyword.return`.
+pub type Highlight = (usize, usize, &'static str);
+
 #[derive(Debug)]
 pub struct DiffResult {
     pub file_format: FileFormat,
@@ -58,6 +62,10 @@ pub struct DiffResult {
     pub rhs_src: FileContent,
     pub lhs_folds: Vec<Fold>,
     pub rhs_folds: Vec<Fold>,
+    /// Highlight captures of each parsed side, when the options asked for
+    /// them. A file diffed by line still has them if it parsed.
+    pub lhs_highlights: Vec<Highlight>,
+    pub rhs_highlights: Vec<Highlight>,
 
     pub lhs_positions: Vec<MatchedPos>,
     pub rhs_positions: Vec<MatchedPos>,

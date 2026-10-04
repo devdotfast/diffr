@@ -38,8 +38,7 @@ use crate::lines::SourcePosition;
 use crate::pairing::Pairing;
 use crate::parse::folds::{self, Fold, FoldMatch};
 use crate::parse::syntax::{MatchKind, MatchedPos, SyntaxId};
-use crate::parse::tree_sitter_parser::{highlight_captures, TreeSitterConfig};
-use crate::summary::{DiffResult, FallbackCause, FileContent, FileFormat};
+use crate::summary::{DiffResult, FallbackCause, FileContent, FileFormat, Highlight};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Everything the projection needs besides the diff itself.
@@ -48,8 +47,6 @@ pub struct Inputs<'a> {
     pub file: &'a Pairing<FileRef>,
     /// Byte length of each side's content, for binary files.
     pub sizes: (u64, u64),
-    /// Highlight spans per side; empty when the run did not ask for syntax.
-    pub syntax: (Vec<SyntaxSpan>, Vec<SyntaxSpan>),
 }
 
 pub fn diff(result: &DiffResult, inputs: Inputs<'_>) -> Diff {
@@ -69,17 +66,16 @@ pub fn diff(result: &DiffResult, inputs: Inputs<'_>) -> Diff {
         }
     };
     let (lhs_root, rhs_root) = regions(result, lhs_src, rhs_src);
-    let (lhs_syntax, rhs_syntax) = inputs.syntax;
     let mut sides = pair(
         inputs.file,
         Source {
             text: lhs_src.to_owned(),
-            syntax: lhs_syntax,
+            syntax: syntax_spans(lhs_src, &result.lhs_highlights),
             root: lhs_root,
         },
         Source {
             text: rhs_src.to_owned(),
-            syntax: rhs_syntax,
+            syntax: syntax_spans(rhs_src, &result.rhs_highlights),
             root: rhs_root,
         },
     );
@@ -144,8 +140,8 @@ fn fallback_code(cause: FallbackCause) -> &'static str {
 
 /// Highlight spans for one side, per line, sorted, non-overlapping. Where
 /// captures nest the innermost wins.
-pub fn syntax_spans(src: &str, parser: &'static TreeSitterConfig) -> Vec<SyntaxSpan> {
-    let mut captures = highlight_captures(src, parser);
+fn syntax_spans(src: &str, highlights: &[Highlight]) -> Vec<SyntaxSpan> {
+    let mut captures = highlights.to_vec();
     // Paint larger captures first so smaller (inner) ones overwrite them.
     captures.sort_by_key(|(start, end, _)| std::cmp::Reverse(end - start));
     let mut owner: Vec<Option<&'static str>> = vec![None; src.len()];
@@ -692,7 +688,6 @@ mod tests {
             Inputs {
                 file: &refs(!lhs.is_empty(), !rhs.is_empty()),
                 sizes: (lhs.len() as u64, rhs.len() as u64),
-                syntax: (Vec::new(), Vec::new()),
             },
         )
     }
@@ -1036,7 +1031,6 @@ mod tests {
             Inputs {
                 file: &refs(true, true),
                 sizes: (lhs.len() as u64, rhs.len() as u64),
-                syntax: (Vec::new(), Vec::new()),
             },
         );
         let (lhs_src, rhs_src) = sources(&diff);
@@ -1369,6 +1363,8 @@ mod tests {
             rhs_src: FileContent::Binary,
             lhs_folds: vec![],
             rhs_folds: vec![],
+            lhs_highlights: vec![],
+            rhs_highlights: vec![],
             lhs_positions: vec![],
             rhs_positions: vec![],
         };
@@ -1377,7 +1373,6 @@ mod tests {
             Inputs {
                 file: &refs(true, true),
                 sizes: (3, 5),
-                syntax: (Vec::new(), Vec::new()),
             },
         );
         let Diff::Binary {
@@ -1390,11 +1385,22 @@ mod tests {
     }
 
     #[test]
-    fn syntax_spans_are_per_line_sorted_and_innermost() {
-        let parser = crate::parse::tree_sitter_parser::from_language(
-            crate::parse::guess_language::Language::Python,
+    fn syntax_spans_are_per_line_sorted_and_innermost_even_on_a_line_diff() {
+        let diff = project_with(
+            "a.py",
+            "def f(x):\n    return \"b\"\n",
+            "def f(x):\n    return \"a\"\n",
+            DiffOptions {
+                graph_limit: 1,
+                syntax: true,
+                ..DiffOptions::default()
+            },
         );
-        let spans = syntax_spans("def f(x):\n    return \"a\"\n", parser);
+        let Diff::Text { stats, .. } = &diff else {
+            panic!("text diff");
+        };
+        assert!(stats.fallback.is_some());
+        let spans = &sources(&diff).1.unwrap().syntax;
         for pair in spans.windows(2) {
             assert!(
                 pair[0].line < pair[1].line

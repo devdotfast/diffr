@@ -1,8 +1,10 @@
 //! Link the pinned grammars with their parse tables compressed.
 //!
 //! Tree-sitter generates each grammar as one `parser.c`: constant tables plus a
-//! lexer. This script moves every table that holds no pointers out of
-//! `parser.c` into zstd byte arrays and leaves empty arrays in their place. A generated C function, `diffr_unpack_<symbol>`, fills them, and
+//! lexer. This script moves every table whose elements are plain data out of
+//! `parser.c` into zstd byte arrays and leaves empty arrays in their place.
+//! Plain data is derived from the C types: integers, `bool`, enums, and structs
+//! or unions of them, resolved through the grammar's `tree_sitter/parser.h`. A generated C function, `diffr_unpack_<symbol>`, fills them, and
 //! `src/lib.rs` runs it once before the grammar's first use.
 use rayon::prelude::*;
 use std::collections::BTreeMap;
@@ -262,8 +264,12 @@ fn package_roots() -> BTreeMap<String, PathBuf> {
 fn pack(symbol: &str, source: &Path, out: &Path) {
     std::fs::create_dir_all(out).unwrap();
     let parser = std::fs::read_to_string(source.join("parser.c")).unwrap();
-    let tables = tables(&parser);
-    let bytes = dump_tables(symbol, source, out, &parser, &tables);
+    let header = std::fs::read_to_string(source.join("tree_sitter/parser.h")).unwrap();
+    let tables = tables(&parser, &header);
+    let (bytes, element_sizes): (Vec<_>, Vec<_>) =
+        dump_tables(symbol, source, out, &parser, &tables)
+            .into_iter()
+            .unzip();
 
     let mut grammar = format!(
         "#include <stdlib.h>\n\
@@ -271,6 +277,19 @@ fn pack(symbol: &str, source: &Path, out: &Path) {
          #define {symbol} diffr_{symbol}\n"
     );
     grammar.push_str(&empty_tables(&parser, &tables, &bytes));
+    // The bytes came from the host; fail the target build if an element type's size differs.
+    let layouts: BTreeMap<&str, usize> = tables
+        .iter()
+        .zip(element_sizes)
+        .map(|(table, size)| (table.element, size))
+        .collect();
+    for (index, (element, size)) in layouts.iter().enumerate() {
+        writeln!(
+            grammar,
+            "typedef char diffr_layout_{index}[sizeof({element}) == {size} ? 1 : -1];"
+        )
+        .unwrap();
+    }
     for (table, bytes) in tables.iter().zip(&bytes) {
         let packed = zstd::bulk::compress(bytes, 19).unwrap();
         write!(
@@ -315,14 +334,15 @@ fn pack(symbol: &str, source: &Path, out: &Path) {
     build.compile(symbol);
 }
 
-/// Compile and run a host program that writes each table's bytes.
+/// Compile and run a host program that writes each table's bytes, and returns
+/// them with the size of the table's element type on the host.
 fn dump_tables(
     symbol: &str,
     source: &Path,
     out: &Path,
     parser: &str,
     tables: &[Table],
-) -> Vec<Vec<u8>> {
+) -> Vec<(Vec<u8>, usize)> {
     let mut dump = String::from("#include <stdio.h>\n#include \"parser.c\"\n");
     // The constructor refers to the external scanner; the dump never calls it.
     if parser.contains(&format!("{symbol}_external_scanner_create")) {
@@ -336,15 +356,15 @@ fn dump_tables(
         )
         .unwrap();
     }
-    // Write the tables back to back into argv[1] and print each one's size.
+    // Write the tables back to back into argv[1]; print each one's size and its element's size.
     dump.push_str(
         "int main(int argc, char **argv) {\n  (void)argc;\n  FILE *file = fopen(argv[1], \"wb\");\n  if (!file) return 1;\n",
     );
-    for Table { name, .. } in tables {
+    for Table { name, element, .. } in tables {
         writeln!(
             dump,
             "  if (fwrite({name}, 1, sizeof {name}, file) != sizeof {name}) return 1;\n  \
-             printf(\"%zu\\n\", sizeof {name});"
+             printf(\"%zu %zu\\n\", sizeof {name}, sizeof({element}));"
         )
         .unwrap();
     }
@@ -383,9 +403,13 @@ fn dump_tables(
     assert!(output.status.success(), "dumping the {symbol} tables");
     let mut bytes = std::fs::read(&file).unwrap();
     let mut tables = Vec::new();
-    for size in String::from_utf8(output.stdout).unwrap().lines() {
-        let rest = bytes.split_off(size.trim().parse().unwrap());
-        tables.push(std::mem::replace(&mut bytes, rest));
+    for line in String::from_utf8(output.stdout).unwrap().lines() {
+        let (size, element_size) = line.trim().split_once(' ').unwrap();
+        let rest = bytes.split_off(size.parse().unwrap());
+        tables.push((
+            std::mem::replace(&mut bytes, rest),
+            element_size.parse().unwrap(),
+        ));
     }
     assert!(
         bytes.is_empty(),
@@ -394,7 +418,8 @@ fn dump_tables(
     tables
 }
 
-/// A top-level array definition in `parser.c`, `T name[...] = {...};`, whose elements hold no pointers.
+/// A top-level array definition in `parser.c`, `T name[...] = {...};`, whose
+/// elements are plain data.
 struct Table<'a> {
     name: &'a str,
     element: &'a str,
@@ -403,11 +428,39 @@ struct Table<'a> {
     definition: Range<usize>,
 }
 
-/// Find the tables to pack. Arrays of pointers, such as `ts_symbol_names`, parse
-/// with a pointer declarator and are left in place.
-fn tables(parser: &str) -> Vec<Table<'_>> {
+/// What a typedef name in `parser.h` stands for.
+enum Typedef<'tree> {
+    Type(tree_sitter::Node<'tree>),
+    Pointer,
+}
+
+/// Find the tables to pack: top-level arrays whose element type is plain data.
+fn tables<'a>(parser: &'a str, header: &str) -> Vec<Table<'a>> {
     let mut c = tree_sitter::Parser::new();
     c.set_language(&tree_sitter_c::LANGUAGE.into()).unwrap();
+    let header_tree = c.parse(header, None).unwrap();
+    let mut typedefs = BTreeMap::new();
+    let mut nodes = vec![header_tree.root_node()];
+    while let Some(node) = nodes.pop() {
+        let mut cursor = node.walk();
+        if node.kind() != "type_definition" {
+            nodes.extend(node.children(&mut cursor));
+            continue;
+        }
+        let ty = node.child_by_field_name("type").unwrap();
+        for declarator in node.children_by_field_name("declarator", &mut cursor) {
+            let typedef = match declarator.kind() {
+                "type_identifier" => Typedef::Type(ty),
+                _ => Typedef::Pointer,
+            };
+            let mut name = declarator;
+            while let Some(inner) = name.child_by_field_name("declarator") {
+                name = inner;
+            }
+            typedefs.insert(&header[name.byte_range()], typedef);
+        }
+    }
+
     let tree = c.parse(parser, None).unwrap();
     let text = |node: tree_sitter::Node| &parser[node.byte_range()];
     let mut cursor = tree.walk();
@@ -421,6 +474,7 @@ fn tables(parser: &str) -> Vec<Table<'_>> {
                 })?;
             init.child_by_field_name("value")
                 .filter(|value| value.kind() == "initializer_list")?;
+            // An array of pointers, such as `ts_symbol_names`, has a pointer declarator here.
             let array = init
                 .child_by_field_name("declarator")
                 .filter(|array| array.kind() == "array_declarator")?;
@@ -428,15 +482,74 @@ fn tables(parser: &str) -> Vec<Table<'_>> {
             while name.kind() == "array_declarator" {
                 name = name.child_by_field_name("declarator").unwrap();
             }
-            (name.kind() == "identifier").then_some(())?;
-            Some(Table {
+            let ty = definition.child_by_field_name("type").unwrap();
+            plain_data(ty, parser, header, &typedefs).then(|| Table {
                 name: text(name),
-                element: text(definition.child_by_field_name("type").unwrap()),
+                element: text(ty),
                 sized_declarator: array.child_by_field_name("size").map(|_| text(array)),
                 definition: definition.byte_range(),
             })
         })
         .collect()
+}
+
+/// Whether values of the C type `ty` are plain data: integers, `bool`, enums,
+/// and structs or unions of them, with no pointers. Panics on a type it cannot
+/// resolve, so an unknown type never gets packed by accident.
+fn plain_data(
+    ty: tree_sitter::Node,
+    source: &str,
+    header: &str,
+    typedefs: &BTreeMap<&str, Typedef>,
+) -> bool {
+    match ty.kind() {
+        "primitive_type" | "sized_type_specifier" | "enum_specifier" => true,
+        "type_identifier" => {
+            let name = &source[ty.byte_range()];
+            match typedefs.get(name) {
+                Some(Typedef::Type(ty)) => plain_data(*ty, header, header, typedefs),
+                Some(Typedef::Pointer) => false,
+                None => panic!("cannot resolve the C type {name}"),
+            }
+        }
+        "struct_specifier" | "union_specifier" => {
+            let body = ty.child_by_field_name("body").unwrap_or_else(|| {
+                panic!("cannot resolve the C type {}", &source[ty.byte_range()])
+            });
+            let mut cursor = body.walk();
+            let plain = body
+                .named_children(&mut cursor)
+                .filter(|field| field.kind() != "comment")
+                .all(|field| {
+                    assert_eq!(
+                        field.kind(),
+                        "field_declaration",
+                        "unexpected struct member"
+                    );
+                    let mut cursor = field.walk();
+                    let plain_declarators = field
+                        .children_by_field_name("declarator", &mut cursor)
+                        .all(|mut declarator| {
+                            while declarator.kind() == "array_declarator" {
+                                declarator = declarator.child_by_field_name("declarator").unwrap();
+                            }
+                            declarator.kind() == "field_identifier"
+                        });
+                    plain_declarators
+                        && plain_data(
+                            field.child_by_field_name("type").unwrap(),
+                            source,
+                            header,
+                            typedefs,
+                        )
+                });
+            plain
+        }
+        kind => panic!(
+            "cannot resolve the C type {} ({kind})",
+            &source[ty.byte_range()]
+        ),
+    }
 }
 
 /// Replace each table's definition with an empty, writable array of the same size.

@@ -7,14 +7,5 @@
     "x86_64-unknown-linux-gnu": "190c506b238d95f15a552b3983cd3351a5eb385f2057b5a08c90d87a2b466075",
     "aarch64-unknown-linux-gnu": "91abbca8f38cb3de355cbc8a47086686c7e0f88961d6e2012fbefcdee1979607",
     "x86_64-pc-windows-msvc": "0e129b2cf5c86af44643861da42656fc266f2e1f94ab501f0a2b34dc6efff1b7"
-  },
-  "full": {
-    "sha256": {
-      "aarch64-apple-darwin": "6675ba404990be3e7b7f8e26b113b7f083e609e88c7eae366e3367a4e32364d5",
-      "x86_64-apple-darwin": "c9188df81078fe6bb3fbae2b44e7c1fff9b37cbe66c7cd9c11091c3d151e4dcf",
-      "x86_64-unknown-linux-gnu": "a56aa73980850ecdfdce201253d37d06a38ef30cdb0507d61bc973e944f4174a",
-      "aarch64-unknown-linux-gnu": "d6788ac5e17e986ce2f2ebc6069dc27bcb127847f38632a7cfecf434820e3f81",
-      "x86_64-pc-windows-msvc": "d10f2fbb55df4a42e3305c531ffd1e615bca494b8161d4817ed946239063b67b"
-    }
   }
 }

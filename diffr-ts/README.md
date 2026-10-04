@@ -16,10 +16,6 @@ Supports macOS arm64, macOS x64, Linux arm64, Linux x64, and Windows x64 (`diffr
 network access. Downloads warn on network failure unless `--required`; invalid
 hashes or archives always fail.
 
-`--full` fetches the full edition, which adds the parsers lean builds omit (Apex,
-Fortran, F#, Haskell, Julia, OCaml, QML, Verilog, VHDL). It requires full-edition
-pins, which start with the next release.
-
 ## Wire changes
 
 Keep these files in sync:
@@ -34,8 +30,8 @@ Keep these files in sync:
 ## Release
 
 After tagging the matching Rust release and building with `cargo build --locked`,
-run from `diffr-ts`. New pins select the lean and full CLI-only release archives;
-older pins continue to use the combined archives:
+run from `diffr-ts`. New pins select the CLI-only release archive;
+older pins continue to use the combined archive:
 
 ```sh
 bun install --frozen-lockfile

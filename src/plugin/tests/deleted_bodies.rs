@@ -39,7 +39,11 @@ fn function(id: u32, start: u32, end: u32, children: Vec<Region>) -> Region {
         relations: Vec::new(),
         tags: vec![FUNCTION.to_owned()],
         visibility: Visibility::default(),
-        node: Node::Fold { children },
+        node: Node::Fold {
+            indent: range(start, end).start,
+            syntax: None,
+            children,
+        },
     }
 }
 

@@ -76,6 +76,8 @@ fn file_state() -> Cursor {
     let fold = Region {
         node: Node::Fold {
             children: vec![leaf(2, 1, 0, 4)],
+            indent: SourcePos { line: 0, column: 0 },
+            syntax: None,
         },
         ..leaf(1, 10, 0, 4)
     };

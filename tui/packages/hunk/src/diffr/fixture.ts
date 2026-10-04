@@ -20,7 +20,7 @@ export function fold(
   collapsed = false,
 ): FoldRegion {
   return { id, fold_state_id: id, start: pos(...start), end: pos(...end), tags,
-    visibility: { collapsed, label }, kind: "fold", changed: [], children };
+    visibility: { collapsed, label }, kind: "fold", changed: [], children, indent: pos(...start) };
 }
 export const line = (line: number, start_column: number, end_column: number): Span =>
   ({ line, start_column, end_column });

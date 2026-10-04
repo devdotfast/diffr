@@ -53,7 +53,11 @@ fn fold(id: u32, collapsed: bool, children: Vec<Region>) -> Region {
             collapsed,
             label: String::new(),
         },
-        node: Node::Fold { children },
+        node: Node::Fold {
+            indent: children[0].range.start,
+            syntax: None,
+            children,
+        },
     }
 }
 
@@ -298,6 +302,25 @@ fn a_join_listing_both_sides_runs_wraps_each_with_one_fold_state() {
         shape(&rhs.regions[1..])[0],
         (15, None, 14, 1, 8, false, String::new())
     );
+}
+
+#[test]
+fn a_joined_fold_takes_its_parents_indent() {
+    let mut body = fold(1, false, vec![leaf(2, 0, 0, 1, &[]), leaf(3, 1, 1, 2, &[])]);
+    let Node::Fold { indent, .. } = &mut body.node else {
+        unreachable!("a fold");
+    };
+    indent.column = 4;
+    let mut sides = both(vec![body, leaf(4, 2, 2, 3, &[])], Vec::new());
+    sides.join(&[2, 3]).unwrap();
+    let (lhs, _) = sides_of(&sides);
+    let Node::Fold { children, .. } = &lhs.regions[0].node else {
+        unreachable!("a fold");
+    };
+    let Node::Fold { indent, .. } = children[0].node else {
+        unreachable!("the joined fold");
+    };
+    assert_eq!(indent.column, 4);
 }
 
 #[test]

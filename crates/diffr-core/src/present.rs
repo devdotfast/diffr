@@ -58,7 +58,7 @@ fn change_coverage(sides: &Pairing<Source>) -> ChangeCoverage {
                 Node::Leaf { alignment_id, .. } => {
                     out.insert(*alignment_id);
                 }
-                Node::Fold { children } => alignments(children, out),
+                Node::Fold { children, .. } => alignments(children, out),
             }
         }
     }
@@ -87,7 +87,7 @@ fn change_coverage(sides: &Pairing<Source>) -> ChangeCoverage {
                         visible.extend_from_slice(&all[start..]);
                     }
                 }
-                Node::Fold { children } => collect(children, other, hidden, all, visible),
+                Node::Fold { children, .. } => collect(children, other, hidden, all, visible),
             }
         }
     }
@@ -194,7 +194,11 @@ mod visible_tests {
                 collapsed,
                 label: String::new(),
             },
-            node: Node::Fold { children },
+            node: Node::Fold {
+                indent: pos(lines.0),
+                syntax: None,
+                children,
+            },
         }
     }
 

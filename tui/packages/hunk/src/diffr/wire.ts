@@ -48,6 +48,10 @@ export interface LeafRegion extends RegionBase {
 }
 export interface FoldRegion extends RegionBase {
   kind: "fold";
+  /** Where the fold's content starts. Collapsed rows sit at this column. */
+  indent: { line: number; column: number };
+  /** From the opener to the closer, before rounding to lines. Absent without an opener. */
+  syntax?: { start: { line: number; column: number }; end: { line: number; column: number } };
 }
 export type Region = LeafRegion | FoldRegion;
 const regionBase = z.object({
@@ -62,7 +66,8 @@ const region: z.ZodType<Region> = z.lazy(() =>
   z.discriminatedUnion("kind", [
     regionBase.extend({ kind: z.literal("leaf"), alignment_id: uint, changed: z.array(span).default([]) })
       .transform((leaf) => ({ ...leaf, children: [] as Region[] })),
-    regionBase.extend({ kind: z.literal("fold"), children: z.array(region) })
+    regionBase.extend({ kind: z.literal("fold"), children: z.array(region), indent: sourcePos,
+      syntax: z.object({ start: sourcePos, end: sourcePos }).optional() })
       .transform((fold) => ({ ...fold, changed: [] as Region["changed"] })),
   ]),
 );

@@ -274,7 +274,14 @@ export const StructuralRegionSchema: z.ZodType<StructuralRegion> = z.lazy(() =>
 
 export type StructuralNode =
   | { kind: "leaf"; alignment_id: number; changed?: StructuralSpan[] }
-  | { kind: "fold"; children: StructuralRegion[] };
+  | {
+      kind: "fold";
+      children: StructuralRegion[];
+      /** Where the fold's content starts. Collapsed rows sit at this column. */
+      indent: StructuralPos;
+      /** From the opener to the closer, before rounding to lines. Absent without an opener. */
+      syntax?: StructuralSourceRange;
+    };
 
 export const StructuralNodeSchema: z.ZodType<StructuralNode> = z.lazy(() =>
   z.union([
@@ -286,6 +293,8 @@ export const StructuralNodeSchema: z.ZodType<StructuralNode> = z.lazy(() =>
     z.object({
       kind: z.literal("fold"),
       children: z.array(StructuralRegionSchema),
+      indent: StructuralPosSchema,
+      syntax: StructuralSourceRangeSchema.optional(),
     }),
   ]),
 );

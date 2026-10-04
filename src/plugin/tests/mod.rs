@@ -20,7 +20,7 @@ use std::path::Path;
 pub(crate) fn walk(regions: &[Region], visit: &mut impl FnMut(&Region)) {
     for region in regions {
         visit(region);
-        if let Node::Fold { children } = &region.node {
+        if let Node::Fold { children, .. } = &region.node {
             walk(children, visit);
         }
     }
@@ -29,7 +29,7 @@ pub(crate) fn walk(regions: &[Region], visit: &mut impl FnMut(&Region)) {
 pub(crate) fn walk_mut(regions: &mut [Region], visit: &mut impl FnMut(&mut Region)) {
     for region in regions {
         visit(region);
-        if let Node::Fold { children } = &mut region.node {
+        if let Node::Fold { children, .. } = &mut region.node {
             walk_mut(children, visit);
         }
     }

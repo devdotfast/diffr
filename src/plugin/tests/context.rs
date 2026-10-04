@@ -45,7 +45,7 @@ fn open_lines(regions: &[Region]) -> BTreeSet<u32> {
             }
             match &region.node {
                 Node::Leaf { .. } => out.extend(region.range.start.line..region.range.end.line),
-                Node::Fold { children } => visit(children, out),
+                Node::Fold { children, .. } => visit(children, out),
             }
         }
     }
@@ -288,6 +288,8 @@ fn a_fold_whose_matched_partner_holds_changes_stays_open() {
         tags: vec![],
         visibility: Visibility::default(),
         node: Node::Fold {
+            indent: child.range.start,
+            syntax: None,
             children: vec![child],
         },
     };
@@ -333,7 +335,7 @@ fn open_leaf_lines(regions: &[Region]) -> BTreeSet<u32> {
         for region in regions.iter().filter(|region| !region.visibility.collapsed) {
             match &region.node {
                 Node::Leaf { .. } => out.extend(region.range.start.line..region.range.end.line),
-                Node::Fold { children } => visit(children, out),
+                Node::Fold { children, .. } => visit(children, out),
             }
         }
     }
@@ -508,7 +510,7 @@ fn collapsed_rows(regions: &[Region]) -> Vec<((u32, u32), String)> {
                 (region.range.start.line, region.range.end.line),
                 region.visibility.label.clone(),
             ));
-        } else if let Node::Fold { children } = &region.node {
+        } else if let Node::Fold { children, .. } = &region.node {
             out.extend(collapsed_rows(children));
         }
     }
@@ -518,7 +520,7 @@ fn collapsed_rows(regions: &[Region]) -> Vec<((u32, u32), String)> {
 fn find<'a>(regions: &'a [Region], test: &dyn Fn(&Region) -> bool) -> Option<&'a Region> {
     regions.iter().find_map(|region| match &region.node {
         _ if test(region) => Some(region),
-        Node::Fold { children } => find(children, test),
+        Node::Fold { children, .. } => find(children, test),
         Node::Leaf { .. } => None,
     })
 }

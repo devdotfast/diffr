@@ -34,6 +34,7 @@ use super::{
 use crate::hash::DftHashMap;
 use crate::line_layout::{aligned_rows, novel_lines, runs, Run};
 use crate::line_parser;
+use crate::lines::SourcePosition;
 use crate::pairing::Pairing;
 use crate::parse::folds::{self, Fold, FoldMatch};
 use crate::parse::syntax::{MatchKind, MatchedPos, SyntaxId};
@@ -448,8 +449,7 @@ fn tree(
         let open = stack.pop().expect("closing an open fold");
         let fold = open.fold.fold;
         // The wire range is the hull of the children, which tile whole
-        // lines; the parser's byte columns inside the header line are not
-        // carried, since nothing narrower than a line can be hidden.
+        // lines, since nothing narrower than a line can be hidden.
         let (Some(first), Some(last)) = (open.children.first(), open.children.last()) else {
             return;
         };
@@ -469,6 +469,11 @@ fn tree(
             },
             node: Node::Fold {
                 children: open.children,
+                indent: wire_position(fold.indent),
+                syntax: fold.syntax.map(|syntax| SourceRange {
+                    start: wire_position(syntax.start),
+                    end: wire_position(syntax.end),
+                }),
             },
         };
         match stack.last_mut() {
@@ -507,7 +512,7 @@ fn tree(
     }
     fn all(regions: &[Region], out: &mut Vec<(u32, SourceRange)>) {
         for region in regions {
-            if let Node::Fold { children } = &region.node {
+            if let Node::Fold { children, .. } = &region.node {
                 out.push((region.id, region.range));
                 all(children, out);
             }
@@ -520,7 +525,7 @@ fn tree(
                 .filter(|(id, _, _)| *id == region.id)
                 .map(|(_, name, target)| (name.clone(), *target))
                 .collect();
-            if let Node::Fold { children } = &mut region.node {
+            if let Node::Fold { children, .. } = &mut region.node {
                 attach(children, relations);
             }
         }
@@ -622,6 +627,13 @@ fn leaf_region(
     }
 }
 
+fn wire_position(position: SourcePosition) -> SourcePos {
+    SourcePos {
+        line: position.line.as_usize() as u32,
+        column: position.byte_column as u32,
+    }
+}
+
 fn positions_by_line(positions: &[MatchedPos]) -> BTreeMap<usize, Vec<&MatchedPos>> {
     let mut by_line: BTreeMap<usize, Vec<&MatchedPos>> = BTreeMap::new();
     for position in positions {
@@ -694,7 +706,7 @@ mod tests {
         for region in regions {
             match &region.node {
                 Node::Leaf { .. } => out.push(region),
-                Node::Fold { children } => out.extend(leaves(children)),
+                Node::Fold { children, .. } => out.extend(leaves(children)),
             }
         }
         out
@@ -711,7 +723,7 @@ mod tests {
         let mut out = Vec::new();
         for region in regions {
             out.push(region);
-            if let Node::Fold { children } = &region.node {
+            if let Node::Fold { children, .. } = &region.node {
                 out.extend(all(children));
             }
         }
@@ -736,7 +748,7 @@ mod tests {
 
     fn assert_folds_hold_children(regions: &[Region]) {
         for region in regions {
-            if let Node::Fold { children } = &region.node {
+            if let Node::Fold { children, .. } = &region.node {
                 assert!(!children.is_empty(), "fold without children {region:?}");
                 let (start, end) = region.range.lines_spanned();
                 let mut at = start;

@@ -44,7 +44,11 @@ fn function_fold(id: u32, start: u32, end: u32, children: Vec<Region>) -> Region
         relations: Vec::new(),
         tags: vec!["removed-runs:function".to_owned()],
         visibility: Visibility::default(),
-        node: Node::Fold { children },
+        node: Node::Fold {
+            indent: range(start, end).start,
+            syntax: None,
+            children,
+        },
     }
 }
 
@@ -178,6 +182,8 @@ fn removed_runs_skip_paired_leaves_and_collapsed_ancestors() {
                 },
                 node: Node::Fold {
                     children: vec![removed_leaf(2, 2, 8, 20, &[])],
+                    indent: range(8, 20).start,
+                    syntax: None,
                 },
             },
             removed_leaf(3, 3, 20, 30, &[]),
@@ -193,7 +199,7 @@ fn removed_runs_skip_paired_leaves_and_collapsed_ancestors() {
     let lhs = &lhs(&sides).regions;
     assert_eq!(lhs.len(), 5, "paired leaf, collapsed fold, three pieces");
     assert_eq!(lhs[0].id, 7);
-    let Node::Fold { children } = &lhs[1].node else {
+    let Node::Fold { children, .. } = &lhs[1].node else {
         panic!("fold expected");
     };
     assert_eq!(
@@ -248,12 +254,12 @@ fn removed_runs_stay_open_under_a_paired_function() {
         &mut sides,
     );
     let lhs = &lhs(&sides).regions;
-    let Node::Fold { children } = &lhs[0].node else {
+    let Node::Fold { children, .. } = &lhs[0].node else {
         panic!("fold expected");
     };
     assert_eq!(children.len(), 2, "nothing split under the paired function");
     assert!(children.iter().all(|child| !child.visibility.collapsed));
-    let Node::Fold { children } = &lhs[1].node else {
+    let Node::Fold { children, .. } = &lhs[1].node else {
         panic!("fold expected");
     };
     assert_eq!(

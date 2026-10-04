@@ -176,11 +176,13 @@ impl Cursor {
                 if region.id == id {
                     let children = match &region.node {
                         Node::Leaf { .. } => vec![],
-                        Node::Fold { children } => children.iter().map(|child| child.id).collect(),
+                        Node::Fold { children, .. } => {
+                            children.iter().map(|child| child.id).collect()
+                        }
                     };
                     return Some(view(region, parent, side, children));
                 }
-                if let Node::Fold { children } = &region.node {
+                if let Node::Fold { children, .. } = &region.node {
                     if let Some(node) = find(children, Some(region.id), id, side) {
                         return Some(node);
                     }
@@ -233,7 +235,7 @@ impl Cursor {
                         longest_gap: n,
                     }
                 }
-                Node::Fold { children } => {
+                Node::Fold { children, .. } => {
                     let mut rows = RowSummary {
                         collapsed: 0,
                         leading: 0,
@@ -281,7 +283,8 @@ impl Cursor {
         let siblings = if path.len() == 1 {
             &own.regions
         } else {
-            let Node::Fold { children } = &at(&own.regions, &path[..path.len() - 1]).node else {
+            let Node::Fold { children, .. } = &at(&own.regions, &path[..path.len() - 1]).node
+            else {
                 unreachable!("a region's parent is a fold")
             };
             children
@@ -320,7 +323,7 @@ impl Cursor {
                 }
             }
             for region in regions {
-                if let Node::Fold { children } = &region.node {
+                if let Node::Fold { children, .. } = &region.node {
                     if let Some(ids) = search(children, nodes) {
                         return Some(ids);
                     }
@@ -572,6 +575,18 @@ impl Cursor {
             let Some((parent, first, count)) = group else {
                 continue;
             };
+            // A joined fold sits in its parent's body; column 0 at the top level.
+            let indent = if parent.is_empty() {
+                SourcePos {
+                    line: tree[first].range.start.line,
+                    column: 0,
+                }
+            } else {
+                match &at(tree, &parent).node {
+                    Node::Fold { indent, .. } => *indent,
+                    Node::Leaf { .. } => unreachable!("a path descends through folds"),
+                }
+            };
             let list = siblings(tree, &parent);
             let children: Vec<Region> = list.drain(first..first + count).collect();
             let range = SourceRange {
@@ -595,7 +610,11 @@ impl Cursor {
                     relations: Vec::new(),
                     tags: Vec::new(),
                     visibility: Visibility::default(),
-                    node: Node::Fold { children },
+                    node: Node::Fold {
+                        children,
+                        indent,
+                        syntax: None,
+                    },
                 },
             );
         }
@@ -738,7 +757,7 @@ fn side_of(sides: &Pairing<Source>, side: Side) -> Option<&Source> {
 fn walk(regions: &[Region], visit: &mut impl FnMut(&Region)) {
     for region in regions {
         visit(region);
-        if let Node::Fold { children } = &region.node {
+        if let Node::Fold { children, .. } = &region.node {
             walk(children, visit);
         }
     }
@@ -747,7 +766,7 @@ fn walk(regions: &[Region], visit: &mut impl FnMut(&Region)) {
 fn walk_mut(regions: &mut [Region], visit: &mut impl FnMut(&mut Region)) {
     for region in regions {
         visit(region);
-        if let Node::Fold { children } = &mut region.node {
+        if let Node::Fold { children, .. } = &mut region.node {
             walk_mut(children, visit);
         }
     }
@@ -775,7 +794,7 @@ fn path_where(regions: &[Region], is: &impl Fn(&Region) -> bool) -> Option<Vec<u
         if is(region) {
             return Some(vec![index]);
         }
-        if let Node::Fold { children } = &region.node {
+        if let Node::Fold { children, .. } = &region.node {
             if let Some(mut path) = path_where(children, is) {
                 path.insert(0, index);
                 return Some(path);
@@ -795,7 +814,7 @@ fn at<'a>(regions: &'a [Region], path: &[usize]) -> &'a Region {
     let (&index, rest) = path.split_first().expect("a path is never empty");
     match (rest.is_empty(), &regions[index].node) {
         (true, _) => &regions[index],
-        (false, Node::Fold { children }) => at(children, rest),
+        (false, Node::Fold { children, .. }) => at(children, rest),
         (false, Node::Leaf { .. }) => unreachable!("a path descends through folds"),
     }
 }
@@ -805,7 +824,7 @@ fn siblings<'a>(regions: &'a mut Vec<Region>, parent: &[usize]) -> &'a mut Vec<R
     match parent.split_first() {
         None => regions,
         Some((&index, rest)) => match &mut regions[index].node {
-            Node::Fold { children } => siblings(children, rest),
+            Node::Fold { children, .. } => siblings(children, rest),
             Node::Leaf { .. } => unreachable!("a path descends through folds"),
         },
     }
@@ -832,7 +851,7 @@ fn find(regions: &[Region], id: u32) -> Option<&Region> {
             return Some(region);
         }
         match &region.node {
-            Node::Fold { children } => find(children, id),
+            Node::Fold { children, .. } => find(children, id),
             Node::Leaf { .. } => None,
         }
     })
@@ -843,7 +862,7 @@ fn find_mut(regions: &mut [Region], id: u32) -> Option<&mut Region> {
         if region.id == id {
             return Some(region);
         }
-        if let Node::Fold { children } = &mut region.node {
+        if let Node::Fold { children, .. } = &mut region.node {
             if let Some(found) = find_mut(children, id) {
                 return Some(found);
             }

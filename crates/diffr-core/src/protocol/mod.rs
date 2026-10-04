@@ -246,7 +246,15 @@ pub enum Node {
         changed: Vec<Span>,
     },
     /// A foldable region. Its range is the hull of its children.
-    Fold { children: Vec<Region> },
+    Fold {
+        children: Vec<Region>,
+        /// Where the fold's content starts. Collapsed rows sit at this column.
+        indent: SourcePos,
+        /// From the opener to the closer, before rounding to lines. None
+        /// without an opener.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        syntax: Option<SourceRange>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -380,6 +388,8 @@ mod tests {
                 tags: vec!["deleted-bodies:function".to_owned()],
                 visibility: Visibility::default(),
                 node: Node::Fold {
+                    indent: pos(0, 0),
+                    syntax: None,
                     children: vec![
                         leaf(first, 0, 0, 1, vec![]),
                         leaf(first, 1, 1, 2, changed),
@@ -438,6 +448,7 @@ mod tests {
             json!({
                 "id": first, "fold_state_id": 1, "kind": "fold", "tags": ["deleted-bodies:function"],
                 "start": {"line": 0, "column": 0}, "end": {"line": 3, "column": 0},
+                "indent": {"line": 0, "column": 0},
                 "children": [
                     {"id": first + 1, "fold_state_id": 2, "kind": "leaf", "alignment_id": 0, "start": {"line": 0, "column": 0}, "end": {"line": 1, "column": 0}},
                     middle,

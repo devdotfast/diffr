@@ -276,6 +276,7 @@ mod tests {
                 "builtin:shared/queries/rust.scm",
                 "builtin:shared/queries/rust-docstrings.scm",
                 "builtin:deleted-bodies/queries/rust.scm",
+                "builtin:shared/queries/rust-tests.scm",
                 "builtin:test-bodies/queries/rust.scm",
                 "builtin:removed-runs/queries/rust.scm",
                 "builtin:context/queries/rust.scm",

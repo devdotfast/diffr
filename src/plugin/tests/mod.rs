@@ -33,15 +33,6 @@ pub(crate) fn walk(regions: &[Region], visit: &mut impl FnMut(&Region)) {
     }
 }
 
-pub(crate) fn walk_mut(regions: &mut [Region], visit: &mut impl FnMut(&mut Region)) {
-    for region in regions {
-        visit(region);
-        if let Node::Fold { children, .. } = &mut region.node {
-            walk_mut(children, visit);
-        }
-    }
-}
-
 pub(crate) fn is_fold(region: &Region) -> bool {
     matches!(region.node, Node::Fold { .. })
 }
@@ -158,15 +149,6 @@ pub(crate) fn run(
     sides: &mut Pairing<protocol::Source>,
 ) {
     shape(&bundled(name, overrides), file, sides).unwrap();
-}
-
-/// Run a pipeline and inspect the sides it left, without changing `sides`.
-fn edited(
-    pipeline: &Pipeline,
-    file: &FileChange,
-    sides: &Pairing<Source>,
-) -> anyhow::Result<Pairing<Source>> {
-    crate::test_runtime().block_on(pipeline.run(file, sides.clone()))
 }
 
 /// For each `deleted-bodies:function` body on the after side, the first line

@@ -104,13 +104,13 @@ export function rowsForFile(
   const { leaves, folds } = flatten(d);
   const hidden = [hiddenLines(folds[0], collapsed), hiddenLines(folds[1], collapsed)];
   // A collapsed fold is a row of its own, where its first line would have been. A syntax fold
-  // instead joins its opener, label and closing suffix on the opener's line, so its closer is
-  // masked too.
+  // with a one-line label instead joins its opener, label and closing suffix on the opener's
+  // line, so its closer is masked too.
   const bands = folds.map(side => collapsedFolds(side, collapsed));
   const inline = bands.map((sideBands, side) => {
     const result = new Map<number, SyntaxFold>();
     for (const fold of sideBands.values()) {
-      if (!fold.syntax) continue;
+      if (!fold.syntax || fold.label.includes("\n")) continue;
       sideBands.delete(fold.startLine);
       result.set(fold.syntax.start.line, fold as SyntaxFold);
       for (let line = fold.syntax.start.line + 1; line <= fold.syntax.end.line; line++) hidden[side].add(line);
@@ -133,6 +133,24 @@ export function rowsForFile(
     return lines;
   });
   const tintOf = (region: Leaf | Fold) => foldTint(region.id, region.side, paired[region.side]);
+  const alignments = leaves.map(side => new Set(side.map(leaf => leaf.alignmentId)));
+  const isChanged = (leaf: Leaf, line: number) =>
+    leaf.changed.has(line) || !alignments[leaf.side ? 0 : 1].has(leaf.alignmentId);
+  // A paired leaf is changed when its counterpart has change spans.
+  const spanned = new Set(leaves.flat().filter(leaf => leaf.changed.size).map(leaf => leaf.alignmentId));
+  // A collapsed paired region that hides a change is modified, and counts its side's changed lines.
+  const collapsedTint = (region: Leaf | Fold): { tint: FoldTint; note: string } => {
+    const tint = tintOf(region);
+    if (tint !== "neutral") return { tint, note: "" };
+    const last = "lastHidden" in region ? region.lastHidden : region.endLine - 1;
+    const inside = leaves[region.side].filter(leaf => leaf.endLine > region.startLine && leaf.startLine <= last);
+    let count = 0;
+    for (const leaf of inside)
+      for (let line = Math.max(leaf.startLine, region.startLine); line <= Math.min(leaf.endLine - 1, last); line++)
+        if (isChanged(leaf, line)) count++;
+    if (!count && !inside.some(leaf => spanned.has(leaf.alignmentId))) return { tint, note: "" };
+    return { tint: "modified", note: count ? ` · ${count} line${count === 1 ? "" : "s"} changed` : "" };
+  };
   const placeholder = (text: string, tint: FoldTint): RenderSpan =>
     ({ text, fg: theme.foldPlaceholder, bg: foldBackground(theme, tint) });
   const caches = [new Map<number, RenderSpan[]>(), new Map<number, RenderSpan[]>()];
@@ -145,7 +163,6 @@ export function rowsForFile(
     }
     return spans;
   };
-  const alignments = leaves.map(side => new Set(side.map(leaf => leaf.alignmentId)));
   const cell = (leaf: Leaf | null, line: number | null, side: Side): SplitLineCell => {
     if (line === null || leaf === null) return empty;
     let spans = spansOf(side, line, leaf);
@@ -156,13 +173,13 @@ export function rowsForFile(
       const closer = texts[side][end.line]!;
       const suffix = lineSpans(closer, syntax[side].get(end.line) ?? [], [], side ? "right" : "left", theme);
       const label = folded.label.replace(/\n/g, " · ");
-      const tint = tintOf(folded);
+      const { tint, note } = collapsedTint(folded);
       spans = [...sliceSpansWindow(spans, 0, byteColumn(texts[side][line]!, start.column)).spans,
-        placeholder(` ⋯${label ? " " + label : ""} `, tint),
+        placeholder(` ⋯${label ? " " + label : ""}${note} `, tint),
         ...sliceSpansWindow(suffix, byteColumn(closer, end.column), Infinity).spans];
       fold = { id: folded.foldStateId, label: folded.label, collapsed: true, tint };
     }
-    const changed = leaf.changed.has(line) || !alignments[side ? 0 : 1].has(leaf.alignmentId);
+    const changed = isChanged(leaf, line);
     return {
       kind: changed ? (side ? "addition" : "deletion") : "context",
       sign: changed ? (side ? "+" : "-") : " ",
@@ -179,14 +196,24 @@ export function rowsForFile(
   };
   // A collapsed region is one row: chevron and label, no line number, whether the region is a
   // fold or a leaf the context plugin cut out. It starts at its parent's indent; a multi-line
-  // label (pseudocode) hangs under it at that indent, one row per line.
+  // label (pseudocode) hangs under it at that indent, one row per line. A syntax body with a
+  // multi-line label is instead quoted between its opener and closer, at the body's indent.
   const band = (region: Leaf | Fold) => {
-    const tint = tintOf(region);
-    const lead = (text: string) => withGuides([{ text: " ".repeat(region.parentColumn) }, placeholder(text, tint)],
-      guides[region.side].get(region.startLine) ?? [], theme);
+    const { tint, note } = collapsedTint(region);
     const multiline = region.label.includes("\n");
+    const quoted = "syntax" in region && region.syntax !== undefined && multiline;
+    const body = texts[region.side][region.startLine]!;
+    const column = quoted ? byteColumn(body, body.length - body.trimStart().length) : region.parentColumn;
+    const lead = (text: string) => withGuides([{ text: " ".repeat(column) }, placeholder(text, tint)],
+      guides[region.side].get(region.startLine) ?? [], theme);
+    if (quoted) {
+      const [first, ...rest] = region.label.split("\n");
+      const header = { kind: "context" as const, sign: " ", band: tint, spans: lead(`> ${first}${note}`),
+        fold: { id: region.foldStateId, label: region.label, collapsed: true, tint } };
+      return { header, labels: rest.map(text => ({ ...header, foldLabel: true, spans: lead(`> ${text}`), fold: undefined })) };
+    }
     const header = { kind: "context" as const, sign: " ", band: tint,
-      spans: lead(`⋯${region.label && !multiline ? " " + region.label : ""}`),
+      spans: lead(`⋯${region.label && !multiline ? " " + region.label : ""}${note}`),
       fold: { id: region.foldStateId, label: region.label, collapsed: true, tint } };
     const labels = multiline
       ? region.label.split("\n").map(text => ({ ...header, foldLabel: true, spans: lead(text), fold: undefined }))

@@ -1,8 +1,6 @@
-; inherits: builtin:shared/queries/go.scm, builtin:shared/queries/go-docstrings.scm
-((function_declaration name: (identifier) @_name body: (block "{" @fold.open (statement_list . [
-    (labeled_statement (label_name) . (_) @fold.indent)
-    (_) @fold.indent
-  ]) "}" @fold.close) @fold)
-  (#not-match? @fold.indent "^[A-Za-z_][A-Za-z0-9_]*:\\s*\n")
+; inherits: builtin:shared/queries/go.scm, builtin:shared/queries/go-docstrings.scm, builtin:shared/queries/go-tests.scm
+((function_declaration name: (identifier) @_name body: (block "{" @fold.open (statement_list .
+    (if_statement condition: (call_expression function: (selector_expression) @_short)) @fold.indent) "}" @fold.close) @fold)
   (#match? @_name "^Test")
-  (#set! tag "test-bodies:test"))
+  (#eq? @_short "testing.Short")
+  (#set! tag "test-bodies:integration"))

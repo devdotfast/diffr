@@ -184,12 +184,19 @@ fn bundled_path_rules_tag_vendored_docs_test_and_generated_files() {
         ("vendored", &["src/vendors.rs", "distribution/a.py"]),
         ("docs", &["src/docs/mod.rs", "src/readme_parser.rs"]),
         ("test", &["testing/helpers.rs", "src/testament.py"]),
+        (
+            "integration",
+            &["src/plugin/tests/a.rs", "tests/integrations_test.py"],
+        ),
     ];
     let exactly: &[(&str, &[&str])] = &[
         ("tests/streaming/check.py", &["test"]),
         ("src/App.test.tsx", &["test"]),
         ("src/review/tests.rs", &["test"]),
         ("tests/snapshots/Cargo.lock", &["generated", "test"]),
+        ("crates/core/tests/login.rs", &["integration", "test"]),
+        ("pkg/db/store_integration_test.go", &["integration", "test"]),
+        ("web/e2e/checkout.spec.ts", &["e2e", "test"]),
         (
             "node_modules/x/package-lock.json",
             &["generated", "vendored"],
@@ -225,6 +232,41 @@ fn bundled_path_rules_tag_vendored_docs_test_and_generated_files() {
         }
     }
     for (path, expected) in exactly {
+        assert_eq!(tags_of(&records, path), expected.to_vec(), "{path}");
+    }
+}
+
+#[test]
+fn test_content_tags_integration_and_end_to_end_files() {
+    let files: &[(&str, &str, &[&str])] = &[
+        (
+            "store_test.go",
+            "//go:build integration\n\npackage store\n",
+            &["integration", "test"],
+        ),
+        (
+            "tests/test_api.py",
+            "import pytest\n\npytestmark = pytest.mark.e2e\n",
+            &["e2e", "test"],
+        ),
+        (
+            "src/checkout.spec.ts",
+            "import { test } from '@playwright/test';\n",
+            &["e2e", "test"],
+        ),
+        ("tests/test_unit.py", "import pytest\n", &["test"]),
+    ];
+    let fixture = Fixture::new();
+    for (path, text, _) in files {
+        fixture.write(path, text);
+    }
+    let base = fixture.commit();
+    for (path, text, _) in files {
+        fixture.write(path, &format!("{text}// changed\n"));
+    }
+    let head = fixture.commit();
+    let records = records(&fixture.run(&base, &head));
+    for (path, _, expected) in files {
         assert_eq!(tags_of(&records, path), expected.to_vec(), "{path}");
     }
 }
@@ -334,7 +376,7 @@ fn visibility_of<'a>(records: &'a [Value], path: &str) -> Option<&'a Value> {
         .and_then(|root| root.get("visibility"))
 }
 
-/// By default the classifier hides generated, vendored and test files, and
+/// By default the classifier hides generated and vendored files, and
 /// deleted ones: each is diffed by line and shown behind its reason.
 #[test]
 fn hidden_files_are_diffed_by_line_and_shown_behind_their_reason() {
@@ -357,10 +399,7 @@ fn hidden_files_are_diffed_by_line_and_shown_behind_their_reason() {
         hidden("Vendored file · hidden by default")
     );
     assert_eq!(fallback_of(&defaults, "vendor/lib/a.rs"), Some("hidden"));
-    assert_eq!(
-        visibility_of(&defaults, "tests/a.rs").cloned(),
-        hidden("Test file · hidden by default")
-    );
+    assert_eq!(visibility_of(&defaults, "tests/a.rs"), None);
     assert_eq!(
         visibility_of(&defaults, "src/gone.rs").cloned(),
         hidden("Deleted file · hidden by default")

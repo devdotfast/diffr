@@ -6,7 +6,7 @@ description = "Pseudocode summaries for large new function bodies and tests."
 # startup when a plugin that is on cannot be made.
 [enabled]
 title = "Summarize functions and tests"
-description = "Summarize large new function bodies and right-side tests as pseudocode. Needs an API key: `api_key`, or the provider's variable in the environment: `GEMINI_API_KEY` or `GOOGLE_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`."
+description = "Summarize large new function bodies and new tests as pseudocode. Needs an API key: `api_key`, or the provider's variable in the environment: `GEMINI_API_KEY` or `GOOGLE_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`."
 default = false
 
 [options.provider]
@@ -62,19 +62,71 @@ default = 3
 [options.system_prompt]
 type = "string"
 title = "System prompt"
-description = "The system instruction sent with every request; diffr builds each request's message from one body's numbered lines and its documentation. Unset uses the default: https://github.com/devdotfast/diffr/blob/main/plugins/shape/summarize/plugin.toml#L66-L72"
+description = "The system instruction sent with every request; diffr builds each request's message from one body's numbered lines."
 default = """\
-For each listed fold, rewrite that function body as short \
-pseudocode. Keep the names. No prose, no comments, no code fences. Use as few lines as \
-possible: about one pseudocode line per five source lines, and never more than a third \
-of the body's lines. When a fold lists a doc, also set "summary" to one sentence copied \
-verbatim from that doc; otherwise leave it empty. Answer with a JSON object whose \
-"summaries" array holds one {"id", "summary", "pseudocode"} object per fold."""
+For each block of code, rewrite it as pseudocode a reviewer can \
+read instead of the code. First decide what the code does. If uncertain, \
+pick the option with the shortest output / explanation.
+
+Examples below are delimited with code fences, you should not add those to your output.
+
+A pure algorithm: plain-word steps, nested two spaces per level, for example:
+```pseudo
+if content is unchanged
+  return cached result
+write new content
+return fresh result
+```
+
+Control flow (mostly calls to other functions, in order): a call tree of the callees, \
+each call's own calls indented under it, for example:
+```pseudo
+createSession
+  persistPrompt
+  launchAgent
+navigateToSession
+```
+
+You can also create notional functions to make the pseudocode read easier in control-flow;
+just add a note that you've done so, e.g.: \
+```pseudo
+loadSettings
+reconcileSessions # summarization; not literal code
+  resumeRunningSessions
+  dropExpiredSessions
+saveSettings
+```
+
+UI (renders components or markup): a component tree, with the hooks and state that \
+matter under their component, and a component's module in parentheses when it comes \
+from elsewhere, for example:
+```pseudo
+<SessionToolbar>
+  useSessionEvents()
+  <RunSkillButton> (packages/ui)
+```
+
+Break a test into setup, action being tested, and assertion phases; summarize setup with the \
+methods above, e.g. control-flow pseudocode. For example:
+```pseudo
+Setup:
+  createSession
+    persistPrompt
+  stopAgent(session)
+Action:
+  resumed := resumeSession(session.id)
+Assertions:
+  assertEq(resumed.id, session.id)
+  assertEq(resumed.prompt, session.prompt)
+  assert agent is running
+```
+
+Reply with only pseudocode in the format above (code within the 'pseudo' blocks), nothing else."""
 
 [options.tests]
 type = "boolean"
 title = "Summarize tests"
-description = "Summarize right-side test bodies, including modified and unchanged tests in diffed files."
+description = "Summarize new test bodies."
 default = true
 
 [options.test_min_lines]

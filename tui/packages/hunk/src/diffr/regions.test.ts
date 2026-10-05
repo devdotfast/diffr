@@ -98,8 +98,9 @@ test("rows carry fold headers on both layouts and drop hidden lines", () => {
   const file = createFoldedDiffFile();
   const split = rowsForFile(file, 0, "split", dark, new Set([11])).filter((r) => r.right);
   expect(split.map((r) => r.right!.lineNumber)).toEqual([1, 2, undefined, 5, 6, 7, 8]);
-  expect(split[2].right!.fold).toEqual({ id: 11, label: "Body", collapsed: true, tint: "neutral" });
-  expect(split[2].left!.fold).toEqual({ id: 11, label: "Body", collapsed: true, tint: "neutral" });
+  // The body hides the right side's changed line, so both sides take the modification tint.
+  expect(split[2].right!.fold).toEqual({ id: 11, label: "Body", collapsed: true, tint: "modified" });
+  expect(split[2].left!.fold).toEqual({ id: 11, label: "Body", collapsed: true, tint: "modified" });
   // The open outer fold marks the first line it covers, so it can be collapsed from there.
   expect(split[1].right!.fold).toEqual({ id: 10, label: "Body", collapsed: false, tint: "neutral" });
   const unified = rowsForFile(file, 0, "unified", dark, new Set([10])).filter((r) => r.cell);
@@ -119,6 +120,20 @@ test("a multi-line label uses the declared enclosing indent inside the fold tint
   expect(rows.indexOf(labels[0])).toBe(rows.findIndex((r) => r.right?.fold?.id === 11) + 1);
   const unified = rowsForFile(file, 0, "unified", dark, new Set([11]));
   expect(unified.filter((r) => r.cell?.foldLabel)).toHaveLength(3);
+});
+test("a syntax body with a multi-line label is quoted between its opener and closer", () => {
+  const file = createFoldedDiffFile();
+  if (file.diff.type !== "text") throw new Error();
+  for (const source of [file.diff.lhs!, file.diff.rhs!]) {
+    const closure = source.root.children[1].children[1];
+    if (closure.kind !== "fold") throw new Error();
+    closure.visibility = { collapsed: true, label: "call a\ncall b" };
+    closure.syntax = { start: { line: 1, column: 13 }, end: { line: 4, column: 4 } };
+  }
+  const rows = rowsForFile(file, 0, "split", dark, new Set([11])).filter((r) => r.right);
+  const text = (r: (typeof rows)[number]) => r.right!.spans.map((s) => s.text).join("");
+  expect(rows.slice(1, 5).map(text)).toEqual(["    inner(|| {", "        > call a · 1 line changed", "        > call b", "    });"]);
+  expect(rows[2].right!.fold?.id).toBe(11);
 });
 test("a collapsed leaf is one fold row with the chevron, its label, and no line number", () => {
   const file = createTestDiffFile();
@@ -248,6 +263,13 @@ test("a collapsed fold takes its side's change tint when one-sided and stays neu
   const both = paired.find((r) => r.left?.fold && r.right?.fold)!;
   expect([both.left!.fold!.tint, both.right!.fold!.tint]).toEqual(["neutral", "neutral"]);
   expect(foldBackground(dark, "neutral")).toBe(dark.foldBackground);
+  // Modified: the same pair hiding a changed line takes the modification tint and counts it.
+  const changedBody = (id: number) => ({ ...body(id, "Body"), children: [leaf(107, 1, 2, [line(1, 4, 5)])] });
+  const modified = rowsFor([changedBody(7)], [{ ...changedBody(8), fold_state_id: 7 }]);
+  const changedRow = modified.find((r) => r.left?.fold && r.right?.fold)!;
+  expect([changedRow.left!.fold!.tint, changedRow.right!.fold!.tint]).toEqual(["modified", "modified"]);
+  expect(changedRow.right!.spans.map((s) => s.text).join("")).toContain("⋯ Body · 1 line changed");
+  expect(foldBackground(dark, "modified")).toBe(dark.modification);
   // A fold state shared only on its own side does not pair a fold.
   const linked = rowsFor([{ ...body(7, "Body"), children: [{ ...leaf(107, 1, 2), fold_state_id: 7 }] }], [body(8, "Body")]);
   expect(linked.find((r) => r.left?.fold)!.left!.fold!.tint).toBe("removed");

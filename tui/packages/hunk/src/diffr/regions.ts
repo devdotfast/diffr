@@ -41,7 +41,7 @@ export interface Fold {
   parentColumn: number;
 }
 /** The change tint of a fold: a one-sided region takes its side's change colour, a paired one stays neutral. */
-export type FoldTint = "inserted" | "removed" | "neutral";
+export type FoldTint = "inserted" | "removed" | "modified" | "neutral";
 export interface RowFold {
   /** The fold-state id: what toggling this header toggles. */
   id: number;

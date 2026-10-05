@@ -763,39 +763,6 @@ mod tests {
     use crate::config::Config;
 
     #[test]
-    fn the_prompt_description_links_to_its_default_in_the_source() {
-        let source = include_str!("../../../../plugins/shape/summarize/plugin.toml");
-        let lines: Vec<&str> = source.lines().collect();
-        let table = lines
-            .iter()
-            .position(|line| *line == "[options.system_prompt]")
-            .unwrap();
-        let start = table
-            + lines[table..]
-                .iter()
-                .position(|line| line.starts_with("default = \"\"\""))
-                .unwrap();
-        let end = start
-            + lines[start..]
-                .iter()
-                .position(|line| line.ends_with("\"\"\""))
-                .unwrap();
-        let manifest = super::builtin::manifest("summarize").unwrap();
-        let description = manifest.options["system_prompt"]["description"]
-            .as_str()
-            .unwrap();
-        let link = format!(
-            "https://github.com/devdotfast/diffr/blob/main/plugins/shape/summarize/plugin.toml#L{}-L{}",
-            start + 1,
-            end + 1
-        );
-        assert!(
-            description.contains(&link),
-            "{description}\nexpected {link}"
-        );
-    }
-
-    #[test]
     fn defaults_can_follow_another_option() {
         let summarize = |toml: &str| {
             Config::from_toml(toml).unwrap().plugins.entries["bundled.summarize"]
@@ -983,10 +950,10 @@ mod tests {
         let summarize = &plugins["bundled"]["properties"]["summarize"]["properties"];
         // A text setting, so settings screens let users edit the prompt.
         assert!(summarize["system_prompt"].get("x-settings").is_none());
-        assert!(summarize["system_prompt"]["default"]
-            .as_str()
-            .unwrap()
-            .starts_with("For each listed fold, rewrite that function body"));
+        assert_eq!(
+            summarize["system_prompt"]["default"],
+            super::builtin::manifest("summarize").unwrap().options["system_prompt"]["default"]
+        );
         let keys: Vec<&String> = plugins.as_object().unwrap().keys().collect();
         assert_eq!(keys, ["order", "bundled", "external"]);
     }
@@ -1084,7 +1051,7 @@ mod tests {
         assert_eq!(classifier["hide_deleted"], false);
         assert_eq!(
             classifier["hide"],
-            serde_json::json!(["generated", "vendored", "test"])
+            serde_json::json!(["generated", "vendored"])
         );
         let summarize = &config.plugins.entries["bundled.summarize"];
         assert_eq!(

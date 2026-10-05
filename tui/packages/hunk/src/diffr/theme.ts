@@ -28,6 +28,7 @@ export interface Palette {
   highlight: string;
   addition: string;
   deletion: string;
+  modification: string;
   addWord: string;
   deleteWord: string;
   addedText: string;
@@ -121,6 +122,7 @@ export function paletteFromHelix(theme: HelixTheme): Palette {
   const muted = scopeFg(theme, "ui.linenr") ?? scopeFg(theme, "comment") ?? mix(fg, bg, 0.4);
   const plus = scopeFg(theme, "diff.plus") ?? (isLight ? "#1a7f37" : "#7ee787");
   const minus = scopeFg(theme, "diff.minus") ?? (isLight ? "#cf222e" : "#ffa198");
+  const delta = scopeFg(theme, "diff.delta") ?? (isLight ? "#9a6700" : "#e3b341");
   const selection = scopeBg(theme, "ui.selection") ?? mix(bg, fg, 0.15);
   return {
     name: theme.name,
@@ -132,6 +134,7 @@ export function paletteFromHelix(theme: HelixTheme): Palette {
     highlight: selection,
     addition: mix(bg, plus, 0.12),
     deletion: mix(bg, minus, 0.12),
+    modification: mix(bg, delta, 0.12),
     addWord: mix(bg, plus, 0.28),
     deleteWord: mix(bg, minus, 0.28),
     addedText: plus,
@@ -181,5 +184,6 @@ export function themeConfig(show: unknown): { name: string; path: string | null 
 
 /** Paired folds are neutral; only one-sided folds carry a change tint. */
 export function foldBackground(theme: Palette, tint: FoldTint) {
-  return tint === "inserted" ? theme.addition : tint === "removed" ? theme.deletion : theme.foldBackground;
+  return tint === "inserted" ? theme.addition : tint === "removed" ? theme.deletion
+    : tint === "modified" ? theme.modification : theme.foldBackground;
 }

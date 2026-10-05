@@ -1,6 +1,7 @@
 """Build release archives and a Homebrew formula from their exact bytes."""
 import argparse
 import hashlib
+import json
 from pathlib import Path
 import re
 import subprocess
@@ -11,6 +12,13 @@ TARGETS = (
     "x86_64-pc-windows-msvc",
 )
 ROOT = Path(__file__).resolve().parent.parent
+NPM_PLATFORMS = {
+    "aarch64-apple-darwin": ("darwin", "arm64"),
+    "x86_64-apple-darwin": ("darwin", "x64"),
+    "x86_64-unknown-linux-gnu": ("linux", "x64"),
+    "aarch64-unknown-linux-gnu": ("linux", "arm64"),
+    "x86_64-pc-windows-msvc": ("win32", "x64"),
+}
 
 
 def archive_name(version, target, artifact="diffr"):
@@ -29,6 +37,36 @@ def pack(version, target, install, output, edition="lean"):
                 archive.add(install / "bin" / f"{name}{exe}", arcname=f"{name}{exe}")
             for name in ("LICENSE", "NOTICE", "tui/LICENSE", "tui/themes/LICENSE"):
                 archive.add(ROOT / name, arcname=name)
+
+
+def npm(version, dist, output):
+    """Stage one npm package per platform and point @dev.fast/diffr at them."""
+    manifest_path = ROOT / "diffr-ts" / "package.json"
+    main = json.loads(manifest_path.read_text())
+    if main["version"] != version:
+        raise ValueError(f"diffr-ts/package.json is {main['version']}, release is {version}")
+    main["optionalDependencies"] = {}
+    for target, (os, cpu) in NPM_PLATFORMS.items():
+        name = f"@dev.fast/diffr-{os}-{cpu}"
+        exe = "diffr.exe" if os == "win32" else "diffr"
+        directory = output / f"diffr-{os}-{cpu}"
+        directory.mkdir(parents=True)
+        with tarfile.open(dist / archive_name(version, target, "diffr-cli-full")) as archive:
+            for member in (exe, "LICENSE", "NOTICE"):
+                archive.extract(member, directory, filter="data")
+        (directory / "package.json").write_text(json.dumps({
+            "name": name,
+            "version": version,
+            "description": f"The diffr {version} executable for {os}-{cpu}",
+            "repository": main["repository"],
+            "license": main["license"],
+            "os": [os],
+            "cpu": [cpu],
+            **({"libc": ["glibc"]} if os == "linux" else {}),
+            "files": [exe, "NOTICE"],
+        }, indent=2) + "\n")
+        main["optionalDependencies"][name] = version
+    manifest_path.write_text(json.dumps(main, indent=2) + "\n")
 
 
 def formula(version, output):
@@ -88,12 +126,13 @@ end
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("pack", "formula"))
+    parser.add_argument("command", choices=("pack", "formula", "npm"))
     parser.add_argument("--version", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--target", choices=TARGETS)
     parser.add_argument("--install", type=Path)
     parser.add_argument("--edition", choices=("lean", "full"), default="lean")
+    parser.add_argument("--dist", type=Path, help="release archives, for npm")
     args = parser.parse_args()
     if not re.fullmatch(r"\d+\.\d+\.\d+", args.version):
         parser.error("version must be a stable X.Y.Z release")
@@ -102,5 +141,9 @@ if __name__ == "__main__":
         if not args.target or not args.install:
             parser.error("pack requires --target and --install")
         pack(args.version, args.target, args.install.resolve(), args.output, args.edition)
+    elif args.command == "npm":
+        if not args.dist:
+            parser.error("npm requires --dist")
+        npm(args.version, args.dist, args.output)
     else:
         formula(args.version, args.output)

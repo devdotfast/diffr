@@ -49,12 +49,13 @@ function indents(source: Source | undefined): Map<number, number> {
 
 const cell = (c: SplitLineCell | undefined, indent: Map<number, number>): string => {
   if (!c || c.kind === "empty") return "";
-  if (c.fold?.collapsed)
+  // A collapsed band has no line number; a syntax fold collapses inline on its opener's line.
+  if (c.fold?.collapsed && c.lineNumber === undefined)
     return `     ${`▸${c.fold.id}`.padEnd(5)}${" ".repeat(indent.get(c.fold.id) ?? 0)}⋯ ${c.fold.label.split("\n")[0]}`;
-  if (c.foldLabel) return `        ${c.spans.map((s) => s.text).join("")}`;
+  if (c.foldLabel) return `        ${c.spans.map((s) => (s.guide === undefined ? s.text : " ")).join("")}`;
   const sign = { addition: "+", deletion: "-", context: " " }[c.kind];
-  const chevron = c.fold ? `▾${c.fold.id}` : "";
-  return `${String(c.lineNumber ?? "").padStart(4)}${sign}${chevron.padEnd(5)}${c.spans.map((s) => s.text).join("")}`;
+  const chevron = c.fold ? `${c.fold.collapsed ? "▸" : "▾"}${c.fold.id}` : "";
+  return `${String(c.lineNumber ?? "").padStart(4)}${sign}${chevron.padEnd(5)}${c.spans.map((s) => (s.guide === undefined ? s.text : " ")).join("")}`;
 };
 const fit = (text: string) => (text.length > width ? text.slice(0, width - 1) + "…" : text.padEnd(width));
 

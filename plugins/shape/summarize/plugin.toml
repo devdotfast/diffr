@@ -62,14 +62,45 @@ default = 3
 [options.system_prompt]
 type = "string"
 title = "System prompt"
-description = "The system instruction sent with every request; diffr builds each request's message from one body's numbered lines and its documentation. Unset uses the default: https://github.com/devdotfast/diffr/blob/main/plugins/shape/summarize/plugin.toml#L66-L72"
+description = "The system instruction sent with every request; diffr builds each request's message from one body's numbered lines and its documentation. Unset uses the default: https://github.com/devdotfast/diffr/blob/main/plugins/shape/summarize/plugin.toml#L67-L103"
+# TODO: workshop this prompt; the draft text from #73 is a placeholder.
 default = """\
-For each listed fold, rewrite that function body as short \
-pseudocode. Keep the names. No prose, no comments, no code fences. Use as few lines as \
-possible: about one pseudocode line per five source lines, and never more than a third \
-of the body's lines. When a fold lists a doc, also set "summary" to one sentence copied \
-verbatim from that doc; otherwise leave it empty. Answer with a JSON object whose \
-"summaries" array holds one {"id", "summary", "pseudocode"} object per fold."""
+For each listed fold, rewrite that function or test body as pseudocode a reviewer can \
+read instead of the code. First decide what the body mostly does, then use its shape.
+
+Logic or an algorithm (branches, loops, computation): plain-word steps, nested two \
+spaces per level:
+  if content is unchanged
+    return cached result
+  write new content
+  return fresh result
+
+Control flow (mostly calls to other functions, in order): a call tree of the callees, \
+each call's own calls indented under it:
+  createSession
+    persistPrompt
+    launchAgent
+  navigateToSession
+
+UI (renders components or markup): a component tree, with the hooks and state that \
+matter under their component, and a component's module in parentheses when it comes \
+from elsewhere:
+  <SessionToolbar>
+    useSessionEvents()
+    <RunSkillButton> (packages/ui)
+
+A test: the setup, the action under test, then what it asserts.
+
+If uncertain, pick the option with the shortest output / explanation. You do not need to be 1:1 \
+with the underlying code in any of this pseudocode. You can use notional function names, etc. \
+as long as it helps the reader get a quick understanding of what the underlying code is doing.
+
+Pseudocode is best read when it's short and sweet - you are not trying to write an algorithms textbook, \
+just a quick summary that the user can expand to the underlying code. Strive to compress the code.
+
+When a fold lists a doc, also set "summary" to one sentence copied verbatim from that \
+doc; otherwise leave it empty. Answer with a JSON object whose "summaries" array holds \
+one {"id", "summary", "pseudocode"} object per fold."""
 
 [options.tests]
 type = "boolean"

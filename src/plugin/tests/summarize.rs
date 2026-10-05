@@ -454,10 +454,6 @@ fn the_system_prompt_is_the_configured_one() {
     let defaults = builtin::manifest("summarize").unwrap().defaults();
     let prompt = defaults["system_prompt"].as_str().unwrap();
     assert_eq!(system, prompt);
-    assert!(prompt.starts_with(
-        "For each listed fold, rewrite that function body as short pseudocode. Keep the names."
-    ));
-    assert!(!prompt.contains('\n'));
 }
 
 #[test]

@@ -121,43 +121,49 @@ impl Context {
         Ok(())
     }
 
-    /// Whether a region hides in its neighbours' row. A fold hides when it
-    /// is an item no change lies within `lines` of. A leaf hides when none of
-    /// its lines is kept. The root and a changed scope's header never hide.
+    /// Whether a region hides in its neighbours' row: a leaf with no kept
+    /// line, or an item no change lies within `lines` of, on either side.
     fn hidden(&self, cursor: &Cursor, id: u32) -> Result<bool, String> {
-        let data = cursor.get(id)?.data;
-        if data.parent.is_none() || in_header(cursor, id)? {
-            return Ok(false);
-        }
-        if matches!(data.kind, Kind::Leaf(_)) {
+        if matches!(cursor.get(id)?.data.kind, Kind::Leaf(_)) {
             return Ok(self.kept(cursor, id)?.is_empty());
         }
-        Ok(self.item(cursor, id)? && !self.near_change(cursor, id)?)
-    }
-
-    /// Whether a fold stays shut as one item: it is unchanged, is not the
-    /// body a changed scope opens with, and reaches the other side, so its
-    /// twin folds with it and rows stay aligned.
-    fn item(&self, cursor: &Cursor, id: u32) -> Result<bool, String> {
-        let RegionView { side, data, .. } = cursor.get(id)?;
-        Ok(data.parent.is_some()
-            && !in_header(cursor, id)?
-            && !changed(cursor, id)?
-            && !opens_with_scope(cursor, id)?
-            && paired(cursor, id, side)?)
-    }
-
-    /// Whether a changed leaf lies within `lines` of this fold on either
-    /// side.
-    fn near_change(&self, cursor: &Cursor, id: u32) -> Result<bool, String> {
+        if !self.item(cursor, id)? {
+            return Ok(false);
+        }
         for region in cursor.linked_regions(id)? {
             let RegionView { side, data, .. } = cursor.get(region)?;
             let start = data.range.start.line.saturating_sub(self.options.lines);
             let end = data.range.end.line + self.options.lines;
             for leaf in cursor.leaves(side, start, end) {
                 if changed(cursor, leaf)? {
-                    return Ok(true);
+                    return Ok(false);
                 }
+            }
+        }
+        Ok(true)
+    }
+
+    /// Whether a fold stays shut as one item. It is unchanged, and it is not
+    /// the body of a changed scope: that body opens with its scope, so a
+    /// changed signature shows the start of the body. It also reaches the
+    /// other side, so its twin folds with it and rows stay aligned.
+    fn item(&self, cursor: &Cursor, id: u32) -> Result<bool, String> {
+        let RegionView { side, data, .. } = cursor.get(id)?;
+        let Some(parent) = data.parent else {
+            return Ok(false);
+        };
+        if in_header(cursor, id)? || changed(cursor, id)? {
+            return Ok(false);
+        }
+        if tagged(&data, "context:body")
+            && tagged(&cursor.get(parent)?.data, "context:scope")
+            && changed(cursor, parent)?
+        {
+            return Ok(false);
+        }
+        for region in cursor.linked_regions(id)? {
+            if cursor.get(region)?.side != side {
+                return Ok(true);
             }
         }
         Ok(false)
@@ -219,7 +225,31 @@ fn outline(cursor: &Cursor, id: u32) -> Result<(), String> {
         && !tagged(&data, "context:comment")
         && cursor.display(id)?.collapsed == 0
     {
-        fold_once(cursor, id, &data)?;
+        // A scope's body is its `context:body` child, else its last fold child.
+        let mut body = None;
+        if tagged(&data, "context:scope") {
+            for child in cursor.get(id)?.children {
+                let data = cursor.get(child)?.data;
+                if tagged(&data, "context:body") {
+                    body = Some(child);
+                    break;
+                }
+                if matches!(data.kind, Kind::Fold) {
+                    body = Some(child);
+                }
+            }
+        }
+        match body {
+            Some(body) => collapse(cursor, body, |region| {
+                let range = cursor.get(region)?.data.range;
+                Ok(format!("{} lines", range.end.line - range.start.line))
+            })?,
+            None => collapse(cursor, id, |region| {
+                let text = cursor.text(region)?;
+                let head = text.lines().next().unwrap_or_default().trim();
+                Ok(format!("{head} … {} lines", text.lines().count()))
+            })?,
+        }
     }
     for child in cursor.get(id)?.children {
         if matches!(cursor.get(child)?.data.kind, Kind::Fold) {
@@ -227,59 +257,6 @@ fn outline(cursor: &Cursor, id: u32) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-/// Fold one level of an outline: a scope's body, else the whole fold.
-fn fold_once(cursor: &Cursor, id: u32, data: &Region) -> Result<(), String> {
-    if tagged(data, "context:scope") {
-        // The body: the `context:body` child, else the last fold child.
-        let mut body = None;
-        for child in cursor.get(id)?.children {
-            let data = cursor.get(child)?.data;
-            if tagged(&data, "context:body") {
-                body = Some(child);
-                break;
-            }
-            if matches!(data.kind, Kind::Fold) {
-                body = Some(child);
-            }
-        }
-        if let Some(body) = body {
-            return collapse(cursor, body, |region| {
-                let range = cursor.get(region)?.data.range;
-                Ok(format!("{} lines", range.end.line - range.start.line))
-            });
-        }
-    }
-    collapse(cursor, id, |region| {
-        let text = cursor.text(region)?;
-        let head = text.lines().next().unwrap_or_default().trim();
-        Ok(format!("{head} … {} lines", text.lines().count()))
-    })
-}
-
-/// Whether a fold's state reaches the other side. Only such a fold may fold
-/// as a unit: its twin folds with it, so rows stay aligned.
-fn paired(cursor: &Cursor, id: u32, side: Side) -> Result<bool, String> {
-    for region in cursor.linked_regions(id)? {
-        if cursor.get(region)?.side != side {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-/// Whether a fold is the body of a changed scope, which opens with it even
-/// when the body is unchanged, so a changed signature shows the start of the
-/// body.
-fn opens_with_scope(cursor: &Cursor, id: u32) -> Result<bool, String> {
-    let data = cursor.get(id)?.data;
-    let Some(parent) = data.parent else {
-        return Ok(false);
-    };
-    Ok(tagged(&data, "context:body")
-        && tagged(&cursor.get(parent)?.data, "context:scope")
-        && changed(cursor, parent)?)
 }
 
 /// Whether a region sits above the `context:body` of a changed scope: its

@@ -1,7 +1,7 @@
 {
   "name": "@dev.fast/diffr",
   "version": "0.1.10",
-  "description": "diffr's NDJSON wire contract, validators, and release binary fetcher",
+  "description": "diffr's NDJSON wire contract, validators, and the diffr binary for this platform",
   "repository": "https://github.com/devdotfast/diffr",
   "license": "MIT",
   "type": "module",
@@ -14,23 +14,17 @@
     "./package.json": "./package.json",
     "./src/*": "./src/*"
   },
-  "bin": {
-    "diffr-fetch": "bin/fetch.mjs"
-  },
   "files": [
     "dist",
     "src",
     "!src/*.test.ts",
     "!src/test-binary.ts",
-    "bin",
-    "pins.json",
     "README.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "pin": "node scripts/pin.mjs",
     "prepack": "npm run build"
   },
   "peerDependencies": {

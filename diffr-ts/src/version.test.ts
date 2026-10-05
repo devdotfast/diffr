@@ -12,13 +12,8 @@ test("STRUCTURAL_DIFF_WIRE_VERSION matches crates/diffr-core/src/protocol/mod.rs
   expect(Number(match![1])).toBe(STRUCTURAL_DIFF_WIRE_VERSION);
 });
 
-test("release pins match the package version and cover all supported targets", () => {
-  const root = join(repositoryRoot, "diffr-ts");
-  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-  const pins = JSON.parse(readFileSync(join(root, "pins.json"), "utf8"));
-  expect(pins.version).toBe(pkg.version);
-  expect(Object.keys(pins.sha256).sort()).toEqual([
-    "aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu",
-  ]);
-  for (const hash of Object.values(pins.sha256)) expect(hash).toMatch(/^[a-f0-9]{64}$/);
+test("package version matches the Cargo version", () => {
+  const pkg = JSON.parse(readFileSync(join(repositoryRoot, "diffr-ts/package.json"), "utf8"));
+  const cargo = readFileSync(join(repositoryRoot, "Cargo.toml"), "utf8");
+  expect(/^version = "([^"]+)"/m.exec(cargo)?.[1]).toBe(pkg.version);
 });

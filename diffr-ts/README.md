@@ -1,20 +1,17 @@
 # @dev.fast/diffr
 
-TypeScript types, zod validators, and a binary fetcher for diffr's NDJSON protocol.
-The package version matches the diffr release.
+TypeScript types and zod validators for diffr's NDJSON protocol, plus the diffr
+executable. The package version matches the diffr release.
 
 ```ts
 import { decodeStructuralDiffEvent } from "@dev.fast/diffr";
 const event = decodeStructuralDiffEvent(line);
 ```
 
-```sh
-npx --package @dev.fast/diffr@0.1.6 diffr-fetch --into ./bin --required
-```
-
-Supports macOS arm64, macOS x64, Linux arm64, Linux x64, and Windows x64 (`diffr.exe`). `--check` verifies an existing install without
-network access. Downloads warn on network failure unless `--required`; invalid
-hashes or archives always fail.
+`diffrBinaryPath()` returns the executable from the `@dev.fast/diffr-<platform>-<arch>`
+optional dependency npm installed for this machine, or `undefined` when there is none
+(musl Linux, Windows arm64, or `--omit=optional`). Platforms: macOS arm64 and x64,
+glibc Linux arm64 and x64, Windows x64.
 
 ## Wire changes
 
@@ -29,13 +26,5 @@ Keep these files in sync:
 
 ## Release
 
-After tagging the matching Rust release and building with `cargo build --locked`,
-run from `diffr-ts`. New pins select the CLI-only release archive;
-older pins continue to use the combined archive:
-
-```sh
-bun install --frozen-lockfile
-npm run pin
-bun run typecheck && bun test
-npm publish --access public
-```
+Bump `diffr-ts/package.json` with `Cargo.toml`. The release workflow publishes the
+platform packages and this package from the tag, using npm trusted publishing.

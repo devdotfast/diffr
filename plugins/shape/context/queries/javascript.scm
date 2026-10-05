@@ -5,9 +5,13 @@
 ; and its last is the line that closes it. The body fold the shared query
 ; gives the construct covers only the body, so it nests inside the scope and
 ; starts a line later.
-((function_declaration) @fold
+; An exported declaration is matched on its export, below, so the scope
+; starts on the line with `export`, not the line after it.
+(program
+  [(function_declaration) (generator_function_declaration) (class_declaration)] @fold
   (#set! tag "context:scope"))
-((generator_function_declaration) @fold
+(statement_block
+  [(function_declaration) (generator_function_declaration) (class_declaration)] @fold
   (#set! tag "context:scope"))
 ((method_definition) @fold
   (#set! tag "context:scope"))
@@ -28,8 +32,6 @@
   (#set! tag "context:scope"))
 ((expression_statement
   (call_expression arguments: (arguments (arrow_function)))) @fold
-  (#set! tag "context:scope"))
-((class_declaration) @fold
   (#set! tag "context:scope"))
 ((for_statement) @fold
   (#set! tag "context:scope"))

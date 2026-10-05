@@ -528,46 +528,44 @@ fn find<'a>(regions: &'a [Region], test: &dyn Fn(&Region) -> bool) -> Option<&'a
 const STORE: &str = "impl Store {\n    fn limit(&self) -> u32 {\n        10\n    }\n\n    fn load(&self) {\n        self.open();\n        self.read();\n        self.close();\n    }\n\n    fn save(&self) {\n        self.write();\n        self.flush();\n    }\n}\n";
 
 #[test]
-fn an_unchanged_fold_hides_whole_with_its_neighbours_in_one_row() {
+fn an_unchanged_fold_near_a_change_is_an_outline_and_the_rest_one_row() {
     let after = STORE.replace("        10", "        20");
     let sides = shaped("a.rs", STORE, &after, 3);
     for source in [lhs(&sides), rhs(&sides)] {
-        // `fn load` starts inside the padding, but it is unchanged: it hides
-        // as a unit, with the blank line and `fn save`, behind one row.
+        // `fn load` starts within the padding, but it is unchanged, so it is
+        // not opened: its signature and closer show and its body folds. The
+        // blank line and `fn save` fold behind one row.
         assert_eq!(
             collapsed_rows(source.root.children()),
-            [((5, 15), "10 unchanged lines".to_owned())]
+            [
+                ((6, 9), "3 lines".to_owned()),
+                ((10, 15), "5 unchanged lines".to_owned())
+            ]
         );
         assert_eq!(
             open_leaf_lines(source.root.children()),
-            BTreeSet::from([0, 1, 2, 3, 4, 15])
+            BTreeSet::from([0, 1, 2, 3, 4, 5, 9, 15])
         );
-        // Opening the row reads as an outline: each function keeps its
-        // signature and closer, with its body closed.
-        let load = find(source.root.children(), &|r| {
-            is_fold(r) && r.range.start.line == 5 && r.range.end.line == 10
-        })
-        .unwrap();
-        assert!(!load.visibility.collapsed);
+        // Opening the row shows `fn save` as an outline too.
         let body = find(source.root.children(), &|r| {
-            is_fold(r) && r.range.start.line == 6 && r.range.end.line == 9
+            is_fold(r) && r.range.start.line == 12 && r.range.end.line == 14
         })
         .unwrap();
         assert!(body.visibility.collapsed);
-        assert_eq!(body.visibility.label, "3 lines");
+        assert_eq!(body.visibility.label, "2 lines");
     }
-    let (lhs_gap, rhs_gap) = (
+    let (lhs_row, rhs_row) = (
         find(lhs(&sides).root.children(), &|r| {
-            r.visibility.label == "10 unchanged lines"
+            r.visibility.label == "5 unchanged lines"
         })
         .unwrap(),
         find(rhs(&sides).root.children(), &|r| {
-            r.visibility.label == "10 unchanged lines"
+            r.visibility.label == "5 unchanged lines"
         })
         .unwrap(),
     );
     assert_eq!(
-        lhs_gap.fold_state_id, rhs_gap.fold_state_id,
+        lhs_row.fold_state_id, rhs_row.fold_state_id,
         "one toggle for both sides"
     );
 }
@@ -580,10 +578,14 @@ fn a_summary_inside_a_row_shows_when_the_row_opens() {
     run("test-bodies", json!({ "min_lines": 3 }), &file, &mut sides);
     run("context", json!({ "lines": 3 }), &file, &mut sides);
     let regions = rhs(&sides).root.children();
-    // The whole stretch, test module included, is one row.
+    // `fn load` is near the change: an outline. The rest, test module
+    // included, is one row.
     assert_eq!(
         collapsed_rows(regions),
-        [((5, 23), "18 unchanged lines".to_owned())]
+        [
+            ((6, 9), "3 lines".to_owned()),
+            ((10, 23), "13 unchanged lines".to_owned())
+        ]
     );
     // Inside it, `mod tests` stays open so the test module's own row shows.
     let tests = find(regions, &|r| has_tag(r, "test-bodies:module")).unwrap();

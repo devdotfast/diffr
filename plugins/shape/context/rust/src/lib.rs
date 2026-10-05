@@ -1,6 +1,6 @@
 //! Keep changes and the context around them; fold every other stretch into one row.
 //!
-//! One walk does it. Entering an unchanged fold hides it. Entering a leaf
+//! One walk does it. Entering an unchanged fold folds it to an outline. Entering a leaf
 //! cuts it where kept lines start and stop. Leaving a fold folds each run
 //! of hidden children into one row. The host's root fold makes the top
 //! level one more fold.
@@ -39,7 +39,9 @@ impl GuestPlugin for Context {
             return Ok(false);
         }
         match (phase, data.kind) {
-            (Visit::Pre, Kind::Fold) if self.hidden(cursor, id)? => {
+            // Only changed folds open. An unchanged fold is an outline: near a
+            // change it stays on screen, otherwise it joins its neighbours' row.
+            (Visit::Pre, Kind::Fold) if self.item(cursor, id)? => {
                 outline(cursor, id)?;
                 Ok(false)
             }
@@ -119,24 +121,43 @@ impl Context {
         Ok(())
     }
 
-    /// Whether a region hides. A fold hides when its fold state is unchanged
-    /// and reaches the other side, so rows stay aligned. A leaf hides when
-    /// none of its lines is kept. The root and a changed scope's header
-    /// never hide.
+    /// Whether a region hides in its neighbours' row. A fold hides when it
+    /// is an item no change lies within `lines` of. A leaf hides when none of
+    /// its lines is kept. The root and a changed scope's header never hide.
     fn hidden(&self, cursor: &Cursor, id: u32) -> Result<bool, String> {
-        let RegionView { side, data, .. } = cursor.get(id)?;
+        let data = cursor.get(id)?.data;
         if data.parent.is_none() || in_header(cursor, id)? {
             return Ok(false);
         }
         if matches!(data.kind, Kind::Leaf(_)) {
             return Ok(self.kept(cursor, id)?.is_empty());
         }
-        if changed(cursor, id)? {
-            return Ok(false);
-        }
+        Ok(self.item(cursor, id)? && !self.near_change(cursor, id)?)
+    }
+
+    /// Whether a fold stays shut as one item: it is unchanged, is not the
+    /// body a changed scope opens with, and reaches the other side, so its
+    /// twin folds with it and rows stay aligned.
+    fn item(&self, cursor: &Cursor, id: u32) -> Result<bool, String> {
+        let RegionView { side, data, .. } = cursor.get(id)?;
+        Ok(data.parent.is_some()
+            && !in_header(cursor, id)?
+            && !changed(cursor, id)?
+            && !opens_with_scope(cursor, id)?
+            && paired(cursor, id, side)?)
+    }
+
+    /// Whether a changed leaf lies within `lines` of this fold on either
+    /// side.
+    fn near_change(&self, cursor: &Cursor, id: u32) -> Result<bool, String> {
         for region in cursor.linked_regions(id)? {
-            if cursor.get(region)?.side != side {
-                return Ok(true);
+            let RegionView { side, data, .. } = cursor.get(region)?;
+            let start = data.range.start.line.saturating_sub(self.options.lines);
+            let end = data.range.end.line + self.options.lines;
+            for leaf in cursor.leaves(side, start, end) {
+                if changed(cursor, leaf)? {
+                    return Ok(true);
+                }
             }
         }
         Ok(false)
@@ -187,16 +208,30 @@ impl Context {
     }
 }
 
-/// How a hidden fold looks once its row opens: an outline. A comment stays
-/// open: it names the code below it. A scope keeps its header and closer
-/// and closes its body. Any other fold closes whole. A fold holding a
-/// region another plugin collapsed stays open, so that summary shows.
+/// How an unchanged fold looks: an outline. A scope keeps its signature and
+/// closer and folds its body; any other fold folds whole. Every fold inside
+/// is folded the same way, so opening one shows the next level. A comment
+/// stays open: it names the code below it. A fold holding a region another
+/// plugin collapsed stays open, so that summary shows.
 fn outline(cursor: &Cursor, id: u32) -> Result<(), String> {
     let data = cursor.get(id)?.data;
-    if tagged(&data, "context:comment") || cursor.display(id)?.collapsed > 0 {
-        return Ok(());
+    if !data.visibility.collapsed
+        && !tagged(&data, "context:comment")
+        && cursor.display(id)?.collapsed == 0
+    {
+        fold_once(cursor, id, &data)?;
     }
-    if tagged(&data, "context:scope") {
+    for child in cursor.get(id)?.children {
+        if matches!(cursor.get(child)?.data.kind, Kind::Fold) {
+            outline(cursor, child)?;
+        }
+    }
+    Ok(())
+}
+
+/// Fold one level of an outline: a scope's body, else the whole fold.
+fn fold_once(cursor: &Cursor, id: u32, data: &Region) -> Result<(), String> {
+    if tagged(data, "context:scope") {
         // The body: the `context:body` child, else the last fold child.
         let mut body = None;
         for child in cursor.get(id)?.children {
@@ -221,6 +256,30 @@ fn outline(cursor: &Cursor, id: u32) -> Result<(), String> {
         let head = text.lines().next().unwrap_or_default().trim();
         Ok(format!("{head} … {} lines", text.lines().count()))
     })
+}
+
+/// Whether a fold's state reaches the other side. Only such a fold may fold
+/// as a unit: its twin folds with it, so rows stay aligned.
+fn paired(cursor: &Cursor, id: u32, side: Side) -> Result<bool, String> {
+    for region in cursor.linked_regions(id)? {
+        if cursor.get(region)?.side != side {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether a fold is the body of a changed scope, which opens with it even
+/// when the body is unchanged, so a changed signature shows the start of the
+/// body.
+fn opens_with_scope(cursor: &Cursor, id: u32) -> Result<bool, String> {
+    let data = cursor.get(id)?.data;
+    let Some(parent) = data.parent else {
+        return Ok(false);
+    };
+    Ok(tagged(&data, "context:body")
+        && tagged(&cursor.get(parent)?.data, "context:scope")
+        && changed(cursor, parent)?)
 }
 
 /// Whether a region sits above the `context:body` of a changed scope: its

@@ -7,7 +7,7 @@ use crate::options::DiffOptions;
 use crate::plugin::{Classifier, MutationFailed, Pipeline};
 use crate::present::present;
 use crate::protocol::project::{self, Inputs};
-use crate::protocol::{Diff, Event, FileChange, Outcome, Problem, VERSION};
+use crate::protocol::{self, Diff, Event, FileChange, Outcome, Problem, VERSION};
 use crate::summary::{DiffResult, FallbackCause, FileContent, FileFormat};
 use crate::tags;
 use std::io::{BufWriter, Write};
@@ -102,8 +102,7 @@ pub(crate) fn stream(
                 ended.failed |= *failed > 0;
                 ended.aborted = aborted.is_some();
             }
-            serde_json::to_writer(&mut output, &event)?;
-            output.write_all(b"\n")?;
+            protocol::write_record(&mut output, &event)?;
             output.flush()?;
         }
         Ok(ended)

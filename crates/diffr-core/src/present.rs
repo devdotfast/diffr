@@ -2,7 +2,7 @@
 //! lines that stay visible.
 use crate::hash::DftHashSet;
 use crate::pairing::Pairing;
-use crate::protocol::{Diff, LineRange, Node, Region, Source, StructuralChanges, Visibility};
+use crate::protocol::{Diff, LineCounts, LineRange, Node, Region, Source, Visibility};
 
 /// Run the plugins on a diff and recount what stays visible. `shape` runs
 /// the plugins on a text diff's sides. A hidden file runs no plugin: its
@@ -27,27 +27,17 @@ pub async fn present(
                 }),
                 None => shape(sides).await?,
             };
-            let coverage = change_coverage(&sides);
-            stats.visible = coverage.initially_visible.counts();
-            Ok(Diff::Text {
-                sides,
-                stats,
-                structural_changes: coverage.all,
-            })
+            stats.visible = visible_changes(&sides);
+            Ok(Diff::Text { sides, stats })
         }
         Diff::Binary { sides } => Ok(Diff::Binary { sides }),
     }
 }
 
-/// Collect complete and default-visible coverage together. A paired leaf counts
-/// only lines carrying changed spans; every line of an unpaired leaf counts,
-/// including blank lines. Visibility never removes lines from `all`.
-struct ChangeCoverage {
-    all: StructuralChanges,
-    initially_visible: StructuralChanges,
-}
-
-fn change_coverage(sides: &Pairing<Source>) -> ChangeCoverage {
+/// Count the changed lines that start visible. A paired leaf counts only
+/// lines carrying changed spans; every line of an unpaired leaf counts,
+/// including blank lines.
+fn visible_changes(sides: &Pairing<Source>) -> LineCounts {
     fn alignments(regions: &[Region], out: &mut DftHashSet<u32>) {
         for region in regions {
             match &region.node {
@@ -62,61 +52,54 @@ fn change_coverage(sides: &Pairing<Source>) -> ChangeCoverage {
         regions: &[Region],
         other: &DftHashSet<u32>,
         hidden: bool,
-        all: &mut Vec<LineRange>,
         visible: &mut Vec<LineRange>,
     ) {
         for region in regions {
             let hidden = hidden || region.visibility.collapsed;
             match &region.node {
+                Node::Leaf { .. } if hidden => {}
                 Node::Leaf {
                     alignment_id,
                     changed,
                 } => {
-                    let start = all.len();
                     if other.contains(alignment_id) {
-                        all.extend(changed.iter().map(|span| [span.line, span.line + 1]));
+                        visible.extend(changed.iter().map(|span| [span.line, span.line + 1]));
                     } else {
                         let lines = region.range.lines();
-                        all.push([lines.start, lines.end]);
-                    }
-                    if !hidden {
-                        visible.extend_from_slice(&all[start..]);
+                        visible.push([lines.start, lines.end]);
                     }
                 }
-                Node::Fold { children, .. } => collect(children, other, hidden, all, visible),
+                Node::Fold { children, .. } => collect(children, other, hidden, visible),
             }
         }
     }
-    fn side(source: Option<&Source>, other: Option<&Source>) -> (Vec<LineRange>, Vec<LineRange>) {
+    fn side(source: Option<&Source>, other: Option<&Source>) -> u32 {
         let mut paired = DftHashSet::default();
         if let Some(other) = other {
             alignments(std::slice::from_ref(&other.root), &mut paired);
         }
-        let (mut all, mut visible) = (Vec::new(), Vec::new());
+        let mut visible = Vec::new();
         if let Some(source) = source {
             collect(
                 std::slice::from_ref(&source.root),
                 &paired,
                 false,
-                &mut all,
                 &mut visible,
             );
         }
-        (coalesce(all), coalesce(visible))
+        coalesce(visible)
+            .iter()
+            .map(|[start, end]| end - start)
+            .sum()
     }
     let (lhs, rhs) = match sides {
         Pairing::Both { lhs, rhs } => (Some(lhs), Some(rhs)),
         Pairing::LeftOnly { lhs } => (Some(lhs), None),
         Pairing::RightOnly { rhs } => (None, Some(rhs)),
     };
-    let (base, visible_base) = side(lhs, rhs);
-    let (head, visible_head) = side(rhs, lhs);
-    ChangeCoverage {
-        all: StructuralChanges { base, head },
-        initially_visible: StructuralChanges {
-            base: visible_base,
-            head: visible_head,
-        },
+    LineCounts {
+        added: side(rhs, lhs),
+        removed: side(lhs, rhs),
     }
 }
 
@@ -241,64 +224,14 @@ mod visible_tests {
             leaf(9, 9, (3, 4), &[], false),
             leaf(10, 8, (4, 7), &[4, 5], true),
         ]);
-        let coverage = change_coverage(&Pairing::Both { lhs, rhs });
-        assert_eq!(coverage.all.head, vec![[0, 2], [4, 15]]);
-        assert_eq!(coverage.all.base, vec![[0, 1], [4, 7]]);
-        let counts = coverage.initially_visible.counts();
+        let counts = visible_changes(&Pairing::Both { lhs, rhs });
         assert_eq!(counts.added, 2 + 2 + 3);
         assert_eq!(counts.removed, 1);
     }
 
     #[test]
-    fn changing_fold_visibility_never_changes_complete_coverage() {
-        let lhs = source(vec![leaf(1, 7, (0, 3), &[], false)]);
-        let rhs = source(vec![fold(
-            2,
-            (0, 3),
-            true,
-            vec![fold(
-                3,
-                (0, 3),
-                false,
-                vec![leaf(4, 7, (0, 3), &[2, 0, 0], false)],
-            )],
-        )]);
-        let mut sides = Pairing::Both { lhs, rhs };
-        let hidden = change_coverage(&sides);
-        assert_eq!(hidden.all.head, vec![[0, 1], [2, 3]]);
-        assert!(hidden.all.base.is_empty()); // Added tokens do not imply removed tokens.
-        assert_eq!(hidden.initially_visible.counts().added, 0);
-        if let Pairing::Both { rhs, .. } = &mut sides {
-            let Node::Fold { children, .. } = &mut rhs.root.node else {
-                unreachable!("a root is a fold");
-            };
-            children[0].visibility.collapsed = false;
-        }
-        let opened = change_coverage(&sides);
-        assert_eq!(opened.all, hidden.all);
-        assert_eq!(opened.initially_visible, opened.all);
-    }
-
-    #[test]
-    fn deleted_blank_lines_and_empty_files_have_complete_coverage() {
-        let lhs = source(vec![leaf(1, 0, (0, 2), &[], true)]);
-        let deleted = change_coverage(&Pairing::LeftOnly { lhs });
-        assert_eq!(deleted.all.base, vec![[0, 2]]);
-        assert!(deleted.all.head.is_empty());
-        assert_eq!(deleted.initially_visible.counts().removed, 0);
-        let empty = change_coverage(&Pairing::RightOnly {
-            rhs: source(vec![]),
-        });
-        assert_eq!(empty.all, StructuralChanges::default());
-    }
-
-    #[test]
-    fn a_missing_side_counts_nothing() {
-        let rhs = source(vec![leaf(0, 1, (0, 1), &[0], false)]);
-        let counts = change_coverage(&Pairing::RightOnly { rhs })
-            .initially_visible
-            .counts();
-        assert_eq!(counts.added, 1);
-        assert_eq!(counts.removed, 0);
+    fn every_line_of_a_deleted_file_counts_even_blank_ones() {
+        let lhs = source(vec![leaf(1, 0, (0, 2), &[], false)]);
+        assert_eq!(visible_changes(&Pairing::LeftOnly { lhs }).removed, 2);
     }
 }

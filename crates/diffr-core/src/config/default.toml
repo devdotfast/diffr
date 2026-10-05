@@ -3,12 +3,11 @@ version = 1
 
 [plugins]
 order = [
-    "bundled.context",
     "bundled.deleted-bodies",
     "bundled.summarize",
     "bundled.test-bodies",
     "bundled.removed-runs",
-    "bundled.group",
+    "bundled.context",
 ]
 
 [plugins.bundled.context]
@@ -18,9 +17,6 @@ lines = 3
 [plugins.bundled.deleted-bodies]
 enabled = true
 min_lines = 12
-
-[plugins.bundled.group]
-enabled = true
 
 [plugins.bundled.removed-runs]
 enabled = true

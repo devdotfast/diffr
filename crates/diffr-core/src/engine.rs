@@ -13,7 +13,7 @@ use crate::parse::folds;
 use crate::parse::guess_language::{guess, language_name, LanguageOverride};
 use crate::parse::syntax::{self, init_next_prev};
 use crate::parse::tree_sitter_parser as tsp;
-use crate::summary::{DiffResult, FallbackCause, FileContent, FileFormat};
+use crate::summary::{DiffResult, FallbackCause, FileContent, FileFormat, Highlight};
 use humansize::{format_size, FormatSizeOptions, BINARY};
 use std::{env, fmt, path::Path};
 use typed_arena::Arena;
@@ -45,7 +45,7 @@ impl fmt::Display for QueryConflict {
         let (first, second) = &self.conflict.sources;
         write!(
             f,
-            "{}:{}{}: {first} and {second} capture the same {} with different fold ranges",
+            "{}:{}{}: {first} and {second} capture the same {} with different fold ranges or indents",
             self.path,
             self.conflict.line + 1,
             match self.side {
@@ -111,10 +111,30 @@ pub fn diff_file_content(
     let language = guess(Path::new(display_path), guess_src, overrides);
     let lang_config = language.map(|lang| (lang, params.language(lang)));
 
+    // Highlights come from the same parse as the folds, so a side that
+    // parsed has them whether or not the match runs.
+    let highlights = |lhs_tree: &tree_sitter::Tree, rhs_tree: &tree_sitter::Tree, parser| {
+        if diff_options.syntax {
+            (
+                tsp::highlight_captures(lhs_tree, lhs_src, parser),
+                tsp::highlight_captures(rhs_tree, rhs_src, parser),
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        }
+    };
+
     if lhs_src == rhs_src {
         let file_format = match language {
             Some(language) => FileFormat::SupportedLanguage(language),
             None => FileFormat::PlainText,
+        };
+        let (lhs_highlights, rhs_highlights) = match lang_config {
+            Some((_, lang_config)) if diff_options.syntax => {
+                let tree = tsp::to_tree(lhs_src, lang_config.parser);
+                highlights(&tree, &tree, lang_config.parser)
+            }
+            _ => (Vec::new(), Vec::new()),
         };
 
         // If the two files are byte-for-byte identical, return early
@@ -127,10 +147,14 @@ pub fn diff_file_content(
             rhs_positions: vec![],
             lhs_folds: vec![],
             rhs_folds: vec![],
+            lhs_highlights,
+            rhs_highlights,
         });
     }
 
     let mut lhs_folds = Vec::new();
+    let mut lhs_highlights: Vec<Highlight> = Vec::new();
+    let mut rhs_highlights: Vec<Highlight> = Vec::new();
     let mut rhs_folds = Vec::new();
     let (file_format, lhs_positions, rhs_positions) = match lang_config {
         _ if diff_options.by_line.is_some() => {
@@ -151,6 +175,8 @@ pub fn diff_file_content(
             let arena = Arena::new();
             match tsp::to_tree_with_limit(diff_options, lang_config.parser, lhs_src, rhs_src) {
                 Ok((lhs_tree, rhs_tree)) => {
+                    (lhs_highlights, rhs_highlights) =
+                        highlights(&lhs_tree, &rhs_tree, lang_config.parser);
                     match tsp::to_syntax_with_limit(
                         lhs_src,
                         rhs_src,
@@ -348,5 +374,7 @@ pub fn diff_file_content(
         rhs_positions,
         lhs_folds,
         rhs_folds,
+        lhs_highlights,
+        rhs_highlights,
     })
 }

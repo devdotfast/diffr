@@ -327,7 +327,11 @@ fn visibility_of<'a>(records: &'a [Value], path: &str) -> Option<&'a Value> {
     records
         .iter()
         .find(|record| record["type"] == "file" && path_of(&record["file"]) == path)
-        .and_then(|record| record.get("visibility"))
+        .and_then(|record| {
+            let diff = &record["diff"];
+            diff["rhs"].get("root").or(diff["lhs"].get("root"))
+        })
+        .and_then(|root| root.get("visibility"))
 }
 
 /// By default the classifier hides generated, vendored and test files, and

@@ -3,7 +3,6 @@
 //! components through a [`Pipeline`].
 mod context;
 mod deleted_bodies;
-mod group;
 mod removed_runs;
 mod summarize;
 mod test_bodies;
@@ -16,12 +15,19 @@ use crate::plugin::cursor::Cursor;
 use crate::protocol::{self, project, Diff, FileChange, FileRef, FileStatus, Node, Region, Source};
 use serde_json::json;
 use std::num::NonZeroUsize;
+
+/// A test side's root. Its id stays clear of the regions' ids and differs
+/// between sides, which never share region ids.
+pub(crate) fn test_root(regions: Vec<Region>) -> Region {
+    let id = 1000 + regions.iter().map(|region| region.id).min().unwrap_or(0);
+    Region::root(id, regions)
+}
 use std::path::Path;
 
 pub(crate) fn walk(regions: &[Region], visit: &mut impl FnMut(&Region)) {
     for region in regions {
         visit(region);
-        if let Node::Fold { children } = &region.node {
+        if let Node::Fold { children, .. } = &region.node {
             walk(children, visit);
         }
     }
@@ -30,14 +36,10 @@ pub(crate) fn walk(regions: &[Region], visit: &mut impl FnMut(&Region)) {
 pub(crate) fn walk_mut(regions: &mut [Region], visit: &mut impl FnMut(&mut Region)) {
     for region in regions {
         visit(region);
-        if let Node::Fold { children } = &mut region.node {
+        if let Node::Fold { children, .. } = &mut region.node {
             walk_mut(children, visit);
         }
     }
-}
-
-pub(crate) fn line_count(region: &Region) -> usize {
-    region.range.lines().len()
 }
 
 pub(crate) fn is_fold(region: &Region) -> bool {
@@ -98,7 +100,6 @@ pub(crate) fn project_compiled(
         project::Inputs {
             file: &file.file,
             sizes: (before.len() as u64, after.len() as u64),
-            syntax: (Vec::new(), Vec::new()),
         },
     );
     let Diff::Text { sides, .. } = diff else {
@@ -175,7 +176,7 @@ fn documented(path: &str, after: &str) -> Vec<(u32, Option<(u32, u32)>)> {
     let source = rhs(&sides);
     let cursor = Cursor::new(file.clone(), sides.clone()).expect("a region");
     let mut bodies = Vec::new();
-    walk(&source.regions, &mut |region| {
+    walk(source.root.children(), &mut |region| {
         if is_fold(region) && has_tag(region, "deleted-bodies:function") {
             let docstring = cursor
                 .related(region.id, "documentation")
@@ -183,7 +184,7 @@ fn documented(path: &str, after: &str) -> Vec<(u32, Option<(u32, u32)>)> {
                 .first()
                 .map(|id| {
                     let mut lines = None;
-                    walk(&source.regions, &mut |docstring| {
+                    walk(source.root.children(), &mut |docstring| {
                         if docstring.id == *id {
                             lines = Some(docstring.range.lines());
                         }
@@ -270,13 +271,7 @@ fn the_default_pipeline_makes_every_plugin_that_is_on() {
         .collect();
     assert_eq!(
         made,
-        [
-            "context",
-            "deleted-bodies",
-            "test-bodies",
-            "removed-runs",
-            "group"
-        ],
+        ["deleted-bodies", "test-bodies", "removed-runs", "context"],
         "the summarizer is off until turned on"
     );
 }

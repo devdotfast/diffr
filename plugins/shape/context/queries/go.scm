@@ -15,3 +15,18 @@
   (#set! tag "context:scope"))
 ((return_statement) @fold
   (#set! tag "context:scope"))
+
+; Blocks with a closing line of their own: a change inside keeps it.
+((if_statement) @fold
+  (#set! tag "context:scope"))
+((type_switch_statement) @fold
+  (#set! tag "context:scope"))
+((select_statement) @fold
+  (#set! tag "context:scope"))
+
+; A comment run reads as the header of the code below it, so it stays open
+; when a row of unchanged code opens.
+((comment)+ @fold
+  .
+  (_)
+  (#set! tag "context:comment"))

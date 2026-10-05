@@ -56,8 +56,10 @@ impl GuestPlugin for RemovedRuns {
         if len < self.options.min_lines.max(3) || !cursor.is_one_sided(data.id)? {
             return Ok(false);
         }
-        // The nearest function takes precedence over the nearest enclosing fold.
-        let ancestors = cursor.ancestors(data.id)?;
+        // The nearest function takes precedence over the nearest enclosing
+        // fold. The root, the whole file, encloses everything and is no owner.
+        let mut ancestors = cursor.ancestors(data.id)?;
+        ancestors.retain(|region| region.parent.is_some());
         let enclosing = ancestors
             .iter()
             .find(|region| region.tags.iter().any(|tag| tag == FUNCTION))

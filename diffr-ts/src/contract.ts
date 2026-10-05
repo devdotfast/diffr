@@ -37,7 +37,6 @@ export type StructuralDiffEvent =
   | ({
       type: "file";
       file: StructuralPairing<StructuralFileRef>;
-      visibility?: StructuralVisibility;
     } & StructuralOutcome)
   | {
       type: "complete";
@@ -60,7 +59,6 @@ export const StructuralDiffEventSchema: z.ZodType<StructuralDiffEvent> = z.lazy(
         .object({
           type: z.literal("file"),
           file: structuralPairingSchema(StructuralFileRefSchema),
-          visibility: StructuralVisibilitySchema.optional(),
         })
         .and(StructuralOutcomeSchema),
       z.object({
@@ -217,14 +215,15 @@ export const StructuralDiffSchema: z.ZodType<StructuralDiff> = z.lazy(() =>
 export type StructuralSource = {
   text: string;
   syntax?: StructuralSyntaxSpan[];
-  regions?: StructuralRegion[];
+  /** The whole file, as one fold. Both sides' roots share a fold_state_id; its visibility is the file's. */
+  root: StructuralRegion;
 };
 
 export const StructuralSourceSchema: z.ZodType<StructuralSource> = z.lazy(() =>
   z.object({
     text: z.string(),
     syntax: z.array(StructuralSyntaxSpanSchema).optional(),
-    regions: z.array(StructuralRegionSchema).optional(),
+    root: StructuralRegionSchema,
   }),
 );
 
@@ -274,7 +273,14 @@ export const StructuralRegionSchema: z.ZodType<StructuralRegion> = z.lazy(() =>
 
 export type StructuralNode =
   | { kind: "leaf"; alignment_id: number; changed?: StructuralSpan[] }
-  | { kind: "fold"; children: StructuralRegion[] };
+  | {
+      kind: "fold";
+      children: StructuralRegion[];
+      /** Where the fold's content starts. Collapsed rows sit at this column. */
+      indent: StructuralPos;
+      /** From the opener to the closer, before rounding to lines. Absent without an opener. */
+      syntax?: StructuralSourceRange;
+    };
 
 export const StructuralNodeSchema: z.ZodType<StructuralNode> = z.lazy(() =>
   z.union([
@@ -286,6 +292,8 @@ export const StructuralNodeSchema: z.ZodType<StructuralNode> = z.lazy(() =>
     z.object({
       kind: z.literal("fold"),
       children: z.array(StructuralRegionSchema),
+      indent: StructuralPosSchema,
+      syntax: StructuralSourceRangeSchema.optional(),
     }),
   ]),
 );

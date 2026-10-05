@@ -229,7 +229,7 @@ fn conflict_or_die<T>(result: Result<T, Conflict>) -> T {
         Ok(value) => value,
         Err(conflict) => {
             eprintln!(
-                "line {}: {} and {} capture the same {} with different fold ranges",
+                "line {}: {} and {} capture the same {} with different fold ranges or indents",
                 conflict.line + 1,
                 conflict.sources.0,
                 conflict.sources.1,

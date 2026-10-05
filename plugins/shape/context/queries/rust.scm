@@ -26,3 +26,39 @@
 ((function_item body: (block (_expression) @fold .))
   (#not-match? @fold "^(\\{|\\[|b?r?#*\")")
   (#set! tag "context:scope"))
+
+; Function items can begin at doc comments. Keep the full declaration header.
+((function_item body: (block "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold)
+  (#set! tag "context:body"))
+
+; A binding is a scope when its value is a block of its own: an array or a
+; struct, borrowed or not, a closure or a call taking one. A change inside it keeps the
+; binding's first line and the line that closes it.
+([
+  (const_item value: [
+    (array_expression) (struct_expression) (closure_expression) (macro_invocation)
+    (reference_expression value: [(array_expression) (struct_expression)])
+    (call_expression arguments: (arguments (closure_expression)))])
+  (static_item value: [
+    (array_expression) (struct_expression) (closure_expression) (macro_invocation)
+    (reference_expression value: [(array_expression) (struct_expression)])
+    (call_expression arguments: (arguments (closure_expression)))])
+  (let_declaration value: [
+    (array_expression) (struct_expression) (closure_expression) (macro_invocation)
+    (reference_expression value: [(array_expression) (struct_expression)])
+    (call_expression arguments: (arguments (closure_expression)))])
+] @fold
+  (#set! tag "context:scope"))
+
+; Blocks with a closing line of their own: a change inside keeps it.
+((if_expression) @fold
+  (#set! tag "context:scope"))
+((while_expression) @fold
+  (#set! tag "context:scope"))
+
+; A comment run reads as the header of the code below it, so it stays open
+; when a row of unchanged code opens.
+([(line_comment) (block_comment)]+ @fold
+  .
+  (_)
+  (#set! tag "context:comment"))

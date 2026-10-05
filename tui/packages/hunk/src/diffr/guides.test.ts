@@ -1,0 +1,45 @@
+import {expect, test} from "bun:test";
+import {createGuideDiffFile, createTestDiffFile, leaf, line, root} from "./fixture";
+import {dark, rowsForFile} from "./rows";
+import {byteColumn, defaultCollapsed} from "./regions";
+const sourceText = (cell: {spans: {text: string}[]} | undefined) => cell?.spans.map(s => s.text).join("");
+test("Paper: enclosing guides cross blank lines and indented gap bands; syntax folds join opener and closer", () => {
+  const file = createGuideDiffFile();
+  if (file.diff.type !== "text") throw new Error();
+  const rows = rowsForFile(file, 0, "split", dark, defaultCollapsed(file.diff));
+  const blank = rows.find(r => r.right?.lineNumber === 5)!.right!;
+  expect(sourceText(blank)).toBe("│   │   │");
+  expect(blank.kind).toBe("context"); // Its leaf contains a change on another line.
+  const band = rows.find(r => r.right?.fold?.id === 5)!.right!;
+  expect(sourceText(band)).toBe("│   │   │   ⋯ 2 unchanged lines");
+  expect(band.spans.filter(s => s.guide !== undefined).map(s => s.guide)).toEqual([10, 20, 30]);
+  const other = rows.find(r => r.right?.fold?.id === 40)!;
+  expect(sourceText(other.right)).toBe("│   fn other() { ⋯ 2 lines }");
+  expect(other.right?.lineNumber).toBe(10);
+  expect(rows.some(r => r.right?.lineNumber === 13)).toBe(false);
+  expect(rows.find(r => r.right?.lineNumber === 3)?.right?.fold?.id).toBe(30);
+});
+test("folding one side masks it without changing correspondence on the other side", () => {
+  const file = createGuideDiffFile();
+  if (file.diff.type !== "text") throw new Error();
+  const rightIf = file.diff.rhs!.root.children[1].children[1].children[1];
+  rightIf.fold_state_id = 303;
+  const rows = rowsForFile(file, 0, "split", dark, new Set([303]));
+  const changed = rows.find(r => r.left?.lineNumber === 4)!;
+  expect(changed.right?.kind).toBe("empty");
+  expect(sourceText(rows.find(r => r.right?.lineNumber === 3)?.right)).toContain("if event.open { ⋯ 2 lines }");
+  expect(rows.find(r => r.left?.lineNumber === 9)?.right?.lineNumber).toBe(9);
+});
+test("paired leaves tint only lines with change spans, never neighboring unchanged lines", () => {
+  const file = createTestDiffFile();
+  if (file.diff.type !== "text") throw new Error();
+  file.diff.lhs = {text: "before\nold\nafter\n", syntax: [], root: root([leaf(1, 0, 3, [line(1, 0, 3)])])};
+  file.diff.rhs = {text: "before\nnew\nafter\n", syntax: [], root: root([leaf(1, 0, 3, [line(1, 0, 3)])])};
+  const rows = rowsForFile(file, 0, "split", dark).slice(1);
+  expect(rows.map(r => r.right?.kind)).toEqual(["context", "addition", "context"]);
+  expect(rows.map(r => r.left?.kind)).toEqual(["context", "deletion", "context"]);
+});
+test("wire byte columns use the code row's tab stops and Unicode cell widths", () => {
+  expect(byteColumn("\t界 café {", 4)).toBe(6);
+  expect(byteColumn("\t界 café {", 10)).toBe(11);
+});

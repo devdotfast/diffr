@@ -26,18 +26,9 @@ export function measureRows(
   width: number,
   wrap: boolean,
   horizontalOffset: number,
+  /** The longest source on screen, in lines. Folding never resizes the line-number lane. */
+  maxLine: number,
 ): Geometry {
-  const maxLine = rows.reduce(
-    (max, r) =>
-      Math.max(
-        max,
-        r.left?.lineNumber ?? 0,
-        r.right?.lineNumber ?? 0,
-        r.cell?.oldLineNumber ?? 0,
-        r.cell?.newLineNumber ?? 0,
-      ),
-    1,
-  );
   const digits = String(maxLine).length;
   const gutter = digits + 4, unifiedGutter = digits * 2 + 5;
   const leftWidth = Math.floor((width - 1) / 2),
@@ -70,4 +61,46 @@ export function visibleRows(geometry: Geometry, top: number, height: number) {
     visibleBodyBounds: { top, height },
   });
   return geometry.rows.slice(window.startIndex, window.endIndex);
+}
+
+/** The source line a row shows on one side. */
+function sourceLine(row: ViewerRow, side: "left" | "right") {
+  return side === "right" ? row.right?.lineNumber ?? row.cell?.newLineNumber : row.left?.lineNumber ?? row.cell?.oldLineNumber;
+}
+/** The fold a row's chevron toggles. */
+export const rowFold = (row: ViewerRow) => row.cell?.fold ?? row.right?.fold ?? row.left?.fold;
+/**
+ * Where the reader is: the top row and how far into it. Rows come and go as files load and
+ * folds toggle, so the position also keeps the fold and source line it showed to land near.
+ * Null is the top of the document.
+ */
+export interface ViewPosition {
+  key: string;
+  fileIndex: number;
+  offset: number;
+  fold?: number;
+  side: "left" | "right";
+  line?: number;
+}
+export function positionAt(geometry: Geometry, top: number): ViewPosition | null {
+  const item = visibleRows(geometry, top, 1)[0];
+  if (!item) return null;
+  const row = item.row, right = sourceLine(row, "right");
+  return { key: row.key, fileIndex: row.fileIndex, offset: top - item.top, fold: rowFold(row)?.id,
+    side: right === undefined ? "left" : "right", line: right ?? sourceLine(row, "left") };
+}
+export function positionTop(geometry: Geometry, position: ViewPosition | null): number {
+  if (!position) return 0;
+  const at = (row: MeasuredRow) => row.top + Math.min(position.offset, row.height - 1);
+  const same = geometry.rows.find(r => r.row.key === position.key);
+  if (same) return at(same);
+  // The row is gone: land on the fold it showed, else the next source line it showed, else
+  // the file's header.
+  const file = geometry.rows.filter(r => r.row.fileIndex === position.fileIndex);
+  const folded = position.fold !== undefined && file.find(r =>
+    [r.row.left?.fold?.id, r.row.right?.fold?.id, r.row.cell?.fold?.id].includes(position.fold));
+  if (folded) return at(folded);
+  const line = position.line;
+  const next = line !== undefined && file.find(r => (sourceLine(r.row, position.side) ?? -1) >= line);
+  return (next || file[0]!).top;
 }

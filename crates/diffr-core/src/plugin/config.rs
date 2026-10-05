@@ -1028,7 +1028,7 @@ mod tests {
             "name = 'mine'\ntitle = 'Mine'\n[options.depth]\ntype = 'integer'\ntitle = 'Depth'\ndefault = 2\n",
         )
         .unwrap();
-        let order = "order = ['bundled.context', 'bundled.deleted-bodies', 'bundled.test-bodies', 'bundled.removed-runs', 'bundled.summarize', 'bundled.group', 'external.mine']";
+        let order = "order = ['bundled.context', 'bundled.deleted-bodies', 'bundled.test-bodies', 'bundled.removed-runs', 'bundled.summarize', 'external.mine']";
         let config = Config::from_toml_in(
             &format!("[plugins]\n{order}\n[plugins.external.mine]\npath = 'plugins/mine'\n"),
             dir.path(),
@@ -1053,8 +1053,11 @@ mod tests {
                 && renamed.ends_with("the plugin is named \"mine\", not \"other\""),
             "{renamed}"
         );
-        let missing = error("[plugins.bundled.group]\npath = 'plugins/absent'\n");
-        assert!(missing.starts_with("plugins.bundled.group: "), "{missing}");
+        let missing = error("[plugins.bundled.context]\npath = 'plugins/absent'\n");
+        assert!(
+            missing.starts_with("plugins.bundled.context: "),
+            "{missing}"
+        );
         std::fs::write(
             folder.join("plugin.toml"),
             "name = 'mine'\ntitle = 'Mine'\n[options.path]\ntype = 'string'\ntitle = 'Path'\n",

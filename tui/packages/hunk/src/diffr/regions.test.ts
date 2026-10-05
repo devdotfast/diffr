@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { createTestDiffFile, fold, leaf, line } from "./fixture";
+import { createTestDiffFile, fold, leaf, line, root } from "./fixture";
 import { collapsedFolds, defaultCollapsed, flatten, foldHeaders, foldIds, foldTint, gapIds, hiddenLines, pairedIds } from "./regions";
 import { dark, rowsForFile } from "./rows";
 import type { DiffFile, Region } from "./wire";
-import { foldBackground } from "../ui/diff/CodeRowView";
+import { foldBackground } from "./theme";
 /** Rust-style body folds: each covers its body alone, so the lines that open and close a
  * construct are leaves around it, like VS Code's rows. */
 export function createFoldedDiffFile(): DiffFile {
@@ -32,8 +32,8 @@ export function createFoldedDiffFile(): DiffFile {
     leaf(6, 7, 8),
   ];
   if (file.diff.type !== "text") throw new Error("fixture is not a text diff");
-  file.diff.lhs = { text, syntax: [], regions: regions(false) };
-  file.diff.rhs = { text, syntax: [], regions: regions(true) };
+  file.diff.lhs = { text, syntax: [], root: root(regions(false))};
+  file.diff.rhs = { text, syntax: [], root: root(regions(true))};
   file.diff.stats = { textual: { added: 1, removed: 0 }, visible: { added: 1, removed: 0 } };
   return file;
 }
@@ -59,9 +59,9 @@ test("visibility seeds collapsed ids, and context gaps are collapsed untagged re
   if (file.diff.type !== "text") throw new Error();
   const collapse = (region: Region, label: string) => { region.visibility = { collapsed: true, label }; };
   for (const side of [file.diff.lhs!, file.diff.rhs!]) {
-    const outer = side.regions[1];
+    const outer = side.root.children[1];
     // Leaf 6: paired and unchanged, cut out by the context plugin.
-    collapse(side.regions[2], "1 unchanged line");
+    collapse(side.root.children[2], "1 unchanged line");
     // Fold 12: an untagged fold wrapping unchanged lines, as context groups several siblings.
     outer.children[3].tags = [];
     collapse(outer.children[3], "2 unchanged lines");
@@ -69,7 +69,7 @@ test("visibility seeds collapsed ids, and context gaps are collapsed untagged re
     collapse(outer.children[1].children[1], "1 line");
   }
   // Fold 10: collapsed by a plugin that tagged it, so not a gap even where nothing changed.
-  file.diff.rhs!.regions[1].visibility = { collapsed: true, label: "Body" };
+  file.diff.rhs!.root.children[1].visibility = { collapsed: true, label: "Body" };
   expect([...defaultCollapsed(file.diff)].sort((a, b) => a - b)).toEqual([3, 6, 10, 12]);
   expect(gapIds(file.diff).sort((a, b) => a - b)).toEqual([6, 12]);
   // A collapsed stretch on one side only (a removed run) is not a gap either.
@@ -77,14 +77,14 @@ test("visibility seeds collapsed ids, and context gaps are collapsed untagged re
   if (removed.diff.type !== "text") throw new Error();
   const lonely = leaf(60, 7, 8);
   collapse(lonely, "1 line removed");
-  removed.diff.lhs!.regions[2] = lonely;
+  removed.diff.lhs!.root.children[2] = lonely;
   expect(gapIds(removed.diff)).toEqual([]);
 });
 test("a fold on one side leaves the other side's lines beside blank cells", () => {
   const file = createFoldedDiffFile();
   if (file.diff.type !== "text") throw new Error();
   // The right-hand closure body is a novel fold with its own leaves; the left keeps flat leaves.
-  file.diff.lhs!.regions = [leaf(1, 0, 1), leaf(7, 1, 2), leaf(2, 2, 3), leaf(3, 3, 4), leaf(4, 4, 5), leaf(5, 5, 7), leaf(6, 7, 8)];
+  file.diff.lhs!.root.children = [leaf(1, 0, 1), leaf(7, 1, 2), leaf(2, 2, 3), leaf(3, 3, 4), leaf(4, 4, 5), leaf(5, 5, 7), leaf(6, 7, 8)];
   const rows = rowsForFile(file, 0, "split", dark, new Set([11])).filter((r) => r.left);
   expect(rows.map((r) => [r.left!.lineNumber, r.right!.lineNumber])).toEqual([
     [1, 1], [2, 2], [undefined, undefined], [3, undefined], [4, undefined], [5, 5], [6, 6], [7, 7], [8, 8],
@@ -106,16 +106,16 @@ test("rows carry fold headers on both layouts and drop hidden lines", () => {
   expect(unified.map((r) => r.cell!.newLineNumber)).toEqual([1, undefined, 8]);
   expect(unified[1].cell!.fold?.id).toBe(10);
 });
-test("a multi-line label hangs under the collapsed header inside the fold tint", () => {
+test("a multi-line label uses the declared enclosing indent inside the fold tint", () => {
   const file = createFoldedDiffFile();
   if (file.diff.type !== "text") throw new Error();
   const pseudocode = "call a\ncall b\nreturn";
-  file.diff.rhs!.regions[1].children[1].visibility = { collapsed: false, label: pseudocode };
-  file.diff.lhs!.regions[1].children[1].visibility = { collapsed: false, label: pseudocode };
+  file.diff.rhs!.root.children[1].children[1].visibility = { collapsed: false, label: pseudocode };
+  file.diff.lhs!.root.children[1].children[1].visibility = { collapsed: false, label: pseudocode };
   const rows = rowsForFile(file, 0, "split", dark, new Set([11]));
   const labels = rows.filter((r) => r.right?.foldLabel);
-  expect(labels.map((r) => r.right!.spans[0].text)).toEqual(["        call a", "        call b", "        return"]);
-  expect(labels.map((r) => r.left!.spans[0].text)).toEqual(["        call a", "        call b", "        return"]);
+  expect(labels.map((r) => r.right!.spans.map(s => s.text).join(""))).toEqual(["call a", "call b", "return"]);
+  expect(labels.map((r) => r.left!.spans.map(s => s.text).join(""))).toEqual(["call a", "call b", "return"]);
   expect(rows.indexOf(labels[0])).toBe(rows.findIndex((r) => r.right?.fold?.id === 11) + 1);
   const unified = rowsForFile(file, 0, "unified", dark, new Set([11]));
   expect(unified.filter((r) => r.cell?.foldLabel)).toHaveLength(3);
@@ -123,7 +123,7 @@ test("a multi-line label hangs under the collapsed header inside the fold tint",
 test("a collapsed leaf is one fold row with the chevron, its label, and no line number", () => {
   const file = createTestDiffFile();
   if (file.diff.type !== "text") throw new Error();
-  file.diff.lhs!.regions[0].visibility = file.diff.rhs!.regions[0].visibility = { collapsed: true, label: "1 unchanged line" };
+  file.diff.lhs!.root.children[0].visibility = file.diff.rhs!.root.children[0].visibility = { collapsed: true, label: "1 unchanged line" };
   const split = rowsForFile(file, 0, "split", dark, new Set([1]));
   expect(split[1].left!.fold).toEqual({ id: 1, label: "1 unchanged line", collapsed: true, tint: "neutral" });
   expect(split[1].left!.lineNumber).toBeUndefined();
@@ -145,8 +145,8 @@ test("a fold that runs to the end of the file may end one past its last line", (
   const text = "fn a() {\n    b();\n}\n";
   // Three lines; the fold's hull ends at (3, 0), just past the last line.
   const regions: Region[] = [fold(10, [0, 0], [3, 0], [leaf(1, 0, 1), leaf(2, 1, 3)])];
-  file.diff.lhs = { text, syntax: [], regions };
-  file.diff.rhs = { text, syntax: [], regions };
+  file.diff.lhs = { text, syntax: [], root: root(regions) };
+  file.diff.rhs = { text, syntax: [], root: root(regions) };
   const { folds } = flatten(file.diff);
   expect(folds[0][0]?.lastHidden).toBe(2);
 });
@@ -165,8 +165,8 @@ test("regions sharing a fold_state_id collapse and expand as one bundle", () => 
   const docstring: Region = { ...fold(20, [0, 0], [2, 0], [leaf(1, 0, 2)], "", ["comment"], true), fold_state_id: 21 };
   const body = fold(21, [3, 0], [4, 0], [leaf(2, 3, 4)], "s = a + b\nreturn s", ["body", "function"], true);
   const regions: Region[] = [docstring, leaf(4, 2, 3), body, leaf(3, 4, 5)];
-  file.diff.lhs = { text, syntax: [], regions };
-  file.diff.rhs = { text, syntax: [], regions };
+  file.diff.lhs = { text, syntax: [], root: root(regions) };
+  file.diff.rhs = { text, syntax: [], root: root(regions) };
   const collapsed = defaultCollapsed(file.diff);
   expect([...collapsed]).toEqual([21]);
   const { folds } = flatten(file.diff);
@@ -174,7 +174,7 @@ test("regions sharing a fold_state_id collapse and expand as one bundle", () => 
   expect([...hiddenLines(folds[1], collapsed)].sort()).toEqual([0, 1, 3]);
   expect([...hiddenLines(folds[1], new Set())]).toEqual([]);
   const rows = rowsForFile(file, 0, "split", dark, collapsed).filter((r) => r.right && !r.right.foldLabel);
-  // The docstring is a one-row ⋯ fold (empty label), the signature stays visible between the two
+  // The docstring is a one-row ⋯ fold (empty label)), the signature stays visible between the two
   // rows, and both carry the same id, so either chevron toggles the pair.
   const headers = rows.filter((r) => r.right!.fold).map((r) => [r.right!.lineNumber, r.right!.fold!.id, r.right!.fold!.label, r.right!.fold!.collapsed]);
   expect(headers).toEqual([[undefined, 21, "", true], [undefined, 21, "s = a + b\nreturn s", true]]);
@@ -200,7 +200,7 @@ export function createBundledDiffFile(): DiffFile {
     ...leaf(38, 1, 2), fold_state_id: 4, tags: ["summarize:docstring"], visibility: { collapsed: true, label: "" },
   };
   const body = fold(4, [3, 0], [4, 0], [leaf(5, 3, 4)], "look up path\nreturn None", ["summarize:function"], true);
-  file.diff.rhs = { text, syntax: [], regions: [leaf(3, 0, 1), docstring, leaf(7, 2, 3), body, leaf(6, 4, 5)] };
+  file.diff.rhs = { text, syntax: [], root: root([leaf(3, 0, 1), docstring, leaf(7, 2, 3), body, leaf(6, 4, 5)])};
   file.diff.lhs = undefined;
   return file;
 }
@@ -228,15 +228,15 @@ test("a collapsed fold takes its side's change tint when one-sided and stays neu
   const rowsFor = (lhs: Region[] | undefined, rhs: Region[] | undefined) => {
     const file = createTestDiffFile();
     if (file.diff.type !== "text") throw new Error();
-    file.diff.lhs = lhs && { text, syntax: [], regions: [leaf(88, 0, 1), ...lhs, leaf(9, 2, 3)] };
-    file.diff.rhs = rhs && { text, syntax: [], regions: [leaf(88, 0, 1), ...rhs, leaf(9, 2, 3)] };
+    file.diff.lhs = lhs && { text, syntax: [], root: root([leaf(88, 0, 1), ...lhs, leaf(9, 2, 3)])};
+    file.diff.rhs = rhs && { text, syntax: [], root: root([leaf(88, 0, 1), ...rhs, leaf(9, 2, 3)])};
     return rowsForFile(file, 0, "split", dark, defaultCollapsed(file.diff));
   };
   // Inserted: a summary on the right with no counterpart. The header and every label row are green.
   const inserted = rowsFor(undefined, [body(7, "x = 1\nreturn x")]);
   const header = inserted.find((r) => r.right?.fold)!.right!;
   expect(header.fold!.tint).toBe("inserted");
-  expect(inserted.filter((r) => r.right?.foldLabel).map((r) => r.right!.foldTint)).toEqual(["inserted", "inserted"]);
+  expect(inserted.filter((r) => r.right?.foldLabel).map((r) => r.right!.band)).toEqual(["inserted", "inserted"]);
   expect(foldBackground(dark, "inserted")).toBe(dark.addition);
   // Removed: the same body only on the left.
   const removed = rowsFor([body(7, "2 lines removed")], undefined);
@@ -264,8 +264,8 @@ test("a group is one row that stands for every collapsed region under it", () =>
   const group = fold(20, [1, 0], [12, 0], [body(1, 1), leaf(2, 4, 5), body(3, 5), leaf(4, 8, 9), body(5, 9)], "3 collapsed regions · 11 lines", [], true);
   const file = createTestDiffFile();
   if (file.diff.type !== "text") throw new Error();
-  file.diff.lhs = { text, syntax: [], regions: [leaf(0, 0, 1), group] };
-  file.diff.rhs = { text: "line 0\n", syntax: [], regions: [leaf(0, 0, 1)] };
+  file.diff.lhs = { text, syntax: [], root: root([leaf(0, 0, 1), group])};
+  file.diff.rhs = { text: "line 0\n", syntax: [], root: root([leaf(0, 0, 1)])};
   const bands = (collapsed: Set<number>) =>
     rowsForFile(file, 0, "split", dark, collapsed)
       .filter((r) => r.left?.fold?.collapsed)

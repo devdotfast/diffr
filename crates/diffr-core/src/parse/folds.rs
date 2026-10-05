@@ -23,6 +23,10 @@ pub struct Fold {
     pub(crate) tags: Vec<String>,
     /// Source on this side; may span multiple syntax nodes.
     pub(crate) range: SourceRange,
+    /// See `FoldMetadata::indent`.
+    pub(crate) indent: SourcePosition,
+    /// See `FoldMetadata::syntax`.
+    pub(crate) syntax: Option<SourceRange>,
     /// The syntax node the fold was built on. Engine-internal identity:
     /// syntax ids are unique across both sides of a file and never reach the
     /// wire, where the projection numbers regions itself.
@@ -45,8 +49,8 @@ pub(crate) enum FoldMatch {
 }
 
 /// Two query patterns captured the same syntax node with different fold
-/// ranges. Which range wins would depend on query order, so the file is not
-/// diffed.
+/// ranges or indents. Which wins would depend on query order, so the file is
+/// not diffed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Conflict {
     /// 0-based line the node starts on.
@@ -160,6 +164,11 @@ pub(crate) fn classify(
         if region.start == region.end {
             continue;
         }
+        let syntax = named("fold.open").next_back().map(|_| region);
+        let indent = match named("fold.indent").next_back() {
+            Some(indent) => node_range(indent.node).start,
+            None => node_range(first.node).start,
+        };
         match kinds.entry(first.node.id()) {
             Entry::Vacant(entry) => {
                 let mut tags = pattern.tags.clone();
@@ -170,13 +179,15 @@ pub(crate) fn classify(
                         relations: Vec::new(),
                         tags,
                         range_override: Some(region),
+                        indent,
+                        syntax,
                     },
                     pattern.source,
                 ));
             }
             Entry::Occupied(mut entry) => {
                 let (metadata, source) = entry.get_mut();
-                if metadata.range_override != Some(region) {
+                if metadata.range_override != Some(region) || metadata.indent != indent {
                     let mut sources = [
                         compiled.sources[*source].clone(),
                         compiled.sources[pattern.source].clone(),
@@ -408,6 +419,8 @@ pub(crate) fn project(node: &Syntax<'_>, partner: Option<&Syntax<'_>>) -> Option
         relations: metadata.relations.clone(),
         tags: metadata.tags.clone(),
         range: own_range,
+        indent: metadata.indent,
+        syntax: metadata.syntax,
         syntax_id: node.id(),
         match_kind: match opposite {
             Some(partner) => FoldMatch::Matched {
@@ -462,6 +475,8 @@ pub(crate) fn merge_spans(folds: &mut Vec<Fold>, lines: &[&str]) {
                 let merged = &mut kept[*entry.get()];
                 if inside(&fold.range, &merged.range) {
                     merged.range = fold.range;
+                    merged.indent = fold.indent;
+                    merged.syntax = fold.syntax;
                     merged.syntax_id = fold.syntax_id;
                     merged.match_kind = fold.match_kind;
                 }

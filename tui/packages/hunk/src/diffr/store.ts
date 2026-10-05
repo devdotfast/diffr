@@ -4,23 +4,27 @@ type StartEvent = Extract<DiffEvent, { type: "start" }>;
 export interface Snapshot {
   /** The two ends of the comparison, from the start event. */
   comparison: { lhs: StartEvent["lhs"]; rhs: StartEvent["rhs"] } | null;
-  files: DiffFile[];
+  /** The manifest, in comparison order. `files` and `failures` are indexed like it. */
   inventory: FileChange[];
-  failedFiles: Map<string, string>;
+  /** Each manifest file's diff, once it arrives. */
+  files: (DiffFile | undefined)[];
+  /** Each manifest file's error, once it fails. */
+  failures: (string | undefined)[];
+  loaded: number;
   errors: string[];
-  total: number;
   complete: boolean;
 }
 export class DiffStore {
   private value: Snapshot = {
     comparison: null,
-    files: [],
     inventory: [],
-    failedFiles: new Map(),
+    files: [],
+    failures: [],
+    loaded: 0,
     errors: [],
-    total: 0,
     complete: false,
   };
+  private slots = new Map<string, number>();
   private notification: ReturnType<typeof setTimeout> | undefined;
   private notify() {
     if (this.notification !== undefined || this.listeners.size === 0) return;
@@ -40,18 +44,26 @@ export class DiffStore {
   };
   getSnapshot = () => this.value;
   accept(event: DiffEvent) {
-    if (event.type === "start")
-      this.value = { ...this.value, comparison: { lhs: event.lhs, rhs: event.rhs }, total: event.files.length, inventory: event.files };
+    if (event.type === "start") {
+      this.slots = new Map(event.files.map((entry, index) => [fileIdentity(entry.file), index]));
+      this.value = { ...this.value, comparison: { lhs: event.lhs, rhs: event.rhs }, inventory: event.files,
+        files: event.files.map(() => undefined), failures: event.files.map(() => undefined) };
+    }
     if (event.type === "file") {
-      const identity = fileIdentity(event.file);
-      if (event.diff)
-        this.value = { ...this.value, files: [...this.value.files, { ...event, diff: event.diff }] };
-      else if (event.error)
-        this.value = {
-          ...this.value,
-          failedFiles: new Map(this.value.failedFiles).set(identity, event.error.message),
-          errors: [...this.value.errors, `${filePath(event.file)}: ${event.error.message}`],
-        };
+      const slot = this.slots.get(fileIdentity(event.file));
+      if (slot === undefined) throw new Error(`${filePath(event.file)} is not in the manifest`);
+      if (this.value.files[slot] || this.value.failures[slot])
+        throw new Error(`${filePath(event.file)} arrived twice`);
+      if (event.diff) {
+        const files = [...this.value.files];
+        files[slot] = { ...event, diff: event.diff };
+        this.value = { ...this.value, files, loaded: this.value.loaded + 1 };
+      } else if (event.error) {
+        const failures = [...this.value.failures];
+        failures[slot] = event.error.message;
+        this.value = { ...this.value, failures,
+          errors: [...this.value.errors, `${filePath(event.file)}: ${event.error.message}`] };
+      }
     }
     if (event.type === "complete")
       this.value = {

@@ -38,13 +38,9 @@ pub enum Event {
         files: Vec<FileChange>,
     },
     /// One result. `file` is byte-identical to the manifest entry it
-    /// answers; the path pair is the identity. `visibility` is how the
-    /// file starts out, set by the plugins after diffing: a hidden
-    /// file is collapsed behind its reason.
+    /// answers; the path pair is the identity.
     File {
         file: Pairing<FileRef>,
-        #[serde(default, skip_serializing_if = "Visibility::is_unset")]
-        visibility: Visibility,
         #[serde(flatten)]
         outcome: Outcome,
     },
@@ -172,9 +168,9 @@ pub struct Source {
     /// non-overlapping. Empty unless the run asked for syntax.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub syntax: Vec<SyntaxSpan>,
-    /// The largest regions, in order. Leaves tile the file.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub regions: Vec<Region>,
+    /// The whole file, as one fold. Both sides' roots share one
+    /// fold_state_id, and its visibility is the file's.
+    pub root: Region,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,6 +218,35 @@ pub struct Region {
 }
 
 impl Region {
+    /// A side's root: one fold whose children tile the file.
+    pub fn root(id: u32, children: Vec<Region>) -> Self {
+        let start = SourcePos { line: 0, column: 0 };
+        Self {
+            id,
+            fold_state_id: id,
+            range: SourceRange {
+                start,
+                end: children.last().map_or(start, |last| last.range.end),
+            },
+            relations: Vec::new(),
+            tags: Vec::new(),
+            visibility: Visibility::default(),
+            node: Node::Fold {
+                children,
+                indent: start,
+                syntax: None,
+            },
+        }
+    }
+
+    /// A fold's children; a leaf has none.
+    pub fn children(&self) -> &[Region] {
+        match &self.node {
+            Node::Fold { children, .. } => children,
+            Node::Leaf { .. } => &[],
+        }
+    }
+
     /// A leaf's row alignment; a fold has none.
     pub fn alignment_id(&self) -> Option<u32> {
         match self.node {
@@ -246,7 +271,15 @@ pub enum Node {
         changed: Vec<Span>,
     },
     /// A foldable region. Its range is the hull of its children.
-    Fold { children: Vec<Region> },
+    Fold {
+        children: Vec<Region>,
+        /// Where the fold's content starts. Collapsed rows sit at this column.
+        indent: SourcePos,
+        /// From the opener to the closer, before rounding to lines. None
+        /// without an opener.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        syntax: Option<SourceRange>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -366,40 +399,49 @@ mod tests {
             oid: oid.to_owned(),
             mode: "100644".to_owned(),
         };
-        let side = |first: u32, text: &str, changed: Vec<Span>| Source {
+        // The roots come last, 9 and 10, and share the lhs root's fold state.
+        let side = |first: u32, root: u32, text: &str, changed: Vec<Span>| Source {
             text: text.to_owned(),
             syntax: vec![],
-            regions: vec![Region {
-                id: first,
-                fold_state_id: 1,
-                range: SourceRange {
-                    start: pos(0, 0),
-                    end: pos(3, 0),
-                },
-                relations: Vec::new(),
-                tags: vec!["deleted-bodies:function".to_owned()],
-                visibility: Visibility::default(),
-                node: Node::Fold {
-                    children: vec![
-                        leaf(first, 0, 0, 1, vec![]),
-                        leaf(first, 1, 1, 2, changed),
-                        leaf(first, 2, 2, 3, vec![]),
-                    ],
-                },
-            }],
+            root: Region {
+                fold_state_id: 9,
+                ..Region::root(
+                    root,
+                    vec![Region {
+                        id: first,
+                        fold_state_id: 1,
+                        range: SourceRange {
+                            start: pos(0, 0),
+                            end: pos(3, 0),
+                        },
+                        relations: Vec::new(),
+                        tags: vec!["deleted-bodies:function".to_owned()],
+                        visibility: Visibility::default(),
+                        node: Node::Fold {
+                            indent: pos(0, 0),
+                            syntax: None,
+                            children: vec![
+                                leaf(first, 0, 0, 1, vec![]),
+                                leaf(first, 1, 1, 2, changed),
+                                leaf(first, 2, 2, 3, vec![]),
+                            ],
+                        },
+                    }],
+                )
+            },
         };
         Event::File {
             file: Pairing::Both {
                 lhs: file_ref("3b18e5"),
                 rhs: file_ref("9be2c1"),
             },
-            visibility: Visibility::default(),
             outcome: Outcome::Diff {
                 diff: Diff::Text {
                     sides: Pairing::Both {
-                        lhs: side(1, "fn f() {\n    1\n}\n", vec![]),
+                        lhs: side(1, 9, "fn f() {\n    1\n}\n", vec![]),
                         rhs: side(
                             5,
+                            10,
                             "fn f() {\n    1 + 2\n}\n",
                             vec![Span {
                                 line: 1,
@@ -438,11 +480,19 @@ mod tests {
             json!({
                 "id": first, "fold_state_id": 1, "kind": "fold", "tags": ["deleted-bodies:function"],
                 "start": {"line": 0, "column": 0}, "end": {"line": 3, "column": 0},
+                "indent": {"line": 0, "column": 0},
                 "children": [
                     {"id": first + 1, "fold_state_id": 2, "kind": "leaf", "alignment_id": 0, "start": {"line": 0, "column": 0}, "end": {"line": 1, "column": 0}},
                     middle,
                     {"id": first + 3, "fold_state_id": 4, "kind": "leaf", "alignment_id": 2, "start": {"line": 2, "column": 0}, "end": {"line": 3, "column": 0}},
                 ],
+            })
+        };
+        let root = |id: u32, child: serde_json::Value| {
+            json!({
+                "id": id, "fold_state_id": 9, "kind": "fold",
+                "start": {"line": 0, "column": 0}, "end": {"line": 3, "column": 0},
+                "indent": {"line": 0, "column": 0}, "children": [child],
             })
         };
         let expected = json!({
@@ -453,9 +503,9 @@ mod tests {
             },
             "diff": {
                 "type": "text",
-                "lhs": {"text": "fn f() {\n    1\n}\n", "regions": [region(1, json!([]))]},
+                "lhs": {"text": "fn f() {\n    1\n}\n", "root": root(9, region(1, json!([])))},
                 "rhs": {"text": "fn f() {\n    1 + 2\n}\n",
-                        "regions": [region(5, json!([{"line": 1, "start_column": 5, "end_column": 9}]))]},
+                        "root": root(10, region(5, json!([{"line": 1, "start_column": 5, "end_column": 9}])))},
                 "stats": {"textual": {"added": 1, "removed": 1}, "visible": {"added": 1, "removed": 1}},
                 "structural_changes": {"base": [], "head": [[1, 2]]},
             },
@@ -493,10 +543,6 @@ mod tests {
                         mode: "100644".to_owned(),
                     },
                 },
-                visibility: Visibility {
-                    collapsed: true,
-                    label: "Deleted file · hidden by default".to_owned(),
-                },
                 outcome: Outcome::Diff {
                     diff: Diff::Binary {
                         sides: Pairing::LeftOnly {
@@ -518,7 +564,6 @@ mod tests {
                         mode: "100644".to_owned(),
                     },
                 },
-                visibility: Visibility::default(),
                 outcome: Outcome::Error {
                     error: Problem {
                         code: "not_utf8".to_owned(),

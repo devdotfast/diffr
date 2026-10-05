@@ -23,7 +23,7 @@ typescript = "queries/javascript.scm"
 
 ```scheme
 ; inherits: builtin:shared/queries/rust.scm
-((function_item body: (block "{" @fold.open "}" @fold.close) @fold)
+((function_item body: (block "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold)
   (#set! tag "deleted-bodies:function"))
 ```
 
@@ -46,7 +46,7 @@ Tree-sitter coordinates; labels and comments before the opening brace stay visib
 With both delimiter captures, they must be ordered and contained in the fold node.
 A `@fold.open` without `@fold.close` hides from the opening node's end to the end
 of the fold node; the opening node may precede the fold node, so
-`(function_definition ":" @fold.open body: (block) @fold)` folds a Python body
+`(function_definition ":" @fold.open body: (block . (_) @fold.indent) @fold)` folds a Python body
 from its header's `:`. A `@fold.close` without `@fold.open` selects no fold.
 
 These fold-boundary captures are our convention. There are no arbitrary byte or

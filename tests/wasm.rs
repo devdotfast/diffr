@@ -166,7 +166,13 @@ fn bundled_and_external_components_produce_identical_files() {
         "it('adds', () => {\n  expect(1).toBe(1);\n  expect(2).toBe(2);\n});\n\nit('subtracts', () => {\n  expect(1).toBe(1);\n  expect(2).toBe(2);\n});\n",
     );
     fixture.write("src/gone.go", "package a\n\n// Gone.\n// Really.\nfunc Gone() int {\n\ta := 1\n\tb := 2\n\treturn a + b\n}\n");
+    let settings = |value: u32| {
+        let lines: String = (0..20).map(|i| format!("setting_{i} = {i}\n")).collect();
+        format!("{lines}changed = {value}\n")
+    };
+    fixture.write("src/settings.py", &settings(1));
     let base = fixture.commit("base\n");
+    fixture.write("src/settings.py", &settings(2));
     fixture.write("src/removed.py", "keep = 1\n");
     fixture.write(
         "src/lib.rs",
@@ -204,25 +210,24 @@ fn bundled_and_external_components_produce_identical_files() {
     let wasm = fixture.config(
         "wasm",
         &format!(
-            "[classifier]\npath = {:?}\n[plugins]\norder = ['external.context', 'external.deleted-bodies', 'external.test-bodies', 'external.removed-runs', 'external.group']\n[plugins.external.context]\npath = {:?}\n[plugins.external.deleted-bodies]\npath = {:?}\nmin_lines = 3\n[plugins.external.test-bodies]\npath = {:?}\nmin_lines = 2\n[plugins.external.removed-runs]\npath = {:?}\n[plugins.external.group]\npath = {:?}\n",
+            "[classifier]\npath = {:?}\n[plugins]\norder = ['external.deleted-bodies', 'external.test-bodies', 'external.removed-runs', 'external.context']\n[plugins.external.context]\npath = {:?}\n[plugins.external.deleted-bodies]\npath = {:?}\nmin_lines = 3\n[plugins.external.test-bodies]\npath = {:?}\nmin_lines = 2\n[plugins.external.removed-runs]\npath = {:?}\n",
             root().join("plugins/classify").display().to_string(),
             plugin("context"),
             plugin("deleted-bodies"),
             plugin("test-bodies"),
-            plugin("removed-runs"),
-            plugin("group")
+            plugin("removed-runs")
         ),
     );
 
     let bundled = sorted(&fixture.run(&bundled, &base, &head));
     let wasm = sorted(&fixture.run(&wasm, &base, &head));
-    assert_eq!(bundled.1.len(), 6);
+    assert_eq!(bundled.1.len(), 7);
     // The runs shape something, so that equal streams mean something.
     let mut collapsed = Vec::new();
     for record in &bundled.1 {
         for side in ["lhs", "rhs"] {
             let mut regions = Vec::new();
-            walk(&record["diff"][side]["regions"], &mut regions);
+            walk(&record["diff"][side]["root"]["children"], &mut regions);
             collapsed.extend(
                 regions
                     .into_iter()
@@ -231,12 +236,10 @@ fn bundled_and_external_components_produce_identical_files() {
             );
         }
     }
-    for label in [
-        "2 collapsed regions · 6 lines",
-        "test body",
-        "test module",
-        "4 lines removed",
-    ] {
+    assert!(collapsed
+        .iter()
+        .any(|label| label.ends_with(" unchanged lines")));
+    for label in ["test body", "test module", "4 lines removed"] {
         assert!(collapsed.contains(&label), "{label}: {collapsed:?}");
     }
     assert_eq!(bundled, wasm);

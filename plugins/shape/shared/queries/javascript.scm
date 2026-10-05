@@ -4,13 +4,13 @@
 ; one region. These patterns set no tags; the plugins that import them tag
 ; what they need.
 [
-  (statement_block "{" @fold.open "}" @fold.close)
-  (class_body "{" @fold.open "}" @fold.close)
-  (switch_body "{" @fold.open "}" @fold.close)
+  (statement_block "{" @fold.open . (_) @fold.indent "}" @fold.close)
+  (class_body "{" @fold.open . (_) @fold.indent "}" @fold.close)
+  (switch_body "{" @fold.open . (_) @fold.indent "}" @fold.close)
 ] @fold
 [
-  (object "{" @fold.open "}" @fold.close)
-  (array "[" @fold.open "]" @fold.close)
+  (object "{" @fold.open . (_) @fold.indent "}" @fold.close)
+  (array "[" @fold.open . (_) @fold.indent "]" @fold.close)
 ] @fold
 (import_statement) @fold
 [

@@ -48,6 +48,10 @@ export interface LeafRegion extends RegionBase {
 }
 export interface FoldRegion extends RegionBase {
   kind: "fold";
+  /** Where the fold's content starts. Collapsed rows sit at this column. */
+  indent: { line: number; column: number };
+  /** From the opener to the closer, before rounding to lines. Absent without an opener. */
+  syntax?: { start: { line: number; column: number }; end: { line: number; column: number } };
 }
 export type Region = LeafRegion | FoldRegion;
 const regionBase = z.object({
@@ -62,14 +66,16 @@ const region: z.ZodType<Region> = z.lazy(() =>
   z.discriminatedUnion("kind", [
     regionBase.extend({ kind: z.literal("leaf"), alignment_id: uint, changed: z.array(span).default([]) })
       .transform((leaf) => ({ ...leaf, children: [] as Region[] })),
-    regionBase.extend({ kind: z.literal("fold"), children: z.array(region) })
+    regionBase.extend({ kind: z.literal("fold"), children: z.array(region), indent: sourcePos,
+      syntax: z.object({ start: sourcePos, end: sourcePos }).optional() })
       .transform((fold) => ({ ...fold, changed: [] as Region["changed"] })),
   ]),
 );
 const source = z.object({
   text: z.string(),
   syntax: z.array(syntaxSpan).default([]),
-  regions: z.array(region).default([]),
+  /** The whole file, as one fold. Both sides' roots share a fold_state_id; its visibility is the file's. */
+  root: region,
 });
 const lineCounts = z.object({ added: uint, removed: uint });
 const stats = z.object({
@@ -91,8 +97,6 @@ const diff = z.discriminatedUnion("type", [
 const fileEvent = z.object({
   type: z.literal("file"),
   file: pairing(fileRef),
-  /** How the file starts out, set by the plugins after diffing: a hidden file is collapsed behind its reason. */
-  visibility: visibility.default({ collapsed: false, label: "" }),
   diff: diff.optional(),
   error: problem.optional(),
 });
@@ -125,3 +129,7 @@ export type DiffFile = FileEvent & { diff: Diff };
 export const fileIdentity = (file: Pairing<FileRef>) =>
   JSON.stringify([file.lhs?.path ?? null, file.rhs?.path ?? null]);
 export const filePath = (file: Pairing<FileRef>) => file.rhs?.path ?? file.lhs?.path ?? "";
+/** How a file starts out: its root's visibility. A hidden file is collapsed behind its reason. */
+export function fileVisibility(file: FileEvent): Visibility {
+  return file.diff?.type === "text" ? (file.diff.rhs ?? file.diff.lhs)!.root.visibility : { collapsed: false, label: "" };
+}

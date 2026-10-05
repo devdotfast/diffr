@@ -1,45 +1,41 @@
-//! What a diff looks like once the plugins have shaped it: its starting
-//! visibility and the changed lines that stay visible.
+//! What a diff looks like once the plugins have shaped it: the changed
+//! lines that stay visible.
 use crate::hash::DftHashSet;
 use crate::pairing::Pairing;
 use crate::protocol::{Diff, LineRange, Node, Region, Source, StructuralChanges, Visibility};
 
 /// Run the plugins on a diff and recount what stays visible. `shape` runs
-/// the plugins on a text diff's sides. A hidden file runs no plugin and is
-/// shown collapsed; a binary diff has nothing to shape. `Err` is a run-level
-/// failure.
+/// the plugins on a text diff's sides. A hidden file runs no plugin: its
+/// roots start collapsed behind the reason. A binary diff has nothing to
+/// shape. `Err` is a run-level failure.
 pub async fn present(
     hidden: Option<&str>,
     diff: Diff,
     shape: impl AsyncFnOnce(Pairing<Source>) -> anyhow::Result<Pairing<Source>>,
-) -> anyhow::Result<(Visibility, Diff)> {
-    let visibility = match hidden {
-        Some(reason) => Visibility {
-            collapsed: true,
-            label: reason.to_owned(),
-        },
-        None => Visibility::default(),
-    };
+) -> anyhow::Result<Diff> {
     match diff {
         Diff::Text {
             sides, mut stats, ..
         } => {
             let sides = match hidden {
-                Some(_) => sides,
+                Some(reason) => sides.map(|mut source| {
+                    source.root.visibility = Visibility {
+                        collapsed: true,
+                        label: reason.to_owned(),
+                    };
+                    source
+                }),
                 None => shape(sides).await?,
             };
             let coverage = change_coverage(&sides);
             stats.visible = coverage.initially_visible.counts();
-            Ok((
-                visibility,
-                Diff::Text {
-                    sides,
-                    stats,
-                    structural_changes: coverage.all,
-                },
-            ))
+            Ok(Diff::Text {
+                sides,
+                stats,
+                structural_changes: coverage.all,
+            })
         }
-        Diff::Binary { sides } => Ok((visibility, Diff::Binary { sides })),
+        Diff::Binary { sides } => Ok(Diff::Binary { sides }),
     }
 }
 
@@ -58,7 +54,7 @@ fn change_coverage(sides: &Pairing<Source>) -> ChangeCoverage {
                 Node::Leaf { alignment_id, .. } => {
                     out.insert(*alignment_id);
                 }
-                Node::Fold { children } => alignments(children, out),
+                Node::Fold { children, .. } => alignments(children, out),
             }
         }
     }
@@ -87,18 +83,24 @@ fn change_coverage(sides: &Pairing<Source>) -> ChangeCoverage {
                         visible.extend_from_slice(&all[start..]);
                     }
                 }
-                Node::Fold { children } => collect(children, other, hidden, all, visible),
+                Node::Fold { children, .. } => collect(children, other, hidden, all, visible),
             }
         }
     }
     fn side(source: Option<&Source>, other: Option<&Source>) -> (Vec<LineRange>, Vec<LineRange>) {
         let mut paired = DftHashSet::default();
         if let Some(other) = other {
-            alignments(&other.regions, &mut paired);
+            alignments(std::slice::from_ref(&other.root), &mut paired);
         }
         let (mut all, mut visible) = (Vec::new(), Vec::new());
         if let Some(source) = source {
-            collect(&source.regions, &paired, false, &mut all, &mut visible);
+            collect(
+                std::slice::from_ref(&source.root),
+                &paired,
+                false,
+                &mut all,
+                &mut visible,
+            );
         }
         (coalesce(all), coalesce(visible))
     }
@@ -141,6 +143,11 @@ fn coalesce(mut ranges: Vec<LineRange>) -> Vec<LineRange> {
 mod visible_tests {
     use super::*;
     use crate::protocol::{SourcePos, SourceRange, Span};
+
+    fn test_root(regions: Vec<Region>) -> Region {
+        let id = 1000 + regions.iter().map(|region| region.id).min().unwrap_or(0);
+        Region::root(id, regions)
+    }
 
     fn pos(line: u32) -> SourcePos {
         SourcePos { line, column: 0 }
@@ -194,7 +201,11 @@ mod visible_tests {
                 collapsed,
                 label: String::new(),
             },
-            node: Node::Fold { children },
+            node: Node::Fold {
+                indent: pos(lines.0),
+                syntax: None,
+                children,
+            },
         }
     }
 
@@ -202,7 +213,7 @@ mod visible_tests {
         Source {
             text: String::new(),
             syntax: vec![],
-            regions,
+            root: test_root(regions),
         }
     }
 
@@ -260,7 +271,10 @@ mod visible_tests {
         assert!(hidden.all.base.is_empty()); // Added tokens do not imply removed tokens.
         assert_eq!(hidden.initially_visible.counts().added, 0);
         if let Pairing::Both { rhs, .. } = &mut sides {
-            rhs.regions[0].visibility.collapsed = false;
+            let Node::Fold { children, .. } = &mut rhs.root.node else {
+                unreachable!("a root is a fold");
+            };
+            children[0].visibility.collapsed = false;
         }
         let opened = change_coverage(&sides);
         assert_eq!(opened.all, hidden.all);

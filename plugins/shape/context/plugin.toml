@@ -1,6 +1,6 @@
 name = "context"
 title = "Context"
-description = "Collapse unchanged stretches far from any change, keeping `lines` around every change and the headers of the syntax that encloses it."
+description = "Fold each unchanged stretch into one row, keeping `lines` around every change and the headers of the syntax that encloses it. An unchanged fold is hidden whole."
 
 [enabled]
 title = "Collapse unchanged lines"
@@ -21,5 +21,5 @@ python = "queries/python.scm"
 go = "queries/go.scm"
 javascript = "queries/javascript.scm"
 javascriptjsx = "queries/javascript.scm"
-typescript = "queries/javascript.scm"
-typescripttsx = "queries/javascript.scm"
+typescript = "queries/typescript.scm"
+typescripttsx = "queries/typescript.scm"

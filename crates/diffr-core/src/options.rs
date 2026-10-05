@@ -18,6 +18,8 @@ pub struct DiffOptions {
     /// Diff the file by line without parsing, for this reason: it is
     /// generated or hidden.
     pub by_line: Option<FallbackCause>,
+    /// Collect highlight captures from each parsed side.
+    pub syntax: bool,
 }
 
 impl Default for DiffOptions {
@@ -28,6 +30,7 @@ impl Default for DiffOptions {
             parse_error_limit: DEFAULT_PARSE_ERROR_LIMIT,
             ignore_comments: false,
             by_line: None,
+            syntax: false,
         }
     }
 }

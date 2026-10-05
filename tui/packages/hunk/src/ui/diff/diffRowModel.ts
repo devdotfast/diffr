@@ -10,6 +10,8 @@ import type { FoldTint, RowFold } from "../../diffr/regions";
 
 export interface RenderSpan {
   text: string;
+  /** Fold-state id of an indent guide; paint-only hover accent. */
+  guide?: number;
   fg?: string;
   bg?: string;
   /** Resolve paint-only foreground effects after cursor and copy-selection backgrounds apply. */
@@ -24,8 +26,8 @@ export interface SplitLineCell {
   fold?: RowFold;
   /** A line of a collapsed fold's label, painted in the fold tint without a line number. */
   foldLabel?: boolean;
-  /** The tint of the fold a label line belongs to. */
-  foldTint?: FoldTint;
+  /** A collapsed row or label line: its tint fills the rest of the line. */
+  band?: FoldTint;
   spans: RenderSpan[];
 }
 
@@ -36,6 +38,6 @@ export interface UnifiedLineCell {
   newLineNumber?: number;
   fold?: RowFold;
   foldLabel?: boolean;
-  foldTint?: FoldTint;
+  band?: FoldTint;
   spans: RenderSpan[];
 }

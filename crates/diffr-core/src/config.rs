@@ -459,6 +459,14 @@ mod tests {
             ("(not_a_rust_node) @fold", "NodeType error"),
             ("(block) @typo", "unsupported capture @typo"),
             (
+                r#"(block "{" @fold.open "}" @fold.close) @fold"#,
+                "@fold.open needs exactly one @fold.indent",
+            ),
+            (
+                r#"[(block "{" @fold.open . (_) @fold.indent "}" @fold.close) (match_block)] @fold"#,
+                "@fold.open must be in every branch",
+            ),
+            (
                 r#"((block) @fold (#set! tag "body"))"#,
                 "must be written <plugin>:<name>",
             ),
@@ -519,7 +527,7 @@ mod query_tests {
     fn arbitrary_tags_and_delimiter_captures_reach_the_domain() {
         let params = with_queries(&[(
             "rust",
-            r#"((block "{" @fold.open "}" @fold.close) @fold (#set! tag "removed-runs:user.validation"))"#,
+            r#"((block "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold (#set! tag "removed-runs:user.validation"))"#,
         )]);
         let source = "fn f() { println!(\"☕\"); }";
         let diff = DiffResult::from_sources_with_params("a.rs", "", source, &params);
@@ -611,7 +619,7 @@ mod tag_tests {
 
     #[test]
     fn an_opening_capture_alone_folds_to_the_end_of_the_fold_node() {
-        let query = r#"((function_definition ":" @fold.open body: (block) @fold) (#set! tag "removed-runs:body"))"#;
+        let query = r#"((function_definition ":" @fold.open body: (block . (_) @fold.indent) @fold) (#set! tag "removed-runs:body"))"#;
         let params = with_queries(&[("python", query)]);
         let rhs = "def f(a):\n    x = a\n    return x\n";
         let result = DiffResult::from_sources_with_params("a.py", "", rhs, &params);
@@ -629,7 +637,7 @@ mod tag_tests {
     fn a_node_captured_with_two_ranges_is_a_query_conflict_naming_both_files() {
         let whole = "((block) @fold (#set! tag \"removed-runs:whole\"))";
         let interior =
-            "((block \"{\" @fold.open \"}\" @fold.close) @fold (#set! tag \"summarize:inside\"))";
+            "((block \"{\" @fold.open . (_) @fold.indent \"}\" @fold.close) @fold (#set! tag \"summarize:inside\"))";
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("queries/rust")).unwrap();
         let removed_runs = dir.path().join("queries/rust/removed-runs.scm");
@@ -670,7 +678,7 @@ mod tag_tests {
             assert!(
                 message.contains("queries/rust/removed-runs.scm and ")
                     && message.contains(
-                        "queries/rust/summarize.scm capture the same block with different fold ranges"
+                        "queries/rust/summarize.scm capture the same block with different fold ranges or indents"
                     ),
                 "{message}"
             );
@@ -799,8 +807,8 @@ mod format_tests {
             .to_string()
             .contains("unsupported config version 2"));
         let config =
-            Config::from_toml("version = 1\n[plugins]\norder = ['bundled.group']\n").unwrap();
+            Config::from_toml("version = 1\n[plugins]\norder = ['bundled.context']\n").unwrap();
         assert_eq!(config.plugins.entries.len(), 1);
-        assert!(config.plugins.entries.contains_key("bundled.group"));
+        assert!(config.plugins.entries.contains_key("bundled.context"));
     }
 }

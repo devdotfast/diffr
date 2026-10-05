@@ -1,6 +1,13 @@
 use super::*;
 use crate::protocol::{FileRef, FileStatus};
 
+/// A test side's root. Its id stays clear of the regions' ids and differs
+/// between sides, which never share region ids.
+pub(crate) fn test_root(regions: Vec<Region>) -> Region {
+    let id = 1000 + regions.iter().map(|region| region.id).min().unwrap_or(0);
+    Region::root(id, regions)
+}
+
 fn data(view: RegionView) -> RegionView {
     view
 }
@@ -69,13 +76,15 @@ fn source(regions: Vec<Region>) -> Source {
     Source {
         text: "a\nb\nc\nd\n".into(),
         syntax: Vec::new(),
-        regions,
+        root: test_root(regions),
     }
 }
 fn file_state() -> Cursor {
     let fold = Region {
         node: Node::Fold {
             children: vec![leaf(2, 1, 0, 4)],
+            indent: SourcePos { line: 0, column: 0 },
+            syntax: None,
         },
         ..leaf(1, 10, 0, 4)
     };
@@ -92,7 +101,7 @@ fn source_is_original_text_and_distinguishes_absent_from_empty() {
             let source = Source {
                 text: text.into(),
                 syntax: Vec::new(),
-                regions: vec![leaf(1, 1, 0, 1)],
+                root: test_root(vec![leaf(1, 1, 0, 1)]),
             };
             let sides = match side {
                 Side::Lhs => Pairing::LeftOnly { lhs: source },

@@ -15,6 +15,7 @@ use crate::hash::{DftHashMap, DftHashSet};
 use crate::options::DiffOptions;
 use crate::parse::guess_language as guess;
 use crate::parse::syntax::{AtomKind, Syntax};
+use crate::summary::Highlight;
 
 /// A language may contain certain nodes that are in other languages
 /// and should be parsed as such (e.g. HTML `<script>` nodes
@@ -1175,7 +1176,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
             let language_fn = if language == TypeScript {
                 diffr_grammars::TYPESCRIPT
             } else {
-                diffr_grammars::TSX
+                diffr_grammars::TSX_DIFFR
             };
             let language = tree_sitter::Language::new(language_fn);
 
@@ -1463,14 +1464,14 @@ fn tree_highlights(
     })
 }
 
-/// Every highlight capture in `src` as byte intervals with the capture
-/// name from the language's highlights query. Intervals may nest; the
-/// caller decides precedence.
+/// Every highlight capture in a parsed side as byte intervals with the
+/// capture name from the language's highlights query. Intervals may nest;
+/// the caller decides precedence.
 pub(crate) fn highlight_captures(
+    tree: &tree_sitter::Tree,
     src: &str,
     config: &'static TreeSitterConfig,
-) -> Vec<(usize, usize, &'static str)> {
-    let tree = to_tree(src, config);
+) -> Vec<Highlight> {
     let names = config.highlight_query.capture_names();
     let mut cursor = ts::QueryCursor::new();
     let mut matches = cursor.matches(&config.highlight_query, tree.root_node(), src.as_bytes());
@@ -2142,6 +2143,32 @@ mod tests {
 
     use super::*;
     use crate::config::Params;
+
+    #[test]
+    fn tsx_import_type_arrays_parse_without_errors() {
+        let params = Params::default();
+        let config = params.language(guess::Language::TypeScriptTsx);
+        for source in [
+            "interface Props { entries?: import('./types').Entry[]; }",
+            "type Entries = import('./types').Entry[][];",
+            "const entries: import('./types').Namespace.Entry[] = [];",
+            "type Entries = Array<import('./types').Entry[]>;",
+        ] {
+            assert!(
+                !to_tree(source, config.parser).root_node().has_error(),
+                "{source}"
+            );
+        }
+        assert!(
+            to_tree(
+                "interface Props { entries?: import('./types').Entry[; }",
+                config.parser
+            )
+            .root_node()
+            .has_error(),
+            "invalid syntax must still report an error"
+        );
+    }
 
     /// Simple smoke test for tree-sitter parsing. Having a test also
     /// ensures that this file has its coverage measured.

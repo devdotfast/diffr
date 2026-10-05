@@ -16,7 +16,7 @@ export function selectionBounds(
   return a < 0 || b < 0 ? [-1, -1] : [Math.min(a, b), Math.max(a, b)];
 }
 export function copySelection(
-  files: DiffFile[],
+  files: (DiffFile | undefined)[],
   rows: ViewerRow[],
   selection: SourceSelection,
 ): string {
@@ -33,8 +33,8 @@ export function copySelection(
     const key = `${row.fileIndex}:${n}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const diff = files[row.fileIndex].diff;
-    if (diff.type !== "text") continue;
+    const diff = files[row.fileIndex]?.diff;
+    if (!diff || diff.type !== "text") continue;
     const source = selection.side === "left" ? diff.lhs : diff.rhs;
     if (!source) continue;
     let lines = sources.get(row.fileIndex);

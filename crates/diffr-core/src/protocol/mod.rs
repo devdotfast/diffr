@@ -11,8 +11,9 @@
 //! last line. Columns are 0-based byte offsets into the UTF-8 text on the
 //! wire. All ranges are half-open.
 //!
-//! Records end at `\n` only. U+2028 and U+2029 are written as `\u2028` and
-//! `\u2029`, because some line readers also end a line at them.
+//! Records end at `\n` only. U+0085, U+2028 and U+2029 are written as
+//! `\u0085`, `\u2028` and `\u2029`, because some line readers also end a
+//! line at them.
 //!
 //! Sides are always `lhs` (before) and `rhs` (after). A `Pairing` says which
 //! sides exist and serializes by presence: `{lhs, rhs}`, `{lhs}`, or `{rhs}`.
@@ -38,7 +39,7 @@ pub fn write_record<W: Write>(writer: &mut W, event: &Event) -> serde_json::Resu
     writer.write_all(b"\n").map_err(serde_json::Error::io)
 }
 
-/// Compact JSON that also escapes U+2028 and U+2029.
+/// Compact JSON that also escapes U+0085, U+2028 and U+2029.
 struct RecordFormatter;
 
 impl Formatter for RecordFormatter {
@@ -48,10 +49,11 @@ impl Formatter for RecordFormatter {
         fragment: &str,
     ) -> io::Result<()> {
         fragment
-            .split_inclusive(['\u{2028}', '\u{2029}'])
+            .split_inclusive(['\u{85}', '\u{2028}', '\u{2029}'])
             .try_for_each(|piece| {
                 let mut chars = piece.chars();
                 let escape: &[u8] = match chars.next_back() {
+                    Some('\u{85}') => b"\\u0085",
                     Some('\u{2028}') => b"\\u2028",
                     Some('\u{2029}') => b"\\u2029",
                     _ => return writer.write_all(piece.as_bytes()),
@@ -630,20 +632,20 @@ mod tests {
     }
 
     #[test]
-    fn records_escape_line_and_paragraph_separators() {
+    fn records_escape_line_separators() {
         let event = Event::Complete {
             succeeded: 0,
             failed: 1,
             aborted: Some(Problem {
                 code: "x".to_owned(),
-                message: "a\u{2028}b\u{2029}c\u{2028}".to_owned(),
+                message: "a\u{2028}b\u{2029}c\u{85}d\u{2028}".to_owned(),
             }),
         };
         let mut record = Vec::new();
         write_record(&mut record, &event).unwrap();
         let line = String::from_utf8(record).unwrap();
         assert!(
-            line.ends_with("\"message\":\"a\\u2028b\\u2029c\\u2028\"}}\n"),
+            line.ends_with("\"message\":\"a\\u2028b\\u2029c\\u0085d\\u2028\"}}\n"),
             "{line}"
         );
         assert_eq!(serde_json::from_str::<Event>(&line).unwrap(), event);

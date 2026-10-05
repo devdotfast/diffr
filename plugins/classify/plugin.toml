@@ -1,6 +1,6 @@
 name = "classify"
 title = "Classify"
-description = "Tag each changed file as generated, vendored, docs or test from GitHub Linguist's rules, diffr's test-path rules and git attributes."
+description = "Tag each changed file as generated, vendored, docs, test, integration or e2e from GitHub Linguist's rules, diffr's test-path rules and git attributes."
 
 [options.hide]
 type = "array"

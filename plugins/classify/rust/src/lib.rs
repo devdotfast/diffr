@@ -1,5 +1,5 @@
 //! The classifier: tags each changed file `generated`, `vendored`, `docs`,
-//! `test`, and whatever a repository adds.
+//! `test`, `integration`, `e2e`, and whatever a repository adds.
 //!
 //! Bundled rules come first and have the lowest precedence: GitHub
 //! Linguist's `generated.rb` (ported in [`generated`]), its `vendor.yml` and
@@ -26,6 +26,8 @@ const GENERATED: &str = "generated";
 const VENDORED: &str = "vendored";
 const DOCS: &str = "docs";
 const TEST: &str = "test";
+const INTEGRATION: &str = "integration";
+const E2E: &str = "e2e";
 
 /// How much of a file the content rules read.
 const PREFIX_BYTES: usize = 8 * 1024;
@@ -52,7 +54,15 @@ static DOCUMENTATION: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Directory names, anywhere in the path, that hold tests.
-const TEST_DIRS: &[&str] = &["tests", "test", "__tests__", "spec"];
+const TEST_DIRS: &[&str] = &[
+    "tests",
+    "test",
+    "__tests__",
+    "spec",
+    "e2e",
+    "cypress",
+    "playwright",
+];
 
 fn is_test(path: &str) -> bool {
     let mut parts = path.split('/').filter(|part| !part.is_empty());
@@ -69,6 +79,49 @@ fn is_test(path: &str) -> bool {
         || name.contains(".test.")
         || name.contains(".spec.")
         || name.contains(".integration.")
+        || name.contains(".e2e.")
+}
+
+/// `integration` or `e2e` for a test file whose path says which.
+fn kind_by_path(path: &str) -> Option<&'static str> {
+    let segments: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
+    let parts = || {
+        segments
+            .iter()
+            .flat_map(|segment| segment.split(['.', '_', '-']))
+    };
+    if parts().any(|part| part == "e2e")
+        || segments
+            .iter()
+            .any(|segment| ["cypress", "playwright"].contains(segment))
+    {
+        return Some(E2E);
+    }
+    if parts().any(|part| part == "integration") {
+        return Some(INTEGRATION);
+    }
+    let crate_tests = path.ends_with(".rs")
+        && segments[..segments.len().saturating_sub(1)]
+            .iter()
+            .take_while(|segment| **segment != "src")
+            .any(|segment| *segment == "tests");
+    crate_tests.then_some(INTEGRATION)
+}
+
+/// `integration` or `e2e` for a test file whose first lines say which.
+fn kind_by_content(text: &str) -> Option<&'static str> {
+    if text.contains("@playwright/test") {
+        return Some(E2E);
+    }
+    text.lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("//go:build") || line.starts_with("pytestmark"))
+        .flat_map(|line| line.split(|c: char| !c.is_ascii_alphanumeric()))
+        .find_map(|word| match word {
+            "e2e" => Some(E2E),
+            "integration" => Some(INTEGRATION),
+            _ => None,
+        })
 }
 
 /// Every bundled rule that looks at the repository-relative path alone.
@@ -85,6 +138,7 @@ fn from_path(path: &str) -> BTreeSet<&'static str> {
     }
     if is_test(path) {
         tags.insert(TEST);
+        tags.extend(kind_by_path(path));
     }
     tags
 }
@@ -315,6 +369,11 @@ impl GuestClassifier for Classify {
                 if generated_by_content(path, &bytes, complete) {
                     bundled.insert(GENERATED);
                 }
+            }
+        }
+        if bundled.contains(TEST) && !bundled.contains(INTEGRATION) && !bundled.contains(E2E) {
+            if let Some((bytes, _)) = prefix(side)? {
+                bundled.extend(kind_by_content(&String::from_utf8_lossy(&bytes)));
             }
         }
         let tags: BTreeSet<String> = attributes.resolve(bundled).into_iter().collect();

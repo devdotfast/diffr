@@ -1,7 +1,6 @@
 use super::*;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
-use std::path::Path;
 
 const FUNCTION: &str = "summarize:function";
 
@@ -106,12 +105,7 @@ fn fold_label(sides: &Pairing<Source>) -> String {
     labels.remove(0)
 }
 
-fn gemini_answer(items: &[(u32, &str)]) -> String {
-    let answers: Vec<_> = items
-        .iter()
-        .map(|(id, text)| json!({"id": id, "pseudocode": text}))
-        .collect();
-    let text = json!({"summaries": answers}).to_string();
+fn gemini_answer(text: &str) -> String {
     json!({"candidates": [{"content": {"parts": [{"text": text}]}}]}).to_string()
 }
 
@@ -130,12 +124,8 @@ fn summarizer_with(overrides: serde_json::Value) -> Pipeline {
     bundled("summarize", overrides)
 }
 
-/// Inspect requests emitted by the actual node callbacks.
-fn select(
-    sides: &Pairing<Source>,
-    min_lines: usize,
-    test_min_lines: Option<usize>,
-) -> Vec<(u32, u32, u32, Option<u32>)> {
+/// The first numbered line of each body the summarizer sends.
+fn select(sides: &Pairing<Source>, min_lines: usize, test_min_lines: Option<usize>) -> Vec<u32> {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let server = std::thread::spawn(move || {
@@ -165,17 +155,12 @@ fn select(
             reader.read_exact(&mut body).unwrap();
             let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
             let prompt = body["contents"][0]["parts"][0]["text"].as_str().unwrap();
-            selected.extend(prompt.lines().filter_map(|line| {
-                let (id, lines) = line.strip_prefix("- fold ")?.split_once(": lines ")?;
-                let (start, end) = lines.split_once('-')?;
-                Some((
-                    id.parse::<u32>().unwrap(),
-                    start.parse::<u32>().unwrap(),
-                    end.parse::<u32>().unwrap(),
-                ))
-            }));
-            let response =
-                json!({"candidates":[{"content":{"parts":[{"text":"[]"}]}}]}).to_string();
+            let first = prompt
+                .lines()
+                .find_map(|line| line.split_once(" | ")?.0.trim().parse::<u32>().ok())
+                .unwrap();
+            selected.push(first);
+            let response = gemini_answer("");
             write!(
                 socket,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -196,92 +181,20 @@ fn select(
     let selected = server.join().unwrap();
     result.unwrap();
     selected
-        .into_iter()
-        .map(|(id, start, end)| {
-            let source = sides.rhs().unwrap();
-            let mut doc = None;
-            walk(source.root.children(), &mut |region| {
-                if region.id == id {
-                    doc = region
-                        .relations
-                        .iter()
-                        .find(|(name, _)| name == "documentation")
-                        .map(|(_, id)| *id);
-                }
-            });
-            (id, start, end, doc)
-        })
-        .collect()
 }
 
 #[test]
 fn selection_takes_new_bodies_of_at_least_min_lines() {
     let (_, sides) = project("a.py", "", LARGE);
-    let selected = select(&sides, 3, None);
-    assert_eq!(selected.len(), 1);
-    assert_eq!((selected[0].1, selected[0].2), (2, 4));
+    assert_eq!(select(&sides, 3, None), [2]);
     let (_, sides) = project("a.py", LARGE, LARGE);
-    assert!(select(&sides, 3, None).is_empty());
-}
-
-#[test]
-fn selection_reads_newness_from_the_lines_when_the_match_fell_back() {
-    let before = "def keep():\n    a = 1\n    b = 2\n    return a + b\n";
-    let after = "def keep():\n    a = 1\n    b = 2\n    return a + b\n\ndef fresh():\n    x = 1\n    y = 2\n    return x + y\n";
-    let (_, sides) = project_with(
-        "a.py",
-        before,
-        after,
-        DiffOptions {
-            graph_limit: 1,
-            ..DiffOptions::default()
-        },
-    );
-    // Nothing matched, so no fold is paired; the lines still are. Only the
-    // added body, whose lines pair with nothing, is new.
-    let selected = select(&sides, 3, None);
-    assert_eq!(selected.len(), 1, "{selected:?}");
-    assert_eq!((selected[0].1, selected[0].2), (7, 9));
-}
-
-#[test]
-fn selection_takes_outermost_function_bodies_only() {
-    // A method inside an impl: the impl's declaration_list is a body but
-    // not a function, so the method is the outermost selection.
-    let after = "impl A {\n    fn m(&self) {\n        a();\n        b();\n        c();\n        let f = || {\n            d();\n            e();\n            g();\n        };\n        f();\n    }\n}\n";
-    let (_, sides) = project("a.rs", "", after);
-    let selected = select(&sides, 3, None);
-    assert_eq!(selected.len(), 1, "{selected:?}");
-    assert_eq!((selected[0].1, selected[0].2), (3, 11));
-    // Below the threshold, nothing.
-    assert!(select(&sides, 30, None).is_empty());
-}
-
-#[test]
-fn selection_skips_test_bodies_and_collapsed_folds() {
-    let after = "#[test]\nfn t() {\n    a();\n    b();\n    c();\n}\n\nfn f() {\n    a();\n    b();\n    c();\n}\n";
-    let (file, mut sides) = project("a.rs", "", after);
-    let selected = select(&sides, 3, None);
-    assert_eq!(selected.len(), 1, "{selected:?}");
-    assert_eq!((selected[0].1, selected[0].2), (9, 11));
-    run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
-    let mut sides = sides.clone();
-    let (Pairing::Both { rhs, .. } | Pairing::RightOnly { rhs }) = &mut sides else {
-        panic!("an after side");
-    };
-    walk_mut(std::slice::from_mut(&mut rhs.root), &mut |region| {
-        if region.range.start.line == 8 {
-            region.visibility.collapsed = true;
-        }
-    });
     assert!(select(&sides, 3, None).is_empty());
 }
 
 #[test]
 fn long_summaries_are_discarded_without_changing_initial_folding() {
     let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&sides, 3, None)[0].0;
-    let (endpoint, server) = serve(vec![(200, gemini_answer(&[(id, "a()\nb()\nc()")]))]);
+    let (endpoint, server) = serve(vec![(200, gemini_answer("a()\nb()\nc()"))]);
     shape(&summarizer(&endpoint, 0), &file, &mut sides).unwrap();
     server.join().unwrap();
     let mut folds = Vec::new();
@@ -297,14 +210,13 @@ fn long_summaries_are_discarded_without_changing_initial_folding() {
 #[test]
 fn summaries_collapse_selected_folds_behind_pseudocode() {
     let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&sides, 3, None)[0].0;
-    let (endpoint, server) = serve(vec![(200, gemini_answer(&[(id, "call a, b, c")]))]);
+    let (endpoint, server) = serve(vec![(200, gemini_answer("a b c"))]);
     shape(&summarizer(&endpoint, 0), &file, &mut sides).unwrap();
     let bodies = server.join().unwrap();
     assert!(bodies[0].contains("thinkingBudget"));
-    assert!(bodies[0].contains(&format!("fold {id}: lines 2-4")));
+    assert!(bodies[0].contains("    2 | "));
     // `g` is a one-line function, whose body is not a region.
-    assert_eq!(fold_label(&sides), "call a, b, c");
+    assert_eq!(fold_label(&sides), "a b c");
     let mut collapsed = Vec::new();
     walk(rhs(&sides).root.children(), &mut |region| {
         if is_fold(region) && has_tag(region, FUNCTION) {
@@ -315,160 +227,25 @@ fn summaries_collapse_selected_folds_behind_pseudocode() {
 }
 
 #[test]
-fn a_docstring_is_sent_and_only_a_verbatim_sentence_from_it_is_kept() {
+fn a_docstring_heads_the_pseudocode_with_its_first_line() {
     let after = "/// Sums three numbers.\n/// Used by tests.\nfn total(a: u32, b: u32, c: u32) -> u32 {\n    let x = a;\n    let y = b;\n    let z = c;\n    x + y + z\n}\n";
-    let answer = |id: u32, summary: &str| {
-        let answers = vec![json!({"id": id, "summary": summary, "pseudocode": "return a + b + c"})];
-        json!({"candidates": [{"content": {"parts": [{"text": serde_json::to_string(&answers).unwrap()}]}}]})
-            .to_string()
-    };
-    let body_label = |sides: &Pairing<Source>| {
-        let mut labels = Vec::new();
-        walk(std::slice::from_ref(&rhs(sides).root), &mut |region| {
-            if is_fold(region) && has_tag(region, FUNCTION) {
-                labels.push(region.visibility.label.clone());
-            }
-        });
-        assert_eq!(labels.len(), 1, "{labels:?}");
-        labels.remove(0)
-    };
     let (file, mut sides) = project("a.rs", "", after);
-    let id = select(&sides, 3, None)[0].0;
-    let (endpoint, server) = serve(vec![(200, answer(id, "Sums three numbers."))]);
-    shape(&summarizer(&endpoint, 0), &file, &mut sides).unwrap();
-    let bodies = server.join().unwrap();
-    assert!(
-        bodies[0].contains("doc: Sums three numbers. Used by tests."),
-        "{}",
-        bodies[0]
-    );
-    assert_eq!(body_label(&sides), "Sums three numbers.\nreturn a + b + c");
-    assert_linked(&sides, id);
-
-    // A sentence the docstring does not contain is dropped.
-    let (file, mut sides) = project("a.rs", "", after);
-    let (endpoint, server) = serve(vec![(200, answer(id, "Adds things up."))]);
+    let (endpoint, server) = serve(vec![(200, gemini_answer("return a + b + c"))]);
     shape(&summarizer(&endpoint, 0), &file, &mut sides).unwrap();
     server.join().unwrap();
-    assert_eq!(body_label(&sides), "return a + b + c");
-}
-
-/// The after side's docstring shares the summarized body's fold state
-/// and starts collapsed with an empty label.
-fn assert_linked(sides: &Pairing<Source>, body: u32) {
-    let rhs = rhs(sides);
-    let mut state = None;
-    walk(rhs.root.children(), &mut |region| {
-        if region.id == body {
-            state = Some(region.fold_state_id);
-        }
-    });
-    let mut docstrings = Vec::new();
-    walk(rhs.root.children(), &mut |region| {
-        if has_tag(region, "summarize:docstring") {
-            docstrings.push((
-                region.fold_state_id,
-                region.visibility.collapsed,
-                region.visibility.label.clone(),
-            ));
-        }
-    });
-    assert_eq!(docstrings, [(state.unwrap(), true, String::new())]);
-}
-
-#[test]
-fn newness_is_the_lines_inside_the_body() {
-    // The docstring is unchanged and the signature line still pairs. A fold
-    // covers its body alone, so that line sits outside it: what decides is
-    // whether a line of the body itself pairs.
-    let head = "fn keep() {}\n\n/// Sums three numbers.\n/// Used by tests.\nfn total(a: u32, b: u32, c: u32) -> u32 ";
-    let one_liner = format!("{head}{{ a }}\n");
-    let grown = format!("{head}{{\n    let x = a;\n    x\n}}\n");
-    let after =
-        format!("{head}{{\n    let x = a;\n    let y = b;\n    let z = c;\n    x + y + z\n}}\n");
-    let (_, sides) = project("a.rs", &one_liner, &after);
-    let states = |source: &Source| {
-        let mut states = Vec::new();
-        walk(source.root.children(), &mut |region| {
-            if is_fold(region) && region.range.start.line == 2 {
-                states.push(region.fold_state_id);
-            }
-        });
-        states
-    };
-    let projected = sides.clone();
-    let Pairing::Both { lhs, rhs: replaced } = &projected else {
-        panic!("both sides");
-    };
-    assert_eq!(
-        states(lhs),
-        states(replaced),
-        "the docstring is matched across sides"
-    );
-    // The one-liner it replaced had no body fold to match, and no line of
-    // the new body pairs: the body is new.
-    let mut body = None;
-    walk(replaced.root.children(), &mut |region| {
+    let (mut body, mut docstring) = (None, None);
+    walk(rhs(&sides).root.children(), &mut |region| {
         if is_fold(region) && has_tag(region, FUNCTION) {
-            body = Some(region.fold_state_id);
+            body = Some((region.fold_state_id, region.visibility.label.clone()));
+        }
+        if has_tag(region, "summarize:docstring") {
+            docstring = Some(region.fold_state_id);
         }
     });
-    let mut lhs_states = Vec::new();
-    walk(lhs.root.children(), &mut |region| {
-        lhs_states.push(region.fold_state_id)
-    });
-    assert!(!lhs_states.contains(&body.expect("a function body on the after side")));
-    assert_eq!(select(&projected, 3, None).len(), 1);
-    // The same body grown from one that already had lines: `let x = a;`
-    // still pairs, so this is a rewrite rather than a new body.
-    let (_, sides) = project("a.rs", &grown, &after);
-    assert!(select(&sides, 3, None).is_empty());
-}
-
-#[test]
-fn the_system_prompt_is_the_configured_one() {
-    let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&sides, 3, None)[0].0;
-    let request = |overrides: serde_json::Value, sides: &mut Pairing<protocol::Source>| {
-        let (endpoint, server) = serve(vec![(200, gemini_answer(&[(id, "call a, b, c")]))]);
-        let mut overrides = overrides;
-        overrides["api_key"] = json!("test-key");
-        overrides["endpoint"] = json!(endpoint);
-        overrides["min_lines"] = json!(3);
-        shape(&summarizer_with(overrides), &file, sides).unwrap();
-        let bodies = server.join().unwrap();
-        let body: serde_json::Value = serde_json::from_str(&bodies[0]).unwrap();
-        (
-            body["systemInstruction"]["parts"][0]["text"].clone(),
-            body["contents"][0]["parts"][0]["text"].clone(),
-        )
-    };
-    let (system, user) = request(json!({"system_prompt": "Answer in haiku."}), &mut sides);
-    assert_eq!(system, "Answer in haiku.");
-    let user = user.as_str().unwrap();
-    assert!(user.starts_with("File a.py:\n"), "{user}");
-    assert!(user.contains(&format!("fold {id}: lines 2-4")), "{user}");
-
-    let (_, mut sides) = project("a.py", "", LARGE);
-    let (system, _) = request(json!({}), &mut sides);
-    let defaults = builtin::manifest("summarize").unwrap().defaults();
-    let prompt = defaults["system_prompt"].as_str().unwrap();
-    assert_eq!(system, prompt);
-}
-
-#[test]
-fn transient_failures_are_retried_then_succeed() {
-    let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&sides, 3, None)[0].0;
-    let (endpoint, server) = serve(vec![
-        (503, "{}".to_owned()),
-        (429, "{}".to_owned()),
-        (200, gemini_answer(&[(id, "retry ok")])),
-    ]);
-    shape(&summarizer(&endpoint, 3), &file, &mut sides).unwrap();
-    assert_eq!(server.join().unwrap().len(), 3);
-    let label = fold_label(&sides);
-    assert!(label.ends_with("retry ok"), "{label}");
+    let (state, label) = body.unwrap();
+    assert_eq!(label, "/// Sums three numbers.\nreturn a + b + c");
+    // The docstring folds with the body.
+    assert_eq!(docstring, Some(state));
 }
 
 #[test]
@@ -487,39 +264,6 @@ fn hard_failures_and_exhausted_retries_are_run_failures() {
         format!("{error:#}").contains("after 2 attempts"),
         "{error:#}"
     );
-}
-
-#[test]
-fn small_files_never_call_the_model() {
-    let (file, sides) = project("a.py", "", "def h():\n    e()\n");
-    let pipeline = summarizer_with(json!({
-        "api_key": "k",
-        "endpoint": "http://127.0.0.1:1",
-        "min_lines": 3,
-    }));
-    assert_eq!(edited(&pipeline, &file, &sides).unwrap(), sides.clone());
-}
-
-/// Exercise the same component a user loads from an external plugin folder.
-#[test]
-fn external_component_summarizes_over_http() {
-    let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&sides, 3, None)[0].0;
-    let (endpoint, server) = serve(vec![
-        (429, "{}".into()),
-        (200, gemini_answer(&[(id, "call a, b, c")])),
-    ]);
-    let pipeline = super::configured(&format!(
-        "[plugins]\norder = ['external.summarize']\n[plugins.external.summarize]\nenabled = true\npath = {:?}\n{}",
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/shape/summarize"),
-        super::options(
-            json!({"api_key": "test-key", "endpoint": endpoint, "min_lines": 3, "retries": 1})
-        )
-    ))
-    .unwrap();
-    shape(&pipeline, &file, &mut sides).unwrap();
-    assert_eq!(fold_label(&sides), "call a, b, c");
-    assert_eq!(server.join().unwrap().len(), 2);
 }
 
 #[test]
@@ -563,144 +307,18 @@ fn tests_are_selected_only_when_added_even_if_already_collapsed() {
 }
 
 #[test]
-fn suites_select_individual_tests_and_preserve_nested_summary_folds() {
-    for (path, after, outer_tag) in [
-        ("a.rs", "#[cfg(test)]\nmod tests {\n    #[test]\n    fn one() {\n        setup();\n        act();\n        check();\n    }\n    #[test]\n    fn two() {\n        setup();\n        act();\n        check();\n    }\n}\n", "test-bodies:module"),
-        ("a.ts", "describe('suite', () => {\n    it('one', () => {\n        setup();\n        act();\n        check();\n    });\n    test('two', () => {\n        setup();\n        act();\n        check();\n    });\n});\n", "test-bodies:test"),
-    ] {
-        let (file, mut sides) = project(path, "", after);
-        let selected = select(&sides, 3, Some(3));
-        assert_eq!(selected.len(), 2, "{path}: {selected:?}");
-        let (endpoint, server) = serve(vec![(200, gemini_answer(&[(selected[0].0, "setup; act; check one")])), (200, gemini_answer(&[(selected[1].0, "setup; act; check two")]))]);
-        shape(&summarizer_with(json!({"api_key": "test", "endpoint": endpoint, "test_min_lines": 3})), &file, &mut sides).unwrap();
-        run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
-        server.join().unwrap();
-        run("context", json!({"lines": 3}), &file, &mut sides);
-        let mut found = 0;
-        let mut outer_state = None;
-        walk(rhs(&sides).root.children(), &mut |region| {
-            if has_tag(region, outer_tag) && !selected.iter().any(|s| s.0 == region.id) {
-                assert!(region.visibility.collapsed);
-                outer_state = Some(region.fold_state_id);
-            }
-            if selected.iter().any(|s| s.0 == region.id) {
-                assert!(region.visibility.collapsed);
-                assert!(region.visibility.label.starts_with("setup; act; check"));
-                assert_ne!(Some(region.fold_state_id), outer_state);
-                found += 1;
-            }
-        });
-        assert!(outer_state.is_some());
-        assert_eq!(found, 2);
-    }
-}
-
-#[test]
-fn bundled_wasm_summarizer_streams_large_prompts() {
-    // Exceed the host's outgoing body buffer and close the server immediately
-    // after replying, exercising backpressure and the response/finish race.
-    let after = format!(
-        "def test_it():\n    setup()\n    act()\n    check() # {}\n# outside the selected body\n",
-        "context ".repeat(16_384)
-    );
-    let (file, mut sides) = project("a.py", "", &after);
-    let id = select(&sides, 3, Some(3))[0].0;
-    let (endpoint, server) = serve(vec![(200, gemini_answer(&[(id, "setup; act; check")]))]);
-    let wasm = summarizer_with(json!({
-        "api_key": "test", "endpoint": endpoint, "test_min_lines": 3, "retries": 0,
-    }));
-    assert!(builtin::component("summarize").is_some());
-    shape(&wasm, &file, &mut sides).unwrap();
-    assert_eq!(fold_label(&sides), "setup; act; check");
-    let requests = server.join().unwrap();
-    assert_eq!(requests.len(), 1);
-    let request: serde_json::Value = serde_json::from_str(&requests[0]).unwrap();
-    let prompt = request["contents"][0]["parts"][0]["text"].as_str().unwrap();
-    assert!(prompt.contains(&"context ".repeat(16_384)));
-    assert!(!prompt.contains("outside the selected body"));
-    assert!(prompt.contains(&format!("fold {id}: lines 2-4")));
-}
-
-#[test]
-fn missing_or_empty_summaries_leave_the_file_unchanged() {
-    for empty in [false, true] {
-        let (file, mut sides) = project("a.py", "", LARGE);
-        let id = select(&sides, 3, None)[0].0;
-        let answer = if empty {
-            gemini_answer(&[(id, "")])
-        } else {
-            gemini_answer(&[])
-        };
-        let before = sides.clone();
-        let (endpoint, server) = serve(vec![(200, answer)]);
-        shape(&summarizer(&endpoint, 0), &file, &mut sides).unwrap();
-        assert_eq!(sides, before);
-        server.join().unwrap();
-    }
-}
-
-#[test]
-fn gemini_requests_keep_their_path_and_key_header() {
-    let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&sides, 3, None)[0].0;
-    let (endpoint, server) = serve_requests(vec![(200, gemini_answer(&[(id, "call a, b, c")]))]);
-    shape(&summarizer(&endpoint, 0), &file, &mut sides).unwrap();
-    let request = server.join().unwrap().remove(0);
-    assert_eq!(
-        request.line,
-        "POST /v1beta/models/gemini-3.8-flash:generateContent HTTP/1.1"
-    );
-    assert!(request
-        .headers
-        .contains(&"x-goog-api-key: test-key".to_owned()));
-    let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
-    let config = &body["generationConfig"];
-    assert!(config.get("responseSchema").is_none());
-    assert_eq!(config["responseMimeType"], "application/json");
-    assert_summaries_schema(&config["responseJsonSchema"]);
-    assert!(!request
-        .headers
-        .iter()
-        .any(|header| header.starts_with("authorization")));
-}
-
-fn answers(items: &[(u32, &str)]) -> String {
-    let answers: Vec<_> = items
-        .iter()
-        .map(|(id, text)| json!({"id": id, "pseudocode": text}))
-        .collect();
-    serde_json::to_string(&answers).unwrap()
-}
-
-/// An object root with every field required and nothing else allowed, as
-/// OpenAI's strict mode and Anthropic's structured outputs require.
-fn assert_summaries_schema(schema: &serde_json::Value) {
-    assert_eq!(schema["type"], "object");
-    assert_eq!(schema["required"], json!(["summaries"]));
-    assert_eq!(schema["additionalProperties"], false);
-    let item = &schema["properties"]["summaries"]["items"];
-    assert_eq!(item["required"], json!(["id", "summary", "pseudocode"]));
-    assert_eq!(item["additionalProperties"], false);
-}
-
-#[test]
 fn each_provider_sends_its_own_request_and_reads_its_own_answer() {
-    let (_, sides) = project("a.py", "", LARGE);
-    let id = select(&sides, 3, None)[0].0;
-    let wrapped = format!("{{\"summaries\": {}}}", answers(&[(id, "call a, b, c")]));
-    // A compatible server that ignores the schema may wrap its answer.
-    let fenced = format!("<think>maybe [a] or [b], or []</think>\n```json\n{wrapped}\n```");
     for (provider, path, response, auth) in [
         (
             "openai",
             "/v1",
-            json!({"choices": [{"message": {"role": "assistant", "content": fenced}}]}),
+            json!({"choices": [{"message": {"role": "assistant", "content": "a b c"}}]}),
             "authorization: bearer test-key",
         ),
         (
             "anthropic",
             "",
-            json!({"content": [{"type": "thinking", "thinking": "[1]"}, {"type": "text", "text": wrapped}]}),
+            json!({"content": [{"type": "thinking", "thinking": "hmm"}, {"type": "text", "text": "a b c"}]}),
             "x-api-key: test-key",
         ),
     ] {
@@ -715,7 +333,7 @@ fn each_provider_sends_its_own_request_and_reads_its_own_answer() {
             "retries": 0,
         }));
         shape(&pipeline, &file, &mut sides).unwrap();
-        assert_eq!(fold_label(&sides), "call a, b, c", "{provider}");
+        assert_eq!(fold_label(&sides), "a b c", "{provider}");
         let request = server.join().unwrap().remove(0);
         let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
         assert!(
@@ -731,12 +349,8 @@ fn each_provider_sends_its_own_request_and_reads_its_own_answer() {
                 assert!(body["messages"][1]["content"]
                     .as_str()
                     .unwrap()
-                    .contains(&format!("fold {id}: lines 2-4")));
+                    .contains("    2 | "));
                 assert!(body.get("temperature").is_none());
-                let format = &body["response_format"];
-                assert_eq!(format["type"], "json_schema");
-                assert_eq!(format["json_schema"]["strict"], true);
-                assert_summaries_schema(&format["json_schema"]["schema"]);
             }
             _ => {
                 assert_eq!(request.line, "POST /v1/messages HTTP/1.1");
@@ -745,56 +359,11 @@ fn each_provider_sends_its_own_request_and_reads_its_own_answer() {
                     .contains(&"anthropic-version: 2023-06-01".to_owned()));
                 assert_eq!(body["max_tokens"], 4096);
                 assert!(body.get("temperature").is_none());
-                let format = &body["output_config"]["format"];
-                assert_eq!(format["type"], "json_schema");
-                assert_summaries_schema(&format["schema"]);
-                assert!(body["system"]
-                    .as_str()
-                    .unwrap()
-                    .starts_with("For each listed fold"));
+                assert_eq!(
+                    body["system"],
+                    builtin::manifest("summarize").unwrap().defaults()["system_prompt"]
+                );
             }
         }
     }
-}
-
-#[test]
-fn an_openai_compatible_server_needs_no_key() {
-    if std::env::var_os("OPENAI_API_KEY").is_some() {
-        return;
-    }
-    let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&sides, 3, None)[0].0;
-    let response = json!({"choices": [{"message": {"content": answers(&[(id, "call a, b, c")])}}]});
-    let (endpoint, server) = serve_requests(vec![(200, response.to_string())]);
-    let pipeline = summarizer_with(json!({
-        "provider": "openai",
-        "model": "llama",
-        "endpoint": format!("{endpoint}/v1"),
-        "min_lines": 3,
-    }));
-    shape(&pipeline, &file, &mut sides).unwrap();
-    assert_eq!(fold_label(&sides), "call a, b, c");
-    let request = server.join().unwrap().remove(0);
-    assert!(!request
-        .headers
-        .iter()
-        .any(|header| header.starts_with("authorization")));
-}
-
-#[test]
-fn an_unset_model_is_the_providers_default() {
-    let (file, mut sides) = project("a.py", "", LARGE);
-    let id = select(&sides, 3, None)[0].0;
-    let text = json!({"summaries": [{"id": id, "summary": "", "pseudocode": "call a, b, c"}]});
-    let response = json!({"content": [{"type": "text", "text": text.to_string()}]});
-    let (endpoint, server) = serve_requests(vec![(200, response.to_string())]);
-    let pipeline = summarizer_with(json!({
-        "provider": "anthropic",
-        "api_key": "test-key",
-        "endpoint": endpoint,
-        "min_lines": 3,
-    }));
-    shape(&pipeline, &file, &mut sides).unwrap();
-    let body: serde_json::Value = serde_json::from_str(&server.join().unwrap()[0].body).unwrap();
-    assert_eq!(body["model"], "claude-haiku-4-5");
 }

@@ -62,7 +62,7 @@ default = 3
 [options.system_prompt]
 type = "string"
 title = "System prompt"
-description = "The system instruction sent with every request; diffr builds each request's message from one body's numbered lines and its documentation."
+description = "The system instruction sent with every request; diffr builds each request's message from one body's numbered lines."
 default = """\
 For each block of code, rewrite it as pseudocode a reviewer can \
 read instead of the code. First decide what the code does. If uncertain, \
@@ -121,9 +121,7 @@ Assertions:
   assert agent is running
 ```
 
-When a fold lists a doc, also set "summary" to one sentence copied verbatim from that \
-doc; otherwise leave it empty. Answer with a JSON object whose "summaries" array holds \
-one {"id", "summary", "pseudocode"} object per fold."""
+Reply with only psuedocode in the format above (code within the 'pseudo' blocks), nothing else."""
 
 [options.tests]
 type = "boolean"

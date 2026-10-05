@@ -43,62 +43,27 @@ pub struct Summarize {
     endpoint: String,
 }
 
-/// One fold to summarize: its region id, 1-based inclusive line range, and
-/// its documentation text when it has any.
-struct Request {
-    id: u32,
-    first_line: u32,
-    last_line: u32,
-    doc: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct Answer {
-    id: u32,
-    #[serde(default)]
-    summary: String,
-    pseudocode: String,
-}
-
-/// What the model returned for one fold: an optional sentence quoted from
-/// its docstring, and the pseudocode.
-struct Summary {
-    quote: Option<String>,
-    pseudocode: String,
-}
-
 impl Summarize {
-    fn prompt(&self, path: &str, src: &str, fold: &Request) -> String {
-        let numbered = src
-            .split_terminator('\n')
-            .enumerate()
-            .map(|(index, line)| format!("{:5} | {line}", fold.first_line as usize + index))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let doc = fold
-            .doc
-            .as_ref()
-            .map(|doc| format!("\n  doc: {doc}"))
-            .unwrap_or_default();
-        format!(
-            "File {path}:\n\n{numbered}\n\nFold:\n- fold {}: lines {}-{}{doc}",
-            fold.id, fold.first_line, fold.last_line
-        )
-    }
-
-    /// One request per selected body, retried on transient failures. Any other
-    /// failure is a run-level failure.
+    /// One request per selected body: its lines, numbered from `first_line`
+    /// (1-based). Retried on transient failures; any other failure is a
+    /// run-level failure.
     async fn complete(
         &self,
         path: &str,
         src: &str,
-        fold: &Request,
-    ) -> anyhow::Result<Option<Summary>> {
+        first_line: usize,
+    ) -> anyhow::Result<Option<String>> {
+        let numbered = src
+            .split_terminator('\n')
+            .enumerate()
+            .map(|(index, line)| format!("{:5} | {line}", first_line + index))
+            .collect::<Vec<_>>()
+            .join("\n");
         let provider = self.options.provider;
         let body = provider.body(
             &self.options.model,
             &self.options.system_prompt,
-            &self.prompt(path, src, fold),
+            &format!("File {path}:\n\n{numbered}"),
             800,
         );
         let url = provider.url(&self.endpoint, &self.options.model);
@@ -138,76 +103,12 @@ impl Summarize {
                 http::sleep(Duration::from_millis(250 * (1 << attempt.min(6)))).await;
             }
         };
-        let content = provider
+        let pseudocode = provider
             .text(&text)
-            .ok_or_else(|| failed("no text in the response".to_owned()))?;
-        let answers: Vec<Answer> = provider::answers(content)
-            .ok_or_else(|| failed(format!("no summaries in the answer: {content}")))?;
-        if answers.len() > 1 {
-            return Err(failed("expected at most one summary".into()));
-        }
-        let Some(answer) = answers.into_iter().next() else {
-            return Ok(None);
-        };
-        if answer.id != fold.id {
-            return Err(failed(format!("answered for unknown fold {}", answer.id)));
-        }
-        Ok((!answer.pseudocode.trim().is_empty()).then(|| Summary {
-            quote: quoted(fold.doc.as_deref(), &answer.summary),
-            pseudocode: answer.pseudocode.trim().to_owned(),
-        }))
-    }
-}
-
-/// The text of the docstring region with this id, with comment markers and
-/// quotes stripped, or `None` when it says nothing.
-fn documentation(text: &str) -> Option<String> {
-    let words: Vec<_> = text
-        .split_terminator('\n')
-        .map(strip_markers)
-        .filter(|line| !line.is_empty())
-        .collect();
-    let text = words.join(" ");
-    (!text.is_empty()).then_some(text)
-}
-
-fn strip_markers(line: &str) -> &str {
-    let mut text = line.trim();
-    for prefix in [
-        "///", "//!", "//", "/**", "/*", "*/", "*", "#", "--", ";;", ";", "%",
-    ] {
-        if let Some(rest) = text.strip_prefix(prefix) {
-            text = rest.trim();
-            break;
-        }
-    }
-    for quote in ["\"\"\"", "'''"] {
-        text = text
-            .trim_start_matches(quote)
-            .trim_end_matches(quote)
+            .ok_or_else(|| failed("no text in the response".to_owned()))?
             .trim();
+        Ok((!pseudocode.is_empty()).then(|| pseudocode.to_owned()))
     }
-    text.trim_end_matches("*/").trim()
-}
-
-/// The model's sentence, kept only when it really is a verbatim quote from
-/// the docstring: compared with runs of whitespace collapsed.
-fn quoted(doc: Option<&str>, summary: &str) -> Option<String> {
-    let squash = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let (doc, sentence) = (squash(doc?), squash(summary));
-    (!sentence.is_empty() && doc.contains(&sentence)).then_some(sentence)
-}
-
-/// Pseudocode earns its place only when it is clearly shorter than the
-/// code: a summary with more than half the body's non-blank lines is
-/// dropped; the body retains its original visibility.
-fn compresses(summary: &str, body: &[&str]) -> bool {
-    let summary_lines = summary
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .count();
-    let body_lines = body.iter().filter(|line| !line.trim().is_empty()).count();
-    summary_lines * 2 <= body_lines
 }
 
 /// The API key: the `api_key` option, or else the first of the provider's
@@ -274,44 +175,38 @@ impl GuestPlugin for Summarize {
             return Ok(true);
         }
         let text = cursor.text(data.id)?;
-        let docstring = cursor.related(data.id, "documentation")?.into_iter().next();
-        let doc = docstring
-            .map(|id| cursor.text(id))
-            .transpose()?
-            .as_deref()
-            .and_then(documentation);
-        let lines = data.range.start.line..data.range.end.line;
-        let request = Request {
-            id: data.id,
-            first_line: lines.start + 1,
-            last_line: lines.end,
-            doc,
-        };
         let file = cursor.file();
         let path = match &file.file {
             FileSides::Both((_, rhs)) | FileSides::RightOnly(rhs) => &rhs.path,
             FileSides::LeftOnly(lhs) => &lhs.path,
         };
-        if let Some(summary) = self
-            .complete(path, &text, &request)
+        let Some(pseudocode) = self
+            .complete(path, &text, data.range.start.line as usize + 1)
             .await
             .map_err(|e| format!("summarizer: {e:#}"))?
-        {
-            if compresses(
-                &summary.pseudocode,
-                &text.split_terminator('\n').collect::<Vec<_>>(),
-            ) {
-                let label = match summary.quote {
-                    Some(quote) => format!("{quote}\n{}", summary.pseudocode),
-                    None => summary.pseudocode,
-                };
-                cursor.set_collapsed(data.id, true)?;
-                cursor.set_label(data.id, Some(&label))?;
-                if let Some(docstring) = docstring {
-                    cursor.link(&[data.id, docstring])?;
-                }
-            }
+        else {
+            return Ok(false);
+        };
+        // Pseudocode earns its place only when it is at most half as long as
+        // the body; otherwise the body keeps its original visibility.
+        let size = |text: &str| text.chars().filter(|c| !c.is_whitespace()).count();
+        if size(&pseudocode) * 2 > size(&text) {
+            return Ok(false);
         }
+        cursor.set_collapsed(data.id, true)?;
+        let docstring = cursor.related(data.id, "documentation")?.into_iter().next();
+        let Some(docstring) = docstring else {
+            cursor.set_label(data.id, Some(&pseudocode))?;
+            return Ok(false);
+        };
+        let docstring_text = cursor.text(docstring)?;
+        let first = docstring_text
+            .lines()
+            .next()
+            .ok_or_else(|| format!("empty docstring region {docstring}"))?
+            .trim();
+        cursor.set_label(data.id, Some(&format!("{first}\n{pseudocode}")))?;
+        cursor.link(&[data.id, docstring])?;
         Ok(false)
     }
 }

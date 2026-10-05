@@ -107,7 +107,7 @@ from elsewhere, for example:
 ```
 
 Break a test into setup, action being tested, and assertion phases; summarize setup with the \
-methods above, e.g. control-flow psuedocode. For example:
+methods above, e.g. control-flow pseudocode. For example:
 ```pseudo
 Setup:
   createSession
@@ -121,7 +121,7 @@ Assertions:
   assert agent is running
 ```
 
-Reply with only psuedocode in the format above (code within the 'pseudo' blocks), nothing else."""
+Reply with only pseudocode in the format above (code within the 'pseudo' blocks), nothing else."""
 
 [options.tests]
 type = "boolean"

@@ -1,4 +1,5 @@
 //! Keep changes and the context around them; fold every other stretch into one row.
+//! In a file with search hits, the hits take the place of the changes.
 //!
 //! One walk does it. Entering an unchanged fold folds it to an outline. Entering a leaf
 //! cuts it where kept lines start and stop. Leaving a fold folds each run
@@ -92,15 +93,20 @@ impl Context {
 
     /// Collapse a run of hidden siblings into one row, joined with its peers
     /// on the other side when they are hidden too. A run shorter than
-    /// `MIN_GAP` stays, and so does a lone region that already shows a
-    /// summary.
+    /// `MIN_GAP` stays unless it hides a change, and so does a lone region
+    /// that already shows a summary.
     fn fold_run(&self, cursor: &Cursor, run: &[u32]) -> Result<(), String> {
         let (Some(&first), Some(&last)) = (run.first(), run.last()) else {
             return Ok(());
         };
         let start = cursor.get(first)?.data;
         let lines = cursor.get(last)?.data.range.end.line - start.range.start.line;
-        if lines < MIN_GAP {
+        // With hits, changes away from them may fold.
+        let mut changes = false;
+        for &member in run {
+            changes |= cursor.has_changes(member)?;
+        }
+        if lines < MIN_GAP && !changes {
             return Ok(());
         }
         let row = match run {
@@ -110,12 +116,10 @@ impl Context {
             [only] => *only,
             _ => self.join(cursor, run)?,
         };
+        let kind = if changes { "" } else { " unchanged" };
         collapse(cursor, row, |region| {
             let range = cursor.get(region)?.data.range;
-            Ok(format!(
-                "{} unchanged lines",
-                range.end.line - range.start.line
-            ))
+            Ok(format!("{}{kind} lines", range.end.line - range.start.line))
         })
     }
 
@@ -177,19 +181,25 @@ impl Context {
     /// The lines of a leaf that stay visible, its own and those its paired
     /// leaf keeps on the other side.
     fn kept(&self, cursor: &Cursor, id: u32) -> Result<BTreeSet<u32>, String> {
-        let start = cursor.get(id)?.data.range.start.line;
+        let range = cursor.get(id)?.data.range;
+        let start = range.start.line;
         let mut kept = self.kept_on_side(cursor, id)?;
-        if let Some(peer) = cursor.paired_leaf(id)? {
-            let peer_start = cursor.get(peer)?.data.range.start.line;
-            let shift = |line: u32| line - peer_start + start;
-            kept.extend(self.kept_on_side(cursor, peer)?.into_iter().map(shift));
+        match cursor.paired_leaf(id)? {
+            Some(peer) => {
+                let peer_start = cursor.get(peer)?.data.range.start.line;
+                let shift = |line: u32| line - peer_start + start;
+                kept.extend(self.kept_on_side(cursor, peer)?.into_iter().map(shift));
+            }
+            None if hunk_holds_hit(cursor, id)? => kept.extend(start..range.end.line),
+            None => {}
         }
         Ok(kept)
     }
 
     /// Kept lines of a leaf from its own side: all of it when it or its
-    /// parent always shows; else the lines within `lines` of a change, and
-    /// the edges of the changed syntax around it.
+    /// parent always shows; else the lines within `lines` of a change (a
+    /// hit, in a file with hits), and the edges of the changed syntax
+    /// around it.
     fn kept_on_side(&self, cursor: &Cursor, id: u32) -> Result<BTreeSet<u32>, String> {
         let data = cursor.get(id)?.data;
         let lines = data.range.start.line..data.range.end.line;
@@ -207,11 +217,18 @@ impl Context {
                 ..range.end.saturating_add(radius).min(lines.end)
         };
         let mut kept = BTreeSet::new();
+        let hits = has_hits(cursor, id)?;
         for leaf in self.near(cursor, id)? {
             let leaf = cursor.get(leaf)?.data;
             let Kind::Leaf(spans) = leaf.kind else {
                 return Err(format!("leaves() returned the non-leaf {}", leaf.id));
             };
+            if hits {
+                for span in spans.search_highlights {
+                    kept.extend(near(span.line..span.line + 1));
+                }
+                continue;
+            }
             if cursor.paired_leaf(leaf.id)?.is_none() {
                 kept.extend(near(leaf.range.start.line..leaf.range.end.line));
                 continue;
@@ -376,9 +393,78 @@ fn nearest(cursor: &Cursor, id: u32, tag: &str) -> Result<Option<Region>, String
     Ok(ancestors.into_iter().find(|ancestor| tagged(ancestor, tag)))
 }
 
-/// Changed bytes or unpaired leaves anywhere in this region's fold state,
-/// on either side.
+/// Whether the file holds a search hit, on either side.
+fn has_hits(cursor: &Cursor, id: u32) -> Result<bool, String> {
+    let root = match cursor.ancestors(id)?.last() {
+        Some(root) => root.id,
+        None => id,
+    };
+    Ok(cursor.has_search_highlights(root)?)
+}
+
+/// Whether an unpaired leaf shares its hunk with a hit on the other side:
+/// a hit between the same unchanged paired neighbours.
+fn hunk_holds_hit(cursor: &Cursor, id: u32) -> Result<bool, String> {
+    if !has_hits(cursor, id)? {
+        return Ok(false);
+    }
+    let RegionView { side, .. } = cursor.get(id)?;
+    let other = match side {
+        Side::Lhs => Side::Rhs,
+        Side::Rhs => Side::Lhs,
+    };
+    let Some(other_text) = cursor.source(other) else {
+        return Ok(false);
+    };
+    let text = cursor
+        .source(side)
+        .ok_or("a region's own side has a source")?;
+    let leaves = cursor.leaves(side, 0, text.lines().count() as u32);
+    let at = leaves
+        .iter()
+        .position(|&leaf| leaf == id)
+        .ok_or("a leaf is among its side's leaves")?;
+    let unchanged_peer = |leaf: u32| -> Result<Option<Region>, String> {
+        match cursor.paired_leaf(leaf)? {
+            Some(peer) if !cursor.has_changes(leaf)? && !cursor.has_changes(peer)? => {
+                Ok(Some(cursor.get(peer)?.data))
+            }
+            _ => Ok(None),
+        }
+    };
+    let mut start = 0;
+    for &leaf in leaves[..at].iter().rev() {
+        if let Some(peer) = unchanged_peer(leaf)? {
+            start = peer.range.end.line;
+            break;
+        }
+    }
+    let mut end = other_text.lines().count() as u32;
+    for &leaf in &leaves[at + 1..] {
+        if let Some(peer) = unchanged_peer(leaf)? {
+            end = peer.range.start.line;
+            break;
+        }
+    }
+    // Neighbours out of order, as around moved code, bound no hunk.
+    if start >= end {
+        return Ok(false);
+    }
+    for leaf in cursor.leaves(other, start, end) {
+        if cursor.has_search_highlights(leaf)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// What context grows around, anywhere in this region's fold state on
+/// either side: search hits in a file with hits, else changed bytes or
+/// unpaired leaves.
 fn changed(cursor: &Cursor, id: u32) -> Result<bool, String> {
+    if has_hits(cursor, id)? {
+        return Ok(cursor.has_search_highlights(id)?);
+    }
     for region in cursor.linked_regions(id)? {
         if cursor.has_changes(region)? {
             return Ok(true);

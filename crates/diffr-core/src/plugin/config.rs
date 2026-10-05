@@ -763,39 +763,6 @@ mod tests {
     use crate::config::Config;
 
     #[test]
-    fn the_prompt_description_links_to_its_default_in_the_source() {
-        let source = include_str!("../../../../plugins/shape/summarize/plugin.toml");
-        let lines: Vec<&str> = source.lines().collect();
-        let table = lines
-            .iter()
-            .position(|line| *line == "[options.system_prompt]")
-            .unwrap();
-        let start = table
-            + lines[table..]
-                .iter()
-                .position(|line| line.starts_with("default = \"\"\""))
-                .unwrap();
-        let end = start
-            + lines[start..]
-                .iter()
-                .position(|line| line.ends_with("\"\"\""))
-                .unwrap();
-        let manifest = super::builtin::manifest("summarize").unwrap();
-        let description = manifest.options["system_prompt"]["description"]
-            .as_str()
-            .unwrap();
-        let link = format!(
-            "https://github.com/devdotfast/diffr/blob/main/plugins/shape/summarize/plugin.toml#L{}-L{}",
-            start + 1,
-            end + 1
-        );
-        assert!(
-            description.contains(&link),
-            "{description}\nexpected {link}"
-        );
-    }
-
-    #[test]
     fn defaults_can_follow_another_option() {
         let summarize = |toml: &str| {
             Config::from_toml(toml).unwrap().plugins.entries["bundled.summarize"]

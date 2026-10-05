@@ -348,10 +348,12 @@ mod tests {
             shown["plugins"]["bundled"]["deleted-bodies"],
             serde_json::json!({"enabled": true, "min_lines": 30})
         );
-        assert!(shown["plugins"]["bundled"]["summarize"]["system_prompt"]
-            .as_str()
-            .unwrap()
-            .starts_with("For each listed fold"));
+        assert_eq!(
+            shown["plugins"]["bundled"]["summarize"]["system_prompt"],
+            crate::plugin::builtin::manifest("summarize")
+                .unwrap()
+                .options["system_prompt"]["default"]
+        );
         let text = toml::to_string_pretty(&redacted(&config, false)).unwrap();
         assert!(text.contains("[plugins.bundled.summarize]"), "{text}");
         assert!(text.contains("system_prompt = "), "{text}");

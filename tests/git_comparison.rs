@@ -43,6 +43,27 @@ fn statuses(text: &str) -> Vec<String> {
 }
 
 #[test]
+fn invalid_revision_range_is_rejected_before_the_terminal_ui() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = gix::init(dir.path()).unwrap();
+    commit(&repo, "base");
+    commit(&repo, "head");
+
+    let output = diffr(dir.path(), &["HEAD^2..HEAD"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("unknown revision or path \"HEAD^2..HEAD\""),
+        "{stderr}"
+    );
+
+    let output = diffr(dir.path(), &["HEAD^..HEAD"]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("terminal UI needs a terminal"), "{stderr}");
+}
+
+#[test]
 fn revisions_index_worktree_reverse_paths_and_stats_match_git() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("repo");

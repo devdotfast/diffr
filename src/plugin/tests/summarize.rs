@@ -523,7 +523,7 @@ fn external_component_summarizes_over_http() {
 }
 
 #[test]
-fn tests_are_selected_when_added_modified_unchanged_or_already_collapsed() {
+fn tests_are_selected_only_when_added_even_if_already_collapsed() {
     for (path, before, after) in [
         (
             "a.py",
@@ -552,11 +552,12 @@ fn tests_are_selected_when_added_modified_unchanged_or_already_collapsed() {
             let comment = if path.ends_with(".py") { "#" } else { "//" };
             let after = format!("{after}\n{comment} changed elsewhere\n");
             let (file, mut sides) = project(path, old, &after);
-            assert_eq!(select(&sides, 3, Some(3)).len(), 1, "{path}: {old}");
+            let added = usize::from(old.is_empty());
+            assert_eq!(select(&sides, 3, Some(3)).len(), added, "{path}: {old}");
             assert!(select(&sides, 3, None).is_empty());
             assert!(select(&sides, 3, Some(30)).is_empty());
             run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
-            assert_eq!(select(&sides, 3, Some(3)).len(), 1);
+            assert_eq!(select(&sides, 3, Some(3)).len(), added);
         }
     }
 }

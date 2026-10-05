@@ -1,5 +1,5 @@
-//! The summarizer: large new function bodies become short pseudocode, shown
-//! in place of the collapsed body.
+//! The summarizer: large new function bodies and new tests become short
+//! pseudocode, shown in place of the collapsed body.
 //!
 //! It needs an API key for most providers: `new` fails without one, naming
 //! how to set it or turn the plugin off, which is why the bundled
@@ -14,7 +14,7 @@ mod provider;
 pub use provider::{Details, Provider};
 
 /// The plugin's name, and the tags its queries set: a function body, and a
-/// test body, which can be summarized independently of whether it is new.
+/// test body.
 const FUNCTION: &str = "summarize:function";
 const TEST: &str = "summarize:test";
 
@@ -323,7 +323,9 @@ impl Summarize {
         }
         let count = (data.range.end.line - data.range.start.line) as usize;
         Ok(if data.tags.iter().any(|tag| tag == TEST) {
-            self.options.tests && count >= self.options.test_min_lines
+            self.options.tests
+                && count >= self.options.test_min_lines
+                && cursor.is_one_sided(data.id)?
         } else {
             data.tags.iter().any(|tag| tag == FUNCTION)
                 && !data.visibility.collapsed

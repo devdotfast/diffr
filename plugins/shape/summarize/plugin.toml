@@ -6,7 +6,7 @@ description = "Pseudocode summaries for large new function bodies and tests."
 # startup when a plugin that is on cannot be made.
 [enabled]
 title = "Summarize functions and tests"
-description = "Summarize large new function bodies and right-side tests as pseudocode. Needs an API key: `api_key`, or the provider's variable in the environment: `GEMINI_API_KEY` or `GOOGLE_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`."
+description = "Summarize large new function bodies and new tests as pseudocode. Needs an API key: `api_key`, or the provider's variable in the environment: `GEMINI_API_KEY` or `GOOGLE_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`."
 default = false
 
 [options.provider]
@@ -105,7 +105,7 @@ one {"id", "summary", "pseudocode"} object per fold."""
 [options.tests]
 type = "boolean"
 title = "Summarize tests"
-description = "Summarize right-side test bodies, including modified and unchanged tests in diffed files."
+description = "Summarize new test bodies."
 default = true
 
 [options.test_min_lines]

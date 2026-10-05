@@ -32,7 +32,7 @@ use super::{
     Span, Stats, SyntaxSpan, Visibility,
 };
 use crate::hash::DftHashMap;
-use crate::line_layout::{aligned_rows, novel_lines, runs, Run};
+use crate::line_layout::{aligned_rows, novel_lines, runs, Run, RunKind};
 use crate::line_parser;
 use crate::lines::SourcePosition;
 use crate::pairing::Pairing;
@@ -218,7 +218,7 @@ fn regions(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> (Region, Region
     let rhs_splits = folds::split_lines(rhs_folds.iter().map(|fold| fold.lines));
     let (lhs_leaves, rhs_leaves) = split_runs(&runs, &lhs_splits, &rhs_splits);
 
-    let mut ids = Ids::new();
+    let mut ids = Ids::new(aligned_folds(&runs, &lhs_folds, &rhs_folds));
     let lhs = tree(
         &lhs_folds,
         &lhs_leaves,
@@ -239,6 +239,42 @@ fn regions(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> (Region, Region
         Region::root(ids.fresh_id(), lhs),
         Region::root(ids.fresh_id(), rhs),
     )
+}
+
+/// Folds the matcher left unpaired that the line alignment pairs: a left and
+/// a right fold inside one run of unchanged rows, over the same lines of it.
+/// The two sides of such a run are the same lines, so the folds are twins.
+/// Keyed both ways.
+fn aligned_folds(
+    runs: &[Run],
+    lhs_folds: &[SideFold<'_>],
+    rhs_folds: &[SideFold<'_>],
+) -> DftHashMap<SyntaxId, SyntaxId> {
+    let novel = |side: &SideFold<'_>| matches!(side.fold.match_kind, FoldMatch::Novel);
+    let rhs_by_lines: DftHashMap<(usize, usize), SyntaxId> = rhs_folds
+        .iter()
+        .filter(|side| novel(side))
+        .map(|side| (side.lines, side.fold.syntax_id))
+        .collect();
+    let mut aligned = DftHashMap::default();
+    for lhs in lhs_folds.iter().filter(|side| novel(side)) {
+        let (start, end) = lhs.lines;
+        let run = runs.iter().find_map(|run| match (run.kind, run.sides) {
+            (RunKind::Unchanged, Pairing::Both { lhs, rhs }) if lhs.0 <= start && end <= lhs.1 => {
+                Some((lhs.0, rhs.0))
+            }
+            _ => None,
+        });
+        let Some((lhs_start, rhs_start)) = run else {
+            continue;
+        };
+        let lines = (start - lhs_start + rhs_start, end - lhs_start + rhs_start);
+        if let Some(&rhs) = rhs_by_lines.get(&lines) {
+            aligned.insert(lhs.fold.syntax_id, rhs);
+            aligned.insert(rhs, lhs.fold.syntax_id);
+        }
+    }
+    aligned
 }
 
 /// One side's folds as nested line spans.
@@ -315,15 +351,19 @@ struct Ids {
     /// The `fold_state_id` of every fold numbered so far, by the fold of the
     /// syntax node it was built on.
     folds: DftHashMap<SyntaxId, u32>,
+    /// The opposite of every fold the line alignment pairs (see
+    /// `aligned_folds`).
+    aligned: DftHashMap<SyntaxId, SyntaxId>,
 }
 
 impl Ids {
-    fn new() -> Self {
+    fn new(aligned: DftHashMap<SyntaxId, SyntaxId>) -> Self {
         Self {
             next_id: 1,
             next_alignment: 0,
             leaves: DftHashMap::default(),
             folds: DftHashMap::default(),
+            aligned,
         }
     }
 
@@ -359,10 +399,11 @@ impl Ids {
     /// the survivor a `fold_state_id` of its own.
     fn fold(&mut self, fold: &Fold) -> (u32, u32) {
         let id = self.fresh_id();
-        let numbered = match fold.match_kind {
-            FoldMatch::Matched { opposite } => self.folds.get(&opposite),
-            FoldMatch::Novel => None,
+        let opposite = match fold.match_kind {
+            FoldMatch::Matched { opposite } => Some(opposite),
+            FoldMatch::Novel => self.aligned.get(&fold.syntax_id).copied(),
         };
+        let numbered = opposite.and_then(|opposite| self.folds.get(&opposite));
         let state = match numbered {
             Some(&state) => state,
             None => id,
@@ -858,18 +899,14 @@ mod tests {
             "rhs folds have distinct ids"
         );
         let (lhs_states, rhs_states) = (fold_states(lhs), fold_states(rhs));
-        // Nothing matched the nodes these folds belong to, so no fold pairs.
-        let lhs_state_ids: BTreeSet<u32> = lhs_states.values().copied().collect();
-        assert!(
-            !rhs_states
-                .values()
-                .any(|state| lhs_state_ids.contains(state)),
-            "a fallback's folds are unpaired"
-        );
+        // The matcher never ran. The line alignment pairs `keep`, whose lines
+        // are unchanged; `f` holds a changed line and stays on its own.
+        assert_eq!(lhs_states[&7], rhs_states[&7], "keep pairs by its lines");
+        assert_ne!(lhs_states[&1], rhs_states[&1], "f is unpaired");
     }
 
     #[test]
-    fn folds_pair_only_where_the_matcher_paired_their_nodes() {
+    fn folds_pair_where_the_matcher_or_the_line_alignment_pairs_them() {
         for options in [
             DiffOptions::default(),
             DiffOptions {
@@ -905,8 +942,10 @@ mod tests {
                 assert_eq!(lhs_folds[&7], rhs_folds[&7], "keep pairs");
                 assert_eq!(shared.len(), 2);
             } else {
-                // The matcher never ran, so every fold is on its own.
-                assert!(shared.is_empty(), "a fallback's folds are unpaired");
+                // The matcher never ran. The line alignment pairs `keep`; `f`
+                // holds a changed line and stays on its own.
+                assert_eq!(lhs_folds[&7], rhs_folds[&7], "keep pairs by its lines");
+                assert_eq!(shared.len(), 1);
             }
             assert!(
                 !lhs_folds.values().any(|id| *id == rhs_folds[&13]),

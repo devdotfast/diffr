@@ -246,6 +246,7 @@ fn a_fold_whose_matched_partner_holds_changes_stays_open() {
         visibility: Visibility::default(),
         node: Node::Leaf {
             alignment_id: alignment,
+            pair: None,
             search_highlights: Vec::new(),
             changed: (start..end)
                 .filter(|_| changed)

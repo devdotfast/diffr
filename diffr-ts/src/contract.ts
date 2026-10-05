@@ -244,6 +244,8 @@ export type StructuralNode =
   | {
       kind: "leaf";
       alignment_id: number;
+      /** The partner leaf's `id` on the other side; absent when added or deleted. */
+      pair?: number;
       changed?: StructuralSpan[];
       /** The spans search hits cover. */
       search_highlights?: StructuralSpan[];
@@ -262,6 +264,7 @@ export const StructuralNodeSchema: z.ZodType<StructuralNode> = z.lazy(() =>
     z.object({
       kind: z.literal("leaf"),
       alignment_id: structuralU32,
+      pair: structuralU32.optional(),
       changed: z.array(StructuralSpanSchema).optional(),
       search_highlights: z.array(StructuralSpanSchema).optional(),
     }),

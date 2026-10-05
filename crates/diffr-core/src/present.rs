@@ -159,6 +159,7 @@ mod visible_tests {
             node: Node::Leaf {
                 search_highlights: Vec::new(),
                 alignment_id: alignment,
+                pair: None,
                 changed: changed
                     .iter()
                     .map(|&line| Span {

@@ -26,6 +26,7 @@ fn leaf(id: u32, alignment: u32, start: u32, end: u32, changed: &[u32]) -> Regio
         node: Node::Leaf {
             search_highlights: vec![],
             alignment_id: alignment,
+            pair: None,
             changed: changed
                 .iter()
                 .map(|&line| Span {
@@ -196,6 +197,16 @@ fn cutting_a_paired_leaf_cuts_both_sides_with_fresh_ids_and_a_shared_alignment()
                 (4, Some(2), 4, 6, 7, false, open()),
             ],
             "target {target}"
+        );
+        // Each new tail names the other side's new tail as its pair.
+        let pair = |region: &Region| match region.node {
+            Node::Leaf { pair, .. } => pair,
+            Node::Fold { .. } => panic!("a leaf"),
+        };
+        let tails = [&lhs.root.children()[2..4], &rhs.root.children()[1..3]];
+        assert_eq!(
+            tails.map(|side| side.iter().map(pair).collect::<Vec<_>>()),
+            [vec![Some(103), Some(105)], vec![Some(102), Some(104)],]
         );
         let Node::Leaf { changed, .. } = &lhs.root.children()[3].node else {
             panic!("a leaf");

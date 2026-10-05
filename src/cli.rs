@@ -178,9 +178,9 @@ pub(crate) fn run(runtime: &tokio::runtime::Runtime) -> Result<i32> {
         }
         None => {}
     }
-    let streaming = args.format.is_some();
     let metadata_or_quiet = args.quiet || args.metadata();
-    if !streaming && !metadata_or_quiet {
+    let interactive = args.format.is_none() && !metadata_or_quiet;
+    if interactive && args.no_index {
         return launch_tui(&frontend_args, true);
     }
     if args.no_index {
@@ -194,6 +194,11 @@ pub(crate) fn run(runtime: &tokio::runtime::Runtime) -> Result<i32> {
     let repo = gix::discover(&location)?;
     let workspace = repo.workdir().unwrap_or(repo.git_dir());
     let (comparison, paths) = select(&repo, &location, &args, has_separator)?;
+    if interactive {
+        // Reject invalid revisions before the UI takes over the terminal.
+        comparison.resolve(&repo)?;
+        return launch_tui(&frontend_args, true);
+    }
     let files = FileParams {
         paths,
         // `-M` conflicts with `--no-renames`; renames are on by default.

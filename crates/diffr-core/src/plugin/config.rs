@@ -1084,7 +1084,7 @@ mod tests {
         assert_eq!(classifier["hide_deleted"], false);
         assert_eq!(
             classifier["hide"],
-            serde_json::json!(["generated", "vendored", "test"])
+            serde_json::json!(["generated", "vendored"])
         );
         let summarize = &config.plugins.entries["bundled.summarize"];
         assert_eq!(

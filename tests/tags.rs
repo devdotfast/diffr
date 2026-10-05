@@ -376,7 +376,7 @@ fn visibility_of<'a>(records: &'a [Value], path: &str) -> Option<&'a Value> {
         .and_then(|root| root.get("visibility"))
 }
 
-/// By default the classifier hides generated, vendored and test files, and
+/// By default the classifier hides generated and vendored files, and
 /// deleted ones: each is diffed by line and shown behind its reason.
 #[test]
 fn hidden_files_are_diffed_by_line_and_shown_behind_their_reason() {
@@ -399,10 +399,7 @@ fn hidden_files_are_diffed_by_line_and_shown_behind_their_reason() {
         hidden("Vendored file · hidden by default")
     );
     assert_eq!(fallback_of(&defaults, "vendor/lib/a.rs"), Some("hidden"));
-    assert_eq!(
-        visibility_of(&defaults, "tests/a.rs").cloned(),
-        hidden("Test file · hidden by default")
-    );
+    assert_eq!(visibility_of(&defaults, "tests/a.rs"), None);
     assert_eq!(
         visibility_of(&defaults, "src/gone.rs").cloned(),
         hidden("Deleted file · hidden by default")

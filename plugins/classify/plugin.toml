@@ -7,7 +7,7 @@ type = "array"
 items = { type = "string" }
 title = "Tags that hide a file"
 description = "A file carrying any of these tags starts hidden: it is diffed by line, no shape plugin runs on it, and it is shown collapsed. The first listed tag a file carries names the reason."
-default = ["generated", "vendored", "test"]
+default = ["generated", "vendored"]
 
 [options.hide_deleted]
 type = "boolean"

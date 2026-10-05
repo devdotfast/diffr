@@ -187,10 +187,10 @@ impl GuestPlugin for Summarize {
         else {
             return Ok(false);
         };
-        // Pseudocode earns its place only when it is at most half as long as
-        // the body; otherwise the body keeps its original visibility.
+        // Pseudocode earns its place only when it is at most two thirds as
+        // long as the body; otherwise the body keeps its original visibility.
         let size = |text: &str| text.chars().filter(|c| !c.is_whitespace()).count();
-        if size(&pseudocode) * 2 > size(&text) {
+        if size(&pseudocode) * 3 > size(&text) * 2 {
             return Ok(false);
         }
         cursor.set_collapsed(data.id, true)?;

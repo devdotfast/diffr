@@ -104,13 +104,13 @@ export function rowsForFile(
   const { leaves, folds } = flatten(d);
   const hidden = [hiddenLines(folds[0], collapsed), hiddenLines(folds[1], collapsed)];
   // A collapsed fold is a row of its own, where its first line would have been. A syntax fold
-  // instead joins its opener, label and closing suffix on the opener's line, so its closer is
-  // masked too.
+  // with a one-line label instead joins its opener, label and closing suffix on the opener's
+  // line, so its closer is masked too.
   const bands = folds.map(side => collapsedFolds(side, collapsed));
   const inline = bands.map((sideBands, side) => {
     const result = new Map<number, SyntaxFold>();
     for (const fold of sideBands.values()) {
-      if (!fold.syntax) continue;
+      if (!fold.syntax || fold.label.includes("\n")) continue;
       sideBands.delete(fold.startLine);
       result.set(fold.syntax.start.line, fold as SyntaxFold);
       for (let line = fold.syntax.start.line + 1; line <= fold.syntax.end.line; line++) hidden[side].add(line);
@@ -196,12 +196,22 @@ export function rowsForFile(
   };
   // A collapsed region is one row: chevron and label, no line number, whether the region is a
   // fold or a leaf the context plugin cut out. It starts at its parent's indent; a multi-line
-  // label (pseudocode) hangs under it at that indent, one row per line.
+  // label (pseudocode) hangs under it at that indent, one row per line. A syntax body with a
+  // multi-line label is instead quoted between its opener and closer, at the body's indent.
   const band = (region: Leaf | Fold) => {
     const { tint, note } = collapsedTint(region);
-    const lead = (text: string) => withGuides([{ text: " ".repeat(region.parentColumn) }, placeholder(text, tint)],
-      guides[region.side].get(region.startLine) ?? [], theme);
     const multiline = region.label.includes("\n");
+    const quoted = "syntax" in region && region.syntax !== undefined && multiline;
+    const body = texts[region.side][region.startLine]!;
+    const column = quoted ? byteColumn(body, body.length - body.trimStart().length) : region.parentColumn;
+    const lead = (text: string) => withGuides([{ text: " ".repeat(column) }, placeholder(text, tint)],
+      guides[region.side].get(region.startLine) ?? [], theme);
+    if (quoted) {
+      const [first, ...rest] = region.label.split("\n");
+      const header = { kind: "context" as const, sign: " ", band: tint, spans: lead(`> ${first}${note}`),
+        fold: { id: region.foldStateId, label: region.label, collapsed: true, tint } };
+      return { header, labels: rest.map(text => ({ ...header, foldLabel: true, spans: lead(`> ${text}`), fold: undefined })) };
+    }
     const header = { kind: "context" as const, sign: " ", band: tint,
       spans: lead(`⋯${region.label && !multiline ? " " + region.label : ""}${note}`),
       fold: { id: region.foldStateId, label: region.label, collapsed: true, tint } };

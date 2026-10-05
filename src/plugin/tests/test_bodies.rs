@@ -111,3 +111,38 @@ fn javascript_test_callbacks_collapse() {
         assert_eq!(collapsed, [1], "{path}");
     }
 }
+
+/// Whether each test body starts collapsed.
+fn collapsed_tests(sides: &Pairing<Source>) -> Vec<bool> {
+    let mut collapsed = Vec::new();
+    walk(rhs(sides).root.children(), &mut |region| {
+        if has_tag(region, TEST) {
+            collapsed.push(region.visibility.collapsed);
+        }
+    });
+    collapsed
+}
+
+#[test]
+fn integration_and_end_to_end_tests_stay_open() {
+    let after = "#[test]\nfn t() {\n    a();\n    b();\n    c();\n}\n";
+    let (mut file, mut sides) = project("tests/a.rs", "", after);
+    file.tags = vec!["integration".to_owned(), "test".to_owned()];
+    run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
+    assert_eq!(collapsed_tests(&sides), [false]);
+    // A marked test stays open beside a unit test that collapses.
+    for (path, after) in [
+        (
+            "test_a.py",
+            "@pytest.mark.integration\ndef test_slow():\n    a()\n    b()\n    c()\n\ndef test_fast():\n    a()\n    b()\n    c()\n",
+        ),
+        (
+            "a_test.go",
+            "package a\n\nfunc TestSlow(t *testing.T) {\n\tif testing.Short() {\n\t\tt.Skip()\n\t}\n\ta()\n\tb()\n}\n\nfunc TestFast(t *testing.T) {\n\ta()\n\tb()\n\tc()\n}\n",
+        ),
+    ] {
+        let (file, mut sides) = project(path, "", after);
+        run("test-bodies", json!({"min_lines": 3}), &file, &mut sides);
+        assert_eq!(collapsed_tests(&sides), [false, true], "{path}");
+    }
+}

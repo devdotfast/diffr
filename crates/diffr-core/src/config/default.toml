@@ -1,5 +1,5 @@
 # Bundled defaults. The user config keeps only what differs from these.
-version = 1
+version = 2
 
 [plugins]
 order = [

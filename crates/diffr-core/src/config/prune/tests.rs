@@ -194,7 +194,7 @@ fn edit_value(value: &Value) -> toml_edit::Value {
 /// prompt.
 fn generate(rng: &mut Rng, settings: &[(String, Value)]) -> (DocumentMut, Vec<String>) {
     let mut document = DocumentMut::new();
-    document.insert("version", toml_edit::value(1));
+    document.insert("version", toml_edit::value(2));
     let mut chosen: Vec<(String, Value)> = Vec::new();
     for (key, node) in settings {
         if !rng.chance(40) {

@@ -33,7 +33,7 @@ use std::sync::{Arc, OnceLock};
 use strum::IntoEnumIterator;
 
 pub(crate) const DEFAULT_CONFIG: &str = include_str!("config/default.toml");
-const CONFIG_VERSION: u32 = 1;
+const CONFIG_VERSION: u32 = 2;
 fn config_version() -> u32 {
     CONFIG_VERSION
 }
@@ -41,9 +41,9 @@ fn config_version() -> u32 {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    /// Configuration format version. Unknown versions require a newer diffr.
+    /// Configuration format version. Only version 2 is accepted; omitted means 2.
     #[serde(default = "config_version")]
-    #[schemars(extend("x-settings" = false))]
+    #[schemars(extend("x-settings" = false, "const" = CONFIG_VERSION))]
     pub(crate) version: u32,
     /// The plugins that decide what starts collapsed, hidden, linked or
     /// grouped, and the fold queries they own. Its schema comes from each
@@ -217,6 +217,20 @@ impl Config {
     /// Parse the text of a file in `directory`. Errors lead with the dotted
     /// path of the key they concern, such as `diff.typo`.
     pub fn from_toml_in(source: &str, directory: &Path) -> Result<Self, ConfigError> {
+        // Report an unsupported format before decoding its fields.
+        #[derive(Deserialize)]
+        struct Version {
+            #[serde(default = "config_version")]
+            version: u32,
+        }
+        let version: Version =
+            toml::from_str(source).map_err(|error| ConfigError(error.to_string()))?;
+        if version.version != CONFIG_VERSION {
+            return Err(ConfigError(format!(
+                "unsupported config version {}; expected {CONFIG_VERSION}",
+                version.version
+            )));
+        }
         let source = prune::forget_legacy(source);
         let mut config: Self = serde_path_to_error::deserialize(toml::Deserializer::new(&source))
             .map_err(|error| {
@@ -227,12 +241,6 @@ impl Config {
                 _ => format!("{path}: {message}"),
             })
         })?;
-        if config.version != CONFIG_VERSION {
-            return Err(ConfigError(format!(
-                "unsupported config version {}; expected {CONFIG_VERSION}",
-                config.version
-            )));
-        }
         config.plugins.resolve(directory)?;
         config.classifier.resolve(directory)?;
         Ok(config)
@@ -792,7 +800,7 @@ mod format_tests {
         let defaults = Config::default();
         let text = toml::to_string_pretty(&defaults).unwrap();
         let restored = Config::from_toml(&text).unwrap();
-        assert_eq!(defaults.version, 1);
+        assert_eq!(defaults.version, 2);
         assert_eq!(
             serde_json::to_value(defaults).unwrap(),
             serde_json::to_value(restored).unwrap()
@@ -801,13 +809,15 @@ mod format_tests {
 
     #[test]
     fn unsupported_versions_are_rejected_and_explicit_lists_stay_small() {
-        assert!(Config::from_toml("version = 2")
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("unsupported config version 2"));
+        assert!(
+            Config::from_toml("version = 1\n[plugins.bundled.context]\nenabled = false")
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("unsupported config version 1; expected 2")
+        );
         let config =
-            Config::from_toml("version = 1\n[plugins]\norder = ['bundled.context']\n").unwrap();
+            Config::from_toml("version = 2\n[plugins]\norder = ['bundled.context']\n").unwrap();
         assert_eq!(config.plugins.entries.len(), 1);
         assert!(config.plugins.entries.contains_key("bundled.context"));
     }

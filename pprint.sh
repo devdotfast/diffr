@@ -34,7 +34,7 @@ if [ -n "$mock" ]; then
   server=$!
   mkdir -p "$work/config/diffr"
   cat > "$work/config/diffr/config.toml" <<TOML
-version = 1
+version = 2
 
 [plugins.bundled.summarize]
 enabled = true

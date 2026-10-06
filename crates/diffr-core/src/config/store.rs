@@ -493,7 +493,7 @@ mod sparse_tests {
         let path = dir.path().join("config.toml");
         set(&path, "diff.graph_limit", "42").unwrap();
         let raw = read_toml(&path);
-        assert_eq!(raw["version"].as_integer(), Some(1));
+        assert_eq!(raw["version"].as_integer(), Some(2));
         assert_eq!(raw["diff"]["graph_limit"].as_integer(), Some(42));
         assert!(raw.get("plugins").is_none(), "{raw}");
         let text = std::fs::read_to_string(&path).unwrap();
@@ -611,7 +611,7 @@ mod sparse_tests {
         // Earlier versions wrote every table with its own header.
         std::fs::write(
             &path,
-            "version = 1\n\n[plugins]\n\n[plugins.bundled]\n\n[plugins.bundled.context]\nlines = 3\n",
+            "version = 2\n\n[plugins]\n\n[plugins.bundled]\n\n[plugins.bundled.context]\nlines = 3\n",
         )
         .unwrap();
         set(&path, "diff.graph_limit", "42").unwrap();

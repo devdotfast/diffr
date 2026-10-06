@@ -190,8 +190,7 @@ fn edit_value(value: &Value) -> toml_edit::Value {
 }
 
 /// A config file of random settings at their default or another value, in
-/// random order, with random comments, explicit headers and an old default
-/// prompt.
+/// random order, with random comments and explicit headers.
 fn generate(rng: &mut Rng, settings: &[(String, Value)]) -> (DocumentMut, Vec<String>) {
     let mut document = DocumentMut::new();
     document.insert("version", toml_edit::value(2));
@@ -211,11 +210,6 @@ fn generate(rng: &mut Rng, settings: &[(String, Value)]) -> (DocumentMut, Vec<St
         if let Some(value) = value {
             chosen.push((key.clone(), value));
         }
-    }
-    if rng.chance(25) {
-        let legacy = LEGACY_DEFAULTS[0].1[(rng.next() % 2) as usize];
-        chosen.retain(|(key, _)| key != LEGACY_DEFAULTS[0].0);
-        chosen.push((LEGACY_DEFAULTS[0].0.to_owned(), Value::from(legacy)));
     }
     rng.shuffle(&mut chosen);
     let mut comments = Vec::new();

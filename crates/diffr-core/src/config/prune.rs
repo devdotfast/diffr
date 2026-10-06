@@ -1,42 +1,6 @@
 //! Keep the config file sparse, so that later default changes reach it.
-//! Both passes remove keys by dotted path: [`prune`] each key whose removal
-//! leaves the resolved configuration unchanged, and [`forget_legacy`] each
-//! key that holds a default an earlier version wrote into files.
-use std::borrow::Cow;
+//! Remove each key whose removal leaves the resolved configuration unchanged.
 use toml_edit::{DocumentMut, Item, TableLike};
-
-/// Defaults that versions before 0.1.8 wrote into config files on the first
-/// edit, read as unset. Temporary: remove after 2026-12-31.
-const LEGACY_DEFAULTS: &[(&str, &[&str])] = &[(
-    "plugins.bundled.summarize.system_prompt",
-    &[
-        "For each listed fold, rewrite that function body as short python-flavored pseudocode. Keep the names. No prose, no comments, no code fences. Use as few lines as possible: about one pseudocode line per five source lines, and never more than a third of the body's lines. When a fold lists a doc, also set \"summary\" to one sentence copied verbatim from that doc; otherwise leave it empty. Answer with a JSON array of {\"id\", \"summary\", \"pseudocode\"} objects, one per fold.",
-        "For each listed fold, rewrite that function body as short pseudocode. Keep the names. No prose, no comments, no code fences. Use as few lines as possible: about one pseudocode line per five source lines, and never more than a third of the body's lines. When a fold lists a doc, also set \"summary\" to one sentence copied verbatim from that doc; otherwise leave it empty. Answer with a JSON array of {\"id\", \"summary\", \"pseudocode\"} objects, one per fold.",
-    ],
-)];
-
-/// `source` without the keys that hold a legacy default. Text that does not
-/// parse is returned as it is, for the caller to report.
-pub(crate) fn forget_legacy(source: &str) -> Cow<'_, str> {
-    let Ok(mut document) = source.parse::<DocumentMut>() else {
-        return Cow::Borrowed(source);
-    };
-    let mut changed = false;
-    for (key, values) in LEGACY_DEFAULTS {
-        let path: Vec<&str> = key.split('.').collect();
-        let legacy = get(document.as_table(), &path)
-            .and_then(Item::as_str)
-            .is_some_and(|value| values.contains(&value));
-        if legacy {
-            remove(document.as_table_mut(), &path);
-            changed = true;
-        }
-    }
-    match changed {
-        true => Cow::Owned(document.to_string()),
-        false => Cow::Borrowed(source),
-    }
-}
 
 /// Remove each value, then each table, whose removal leaves `resolve` of
 /// the document unchanged: an object option is only valid whole. `version` stays, and so does
@@ -144,14 +108,6 @@ fn commented(decor: &toml_edit::Decor) -> bool {
         .into_iter()
         .flatten()
         .any(|raw| raw.as_str().is_some_and(|text| text.contains('#')))
-}
-
-fn get<'a>(table: &'a dyn TableLike, path: &[&str]) -> Option<&'a Item> {
-    match path {
-        [key] => table.get(key),
-        [key, rest @ ..] => get(table.get(key)?.as_table_like()?, rest),
-        [] => None,
-    }
 }
 
 pub(crate) fn remove(table: &mut dyn TableLike, path: &[&str]) {

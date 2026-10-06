@@ -231,16 +231,15 @@ impl Config {
                 version.version
             )));
         }
-        let source = prune::forget_legacy(source);
-        let mut config: Self = serde_path_to_error::deserialize(toml::Deserializer::new(&source))
+        let mut config: Self = serde_path_to_error::deserialize(toml::Deserializer::new(source))
             .map_err(|error| {
-            let path = error.path().to_string();
-            let message = error.inner().to_string();
-            ConfigError(match path.as_str() {
-                "." => message,
-                _ => format!("{path}: {message}"),
-            })
-        })?;
+                let path = error.path().to_string();
+                let message = error.inner().to_string();
+                ConfigError(match path.as_str() {
+                    "." => message,
+                    _ => format!("{path}: {message}"),
+                })
+            })?;
         config.plugins.resolve(directory)?;
         config.classifier.resolve(directory)?;
         Ok(config)

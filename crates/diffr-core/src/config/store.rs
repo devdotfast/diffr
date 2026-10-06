@@ -520,28 +520,20 @@ mod sparse_tests {
     }
 
     #[test]
-    fn a_materialized_file_becomes_sparse_and_forgets_an_old_default_prompt() {
+    fn a_materialized_file_becomes_sparse() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        // What earlier versions wrote on the first edit: every default, and
-        // the default prompt of the time.
+        // What earlier versions wrote on the first edit: every default.
         let mut old = toml::Value::try_from(Config::default()).unwrap();
         let summarize = old["plugins"]["bundled"]["summarize"]
             .as_table_mut()
             .unwrap();
-        summarize.insert("system_prompt".into(), LEGACY.into());
         summarize.insert("api_key".into(), "secret".into());
         old["plugins"]["bundled"]["context"]
             .as_table_mut()
             .unwrap()
             .insert("lines".into(), 8.into());
         std::fs::write(&path, toml::to_string(&old).unwrap()).unwrap();
-        let loaded = Config::from_toml(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(
-            loaded.plugins.entries["bundled.summarize"].options["system_prompt"],
-            Config::default().plugins.entries["bundled.summarize"].options["system_prompt"],
-            "an old default prompt reads as the current default"
-        );
         set(&path, "diff.graph_limit", "42").unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(
@@ -685,6 +677,4 @@ mod sparse_tests {
         assert!(text.contains("# just context\n[plugins]"), "{text}");
         assert!(!text.contains("bundled.deleted-bodies"));
     }
-
-    const LEGACY: &str = "For each listed fold, rewrite that function body as short pseudocode. Keep the names. No prose, no comments, no code fences. Use as few lines as possible: about one pseudocode line per five source lines, and never more than a third of the body's lines. When a fold lists a doc, also set \"summary\" to one sentence copied verbatim from that doc; otherwise leave it empty. Answer with a JSON array of {\"id\", \"summary\", \"pseudocode\"} objects, one per fold.";
 }

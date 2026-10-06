@@ -51,6 +51,16 @@ jobs:
       shell: bash
       run: $BUILD_CMD test --target ${{ matrix.job.target }}
 
+  crate_packages:
+    name: Verify crates.io packages
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: dtolnay/rust-toolchain@1.99.0
+      # Build extracted archives together, with their internal dependencies
+      # staged locally instead of requiring them to be published already.
+      - run: cargo package --locked -p diffr-grammars -p diffr-core -p diffr-cli
+
   test_wasm_plugins:
     name: Test WASM component plugins
     runs-on: ubuntu-22.04

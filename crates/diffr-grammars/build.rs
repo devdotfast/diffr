@@ -128,7 +128,7 @@ fn main() {
     sources.extend(
         VENDORED
             .iter()
-            .map(|&(symbol, folder)| (symbol, Path::new("../../vendored_parsers").join(folder))),
+            .map(|&(symbol, folder)| (symbol, Path::new("vendored_parsers").join(folder))),
     );
     for (_, source) in &sources {
         println!("cargo:rerun-if-changed={}", source.display());

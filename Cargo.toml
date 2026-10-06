@@ -1,5 +1,5 @@
 [package]
-name = "diffr"
+name = "diffr-cli"
 description = "Structural diffs with a streaming API and interactive terminal frontend."
 repository = "https://github.com/devdotfast/diffr"
 homepage = "https://github.com/devdotfast/diffr"
@@ -21,6 +21,7 @@ include = [
         "/vendored_parsers/*-src/**/*.c",
         "/vendored_parsers/*-src/**/*.h",
         "/LICENSE",
+        "/NOTICE",
         "/README.md",
 ]
 

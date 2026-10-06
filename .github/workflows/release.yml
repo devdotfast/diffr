@@ -47,7 +47,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: |
-          version=$(cargo metadata --no-deps --format-version 1 | "$PYTHON" -c 'import json, sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "diffr"), end="")')
+          version=$(cargo metadata --no-deps --format-version 1 | "$PYTHON" -c 'import json, sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "diffr-cli"), end="")')
           if [ -n "$RELEASE_TAG" ] && [ "$RELEASE_TAG" != "$version" ]; then
             echo "Tag $RELEASE_TAG does not match Cargo version $version" >&2
             exit 1

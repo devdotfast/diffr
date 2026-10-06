@@ -15,7 +15,7 @@ rust-version = "1.99.0"
 include = [
         "/build.rs",
         "/src/",
-        "/crates/diffr-plugin-sdk/wit/",
+        "/wit/",
         "/plugins/",
         "/vendored_parsers/highlights/*.scm",
         "/vendored_parsers/*-src/**/*.c",

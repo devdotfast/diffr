@@ -14,7 +14,7 @@ include = [
         "/src/",
         "/vendored_parsers/*-src/**/*.c",
         "/vendored_parsers/*-src/**/*.h",
-        "/vendored_parsers/*/LICENSE",
+        "/licenses/",
         "/LICENSE",
         "/NOTICE",
 ]

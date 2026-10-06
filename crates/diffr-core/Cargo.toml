@@ -14,6 +14,18 @@ rust-version = "1.99.0"
 include = [
         "/build.rs",
         "/src/",
+        "/plugins/shape/**/plugin.toml",
+        "/plugins/shape/**/plugin.wasm",
+        "/plugins/shape/**/*.scm",
+        "/plugins/classify/plugin.toml",
+        "/plugins/classify/plugin.wasm",
+        "/licenses/",
+        "/vendored_parsers/highlights/*.scm",
+        "/examples/review/real/*/before.*",
+        "/examples/review/real/*/after.*",
+        "/examples/review/real/*/provenance.json",
+        "/LICENSE",
+        "/NOTICE",
 ]
 
 [dependencies]

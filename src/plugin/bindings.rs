@@ -7,7 +7,7 @@ use diffr_core::plugin::cursor;
 use diffr_core::protocol::{self, FileChange, FileStatus};
 
 wasmtime::component::bindgen!({
-    path: "crates/diffr-plugin-sdk/wit/plugin.wit",
+    path: "wit/plugin.wit",
     world: "diffr-plugin",
     with: { "diffr:plugin/host.cursor": diffr_core::plugin::cursor::Cursor },
     imports: { default: trappable },
@@ -20,7 +20,7 @@ pub(crate) use diffr::plugin::types;
 /// The classifier's world.
 pub(crate) mod classifier {
     wasmtime::component::bindgen!({
-        path: "crates/diffr-plugin-sdk/wit/plugin.wit",
+        path: "wit/plugin.wit",
         world: "diffr-classifier",
         with: {
             "diffr:plugin/types": super::diffr::plugin::types,

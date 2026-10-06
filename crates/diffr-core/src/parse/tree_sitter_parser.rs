@@ -126,7 +126,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 ignore_trailing_tokens: vec![],
                 highlight_query: ts::Query::new(
                     &language,
-                    include_str!("../../../../vendored_parsers/highlights/ada.scm"),
+                    include_str!("../../vendored_parsers/highlights/ada.scm"),
                 )
                 .unwrap(),
                 sub_languages: vec![],
@@ -250,7 +250,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 ignore_trailing_tokens: vec![],
                 highlight_query: ts::Query::new(
                     &language,
-                    include_str!("../../../../vendored_parsers/highlights/cmake.scm"),
+                    include_str!("../../vendored_parsers/highlights/cmake.scm"),
                 )
                 .unwrap(),
                 sub_languages: vec![],
@@ -286,7 +286,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 ignore_trailing_tokens: vec![],
                 highlight_query: ts::Query::new(
                     &language,
-                    include_str!("../../../../vendored_parsers/highlights/c-sharp.scm"),
+                    include_str!("../../vendored_parsers/highlights/c-sharp.scm"),
                 )
                 .unwrap(),
                 sub_languages: vec![],
@@ -341,7 +341,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 ignore_trailing_tokens: vec![],
                 highlight_query: ts::Query::new(
                     &language,
-                    include_str!("../../../../vendored_parsers/highlights/devicetree.scm"),
+                    include_str!("../../vendored_parsers/highlights/devicetree.scm"),
                 )
                 .unwrap(),
                 sub_languages: vec![],
@@ -539,7 +539,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 ignore_trailing_tokens: vec![],
                 highlight_query: ts::Query::new(
                     &language,
-                    include_str!("../../../../vendored_parsers/highlights/hcl.scm"),
+                    include_str!("../../vendored_parsers/highlights/hcl.scm"),
                 )
                 .unwrap(),
                 sub_languages: vec![],
@@ -598,7 +598,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 ignore_trailing_tokens: vec![],
                 highlight_query: ts::Query::new(
                     &language,
-                    include_str!("../../../../vendored_parsers/highlights/janet_simple.scm"),
+                    include_str!("../../vendored_parsers/highlights/janet_simple.scm"),
                 )
                 .unwrap(),
                 sub_languages: vec![],
@@ -699,7 +699,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 ignore_trailing_tokens: vec![],
                 highlight_query: ts::Query::new(
                     &language,
-                    include_str!("../../../../vendored_parsers/highlights/julia.scm"),
+                    include_str!("../../vendored_parsers/highlights/julia.scm"),
                 )
                 .unwrap(),
                 sub_languages: vec![],
@@ -727,7 +727,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 ignore_trailing_tokens: vec![],
                 highlight_query: ts::Query::new(
                     &language,
-                    include_str!("../../../../vendored_parsers/highlights/kotlin.scm"),
+                    include_str!("../../vendored_parsers/highlights/kotlin.scm"),
                 )
                 .unwrap(),
                 sub_languages: vec![],
@@ -742,7 +742,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 ignore_trailing_tokens: vec![],
                 highlight_query: ts::Query::new(
                     &language,
-                    include_str!("../../../../vendored_parsers/highlights/latex.scm"),
+                    include_str!("../../vendored_parsers/highlights/latex.scm"),
                 )
                 .unwrap(),
                 sub_languages: vec![],
@@ -793,7 +793,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 ignore_trailing_tokens: vec![],
                 highlight_query: ts::Query::new(
                     &language,
-                    include_str!("../../../../vendored_parsers/highlights/newick.scm"),
+                    include_str!("../../vendored_parsers/highlights/newick.scm"),
                 )
                 .unwrap(),
                 sub_languages: vec![],
@@ -872,7 +872,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 ignore_trailing_tokens: vec![],
                 highlight_query: ts::Query::new(
                     &language,
-                    include_str!("../../../../vendored_parsers/highlights/pascal.scm"),
+                    include_str!("../../vendored_parsers/highlights/pascal.scm"),
                 )
                 .unwrap(),
                 sub_languages: vec![],
@@ -926,7 +926,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 ignore_trailing_tokens: vec![],
                 highlight_query: ts::Query::new(
                     &language,
-                    include_str!("../../../../vendored_parsers/highlights/proto.scm"),
+                    include_str!("../../vendored_parsers/highlights/proto.scm"),
                 )
                 .unwrap(),
                 sub_languages: vec![],
@@ -1100,7 +1100,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 ignore_trailing_tokens: vec![],
                 highlight_query: ts::Query::new(
                     &language,
-                    include_str!("../../../../vendored_parsers/highlights/smali.scm"),
+                    include_str!("../../vendored_parsers/highlights/smali.scm"),
                 )
                 .unwrap(),
                 sub_languages: Vec::new(),
@@ -1250,7 +1250,7 @@ fn build_config(language: guess::Language) -> TreeSitterConfig {
                 delimiter_tokens: vec![("(", ")"), ("[", "]"), ("begin", "end")],
                 highlight_query: ts::Query::new(
                     &language,
-                    include_str!("../../../../vendored_parsers/highlights/verilog.scm"),
+                    include_str!("../../vendored_parsers/highlights/verilog.scm"),
                 )
                 .unwrap(),
                 sub_languages: vec![],

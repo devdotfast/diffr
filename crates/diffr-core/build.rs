@@ -11,7 +11,7 @@ use std::path::PathBuf;
 /// Embed the component, manifest and queries from every bundled shape plugin
 /// folder under `plugins/shape/`, and the classifier in `plugins/classify/`.
 fn main() {
-    let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");
+    let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     println!("cargo:rerun-if-changed={}", root.join("plugins").display());
     let mut files = String::from("const FILES: &[(&str, &str)] = &[\n");
     let mut components = String::from("const COMPONENTS: &[(&str, &[u8])] = &[\n");

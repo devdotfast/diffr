@@ -2,8 +2,7 @@ name = "summarize"
 title = "Summaries"
 description = "Pseudocode summaries for large new function bodies and tests."
 
-# Off by default: the summarizer needs an API key, and diffr stops at
-# startup when a plugin that is on cannot be made.
+# Off by default: the summarizer needs an API key.
 [enabled]
 title = "Summarize functions and tests"
 description = "Summarize large new function bodies and new tests as pseudocode. Needs an API key: `api_key`, or the provider's variable in the environment: `GEMINI_API_KEY` or `GOOGLE_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`."

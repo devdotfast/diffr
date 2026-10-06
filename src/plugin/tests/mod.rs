@@ -258,38 +258,6 @@ fn the_default_pipeline_makes_every_plugin_that_is_on() {
     );
 }
 
-#[test]
-fn a_plugin_that_cannot_be_made_is_a_setup_error() {
-    let config =
-        Config::from_toml("[plugins.bundled.summarize]\nenabled = true\napi_key = ''\n").unwrap();
-    // Only meaningful when the environment carries no key.
-    if std::env::var_os("GEMINI_API_KEY").is_some() || std::env::var_os("GOOGLE_API_KEY").is_some()
-    {
-        return;
-    }
-    let error = Pipeline::from_config(&config, Path::new("."), NonZeroUsize::MIN)
-        .err()
-        .expect("a summarizer without a key cannot be made");
-    assert_eq!(
-        format!("{error:#}"),
-        "plugins.bundled.summarize: no API key: set plugins.bundled.summarize.api_key, or GEMINI_API_KEY or GOOGLE_API_KEY in the environment, or turn the summarizer off with plugins.bundled.summarize.enabled = false"
-    );
-    if std::env::var_os("OPENAI_API_KEY").is_some() {
-        return;
-    }
-    let config = Config::from_toml(
-        "[plugins.bundled.summarize]\nenabled = true\nprovider = 'openai'\nmodel = 'm'\napi_key = ''\nendpoint = ''\n",
-    )
-    .unwrap();
-    let error = Pipeline::from_config(&config, Path::new("."), NonZeroUsize::MIN)
-        .err()
-        .expect("OpenAI at its default endpoint needs a key");
-    assert_eq!(
-        format!("{error:#}"),
-        "plugins.bundled.summarize: no API key: set plugins.bundled.summarize.api_key, or OPENAI_API_KEY in the environment, or turn the summarizer off with plugins.bundled.summarize.enabled = false"
-    );
-}
-
 /// The manifest can accept an option the component itself rejects: the
 /// component's constructor has the last word, and fails setup.
 #[test]

@@ -71,7 +71,7 @@ fn text_output_is_gone() {
 }
 
 #[test]
-fn a_plugin_that_cannot_be_made_stops_diffr_before_any_record() {
+fn a_summarizer_without_a_key_still_diffs() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("diffr/config.toml");
     std::fs::create_dir_all(config.parent().unwrap()).unwrap();
@@ -88,13 +88,9 @@ fn a_plugin_that_cannot_be_made_stops_diffr_before_any_record() {
     .env("XDG_CONFIG_HOME", dir.path())
     .env_remove("GEMINI_API_KEY")
     .env_remove("GOOGLE_API_KEY");
-    cmd.assert()
-        .failure()
-        .code(2)
-        .stdout(predicate::str::is_empty())
-        .stderr(predicate::str::contains(
-            "plugins.bundled.summarize: no API key: set plugins.bundled.summarize.api_key",
-        ));
+    cmd.assert().success().stderr(predicate::str::contains(
+        "summarize: off for this run: no API key",
+    ));
 }
 
 #[test]

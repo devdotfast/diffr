@@ -1,9 +1,8 @@
 //! The summarizer: large new function bodies and new tests become short
 //! pseudocode, shown in place of the collapsed body.
 //!
-//! It needs an API key for most providers: `new` fails without one, naming
-//! how to set it or turn the plugin off, which is why the bundled
-//! configuration ships it off.
+//! It needs an API key for most providers: without one it does nothing and
+//! says why on stderr, which is why the bundled configuration ships it off.
 //! Each selected body is summarized and edited in its own asynchronous callback.
 use anyhow::anyhow;
 use diffr_plugin_sdk::prelude::*;
@@ -39,8 +38,16 @@ pub struct Options {
 /// The summarizer's options, API key and endpoint.
 pub struct Summarize {
     options: Options,
-    api_key: Option<String>,
+    api_key: Key,
     endpoint: String,
+}
+
+enum Key {
+    Present(String),
+    /// A custom endpoint that takes no key.
+    NotRequired,
+    /// The summarizer does nothing.
+    Missing,
 }
 
 impl Summarize {
@@ -67,7 +74,11 @@ impl Summarize {
             800,
         );
         let url = provider.url(&self.endpoint, &self.options.model);
-        let headers = provider.headers(self.api_key.as_deref());
+        let key = match &self.api_key {
+            Key::Present(key) => Some(key.as_str()),
+            Key::NotRequired | Key::Missing => None,
+        };
+        let headers = provider.headers(key);
         let failed = |message: String| anyhow!("{}: {message}", self.options.model);
         let text: serde_json::Value = {
             let mut attempt = 0;
@@ -112,31 +123,33 @@ impl Summarize {
 }
 
 /// The API key: the `api_key` option, or else the first of the provider's
-/// environment variables that is set and not empty. `None` only where the
-/// provider can go without one.
-fn resolve_key(config: &Options, custom_endpoint: bool) -> anyhow::Result<Option<String>> {
+/// environment variables that is set and not empty. `Missing` says why on
+/// stderr.
+fn resolve_key(config: &Options, custom_endpoint: bool) -> Key {
     let set = |key: &String| !key.is_empty();
     if let Some(key) = config.api_key.clone().filter(set) {
-        return Ok(Some(key));
+        return Key::Present(key);
     }
     let variables = &config.provider_details.key_variables;
     for variable in variables {
         if let Some(key) = std::env::var_os(variable) {
-            let key = key
-                .into_string()
-                .map_err(|_| anyhow!("{variable} is not valid UTF-8"))?;
+            let Ok(key) = key.into_string() else {
+                eprintln!("summarize: off for this run: {variable} is not valid UTF-8");
+                return Key::Missing;
+            };
             if set(&key) {
-                return Ok(Some(key));
+                return Key::Present(key);
             }
         }
     }
     if config.provider_details.keyless_custom_endpoint && custom_endpoint {
-        return Ok(None);
+        return Key::NotRequired;
     }
-    anyhow::bail!(
-        "no API key: set plugins.bundled.summarize.api_key, or {} in the environment, or turn the summarizer off with plugins.bundled.summarize.enabled = false",
+    eprintln!(
+        "summarize: off for this run: no API key: set plugins.bundled.summarize.api_key, or {} in the environment, or turn the summarizer off with plugins.bundled.summarize.enabled = false",
         variables.join(" or ")
-    )
+    );
+    Key::Missing
 }
 
 impl Guest for Summarize {
@@ -151,7 +164,7 @@ impl GuestPlugin for Summarize {
             .endpoint
             .clone()
             .filter(|endpoint| !endpoint.is_empty());
-        let api_key = resolve_key(&options, endpoint.is_some()).map_err(|e| format!("{e:#}"))?;
+        let api_key = resolve_key(&options, endpoint.is_some());
         Ok(Self {
             api_key,
             endpoint: endpoint.unwrap_or_else(|| options.provider_details.endpoint.clone()),
@@ -160,6 +173,9 @@ impl GuestPlugin for Summarize {
     }
 
     async fn visit(&self, cursor: &Cursor, phase: Visit) -> Result<bool, String> {
+        if matches!(self.api_key, Key::Missing) {
+            return Ok(false);
+        }
         if phase == Visit::Post {
             return Ok(true);
         }

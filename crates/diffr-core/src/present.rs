@@ -167,7 +167,6 @@ mod visible_tests {
                 start: pos(lines.0),
                 end: pos(lines.1),
             },
-            relations: Vec::new(),
             tags: vec![],
             visibility: Visibility {
                 collapsed,
@@ -195,7 +194,6 @@ mod visible_tests {
                 start: pos(lines.0),
                 end: pos(lines.1),
             },
-            relations: Vec::new(),
             tags: vec![],
             visibility: Visibility {
                 collapsed,

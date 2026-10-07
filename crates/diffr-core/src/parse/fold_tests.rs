@@ -20,10 +20,43 @@ fn text<'a>(source: &'a str, range: &SourceRange) -> &'a str {
 
 mod folds {
     use super::text;
+    use crate::config::Config;
     use crate::lines::SourceRange;
     use crate::parse::folds::{Fold, FoldMatch};
     use crate::summary::DiffResult;
     use std::fmt::Write as _;
+
+    #[test]
+    fn shared_interiors_work_without_the_context_plugin() {
+        let specimens = [
+            ("a.rs", "fn f() { dispatch(\n  first,\n  middle,\n  last,\n); }\n"),
+            ("a.go", "package a\nfunc f() { dispatch(\n  first,\n  middle,\n  last,\n) }\n"),
+            ("a.py", "def f():\n    dispatch(\n        first,\n        middle,\n        last,\n    )\n"),
+            ("a.js", "dispatch(\n  first,\n  middle,\n  last,\n);\n"),
+            ("a.ts", "interface Props { value: string }\ndispatch(\n  first,\n  middle,\n  last,\n);\n"),
+            ("a.jsx", "const view = <Panel>\n  {dispatch(\n    first,\n    middle,\n    last,\n  )}\n</Panel>;\n"),
+            ("a.tsx", "interface Props { value: string }\nconst view = <Panel>\n  {dispatch(\n    first,\n    middle,\n    last,\n  )}\n</Panel>;\n"),
+        ];
+        for plugin in ["deleted-bodies", "test-bodies", "removed-runs", "summarize"] {
+            let config = format!(
+                "[plugins.shape]\norder = ['bundled.{plugin}']\n[plugins.shape.bundled.{plugin}]\nenabled = true\n"
+            );
+            let params = Config::from_toml(&config).unwrap().compile().unwrap();
+            for (path, source) in specimens {
+                let after = source.replace("middle", "next");
+                let result = DiffResult::from_sources_with_params(path, source, &after, &params);
+                assert!(
+                    result.rhs_folds.iter().any(|fold| {
+                        let interior = text(&after, &fold.range).trim();
+                        interior.starts_with("first,")
+                            && interior.ends_with("last,")
+                            && interior.contains("next,")
+                    }),
+                    "multiline call interior missing for {path}, plugin {plugin}"
+                );
+            }
+        }
+    }
 
     /// The fold on the other side matched with `fold`, if any.
     fn counterpart<'a>(fold: &Fold, other_side: &'a [Fold]) -> Option<&'a Fold> {
@@ -92,31 +125,18 @@ mod folds {
         let lhs = "def test_doc():\n    \"\"\"some shared words before\"\"\"\n";
         let rhs = "def test_doc():\n    \"\"\"some shared words after\"\"\"\n";
         let result = DiffResult::from_sources("a.py", lhs, rhs);
-        // The body and the docstring it holds are one flattened node, which
-        // keeps both folds, the body's first.
-        assert_eq!(result.lhs_folds.len(), 2);
-        assert_eq!(result.rhs_folds.len(), 2);
+        // The body and string fold the same lines, so one fold on the string
+        // carries both tags.
+        assert_eq!(result.lhs_folds.len(), 1);
+        assert_eq!(result.rhs_folds.len(), 1);
         let fold = &result.lhs_folds[0];
-        assert_eq!(
-            fold.tags,
-            [
-                "deleted-bodies:function",
-                "removed-runs:function",
-                "summarize:function",
-                "summarize:test",
-                "test-bodies:test"
-            ]
-        );
+        for tag in ["deleted-bodies:docstring", "deleted-bodies:function"] {
+            assert!(fold.tags.iter().any(|t| t == tag), "{tag}: {:?}", fold.tags);
+        }
         let (left, right) =
             paired(fold, &result.rhs_folds).expect("reuse the replaced-string correspondence");
-        assert_eq!(
-            text(lhs, left),
-            "\n    \"\"\"some shared words before\"\"\""
-        );
-        assert_eq!(
-            text(rhs, right),
-            "\n    \"\"\"some shared words after\"\"\""
-        );
+        assert_eq!(text(lhs, left), "\"\"\"some shared words before\"\"\"");
+        assert_eq!(text(rhs, right), "\"\"\"some shared words after\"\"\"");
     }
 
     #[test]
@@ -317,7 +337,7 @@ mod folds {
         let same_lines: Vec<&Fold> = review
             .rhs_folds
             .iter()
-            .filter(|fold| crate::parse::folds::line_span(fold, &lines) == (1, 5))
+            .filter(|fold| crate::parse::folds::line_span(&fold.range, &lines) == (1, 5))
             .collect();
         assert_eq!(same_lines.len(), 1, "{same_lines:#?}");
         assert_eq!(

@@ -1,4 +1,4 @@
-; inherits: builtin:shared/queries/javascript.scm, builtin:shared/queries/javascript-docstrings.scm, builtin:shared/queries/javascript-tests.scm
+; inherits: builtin:core/queries/javascript/folds.scm, builtin:core/queries/javascript/docstrings.scm, builtin:shared/queries/javascript-tests.scm
 ((call_expression
    function: (identifier) @_name
    arguments: (arguments [

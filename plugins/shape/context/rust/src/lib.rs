@@ -7,6 +7,7 @@
 use diffr_plugin_sdk::prelude::*;
 use serde::Deserialize;
 use std::collections::BTreeSet;
+use std::ops::Range;
 
 /// A hidden stretch shorter than this stays open: its row would save no line.
 const MIN_GAP: u32 = 2;
@@ -41,7 +42,7 @@ impl GuestPlugin for Context {
         match (phase, data.kind) {
             // Only changed folds open. An unchanged fold is an outline: near a
             // change it stays on screen, otherwise it joins its neighbours' row.
-            (Visit::Pre, Kind::Fold) if self.item(cursor, id)? => {
+            (Visit::Pre, Kind::Fold) if item(cursor, id)? => {
                 outline(cursor, id)?;
                 Ok(false)
             }
@@ -73,8 +74,7 @@ impl Context {
         Ok(())
     }
 
-    /// Fold each run of hidden children into one collapsed row, joined with
-    /// its peers on the other side when they are hidden too.
+    /// Fold each run of hidden children into one collapsed row.
     fn merge_runs(&self, cursor: &Cursor, parent: u32) -> Result<(), String> {
         let mut runs = vec![Vec::new()];
         for child in cursor.get(parent)?.children {
@@ -85,171 +85,254 @@ impl Context {
             }
         }
         for run in runs {
-            let (Some(&first), Some(&last)) = (run.first(), run.last()) else {
-                continue;
-            };
-            let start = cursor.get(first)?.data;
-            let lines = cursor.get(last)?.data.range.end.line - start.range.start.line;
-            if lines < MIN_GAP || (run.len() == 1 && start.visibility.collapsed) {
-                continue;
-            }
-            let mut row = first;
-            if run.len() > 1 {
-                let mut ids = run.clone();
-                if let Some(peers) = cursor.matching_siblings(&run)? {
-                    let mut hidden = true;
-                    for &peer in &peers {
-                        hidden &= self.hidden(cursor, peer)?;
-                    }
-                    if hidden {
-                        ids.extend(peers);
-                    }
-                }
-                row = match cursor.join(&ids)? {
-                    RegionIds::Both((lhs, _)) | RegionIds::LeftOnly(lhs) => lhs,
-                    RegionIds::RightOnly(rhs) => rhs,
-                };
-            }
-            collapse(cursor, row, |region| {
-                let range = cursor.get(region)?.data.range;
-                Ok(format!(
-                    "{} unchanged lines",
-                    range.end.line - range.start.line
-                ))
-            })?;
+            self.fold_run(cursor, &run)?;
         }
         Ok(())
     }
 
+    /// Collapse a run of hidden siblings into one row, joined with its peers
+    /// on the other side when they are hidden too. A run shorter than
+    /// `MIN_GAP` stays, and so does a lone region that already shows a
+    /// summary.
+    fn fold_run(&self, cursor: &Cursor, run: &[u32]) -> Result<(), String> {
+        let (Some(&first), Some(&last)) = (run.first(), run.last()) else {
+            return Ok(());
+        };
+        let start = cursor.get(first)?.data;
+        let lines = cursor.get(last)?.data.range.end.line - start.range.start.line;
+        if lines < MIN_GAP {
+            return Ok(());
+        }
+        let row = match run {
+            [only] if start.visibility.collapsed || cursor.display(*only)?.collapsed > 0 => {
+                return Ok(());
+            }
+            [only] => *only,
+            _ => self.join(cursor, run)?,
+        };
+        collapse(cursor, row, |region| {
+            let range = cursor.get(region)?.data.range;
+            Ok(format!(
+                "{} unchanged lines",
+                range.end.line - range.start.line
+            ))
+        })
+    }
+
+    /// Join hidden siblings into one region, with their peers on the other
+    /// side when all of those are hidden too. Returns this side's region.
+    fn join(&self, cursor: &Cursor, run: &[u32]) -> Result<u32, String> {
+        let peers = match cursor.matching_siblings(run)? {
+            Some(peers) => peers,
+            None => Vec::new(),
+        };
+        let mut peers_hidden = true;
+        for &peer in &peers {
+            peers_hidden &= self.hidden(cursor, peer)?;
+        }
+        let ids = match peers_hidden {
+            true => [run, &peers].concat(),
+            false => run.to_vec(),
+        };
+        Ok(match cursor.join(&ids)? {
+            RegionIds::Both((lhs, _)) | RegionIds::LeftOnly(lhs) => lhs,
+            RegionIds::RightOnly(rhs) => rhs,
+        })
+    }
+
     /// Whether a region hides in its neighbours' row: a leaf with no kept
-    /// line, or an item no change lies within `lines` of, on either side.
+    /// line, or an item no change lies within `lines` of, on either side. A
+    /// clause of a changed branch statement stays open with its siblings.
     fn hidden(&self, cursor: &Cursor, id: u32) -> Result<bool, String> {
-        if matches!(cursor.get(id)?.data.kind, Kind::Leaf(_)) {
+        let data = cursor.get(id)?.data;
+        if matches!(data.kind, Kind::Leaf(_)) {
             return Ok(self.kept(cursor, id)?.is_empty());
         }
-        if !self.item(cursor, id)? {
+        if !item(cursor, id)? {
             return Ok(false);
         }
+        let branches = match tagged(&data, "context:clause") {
+            true => nearest(cursor, id, "context:branches")?,
+            false => None,
+        };
+        let open_clause = match branches {
+            Some(branches) => changed(cursor, branches.id)?,
+            None => false,
+        };
+        if open_clause {
+            return Ok(false);
+        }
+        let mut near = Vec::new();
         for region in cursor.linked_regions(id)? {
-            let RegionView { side, data, .. } = cursor.get(region)?;
-            let start = data.range.start.line.saturating_sub(self.options.lines);
-            let end = data.range.end.line + self.options.lines;
-            for leaf in cursor.leaves(side, start, end) {
-                if changed(cursor, leaf)? {
-                    return Ok(false);
-                }
+            near.extend(self.near(cursor, region)?);
+        }
+        for leaf in near {
+            if changed(cursor, leaf)? {
+                return Ok(false);
             }
         }
         Ok(true)
     }
 
-    /// Whether a fold stays shut as one item. It is unchanged, and it is not
-    /// the body of a changed scope: that body opens with its scope, so a
-    /// changed signature shows the start of the body. It also reaches the
-    /// other side, so its twin folds with it and rows stay aligned.
-    fn item(&self, cursor: &Cursor, id: u32) -> Result<bool, String> {
-        let RegionView { side, data, .. } = cursor.get(id)?;
-        let Some(parent) = data.parent else {
-            return Ok(false);
-        };
-        if in_header(cursor, id)? || changed(cursor, id)? {
-            return Ok(false);
-        }
-        if tagged(&data, "context:body")
-            && tagged(&cursor.get(parent)?.data, "context:scope")
-            && changed(cursor, parent)?
-        {
-            return Ok(false);
-        }
-        for region in cursor.linked_regions(id)? {
-            if cursor.get(region)?.side != side {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
     /// The lines of a leaf that stay visible, its own and those its paired
     /// leaf keeps on the other side.
     fn kept(&self, cursor: &Cursor, id: u32) -> Result<BTreeSet<u32>, String> {
-        let data = cursor.get(id)?.data;
+        let start = cursor.get(id)?.data.range.start.line;
         let mut kept = self.kept_on_side(cursor, id)?;
         if let Some(peer) = cursor.paired_leaf(id)? {
             let peer_start = cursor.get(peer)?.data.range.start.line;
-            let shift = |line: u32| line - peer_start + data.range.start.line;
+            let shift = |line: u32| line - peer_start + start;
             kept.extend(self.kept_on_side(cursor, peer)?.into_iter().map(shift));
         }
         Ok(kept)
     }
 
-    /// Kept lines of a leaf from its own side: all of a changed leaf, the
-    /// lines within `lines` of a changed leaf, and the first and last line
-    /// of every changed scope around it.
+    /// Kept lines of a leaf from its own side: all of it when it or its
+    /// parent always shows; else the lines within `lines` of a change, and
+    /// the edges of the changed syntax around it.
     fn kept_on_side(&self, cursor: &Cursor, id: u32) -> Result<BTreeSet<u32>, String> {
-        let RegionView { side, data, .. } = cursor.get(id)?;
+        let data = cursor.get(id)?.data;
         let lines = data.range.start.line..data.range.end.line;
-        if changed(cursor, id)? || in_header(cursor, id)? {
+        let parent_kept = match data.parent {
+            Some(parent) => keep_region(cursor, parent)?,
+            None => false,
+        };
+        if keep_region(cursor, id)? || parent_kept {
             return Ok(lines.collect());
         }
+        let radius = self.options.lines;
+        // A range widened by `lines`, then clipped to this leaf.
+        let near = |range: Range<u32>| {
+            range.start.saturating_sub(radius).max(lines.start)
+                ..range.end.saturating_add(radius).min(lines.end)
+        };
         let mut kept = BTreeSet::new();
-        let window = lines.start.saturating_sub(self.options.lines)..lines.end + self.options.lines;
-        for leaf in cursor.leaves(side, window.start, window.end) {
-            if changed(cursor, leaf)? {
-                let near = cursor.get(leaf)?.data.range;
-                let start = near.start.line.saturating_sub(self.options.lines);
-                let end = near.end.line + self.options.lines;
-                kept.extend(start.max(lines.start)..end.min(lines.end));
+        for leaf in self.near(cursor, id)? {
+            let leaf = cursor.get(leaf)?.data;
+            let Kind::Leaf(spans) = leaf.kind else {
+                return Err(format!("leaves() returned the non-leaf {}", leaf.id));
+            };
+            if cursor.paired_leaf(leaf.id)?.is_none() {
+                kept.extend(near(leaf.range.start.line..leaf.range.end.line));
+                continue;
+            }
+            for span in spans.changed {
+                kept.extend(near(span.line..span.line + 1));
             }
         }
-        for scope in cursor.ancestors(id)? {
-            if tagged(&scope, "context:scope") && changed(cursor, scope.id)? {
-                for line in [scope.range.start.line, scope.range.end.line - 1] {
-                    if lines.contains(&line) {
-                        kept.insert(line);
-                    }
-                }
-            }
-        }
+        let edges = edges(cursor, id)?;
+        kept.extend(edges.into_iter().filter(|line| lines.contains(line)));
         Ok(kept)
     }
+
+    /// The leaves within `lines` of a region, on its side.
+    fn near(&self, cursor: &Cursor, id: u32) -> Result<Vec<u32>, String> {
+        let RegionView { side, data, .. } = cursor.get(id)?;
+        let start = data.range.start.line.saturating_sub(self.options.lines);
+        let end = data.range.end.line.saturating_add(self.options.lines);
+        Ok(cursor.leaves(side, start, end))
+    }
+}
+
+/// Whether a fold stays shut as one item. It is unchanged and does not
+/// always show. It is not the body of a changed scope: that body opens with
+/// its scope, so a changed signature shows the start of the body. It also
+/// reaches the other side, so its twin folds with it and rows stay aligned.
+fn item(cursor: &Cursor, id: u32) -> Result<bool, String> {
+    let RegionView { side, data, .. } = cursor.get(id)?;
+    let Some(parent) = data.parent else {
+        return Ok(false);
+    };
+    if keep_region(cursor, id)? || changed(cursor, id)? {
+        return Ok(false);
+    }
+    if tagged(&data, "context:body")
+        && tagged(&cursor.get(parent)?.data, "context:scope")
+        && changed(cursor, parent)?
+    {
+        return Ok(false);
+    }
+    for region in cursor.linked_regions(id)? {
+        if cursor.get(region)?.side != side {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether a region always shows: a `context:keep` region, or a
+/// `context:relevant` region or header of a changed scope.
+fn keep_region(cursor: &Cursor, id: u32) -> Result<bool, String> {
+    let data = cursor.get(id)?.data;
+    if tagged(&data, "context:keep") {
+        return Ok(true);
+    }
+    let Some(scope) = nearest(cursor, id, "context:scope")? else {
+        return Ok(false);
+    };
+    if !changed(cursor, scope.id)? {
+        return Ok(false);
+    }
+    if tagged(&data, "context:relevant") {
+        return Ok(true);
+    }
+    match bodies(cursor, scope.id)?.first() {
+        Some(body) => Ok(data.range.end.line <= body.range.start.line),
+        None => Ok(false),
+    }
+}
+
+/// The lines that frame a change: the first and last line of each changed
+/// scope around a region, and the line before and after each clause body
+/// of each changed branch statement around it.
+fn edges(cursor: &Cursor, id: u32) -> Result<Vec<u32>, String> {
+    let mut edges = Vec::new();
+    for ancestor in cursor.ancestors(id)? {
+        let scope = tagged(&ancestor, "context:scope");
+        let branches = tagged(&ancestor, "context:branches");
+        if !(scope || branches) || !changed(cursor, ancestor.id)? {
+            continue;
+        }
+        if scope {
+            edges.push(ancestor.range.start.line);
+        }
+        if scope && !tagged(&ancestor, "context:open-ended") {
+            edges.push(ancestor.range.end.line - 1);
+        }
+        if branches {
+            for body in bodies(cursor, ancestor.id)? {
+                edges.extend([body.range.start.line.saturating_sub(1), body.range.end.line]);
+            }
+        }
+    }
+    Ok(edges)
 }
 
 /// How an unchanged fold looks: an outline. A scope keeps its signature and
 /// closer and folds its body; any other fold folds whole. Every fold inside
-/// is folded the same way, so opening one shows the next level. A comment
-/// stays open: it names the code below it. A fold holding a region another
-/// plugin collapsed stays open, so that summary shows.
+/// is folded the same way, so opening one shows the next level. A fold
+/// holding a region another plugin collapsed stays open, so that summary
+/// shows, and so does a fold too short to save a line.
 fn outline(cursor: &Cursor, id: u32) -> Result<(), String> {
     let data = cursor.get(id)?.data;
-    if !data.visibility.collapsed
-        && !tagged(&data, "context:comment")
-        && cursor.display(id)?.collapsed == 0
-    {
-        // A scope's body is its `context:body` child, else its last fold child.
-        let mut body = None;
-        if tagged(&data, "context:scope") {
-            for child in cursor.get(id)?.children {
-                let data = cursor.get(child)?.data;
-                if tagged(&data, "context:body") {
-                    body = Some(child);
-                    break;
-                }
-                if matches!(data.kind, Kind::Fold) {
-                    body = Some(child);
-                }
-            }
-        }
-        match body {
-            Some(body) => collapse(cursor, body, |region| {
-                let range = cursor.get(region)?.data.range;
-                Ok(format!("{} lines", range.end.line - range.start.line))
-            })?,
-            None => collapse(cursor, id, |region| {
-                let text = cursor.text(region)?;
-                let head = text.lines().next().unwrap_or_default().trim();
-                Ok(format!("{head} … {} lines", text.lines().count()))
-            })?,
-        }
+    let summarized = data.visibility.collapsed || cursor.display(id)?.collapsed > 0;
+    let body = match tagged(&data, "context:scope") {
+        true => scope_body(cursor, id)?,
+        false => None,
+    };
+    let range = cursor.get(body.unwrap_or(id))?.data.range;
+    let short = range.end.line - range.start.line < MIN_GAP;
+    match body {
+        _ if summarized || short => {}
+        Some(body) => collapse(cursor, body, |region| {
+            let range = cursor.get(region)?.data.range;
+            Ok(format!("{} lines", range.end.line - range.start.line))
+        })?,
+        None => collapse(cursor, id, |region| {
+            let text = cursor.text(region)?;
+            let head = text.lines().next().unwrap_or_default().trim();
+            Ok(format!("{head} … {} lines", text.lines().count()))
+        })?,
     }
     for child in cursor.get(id)?.children {
         if matches!(cursor.get(child)?.data.kind, Kind::Fold) {
@@ -259,23 +342,38 @@ fn outline(cursor: &Cursor, id: u32) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether a region sits above the `context:body` of a changed scope: its
-/// signature, attributes or doc comment.
-fn in_header(cursor: &Cursor, id: u32) -> Result<bool, String> {
-    let Some(parent) = cursor.get(id)?.data.parent else {
-        return Ok(false);
-    };
-    let scope = cursor.get(parent)?;
-    if !tagged(&scope.data, "context:scope") || !changed(cursor, parent)? {
-        return Ok(false);
-    }
-    for child in scope.children {
+/// A scope's body for its outline: its first `context:body` child, else its
+/// last fold child.
+fn scope_body(cursor: &Cursor, scope: u32) -> Result<Option<u32>, String> {
+    let mut last_fold = None;
+    for child in cursor.get(scope)?.children {
         let data = cursor.get(child)?.data;
         if tagged(&data, "context:body") {
-            return Ok(cursor.get(id)?.data.range.end.line <= data.range.start.line);
+            return Ok(Some(child));
+        }
+        if matches!(data.kind, Kind::Fold) {
+            last_fold = Some(child);
         }
     }
-    Ok(false)
+    Ok(last_fold)
+}
+
+/// A region's `context:body` children.
+fn bodies(cursor: &Cursor, id: u32) -> Result<Vec<Region>, String> {
+    let mut bodies = Vec::new();
+    for child in cursor.get(id)?.children {
+        let data = cursor.get(child)?.data;
+        if tagged(&data, "context:body") {
+            bodies.push(data);
+        }
+    }
+    Ok(bodies)
+}
+
+/// The nearest ancestor with a tag.
+fn nearest(cursor: &Cursor, id: u32, tag: &str) -> Result<Option<Region>, String> {
+    let ancestors = cursor.ancestors(id)?;
+    Ok(ancestors.into_iter().find(|ancestor| tagged(ancestor, tag)))
 }
 
 /// Changed bytes or unpaired leaves anywhere in this region's fold state,

@@ -176,8 +176,6 @@ interface host {
         leaves: func(side: side, start: u32, end: u32) -> list<u32>;
         /// Changed bytes or unpaired leaves on this region's own side.
         has-changes: func(id: u32) -> result<bool, move-error>;
-        /// Query-declared named relationships.
-        related: func(id: u32, name: string) -> result<list<u32>, move-error>;
         /// Opposite-side aligned leaf; none for folds or unmatched leaves.
         paired-leaf: func(id: u32) -> result<option<u32>, move-error>;
         /// All members of the shared collapse state, including this region.

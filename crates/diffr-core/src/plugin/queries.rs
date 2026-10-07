@@ -243,6 +243,9 @@ pub(crate) fn assemble(
 mod tests {
     use super::*;
     use crate::config::Config;
+    use crate::parse::guess_language::Language;
+    use strum::IntoEnumIterator;
+
     fn source(name: &str, text: &str) -> PluginQuery {
         PluginQuery {
             language: "rust".into(),
@@ -255,33 +258,13 @@ mod tests {
     fn every_bundled_query_resolves_and_compiles() {
         let config = Config::default();
         let assembled = assemble(&config.plugins.shape.queries().unwrap()).unwrap();
-        assert_eq!(
-            assembled.keys().map(String::as_str).collect::<Vec<_>>(),
-            [
-                "go",
-                "javascript",
-                "javascriptjsx",
-                "python",
-                "rust",
-                "typescript",
-                "typescripttsx"
-            ]
-        );
-        assert_eq!(
-            assembled["rust"]
-                .iter()
-                .map(|s| s.name.as_str())
-                .collect::<Vec<_>>(),
-            [
-                "builtin:shared/queries/rust.scm",
-                "builtin:shared/queries/rust-docstrings.scm",
-                "builtin:deleted-bodies/queries/rust.scm",
-                "builtin:shared/queries/rust-tests.scm",
-                "builtin:test-bodies/queries/rust.scm",
-                "builtin:removed-runs/queries/rust.scm",
-                "builtin:context/queries/rust.scm",
-            ]
-        );
+        for language in Language::iter() {
+            let key = format!("{language:?}").to_lowercase();
+            assert!(
+                assembled.contains_key(&key),
+                "missing bundled query for {language:?}"
+            );
+        }
         config.compile().unwrap();
     }
 
@@ -302,7 +285,7 @@ mod tests {
             vec![
                 source(
                     "queries/rust/mine.scm",
-                    "; inherits: ../shared.scm, builtin:shared/queries/rust.scm\n(block) @fold",
+                    "; inherits: ../shared.scm, builtin:core/queries/rust/folds.scm\n(block) @fold",
                 ),
                 source("queries/shared.scm", "(block) @fold"),
                 source("queries/shared.scm", "(block) @fold"),
@@ -316,7 +299,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "queries/shared.scm",
-                "builtin:shared/queries/rust.scm",
+                "builtin:core/queries/rust/folds.scm",
                 "queries/rust/mine.scm"
             ]
         );

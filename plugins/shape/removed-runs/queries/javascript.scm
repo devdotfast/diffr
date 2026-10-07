@@ -1,4 +1,4 @@
-; inherits: builtin:shared/queries/javascript.scm
+; inherits: builtin:core/queries/javascript/folds.scm
 ((function_declaration body: (statement_block "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold)
   (#set! tag "removed-runs:function"))
 ((generator_function_declaration body: (statement_block "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold)

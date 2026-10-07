@@ -355,17 +355,6 @@ pub fn diff_file_content(
         }
     };
 
-    // Folds are regions of the file, so two nodes that cover the same lines
-    // hold one fold between them.
-    folds::merge_spans(
-        &mut lhs_folds,
-        &lhs_src.split_terminator('\n').collect::<Vec<_>>(),
-    );
-    folds::merge_spans(
-        &mut rhs_folds,
-        &rhs_src.split_terminator('\n').collect::<Vec<_>>(),
-    );
-
     Ok(DiffResult {
         file_format,
         lhs_src: FileContent::Text(lhs_src.to_owned()),

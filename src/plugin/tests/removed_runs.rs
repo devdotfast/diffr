@@ -19,7 +19,6 @@ fn removed_leaf(id: u32, alignment: u32, start: u32, end: u32, changed: &[u32]) 
         id,
         fold_state_id: id,
         range: range(start, end),
-        relations: Vec::new(),
         tags: vec![],
         visibility: Visibility::default(),
         node: Node::Leaf {
@@ -41,7 +40,6 @@ fn function_fold(id: u32, start: u32, end: u32, children: Vec<Region>) -> Region
         id,
         fold_state_id: id,
         range: range(start, end),
-        relations: Vec::new(),
         tags: vec!["removed-runs:function".to_owned()],
         visibility: Visibility::default(),
         node: Node::Fold {
@@ -175,7 +173,6 @@ fn removed_runs_skip_paired_leaves_and_collapsed_ancestors() {
                 id: 1,
                 fold_state_id: 1,
                 range: range(8, 20),
-                relations: Vec::new(),
                 tags: vec![],
                 visibility: Visibility {
                     collapsed: true,

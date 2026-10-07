@@ -2,7 +2,7 @@
 //!
 //! A fold is a region of a file, not a syntax node: two captures that cover
 //! the same lines — from one query, or from two plugins' queries — are one
-//! fold whose tags are the union of theirs (see [`merge_spans`]). The merged
+//! fold whose tags are the union of theirs (see [`merge_by_lines`]). The merged
 //! fold is owned by the innermost node that produced it, the one whose
 //! extent really is that region, and carries that node's `syntax_id` and its
 //! pairing, so alignment follows the node the matcher paired.
@@ -19,7 +19,7 @@ use tree_sitter::{QueryCursor, Tree};
 
 #[derive(Debug)]
 pub struct Fold {
-    pub(crate) relations: Vec<(String, SourceRange)>,
+    pub(crate) relations: Vec<SourceRange>,
     pub(crate) tags: Vec<String>,
     /// Source on this side; may span multiple syntax nodes.
     pub(crate) range: SourceRange,
@@ -68,13 +68,15 @@ pub struct Conflict {
 /// `@fold.close`, the text from `@fold.open` to the end of the node, or the
 /// hull of a quantified run such as `(comment)+ @fold`.
 /// Captures of the same node merge their tags when their ranges agree; when
-/// they disagree the result is a [`Conflict`].
+/// they disagree the result is a [`Conflict`]. Captures of different nodes
+/// over the same lines merge (see [`merge_by_lines`]).
 pub(crate) fn classify(
     tree: &Tree,
     src: &str,
     compiled: Option<&AnnotationQuery>,
 ) -> Result<DftHashMap<usize, FoldMetadata>, Conflict> {
-    let mut kinds: DftHashMap<usize, (FoldMetadata, usize)> = DftHashMap::default();
+    // Per node: its fold, the query source that made it, and its depth.
+    let mut kinds: DftHashMap<usize, (FoldMetadata, usize, usize)> = DftHashMap::default();
     let Some(compiled) = compiled else {
         return Ok(DftHashMap::default());
     };
@@ -91,46 +93,45 @@ pub(crate) fn classify(
                 .filter(move |capture| query.capture_names()[capture.index as usize] == name)
         };
         for source in named("related.from") {
-            let mut targets: std::collections::BTreeMap<&str, SourceRange> =
-                std::collections::BTreeMap::new();
+            // The target is the hull of every other `@related.*` capture.
+            let mut target: Option<SourceRange> = None;
             for capture in matched.captures {
                 let name = query.capture_names()[capture.index as usize];
-                let Some(name) = name.strip_prefix("related.").filter(|name| *name != "from")
-                else {
+                if !name.starts_with("related.") || name == "related.from" {
                     continue;
-                };
+                }
                 let range = node_range(capture.node);
-                targets
-                    .entry(name)
-                    .and_modify(|span| {
-                        if (range.start.line, range.start.byte_column)
-                            < (span.start.line, span.start.byte_column)
-                        {
-                            span.start = range.start;
-                        }
-                        if (range.end.line, range.end.byte_column)
-                            > (span.end.line, span.end.byte_column)
-                        {
-                            span.end = range.end;
-                        }
-                    })
-                    .or_insert(range);
+                let at = |position: &SourcePosition| (position.line, position.byte_column);
+                target = Some(match target {
+                    None => range,
+                    Some(hull) => SourceRange {
+                        start: if at(&range.start) < at(&hull.start) {
+                            range.start
+                        } else {
+                            hull.start
+                        },
+                        end: if at(&range.end) > at(&hull.end) {
+                            range.end
+                        } else {
+                            hull.end
+                        },
+                    },
+                });
             }
-            relations.extend(
-                targets
-                    .into_iter()
-                    .map(|(name, range)| (source.node.id(), name.to_owned(), range)),
-            );
+            relations.extend(target.map(|range| (source.node.id(), range)));
         }
         let folds: Vec<_> = named("fold").collect();
         let Some(first) = folds.iter().min_by_key(|capture| capture.node.start_byte()) else {
             continue;
         };
+        let last = folds
+            .iter()
+            .max_by_key(|capture| capture.node.end_byte())
+            .expect("a fold capture");
         let region = match (named("fold.open").last(), named("fold.close").last()) {
             (Some(open), Some(close))
-                if folds.len() == 1
-                    && open.node.start_byte() >= first.node.start_byte()
-                    && close.node.end_byte() <= first.node.end_byte()
+                if open.node.start_byte() >= first.node.start_byte()
+                    && close.node.end_byte() <= last.node.end_byte()
                     && open.node.end_byte() <= close.node.start_byte() =>
             {
                 SourceRange {
@@ -149,16 +150,10 @@ pub(crate) fn classify(
                     end: node_range(first.node).end,
                 }
             }
-            (None, None) => {
-                let last = folds
-                    .iter()
-                    .max_by_key(|capture| capture.node.end_byte())
-                    .expect("a fold capture");
-                SourceRange {
-                    start: node_range(first.node).start,
-                    end: node_range(last.node).end,
-                }
-            }
+            (None, None) => SourceRange {
+                start: node_range(first.node).start,
+                end: node_range(last.node).end,
+            },
             _ => continue,
         };
         if region.start == region.end {
@@ -183,10 +178,11 @@ pub(crate) fn classify(
                         syntax,
                     },
                     pattern.source,
+                    depth(first.node),
                 ));
             }
             Entry::Occupied(mut entry) => {
-                let (metadata, source) = entry.get_mut();
+                let (metadata, source, _) = entry.get_mut();
                 if metadata.range_override != Some(region) || metadata.indent != indent {
                     let mut sources = [
                         compiled.sources[*source].clone(),
@@ -206,17 +202,91 @@ pub(crate) fn classify(
             }
         }
     }
-    for (id, name, range) in relations {
-        if let Some((metadata, _)) = kinds.get_mut(&id) {
-            if !metadata.relations.contains(&(name.clone(), range)) {
-                metadata.relations.push((name, range));
+    for (id, range) in relations {
+        if let Some((metadata, _, _)) = kinds.get_mut(&id) {
+            if !metadata.relations.contains(&range) {
+                metadata.relations.push(range);
             }
         }
     }
-    Ok(kinds
-        .into_iter()
-        .map(|(id, (metadata, _))| (id, metadata))
-        .collect())
+    let lines: Vec<&str> = src.split_terminator('\n').collect();
+    Ok(merge_by_lines(
+        kinds
+            .into_iter()
+            .map(|(id, (metadata, _, depth))| (id, depth, metadata))
+            .collect(),
+        &lines,
+    ))
+}
+
+fn depth(node: tree_sitter::Node<'_>) -> usize {
+    let mut depth = 0;
+    let mut at = node;
+    while let Some(parent) = at.parent() {
+        depth += 1;
+        at = parent;
+    }
+    depth
+}
+
+/// Merge folds of different nodes that cover the same whole lines, such as a
+/// Rust `Self { … }` tail expression and the `{ … }` field list inside it.
+/// The merged fold keeps the innermost node's range, indent and syntax (the
+/// deepest among equal ranges), plus every fold's tags and relations.
+/// A fold with no whole line merges with nothing.
+fn merge_by_lines(
+    mut folds: Vec<(usize, usize, FoldMetadata)>,
+    lines: &[&str],
+) -> DftHashMap<usize, FoldMetadata> {
+    let region = |metadata: &FoldMetadata| {
+        metadata
+            .range_override
+            .expect("classify gives every fold its range")
+    };
+    let at = |position: &SourcePosition| (position.line.as_usize(), position.byte_column);
+    folds.sort_by_key(|(_, depth, metadata)| {
+        let region = region(metadata);
+        (
+            at(&region.start),
+            std::cmp::Reverse(at(&region.end)),
+            *depth,
+        )
+    });
+    let mut merged: DftHashMap<usize, FoldMetadata> = DftHashMap::default();
+    let mut owners: DftHashMap<(usize, usize), usize> = DftHashMap::default();
+    for (id, _, metadata) in folds {
+        let span = line_span(&region(&metadata), lines);
+        if span.0 == span.1 {
+            merged.insert(id, metadata);
+            continue;
+        }
+        let Some(&owner) = owners.get(&span) else {
+            owners.insert(span, id);
+            merged.insert(id, metadata);
+            continue;
+        };
+        let held = merged.remove(&owner).expect("an owner holds its fold");
+        let inner = region(&metadata);
+        let outer = region(&held);
+        // Sorted by start, so the incoming fold never starts first.
+        let takes_over = at(&inner.end) <= at(&outer.end);
+        let (id, mut kept, lost) = if takes_over {
+            (id, metadata, held)
+        } else {
+            (owner, held, metadata)
+        };
+        kept.tags.extend(lost.tags);
+        kept.tags.sort();
+        kept.tags.dedup();
+        for relation in lost.relations {
+            if !kept.relations.contains(&relation) {
+                kept.relations.push(relation);
+            }
+        }
+        owners.insert(span, id);
+        merged.insert(id, kept);
+    }
+    merged
 }
 
 /// Lists already retain the two edges of their interior, even without delimiters.
@@ -281,9 +351,8 @@ fn range(node: &Syntax<'_>, metadata: &FoldMetadata) -> Option<SourceRange> {
 /// a fold closes on is inside it only when nothing but whitespace follows
 /// the close, so `] {`, which ends a collection and opens the body after it,
 /// is in neither fold.
-pub(crate) fn line_span(fold: &Fold, lines: &[&str]) -> (usize, usize) {
+pub(crate) fn line_span(range: &SourceRange, lines: &[&str]) -> (usize, usize) {
     let line_count = lines.len();
-    let range = &fold.range;
     let first = range.start.line.as_usize();
     // Code before the fold opens on its first line, or after it closes on
     // its last, is code the fold does not cover: the line stays outside.
@@ -311,8 +380,8 @@ pub(crate) fn line_span(fold: &Fold, lines: &[&str]) -> (usize, usize) {
 /// line, such as a collection whose closer sits on the line that opens the
 /// next body (`for x in [ … ] {`). The rule: the earlier fold gives the
 /// shared line to the later one, so its span ends where the later fold
-/// starts. A span left with fewer than two lines hides nothing and is
-/// dropped (`None`). Output is in input order.
+/// starts. An empty span hides nothing and is dropped (`None`). Output is in
+/// input order.
 pub(crate) fn nested_spans(spans: &[(usize, usize)]) -> Vec<Option<(usize, usize)>> {
     let mut order: Vec<usize> = (0..spans.len()).collect();
     order.sort_by_key(|&index| (spans[index].0, std::cmp::Reverse(spans[index].1)));
@@ -343,7 +412,7 @@ pub(crate) fn nested_spans(spans: &[(usize, usize)]) -> Vec<Option<(usize, usize
         open.push(index);
     }
     for span in &mut out {
-        if span.is_some_and(|(start, end)| end - start < 2) {
+        if span.is_some_and(|(start, end)| end == start) {
             *span = None;
         }
     }
@@ -434,62 +503,6 @@ pub(crate) fn project(node: &Syntax<'_>, partner: Option<&Syntax<'_>>) -> Option
     })
 }
 
-/// Fold the folds of one side that cover the same lines into one.
-///
-/// Two captures — one query's, or two plugins' — can fold the same region
-/// of the file from different syntax nodes, such as a Rust `Self { … }` as
-/// a function's tail expression and the `{ … }` field list inside it. That
-/// is one fold: its tags are the union of theirs, sorted and deduplicated.
-/// (Two ranges on the *same* node are a query conflict instead, and the
-/// file is not diffed; see [`classify`].)
-///
-/// The merged fold is owned by the innermost node that produced it — the
-/// one whose range lies inside the others', and among equal ranges the one
-/// the preorder walk reached last. It keeps that node's `syntax_id` and its
-/// pairing, so alignment follows the node whose extent is the fold's
-/// region. `folds` is in preorder and stays in it, each merged fold where
-/// its outermost contributor stood.
-///
-/// Only folds that hide something merge: a fold of fewer than two lines is
-/// no region (see `nested_spans`), and two of them covering one line are
-/// two byte ranges the reader never sees.
-pub(crate) fn merge_spans(folds: &mut Vec<Fold>, lines: &[&str]) {
-    let inside = |inner: &SourceRange, outer: &SourceRange| {
-        let at = |position: &SourcePosition| (position.line.as_usize(), position.byte_column);
-        at(&inner.start) >= at(&outer.start) && at(&inner.end) <= at(&outer.end)
-    };
-    let mut kept: Vec<Fold> = Vec::with_capacity(folds.len());
-    let mut by_span: DftHashMap<(usize, usize), usize> = DftHashMap::default();
-    for fold in folds.drain(..) {
-        let span = line_span(&fold, lines);
-        if span.1 - span.0 < 2 {
-            kept.push(fold);
-            continue;
-        }
-        match by_span.entry(span) {
-            Entry::Vacant(entry) => {
-                entry.insert(kept.len());
-                kept.push(fold);
-            }
-            Entry::Occupied(entry) => {
-                let merged = &mut kept[*entry.get()];
-                if inside(&fold.range, &merged.range) {
-                    merged.range = fold.range;
-                    merged.indent = fold.indent;
-                    merged.syntax = fold.syntax;
-                    merged.syntax_id = fold.syntax_id;
-                    merged.match_kind = fold.match_kind;
-                }
-                merged.relations.extend(fold.relations);
-                merged.tags.extend(fold.tags);
-                merged.tags.sort();
-                merged.tags.dedup();
-            }
-        }
-    }
-    *folds = kept;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -551,16 +564,19 @@ mod tests {
         let spans = [(0, 6), (5, 9), (7, 8)];
         assert_eq!(
             nested_spans(&spans),
-            vec![Some((0, 5)), Some((5, 9)), None],
-            "the earlier fold ends where the later starts; one-line spans go"
+            vec![Some((0, 5)), Some((5, 9)), Some((7, 8))],
+            "the earlier fold ends where the later starts; one-line spans stay"
         );
         // Clipping cascades through every open ancestor that would cross.
         assert_eq!(
             nested_spans(&[(0, 10), (2, 6), (4, 8)]),
             vec![Some((0, 10)), Some((2, 4)), Some((4, 8))]
         );
-        // An ancestor that is clipped down to its header line disappears.
-        assert_eq!(nested_spans(&[(3, 5), (4, 9)]), vec![None, Some((4, 9))]);
+        // A span clipped to one line stays.
+        assert_eq!(
+            nested_spans(&[(3, 5), (4, 9)]),
+            vec![Some((3, 4)), Some((4, 9))]
+        );
         // Nested and disjoint spans are untouched, whatever their input order.
         assert_eq!(
             nested_spans(&[(5, 9), (0, 4), (1, 3)]),

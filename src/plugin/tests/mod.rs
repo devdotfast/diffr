@@ -11,7 +11,6 @@ use super::*;
 use crate::config::{Config, Params};
 use crate::options::DiffOptions;
 use crate::pairing::Pairing;
-use crate::plugin::cursor::Cursor;
 use crate::protocol::{self, project, Diff, FileChange, FileRef, FileStatus, Node, Region, Source};
 use serde_json::json;
 use std::num::NonZeroUsize;
@@ -152,28 +151,24 @@ pub(crate) fn run(
 }
 
 /// For each `deleted-bodies:function` body on the after side, the first line
-/// of the body and the lines of its docstring, as the query relationship identifies it.
+/// of the body and the lines of its docstring: the `deleted-bodies:docstring`
+/// region sharing its `fold_state_id`.
 fn documented(path: &str, after: &str) -> Vec<(u32, Option<(u32, u32)>)> {
-    let (file, sides) = project(path, "", after);
+    let (_, sides) = project(path, "", after);
     let source = rhs(&sides);
-    let cursor = Cursor::new(file.clone(), sides.clone()).expect("a region");
     let mut bodies = Vec::new();
     walk(source.root.children(), &mut |region| {
         if is_fold(region) && has_tag(region, "deleted-bodies:function") {
-            let docstring = cursor
-                .related(region.id, "documentation")
-                .unwrap()
-                .first()
-                .map(|id| {
-                    let mut lines = None;
-                    walk(source.root.children(), &mut |docstring| {
-                        if docstring.id == *id {
-                            lines = Some(docstring.range.lines());
-                        }
-                    });
-                    let lines = lines.expect("a related region on the same side");
-                    (lines.start, lines.end)
-                });
+            let mut docstring = None;
+            walk(source.root.children(), &mut |other| {
+                if other.fold_state_id == region.fold_state_id
+                    && has_tag(other, "deleted-bodies:docstring")
+                {
+                    let lines = other.range.lines();
+                    assert!(docstring.is_none(), "one docstring per body");
+                    docstring = Some((lines.start, lines.end));
+                }
+            });
             bodies.push((region.range.start.line, docstring));
         }
     });
@@ -189,10 +184,10 @@ fn rust_doc_and_line_comments_above_a_function_are_its_docstring() {
             (1, None),
             (10, Some((5, 7))),
             (18, Some((14, 16))),
-            (24, None),
+            (24, Some((22, 23))),
             (32, Some((28, 31)))
         ],
-        "a one-line docstring is not a region"
+        "one-line docstrings are linked"
     );
 }
 
@@ -304,7 +299,7 @@ fn a_subset_of_bundled_plugins_can_use_shared_query_tags() {
 }
 
 #[test]
-fn documentation_relationship_comes_from_query_captures_not_distance() {
+fn documentation_link_comes_from_query_captures_not_distance() {
     let parameters = (0..16)
         .map(|i| format!("    arg{i}: u32,\n"))
         .collect::<String>();

@@ -258,14 +258,6 @@ impl bindings::diffr::plugin::host::HostCursor for State {
     ) -> wasmtime::Result<Result<bool, MoveError>> {
         Ok(self.table.get(&c)?.has_changes(id).map_err(Into::into))
     }
-    fn related(
-        &mut self,
-        c: Resource<Cursor>,
-        id: u32,
-        name: String,
-    ) -> wasmtime::Result<Result<Vec<u32>, MoveError>> {
-        Ok(self.table.get(&c)?.related(id, &name).map_err(Into::into))
-    }
     fn paired_leaf(
         &mut self,
         c: Resource<Cursor>,

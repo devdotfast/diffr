@@ -63,7 +63,6 @@ fn leaf(id: u32, alignment: u32, start: u32, end: u32) -> Region {
                 column: 0,
             },
         },
-        relations: Vec::new(),
         tags: vec![],
         visibility: Visibility::default(),
         node: Node::Leaf {

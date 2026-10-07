@@ -12,6 +12,8 @@ export interface RenderSpan {
   text: string;
   /** Fold-state id of an indent guide; paint-only hover accent. */
   guide?: number;
+  /** Fold-state id of the scope whose opening or closing bracket this is. */
+  brace?: number;
   fg?: string;
   bg?: string;
   /** Resolve paint-only foreground effects after cursor and copy-selection backgrounds apply. */
@@ -28,6 +30,10 @@ export interface SplitLineCell {
   foldLabel?: boolean;
   /** A collapsed row or label line: its tint fills the rest of the line. */
   band?: FoldTint;
+  /** The innermost open scope holding this line, its opener and closer included. */
+  scope?: number;
+  /** Open scopes whose body (between opener and closer) holds this line. */
+  body?: number[];
   spans: RenderSpan[];
 }
 
@@ -39,5 +45,13 @@ export interface UnifiedLineCell {
   fold?: RowFold;
   foldLabel?: boolean;
   band?: FoldTint;
+  scope?: number;
+  body?: number[];
   spans: RenderSpan[];
+}
+
+/** The scope the pointer is on. Armed when it points at the scope's rail or chevron, which fold it. */
+export interface ScopeFocus {
+  id: number;
+  armed: boolean;
 }

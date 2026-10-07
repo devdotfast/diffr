@@ -11,10 +11,12 @@ import {
   useRenderer,
   useTerminalDimensions,
 } from "@opentui/react";
+import { TextAttributes } from "@opentui/core";
 import { buildFileTree, flattenFileTree, parentDirectories, lineCounts } from "../diffr/fileTree";
 import { matchesKey } from "./lib/keys";
 import { resizeSidebarWidth } from "./lib/sidebar";
 import { CodeRowView } from "./diff/CodeRowView";
+import type { ScopeFocus } from "./diff/diffRowModel";
 import {
   rowsForFile,
   type Layout,
@@ -28,12 +30,12 @@ import {
   type SourceSelection,
 } from "../diffr/selection";
 import { filePath, fileVisibility, type DiffFile, type TextDiff } from "../diffr/wire";
-import { defaultCollapsed, foldIds, gapIds, nestedIds, sourceLines, type RowFold } from "../diffr/regions";
+import { defaultCollapsed, foldIds, gapIds, nestedIds, sourceLines } from "../diffr/regions";
 import { placeholderRows } from "../diffr/rows";
 import { add, blockBar, comparisonLabel, zero, type LineCounts } from "../diffr/counts";
 import type { DiffStore } from "../diffr/store";
 import { sanitizeTerminalLine } from "../lib/terminalText";
-import { sliceTextByWidth } from "./lib/text";
+import { measureTextWidth, sliceTextByWidth } from "./lib/text";
 const fit = (text: string, width: number) =>
   sliceTextByWidth(text, 0, width).text;
 export function App({
@@ -54,7 +56,7 @@ export function App({
     [theme, setTheme] = useState<Palette>(themes.initial);
   const [position, setPosition] = useState<ViewPosition | null>(null);
   const [horizontal, setHorizontal] = useState(0);
-  const [hoveredFold, setHoveredFold] = useState<{file: number; id: number} | null>(null);
+  const [hoveredFold, setHoveredFold] = useState<{file: number; focus: ScopeFocus} | null>(null);
   const [spinner, setSpinner] = useState(0);
   useEffect(() => {
     if (snapshot.complete) return;
@@ -100,7 +102,7 @@ export function App({
     new WeakMap<DiffFile, { key: string; rows: ViewerRow[] }>(),
   );
   const rows = useMemo(() => {
-    const all = fileOrder.flatMap((index): ViewerRow[] => {
+    const perFile = fileOrder.map((index): ViewerRow[] => {
       const file = files[index];
       if (!file) {
         const failure = failures[index];
@@ -121,6 +123,15 @@ export function App({
         ? [cached.rows[0], ...placeholderRows(index, fileVisibility(file).label)]
         : cached.rows.slice(0, 1);
     });
+    // A blank row closes an open file before the next header. It belongs to the file it closes,
+    // so the sticky header doesn't repeat the header just below it.
+    const all: ViewerRow[] = [];
+    for (const fileRows of perFile) {
+      const last = all.at(-1);
+      if (last && !last.key.endsWith(":header") && last.label !== "")
+        all.push({ key: `${last.fileIndex}:end`, fileIndex: last.fileIndex, label: "" });
+      all.push(...fileRows);
+    }
     for (const [i, error] of snapshot.errors.entries())
       all.push({ key: `error:${i}`, fileIndex: -1, label: error });
     return all;
@@ -158,18 +169,18 @@ export function App({
       return new Map(old).set(fileIndex, next);
     });
   // Recursive commands (Alt-click, zC, zO, zA) include every fold nested inside.
-  const setFold = (fileIndex: number, fold: RowFold, collapse: boolean | "toggle", recursive: boolean) => {
+  const setFold = (fileIndex: number, id: number, collapse: boolean | "toggle", recursive: boolean) => {
     const diff = files[fileIndex]?.diff;
     if (diff?.type !== "text") throw new Error(`File ${fileIndex} has no folds`);
-    setFolds(fileIndex, diff, recursive ? [fold.id, ...nestedIds(diff, fold.id)] : [fold.id], collapse);
+    setFolds(fileIndex, diff, recursive ? [id, ...nestedIds(diff, id)] : [id], collapse);
   };
   // `c`: reveal every context gap, or hide them again.
   const toggleContext = () => {
     const opened = textDiffs.some(({ index, diff }) => gapIds(diff).some((id) => !foldsOf(index, diff).has(id)));
     textDiffs.forEach(({ index, diff }) => setFolds(index, diff, gapIds(diff), opened));
   };
-  const toggleFold = (fileIndex: number, fold: RowFold, recursive: boolean) =>
-    setFold(fileIndex, fold, "toggle", recursive);
+  const toggleFold = (fileIndex: number, id: number, recursive: boolean) =>
+    setFold(fileIndex, id, "toggle", recursive);
   const navigateFold = (direction: number) => {
     const headers = geometry.rows.filter((r) => rowFold(r.row));
     const target =
@@ -189,9 +200,9 @@ export function App({
     if (!current || !fold) return;
     const recursive = command === command.toUpperCase();
     const letter = command.toLowerCase();
-    if (letter === "a") toggleFold(current.fileIndex, fold, recursive);
-    else if (letter === "o") setFold(current.fileIndex, fold, false, recursive);
-    else if (letter === "c") setFold(current.fileIndex, fold, true, recursive);
+    if (letter === "a") toggleFold(current.fileIndex, fold.id, recursive);
+    else if (letter === "o") setFold(current.fileIndex, fold.id, false, recursive);
+    else if (letter === "c") setFold(current.fileIndex, fold.id, true, recursive);
   };
   const foldAll = (collapse: boolean) =>
     textDiffs.forEach(({ index, diff }) => setFolds(index, diff, foldIds(diff), collapse));
@@ -296,21 +307,29 @@ export function App({
       : index >= old + viewportHeight ? index - viewportHeight + 1 : old);
   }, [currentFile, treeRows, viewportHeight]);
   const sidebarStart = Math.min(treeScroll, Math.max(0, treeRows.length - viewportHeight));
+  // A file header is the diff's one band: an accent edge, then the directory dimmed so the file
+  // name carries the row.
   const fileHeader = (fileIndex: number, key: string) => {
     const file = files[fileIndex], count = counts[fileIndex]?.visible;
-    const path = filePath(inventory[fileIndex].file);
-    if (!file || !count) return <text key={key} height={1} width={contentWidth} fg={theme.muted} bg={theme.chrome} selectable={false}>
-      {fit(sanitizeTerminalLine(` ${statusGlyph(fileIndex)} ${path}`), contentWidth)}
-    </text>;
-    const statsWidth = String(count.added).length + String(count.removed).length + 5;
+    const path = sanitizeTerminalLine(filePath(inventory[fileIndex].file));
+    const loaded = !!file && !!count;
+    const statsWidth = loaded ? String(count.added).length + String(count.removed).length + 5 : 0;
+    const pathWidth = Math.max(1, contentWidth - statsWidth - 1);
+    const glyph = loaded ? (isClosed(fileIndex, file) ? "▸" : "▾") : statusGlyph(fileIndex);
+    const directory = fit(`${glyph} ${path.slice(0, path.lastIndexOf("/") + 1)}`, pathWidth);
+    const directoryWidth = measureTextWidth(directory);
+    const name = fit(path.slice(path.lastIndexOf("/") + 1), Math.max(0, pathWidth - directoryWidth));
     return <box key={key} height={1} width={contentWidth} flexDirection="row"
-      backgroundColor={theme.chrome}
-      onMouseUp={() => toggleFile(fileIndex)}>
-      <text width={Math.max(1, contentWidth - statsWidth)} fg={theme.fg} selectable={false}>
-        {fit(sanitizeTerminalLine(`${isClosed(fileIndex, file) ? "▸" : "▾"} ${path}`), Math.max(1, contentWidth - statsWidth))}
-      </text>
-      <text fg={theme.addedText} selectable={false}>{` +${count.added}`}</text>
-      <text fg={theme.removedText} selectable={false}>{` −${count.removed} `}</text>
+      backgroundColor={theme.fileHeader}
+      onMouseUp={() => { if (loaded) toggleFile(fileIndex); }}>
+      <text width={1} fg={theme.accent} selectable={false}>▌</text>
+      <text width={directoryWidth} fg={theme.fileHeaderDir} selectable={false}>{directory}</text>
+      <text width={Math.max(0, pathWidth - directoryWidth)} fg={loaded ? theme.fg : theme.fileHeaderDir}
+        attributes={TextAttributes.BOLD} selectable={false}>{name}</text>
+      {loaded && <>
+        <text fg={theme.addedText} selectable={false}>{` +${count.added}`}</text>
+        <text fg={theme.removedText} selectable={false}>{` −${count.removed} `}</text>
+      </>}
     </box>;
   };
   const rendered = [];
@@ -361,9 +380,10 @@ export function App({
               if (dragging.current)
                 setSelection((s) => (s ? { ...s, end: row.key } : s));
             }}
-            activeFold={hoveredFold?.file === row.fileIndex ? hoveredFold.id : undefined}
-            onHover={id => setHoveredFold(old => old?.file === row.fileIndex && old.id === id ? old : id === undefined ? null : {file: row.fileIndex, id})}
-            onFold={(fold, recursive) => toggleFold(row.fileIndex, fold, recursive)}
+            focus={hoveredFold?.file === row.fileIndex ? hoveredFold.focus : undefined}
+            onHover={focus => setHoveredFold(old => old?.file === row.fileIndex && old.focus.id === focus?.id
+              && old.focus.armed === focus.armed ? old : focus === undefined ? null : {file: row.fileIndex, focus})}
+            onFold={(id, recursive) => toggleFold(row.fileIndex, id, recursive)}
           />,
         );
     }

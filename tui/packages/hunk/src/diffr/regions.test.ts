@@ -258,11 +258,11 @@ test("a collapsed fold takes its side's change tint when one-sided and stays neu
   expect(removed.find((r) => r.left?.fold)!.left!.fold!.tint).toBe("removed");
   expect(foldBackground(dark, "removed")).toBe(dark.deletion);
   // Paired: a matched fold pair, each fold with its own id and one fold state between
-  // them, keeps the neutral fold background.
+  // them, sits on the code's own background.
   const paired = rowsFor([body(7, "Body")], [{ ...body(8, "Body"), fold_state_id: 7, children: body(7, "Body").children }]);
   const both = paired.find((r) => r.left?.fold && r.right?.fold)!;
   expect([both.left!.fold!.tint, both.right!.fold!.tint]).toEqual(["neutral", "neutral"]);
-  expect(foldBackground(dark, "neutral")).toBe(dark.foldBackground);
+  expect(foldBackground(dark, "neutral")).toBe(dark.bg);
   // Modified: the same pair hiding a changed line takes the modification tint and counts it.
   const changedBody = (id: number) => ({ ...body(id, "Body"), children: [leaf(107, 1, 2, [line(1, 4, 5)])] });
   const modified = rowsFor([changedBody(7)], [{ ...changedBody(8), fold_state_id: 7 }]);
@@ -304,4 +304,13 @@ test("a group is one row that stands for every collapsed region under it", () =>
   expect(rowsForFile(file, 0, "split", dark, new Set()).find((r) => r.left?.lineNumber === 2)!.left!.fold)
     .toMatchObject({ id: 20, collapsed: false });
   expect(gapIds(file.diff)).toEqual([]);
+});
+test("a scope opened on a line takes its chevron from a statement fold starting there", () => {
+  const base = { side: 1 as const, label: "", tags: [], collapsed: false, nested: [], parentColumn: 0 };
+  const statement = { ...base, id: 1, foldStateId: 1, startLine: 4, lastHidden: 20 };
+  const scope = { ...base, id: 2, foldStateId: 2, startLine: 5, lastHidden: 19,
+    syntax: { start: { line: 4, column: 30 }, end: { line: 20, column: 0 } } };
+  expect(foldHeaders([statement, scope], [], new Set(), new Set()).get(4)?.id).toBe(2);
+  // Without a scope on the line, the outermost fold keeps it.
+  expect(foldHeaders([statement, { ...scope, syntax: undefined }], [], new Set(), new Set()).get(4)?.id).toBe(1);
 });

@@ -132,6 +132,37 @@ export function rowsForFile(
     }
     return lines;
   });
+  // An open scope is a syntax fold on screen, whose rail, brackets and chevron are one target.
+  // The pointer anywhere from its opener's line to its closer's focuses the innermost one; its
+  // body is the lines between, which folding it hides.
+  const scopes = folds.map((side) => {
+    const lines = new Map<number, SyntaxFold[]>();
+    for (const fold of side) {
+      if (!fold.syntax || collapsed.has(fold.foldStateId)) continue;
+      for (let line = fold.syntax.start.line; line <= fold.syntax.end.line; line++)
+        lines.set(line, [...(lines.get(line) ?? []), fold as SyntaxFold]);
+    }
+    return lines;
+  });
+  const scopeOf = (side: Side, line: number) => {
+    const around = scopes[side].get(line) ?? [];
+    const extent = (fold: SyntaxFold) => fold.syntax.end.line - fold.syntax.start.line;
+    // Two scopes can share their lines, as `({` does: the one opening later is inside.
+    const inner = around.reduce<SyntaxFold | undefined>((best, fold) => !best || extent(fold) < extent(best)
+      || (extent(fold) === extent(best) && fold.syntax.start.column > best.syntax.start.column) ? fold : best, undefined);
+    return { scope: inner?.foldStateId,
+      body: around.filter(fold => fold.syntax.start.line < line && line < fold.syntax.end.line).map(fold => fold.foldStateId) };
+  };
+  // The opener is the byte before a scope's syntax range and the closer the byte at its end.
+  const withBraces = (spans: RenderSpan[], side: Side, line: number) => {
+    let result = spans;
+    for (const fold of scopes[side].get(line) ?? []) {
+      const { start, end } = fold.syntax, text = texts[side][line]!;
+      if (start.line === line && start.column > 0) result = markBrace(result, byteColumn(text, start.column - 1), fold.foldStateId);
+      if (end.line === line) result = markBrace(result, byteColumn(text, end.column), fold.foldStateId);
+    }
+    return result;
+  };
   const tintOf = (region: Leaf | Fold) => foldTint(region.id, region.side, paired[region.side]);
   const alignments = leaves.map(side => new Set(side.map(leaf => leaf.alignmentId)));
   const isChanged = (leaf: Leaf, line: number) =>
@@ -165,7 +196,7 @@ export function rowsForFile(
   };
   const cell = (leaf: Leaf | null, line: number | null, side: Side): SplitLineCell => {
     if (line === null || leaf === null) return empty;
-    let spans = spansOf(side, line, leaf);
+    let spans = withBraces(spansOf(side, line, leaf), side, line);
     let fold = headers[side].get(line);
     const folded = inline[side].get(line);
     if (folded) {
@@ -186,6 +217,7 @@ export function rowsForFile(
       lineNumber: line + 1,
       spans: withGuides(spans, guides[side].get(line) ?? [], theme),
       fold,
+      ...scopeOf(side, line),
     };
   };
   let pendingOld: ViewerRow[] = [], pendingNew: ViewerRow[] = [];
@@ -209,12 +241,12 @@ export function rowsForFile(
     if (quoted) {
       const [first, ...rest] = region.label.split("\n");
       const header = { kind: "context" as const, sign: " ", band: tint, spans: lead(`> ${first}${note}`),
-        fold: { id: region.foldStateId, label: region.label, collapsed: true, tint } };
+        fold: { id: region.foldStateId, label: region.label, collapsed: true, tint }, ...scopeOf(region.side, region.startLine) };
       return { header, labels: rest.map(text => ({ ...header, foldLabel: true, spans: lead(`> ${text}`), fold: undefined })) };
     }
     const header = { kind: "context" as const, sign: " ", band: tint,
       spans: lead(`⋯${region.label && !multiline ? " " + region.label : ""}${note}`),
-      fold: { id: region.foldStateId, label: region.label, collapsed: true, tint } };
+      fold: { id: region.foldStateId, label: region.label, collapsed: true, tint }, ...scopeOf(region.side, region.startLine) };
     const labels = multiline
       ? region.label.split("\n").map(text => ({ ...header, foldLabel: true, spans: lead(text), fold: undefined }))
       : [];
@@ -236,8 +268,12 @@ export function rowsForFile(
   };
   const emit = (l: number | null, r: number | null, left: Leaf | null, right: Leaf | null) => {
     const key = `${fileIndex}:${l ?? "_"}:${r ?? "_"}`;
-    if (l !== null && hidden[0].has(l)) l = null;
-    if (r !== null && hidden[1].has(r)) r = null;
+    // A side's line is folded away, as a hidden line or a collapsed leaf, rather than absent.
+    const folded = (line: number | null, leaf: Leaf | null, side: Side) =>
+      line === null ? leaf !== null && collapsed.has(leaf.foldStateId) : hidden[side].has(line);
+    const [leftFolded, rightFolded] = [folded(l, left, 0), folded(r, right, 1)];
+    if (leftFolded) l = null;
+    if (rightFolded) r = null;
     if (l === null && r === null) return;
     const a = cell(left, l, 0), b = cell(right, r, 1);
     if (layout === "split") {
@@ -248,15 +284,22 @@ export function rowsForFile(
     if (l !== null && r !== null && a.kind === "context" && b.kind === "context") {
       flush();
       rows.push({ key, fileIndex, cell: { kind: "context", sign: " ", oldLineNumber: l + 1,
-        newLineNumber: r + 1, fold: b.fold ?? a.fold, spans: b.spans } });
+        newLineNumber: r + 1, fold: b.fold ?? a.fold, scope: b.scope, body: b.body, spans: b.spans } });
       return;
     }
-    if (l !== null)
-      pendingOld.push({ key: `${key}:old`, fileIndex, cell: { kind: a.kind === "deletion" ? "deletion" : "context",
-        sign: a.sign, oldLineNumber: l + 1, fold: a.fold, spans: a.spans } });
-    if (r !== null)
-      pendingNew.push({ key: `${key}:new`, fileIndex, cell: { kind: b.kind === "addition" ? "addition" : "context",
-        sign: b.sign, newLineNumber: r + 1, fold: b.fold, spans: b.spans } });
+    // A row with one line number is gone from, or new to, the other side even when diffr found
+    // no changed words in it, as when a line was split; it keeps its kind only when the other
+    // side's line is folded away.
+    if (l !== null) {
+      const removed = a.kind === "deletion" || !rightFolded;
+      pendingOld.push({ key: `${key}:old`, fileIndex, cell: { kind: removed ? "deletion" : "context",
+        sign: removed ? "-" : " ", oldLineNumber: l + 1, fold: a.fold, scope: a.scope, body: a.body, spans: a.spans } });
+    }
+    if (r !== null) {
+      const added = b.kind === "addition" || !leftFolded;
+      pendingNew.push({ key: `${key}:new`, fileIndex, cell: { kind: added ? "addition" : "context",
+        sign: added ? "+" : " ", newLineNumber: r + 1, fold: b.fold, scope: b.scope, body: b.body, spans: b.spans } });
+    }
   };
   const leafRows = (left: Leaf | null, right: Leaf | null) => {
     // Every leaf is split at its folds' edges, so a fold's first line is a leaf's: the fold's
@@ -305,6 +348,13 @@ function markHunks(rows: ViewerRow[]): ViewerRow[] {
     inHunk = changed;
   }
   return rows;
+}
+/** Tag the one cell at a terminal column as a scope's bracket. */
+function markBrace(spans: RenderSpan[], column: number, id: number): RenderSpan[] {
+  const at = sliceSpansWindow(spans, column, 1).spans;
+  if (!at.length) return spans;
+  return [...sliceSpansWindow(spans, 0, column).spans, ...at.map(span => ({ ...span, brace: id })),
+    ...sliceSpansWindow(spans, column + 1, Infinity).spans];
 }
 /** Replace only whitespace with guides. Blank source lines still carry their enclosing scopes. */
 interface Guide {

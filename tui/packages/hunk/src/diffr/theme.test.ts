@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bundledThemes, colorOf, loadBundledTheme, paletteFromHelix, parseHelixTheme, scopeStyle, themeConfig, themesFromConfig } from "./theme";
+import { bundledThemes, colorOf, foldBackground, loadBundledTheme, paletteFromHelix, parseHelixTheme, scopeStyle, themeConfig, themesFromConfig } from "./theme";
 const sample = `
 "keyword" = { fg = "red", modifiers = ["bold"] }
 "keyword.control" = { fg = "purple" }
@@ -64,4 +64,22 @@ test("the theme set follows diffr's config and errors on a missing section", () 
   expect(set.light.name).toBe("default-light");
   expect(() => themesFromConfig({ name: "nope", path: null })).toThrow("Unknown theme");
   expect(() => themesFromConfig({ name: "default-dark", path: "/nonexistent/theme.toml" })).toThrow();
+});
+test("in every bundled theme a file header stands apart from code and folds, and its path reads", () => {
+  const channel = (hex: string, i: number) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = (hex: string) => 0.2126 * channel(hex, 1) + 0.7152 * channel(hex, 3) + 0.0722 * channel(hex, 5);
+  const contrast = (a: string, b: string) => {
+    const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (high + 0.05) / (low + 0.05);
+  };
+  for (const name of Object.keys(bundledThemes)) {
+    const palette = loadBundledTheme(name);
+    expect(palette.fileHeader).not.toBe(palette.bg);
+    expect(palette.fileHeader).not.toBe(foldBackground(palette, "neutral"));
+    expect(contrast(palette.fg, palette.fileHeader)).toBeGreaterThanOrEqual(4);
+    expect(contrast(palette.fileHeaderDir, palette.fileHeader)).toBeGreaterThanOrEqual(2.5);
+  }
 });

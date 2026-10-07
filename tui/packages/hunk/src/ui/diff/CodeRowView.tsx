@@ -83,8 +83,12 @@ export const CodeRowView = memo(function CodeRowView({
     const gutterWidth = unified ? geometry.unifiedGutter : geometry.gutter;
     const available = Math.max(1, width - gutterWidth);
     const used = Math.min(available, spans.reduce((n, s) => n + measureTextWidth(s.text), 0));
-    const painted = value.band && used < available
-      ? [...spans, {text: " ".repeat(available - used), bg: foldBackground(theme, value.band)}] : spans;
+    // A collapsed row's tint fills the rest of the line; its header row also draws a ┄ rule to
+    // the edge, so a fold reads as a seam in the code rather than a band like a file header.
+    const rest = available - used;
+    const painted = value.band && rest > 0
+      ? [...spans, {text: (value.fold ? "  " + "┄".repeat(rest) : " ".repeat(rest)).slice(0, rest),
+          fg: theme.guide, bg: foldBackground(theme, value.band)}] : spans;
     return (
       <box
         width={width}

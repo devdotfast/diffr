@@ -185,10 +185,28 @@ test("unified trusts diffr's changed spans despite different source indentation"
     expect(copySelection([file], rows, {anchor: rows[1].key, end: rows[1].key, side}))
       .toBe(side === "left" ? "  call();" : "    call();");
   }
-  // Only the side with a changed span may receive change styling.
+  // Only the side with a changed span gets word emphasis, but the old line, printed alone with
+  // its old number, still reads as removed.
   file.diff.rhs.root.children = [leaf(1, 0, 1, [line(0, 0, 11)])];
   const changed = rowsForFile(file, 0, "unified", dark).slice(1);
-  expect(changed.map(r => r.cell!.kind)).toEqual(["context", "addition"]);
+  expect(changed.map(r => r.cell!.kind)).toEqual(["deletion", "addition"]);
+  expect(changed[0].cell!.spans.some(s => s.bg)).toBe(false);
+});
+test("unified marks a split line removed and its halves added; a folded-away partner stays context", () => {
+  const file = createTestDiffFile();
+  if (file.diff.type !== "text") throw new Error();
+  // `f(a, b)` became `f(a,` / `  b)`: diffr changed only the inserted break, so the old line has no spans.
+  file.diff.lhs = { text: "f(a, b)\nend\n", syntax: [], root: root([leaf(1, 0, 1), leaf(2, 1, 2)])};
+  file.diff.rhs = { text: "f(a,\n  b)\nend\n", syntax: [], root: root([leaf(1, 0, 2, [line(0, 4, 4)]), leaf(2, 2, 3)])};
+  const rows = rowsForFile(file, 0, "unified", dark).filter((r) => r.cell);
+  expect(rows.map((r) => [r.cell!.kind, r.cell!.oldLineNumber, r.cell!.newLineNumber])).toEqual([
+    ["deletion", 1, undefined], ["addition", undefined, 1], ["addition", undefined, 2], ["context", 2, 3],
+  ]);
+  // Collapsing the old side's last leaf alone leaves its new partner printed with one number;
+  // that line is folded away, not removed, so it keeps its own kind.
+  file.diff.lhs.root.children[1] = { ...leaf(2, 1, 2), fold_state_id: 5 };
+  const folded = rowsForFile(file, 0, "unified", dark, new Set([5])).filter((r) => r.cell?.newLineNumber === 3);
+  expect(folded.map((r) => r.cell!.kind)).toEqual(["context"]);
 });
 test("binary and one-sided files render without a second side", () => {
   const file = createTestDiffFile();

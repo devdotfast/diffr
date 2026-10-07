@@ -236,8 +236,12 @@ export function rowsForFile(
   };
   const emit = (l: number | null, r: number | null, left: Leaf | null, right: Leaf | null) => {
     const key = `${fileIndex}:${l ?? "_"}:${r ?? "_"}`;
-    if (l !== null && hidden[0].has(l)) l = null;
-    if (r !== null && hidden[1].has(r)) r = null;
+    // A side's line is folded away, as a hidden line or a collapsed leaf, rather than absent.
+    const folded = (line: number | null, leaf: Leaf | null, side: Side) =>
+      line === null ? leaf !== null && collapsed.has(leaf.foldStateId) : hidden[side].has(line);
+    const [leftFolded, rightFolded] = [folded(l, left, 0), folded(r, right, 1)];
+    if (leftFolded) l = null;
+    if (rightFolded) r = null;
     if (l === null && r === null) return;
     const a = cell(left, l, 0), b = cell(right, r, 1);
     if (layout === "split") {
@@ -251,12 +255,19 @@ export function rowsForFile(
         newLineNumber: r + 1, fold: b.fold ?? a.fold, spans: b.spans } });
       return;
     }
-    if (l !== null)
-      pendingOld.push({ key: `${key}:old`, fileIndex, cell: { kind: a.kind === "deletion" ? "deletion" : "context",
-        sign: a.sign, oldLineNumber: l + 1, fold: a.fold, spans: a.spans } });
-    if (r !== null)
-      pendingNew.push({ key: `${key}:new`, fileIndex, cell: { kind: b.kind === "addition" ? "addition" : "context",
-        sign: b.sign, newLineNumber: r + 1, fold: b.fold, spans: b.spans } });
+    // A row with one line number is gone from, or new to, the other side even when diffr found
+    // no changed words in it, as when a line was split; it keeps its kind only when the other
+    // side's line is folded away.
+    if (l !== null) {
+      const removed = a.kind === "deletion" || !rightFolded;
+      pendingOld.push({ key: `${key}:old`, fileIndex, cell: { kind: removed ? "deletion" : "context",
+        sign: removed ? "-" : " ", oldLineNumber: l + 1, fold: a.fold, spans: a.spans } });
+    }
+    if (r !== null) {
+      const added = b.kind === "addition" || !leftFolded;
+      pendingNew.push({ key: `${key}:new`, fileIndex, cell: { kind: added ? "addition" : "context",
+        sign: added ? "+" : " ", newLineNumber: r + 1, fold: b.fold, spans: b.spans } });
+    }
   };
   const leafRows = (left: Leaf | null, right: Leaf | null) => {
     // Every leaf is split at its folds' edges, so a fold's first line is a leaf's: the fold's

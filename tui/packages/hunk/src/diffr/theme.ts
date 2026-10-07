@@ -22,8 +22,12 @@ export interface Palette {
   bg: string;
   fg: string;
   muted: string;
-  /** Header, menu, and sidebar chrome. */
+  /** Menu bar, status bar, and overlay chrome. */
   chrome: string;
+  /** A file header's surface: the one band in the diff that marks where a file starts. */
+  fileHeader: string;
+  /** The directory half of a header's path, so the file name stands out. */
+  fileHeaderDir: string;
   /** Sidebar highlight for the active file. */
   highlight: string;
   addition: string;
@@ -35,8 +39,7 @@ export interface Palette {
   removedText: string;
   /** An accent for interactive text such as links and the layout badge. */
   accent: string;
-  /** VS Code's editor.foldBackground and foldPlaceholderForeground. */
-  foldBackground: string;
+  /** VS Code's editor.foldPlaceholderForeground. */
   foldPlaceholder: string;
   guide: string;
   /** Foreground for a tree-sitter capture such as `keyword.return`; undefined when the theme has no scope for it. */
@@ -124,6 +127,9 @@ export function paletteFromHelix(theme: HelixTheme): Palette {
   const minus = scopeFg(theme, "diff.minus") ?? (isLight ? "#cf222e" : "#ffa198");
   const delta = scopeFg(theme, "diff.delta") ?? (isLight ? "#9a6700" : "#e3b341");
   const selection = scopeBg(theme, "ui.selection") ?? mix(bg, fg, 0.15);
+  // Derived rather than read from ui.statusline, which themes paint for other jobs: onedark's
+  // matches its cursorline, solarized_light's is the colour of its text.
+  const fileHeader = mix(bg, fg, isLight ? 0.12 : 0.16);
   return {
     name: theme.name,
     isLight,
@@ -131,6 +137,8 @@ export function paletteFromHelix(theme: HelixTheme): Palette {
     fg,
     muted,
     chrome: scopeBg(theme, "ui.statusline") ?? mix(bg, fg, 0.06),
+    fileHeader,
+    fileHeaderDir: mix(fg, fileHeader, 0.3),
     highlight: selection,
     addition: mix(bg, plus, 0.12),
     deletion: mix(bg, minus, 0.12),
@@ -140,7 +148,6 @@ export function paletteFromHelix(theme: HelixTheme): Palette {
     addedText: plus,
     removedText: minus,
     accent: scopeFg(theme, "function") ?? scopeFg(theme, "ui.text.focus") ?? fg,
-    foldBackground: scopeBg(theme, "ui.cursorline.primary") ?? mix(bg, fg, 0.1),
     foldPlaceholder: mix(muted, fg, 0.45),
     guide: scopeFg(theme, "ui.virtual.indent-guide") ?? mix(bg, fg, 0.22),
     syntax: (capture) => scopeFg(theme, capture),
@@ -182,8 +189,8 @@ export function themeConfig(show: unknown): { name: string; path: string | null 
   return { name: theme.name, path: theme.path ?? null };
 }
 
-/** Paired folds are neutral; only one-sided folds carry a change tint. */
+/** Paired folds sit on the code's own background; only one-sided folds carry a change tint. */
 export function foldBackground(theme: Palette, tint: FoldTint) {
   return tint === "inserted" ? theme.addition : tint === "removed" ? theme.deletion
-    : tint === "modified" ? theme.modification : theme.foldBackground;
+    : tint === "modified" ? theme.modification : theme.bg;
 }

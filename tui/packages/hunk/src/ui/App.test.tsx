@@ -133,7 +133,7 @@ test("hierarchical tree navigation, sticky counts, sidebar toggle and menus", as
     expect(t.captureCharFrame().split("\n")[2]).toContain("+2 −1");
     await act(async () => { t.mockInput.pressKey("\\"); });
     await t.waitForFrame(f => !f.includes("▾ src "));
-    expect(t.captureCharFrame().split("\n")[2].trimStart()).toStartWith("▾ src/nested/beta.ts");
+    expect(t.captureCharFrame().split("\n")[2].trimStart()).toStartWith("▌▾ src/nested/beta.ts");
     await act(async () => { t.mockInput.pressKey("\\"); });
     await t.waitForFrame(f => f.includes("▾ nested"));
     await act(async () => { await t.mockMouse.click(9, 0); });

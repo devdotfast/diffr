@@ -11,6 +11,7 @@ import {
   useRenderer,
   useTerminalDimensions,
 } from "@opentui/react";
+import { TextAttributes } from "@opentui/core";
 import { buildFileTree, flattenFileTree, parentDirectories, lineCounts } from "../diffr/fileTree";
 import { matchesKey } from "./lib/keys";
 import { resizeSidebarWidth } from "./lib/sidebar";
@@ -33,7 +34,7 @@ import { placeholderRows } from "../diffr/rows";
 import { add, blockBar, comparisonLabel, zero, type LineCounts } from "../diffr/counts";
 import type { DiffStore } from "../diffr/store";
 import { sanitizeTerminalLine } from "../lib/terminalText";
-import { sliceTextByWidth } from "./lib/text";
+import { measureTextWidth, sliceTextByWidth } from "./lib/text";
 const fit = (text: string, width: number) =>
   sliceTextByWidth(text, 0, width).text;
 export function App({
@@ -100,7 +101,7 @@ export function App({
     new WeakMap<DiffFile, { key: string; rows: ViewerRow[] }>(),
   );
   const rows = useMemo(() => {
-    const all = fileOrder.flatMap((index): ViewerRow[] => {
+    const perFile = fileOrder.map((index): ViewerRow[] => {
       const file = files[index];
       if (!file) {
         const failure = failures[index];
@@ -121,6 +122,15 @@ export function App({
         ? [cached.rows[0], ...placeholderRows(index, fileVisibility(file).label)]
         : cached.rows.slice(0, 1);
     });
+    // A blank row closes an open file before the next header. It belongs to the file it closes,
+    // so the sticky header doesn't repeat the header just below it.
+    const all: ViewerRow[] = [];
+    for (const fileRows of perFile) {
+      const last = all.at(-1);
+      if (last && !last.key.endsWith(":header") && last.label !== "")
+        all.push({ key: `${last.fileIndex}:end`, fileIndex: last.fileIndex, label: "" });
+      all.push(...fileRows);
+    }
     for (const [i, error] of snapshot.errors.entries())
       all.push({ key: `error:${i}`, fileIndex: -1, label: error });
     return all;
@@ -296,21 +306,29 @@ export function App({
       : index >= old + viewportHeight ? index - viewportHeight + 1 : old);
   }, [currentFile, treeRows, viewportHeight]);
   const sidebarStart = Math.min(treeScroll, Math.max(0, treeRows.length - viewportHeight));
+  // A file header is the diff's one band: an accent edge, then the directory dimmed so the file
+  // name carries the row.
   const fileHeader = (fileIndex: number, key: string) => {
     const file = files[fileIndex], count = counts[fileIndex]?.visible;
-    const path = filePath(inventory[fileIndex].file);
-    if (!file || !count) return <text key={key} height={1} width={contentWidth} fg={theme.muted} bg={theme.chrome} selectable={false}>
-      {fit(sanitizeTerminalLine(` ${statusGlyph(fileIndex)} ${path}`), contentWidth)}
-    </text>;
-    const statsWidth = String(count.added).length + String(count.removed).length + 5;
+    const path = sanitizeTerminalLine(filePath(inventory[fileIndex].file));
+    const loaded = !!file && !!count;
+    const statsWidth = loaded ? String(count.added).length + String(count.removed).length + 5 : 0;
+    const pathWidth = Math.max(1, contentWidth - statsWidth - 1);
+    const glyph = loaded ? (isClosed(fileIndex, file) ? "▸" : "▾") : statusGlyph(fileIndex);
+    const directory = fit(`${glyph} ${path.slice(0, path.lastIndexOf("/") + 1)}`, pathWidth);
+    const directoryWidth = measureTextWidth(directory);
+    const name = fit(path.slice(path.lastIndexOf("/") + 1), Math.max(0, pathWidth - directoryWidth));
     return <box key={key} height={1} width={contentWidth} flexDirection="row"
-      backgroundColor={theme.chrome}
-      onMouseUp={() => toggleFile(fileIndex)}>
-      <text width={Math.max(1, contentWidth - statsWidth)} fg={theme.fg} selectable={false}>
-        {fit(sanitizeTerminalLine(`${isClosed(fileIndex, file) ? "▸" : "▾"} ${path}`), Math.max(1, contentWidth - statsWidth))}
-      </text>
-      <text fg={theme.addedText} selectable={false}>{` +${count.added}`}</text>
-      <text fg={theme.removedText} selectable={false}>{` −${count.removed} `}</text>
+      backgroundColor={theme.fileHeader}
+      onMouseUp={() => { if (loaded) toggleFile(fileIndex); }}>
+      <text width={1} fg={theme.accent} selectable={false}>▌</text>
+      <text width={directoryWidth} fg={theme.fileHeaderDir} selectable={false}>{directory}</text>
+      <text width={Math.max(0, pathWidth - directoryWidth)} fg={loaded ? theme.fg : theme.fileHeaderDir}
+        attributes={TextAttributes.BOLD} selectable={false}>{name}</text>
+      {loaded && <>
+        <text fg={theme.addedText} selectable={false}>{` +${count.added}`}</text>
+        <text fg={theme.removedText} selectable={false}>{` −${count.removed} `}</text>
+      </>}
     </box>;
   };
   const rendered = [];

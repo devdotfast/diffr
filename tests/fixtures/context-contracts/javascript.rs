@@ -455,6 +455,61 @@ in the saved JSON, then run diffr pprint again. Full text and children are prese
     );
 }
 
+// Contracts: import-envelope
+#[test]
+fn removed_names_keep_import_closer() {
+    let before = r#"// Header 1
+// Header 2
+// Header 3
+// Header 4
+// Header 5
+
+import test from "node:test";
+import { projectInlineSourceAlignment, projectSplitSourceAlignment } from "./alignment.js";
+import {
+  collapsedRegions,
+  hiddenLinesOf,
+  structuralContextGaps,
+  bandDetail,
+  structuralHighlights,
+  structuralRows,
+  utf16Column,
+  StructuralFold,
+  StructuralLeaf,
+  StructuralRegion,
+  StructuralTextDiff,
+} from "./reviewStructuralDiff.js";
+
+function fold(id, children) {
+  return { id, children };
+}
+"#;
+    let after = before.replace("  collapsedRegions,\n  hiddenLinesOf,\n", "");
+
+    let actual = pprint_diff("example.js", before, &after, 3);
+    assert_eq!(
+        actual,
+        r#"base/example.js → head/example.js — base → head
+ base  head
+              … base 1–6 / head 1–6 collapsed [fold_state_id=1] …
+    7     7   import test from "node:test";
+    8     8   import { projectInlineSourceAlignment, projectSplitSourceAlignment } from "./alignment.js";
+    9     9   import {
+   10       -   collapsedRegions,
+   11       -   hiddenLinesOf,
+   12    10     structuralContextGaps,
+   13    11     bandDetail,
+   14    12     structuralHighlights,
+              … base 15–20 / head 13–18 collapsed [fold_state_id=36] …
+   21    19   } from "./reviewStructuralDiff.js";
+              … base 22–25 / head 20–23 collapsed [fold_state_id=38] …
+
+[More context: set visibility.collapsed=false for the indicated fold_state_id
+in the saved JSON, then run diffr pprint again. Full text and children are present.]
+"#
+    );
+}
+
 // Contracts: string-shell, binding-shell
 #[test]
 fn inherited_multiline_string_delimiters_and_interpolation() {

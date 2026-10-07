@@ -3,6 +3,21 @@
 use super::{pprint_after_opening, pprint_diff, OpenFold};
 
 // Contracts: jsx-sibling-subtree
+// packages/review/app/src/diffr-config-section.tsx, 38a74d5fe^ → 38a74d5fe.
+// The long, unchanged AI summaries JSX follows edits to Display settings.
+#[test]
+fn diffr_config_section_folds_unchanged_ai_summaries() {
+    let before = include_str!("tsx-diffr-config-section/before.tsx");
+    let after = include_str!("tsx-diffr-config-section/after.tsx");
+    let actual = pprint_diff("diffr-config-section.tsx", before, after, 3);
+
+    assert_eq!(
+        actual,
+        include_str!("tsx-diffr-config-section/expected.pprint")
+    );
+}
+
+// Contracts: jsx-sibling-subtree
 #[test]
 fn jsx_sibling_subtree() {
     // Setup

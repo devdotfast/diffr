@@ -6,13 +6,13 @@ import { schemaFixture, valuesFixture } from "../diffr/config.test";
 import { flattenSchema, parseValue, type ConfigClient } from "../diffr/config";
 
 test("values show as not set, secrets only as stored, and toggles flip or cycle", () => {
-  const [minLines, collapse, , provider, apiKey] = flattenSchema(schemaFixture, valuesFixture);
+  const [minLines, collapse, provider, apiKey] = flattenSchema(schemaFixture, valuesFixture);
   expect(displayValue(minLines)).toBe("12");
   expect(displayValue({ ...minLines, value: null })).toBe("not set");
   expect(displayValue(apiKey)).toBe("not set");
   expect(displayValue({ ...apiKey, value: "abc" })).toBe("✓ stored");
-  expect(isSecret("plugins.bundled.summarize.api_key")).toBe(true);
-  expect(isSecret("plugins.bundled.deleted-bodies.min_lines")).toBe(false);
+  expect(isSecret("plugins.shape.bundled.summarize.api_key")).toBe(true);
+  expect(isSecret("plugins.shape.bundled.deleted-bodies.min_lines")).toBe(false);
   expect(nextValue(collapse)).toBe("false");
   expect(nextValue(provider)).toBe("none");
   expect(nextValue({ ...provider, value: "none" })).toBe("gemini");
@@ -59,32 +59,32 @@ test("rows lead with titles under group headings; toggles change in place and ty
   try {
     await act(async () => { await t.renderOnce(); });
     // Groups in schema order, each setting under its heading, titles first and keys only in the detail line.
-    const order = ["Collapsed code", "Shortest body to collapse", "Collapse deleted functions", "Hidden files", "Hide test files", "Summaries", "Provider"]
+    const order = ["Collapsed code", "Shortest body to collapse", "Collapse deleted functions", "Summaries", "Provider", "Hidden files", "Hide deleted files"]
       .map((text) => frame().split("\n").findIndex((l) => l.includes(text)));
     expect(order).toEqual([...order].sort((a, b) => a - b));
     expect(order.every((index) => index >= 0)).toBe(true);
     expect(line("Shortest body to collapse")).toContain("→");
-    expect(line("Shortest body to collapse")).not.toContain("plugins.bundled.deleted-bodies.min_lines");
-    expect(frame()).toContain("plugins.bundled.deleted-bodies.min_lines · default 12");
+    expect(line("Shortest body to collapse")).not.toContain("plugins.shape.bundled.deleted-bodies.min_lines");
+    expect(frame()).toContain("plugins.shape.bundled.deleted-bodies.min_lines · default 12");
     expect(frame()).toContain("Bodies shorter than this are never summarized or collapsed.");
     expect(frame()).toContain("(1/6)");
     expect(frame()).toContain("Type to search · Enter/Space to change · Esc to quit");
     expect(line("API key")).toContain("not set");
 
     // Boolean: space flips it in place and writes through the CLI.
-    await type("hidetest");
+    await type("hidedeleted");
     expect(frame()).toContain("(1/1)");
-    expect(line("Hide test files")).toContain("false");
+    expect(line("Hide deleted files")).toContain("false");
     await press(" ");
-    expect(writes).toEqual([["plugins.bundled.hide-files.enabled", "true"]]);
-    expect(line("Hide test files")).toContain("true");
-    expect(frame()).toContain("Hide test files: true");
+    expect(writes).toEqual([["plugins.classify.bundled.hide_deleted", "true"]]);
+    expect(line("Hide deleted files")).toContain("true");
+    expect(frame()).toContain("Hide deleted files: true");
 
     // Enum: enter cycles to the next option.
     await clear();
     await type("provider");
     await press("RETURN");
-    expect(writes.at(-1)).toEqual(["plugins.bundled.summarize.provider", "none"]);
+    expect(writes.at(-1)).toEqual(["plugins.shape.bundled.summarize.provider", "none"]);
     expect(line("Provider")).toContain("none");
 
     // Number: enter opens a prompt titled by the setting; escape discards, enter saves.
@@ -111,7 +111,7 @@ test("rows lead with titles under group headings; toggles change in place and ty
     await press("BACKSPACE");
     await type("20");
     await press("RETURN");
-    expect(writes.at(-1)).toEqual(["plugins.bundled.deleted-bodies.min_lines", "20"]);
+    expect(writes.at(-1)).toEqual(["plugins.shape.bundled.deleted-bodies.min_lines", "20"]);
     expect(line("Shortest body to collapse")).toContain("20");
 
     // Secret: the prompt starts empty and masks typing; the row only says it is stored.
@@ -131,7 +131,7 @@ test("rows lead with titles under group headings; toggles change in place and ty
       t.mockInput.pressKey("RETURN");
     });
     await act(async () => { await t.renderOnce(); });
-    expect(writes.at(-1)).toEqual(["plugins.bundled.summarize.api_key", "abcd"]);
+    expect(writes.at(-1)).toEqual(["plugins.shape.bundled.summarize.api_key", "abcd"]);
     expect(line("API key")).toContain("✓ stored");
     expect(frame()).not.toContain("abc");
 
@@ -148,9 +148,9 @@ test("a change shows every value it moves, such as a default that follows the pr
     schema: () => schemaFixture,
     show: () => structuredClone(values),
     set: (key, value) => {
-      if (key === "plugins.bundled.summarize.provider") {
-        values.plugins.bundled.summarize.provider = value;
-        values.plugins.bundled.summarize.model = `${value}-model`;
+      if (key === "plugins.shape.bundled.summarize.provider") {
+        values.plugins.shape.bundled.summarize.provider = value;
+        values.plugins.shape.bundled.summarize.model = `${value}-model`;
       }
     },
   };
@@ -172,6 +172,6 @@ test("a change shows every value it moves, such as a default that follows the pr
     expect(line("Provider")).toContain("none");
     expect(line("Model")).toContain("none-model");
   } finally {
-    t.renderer.destroy();
+    await act(async () => { t.renderer.destroy(); });
   }
 });

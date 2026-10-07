@@ -47,6 +47,7 @@ mod files;
 mod git;
 mod options;
 mod plugin;
+mod pprint;
 mod run;
 mod tags;
 mod version;

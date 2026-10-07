@@ -124,6 +124,8 @@ enum Format {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Print saved NDJSON without a repository or terminal frontend
+    Pprint(PprintArgs),
     /// Show, edit, or open the settings screen for diffr's configuration
     Config(ConfigArgs),
     #[command(
@@ -136,6 +138,15 @@ enum Command {
         arg_required_else_help = true
     )]
     Debug(DebugArgs),
+}
+
+#[derive(Args)]
+struct PprintArgs {
+    /// Saved event stream; omit or use - to read stdin
+    input: Option<PathBuf>,
+    /// Fold-state IDs to open; descendants retain their own collapsed state
+    #[arg(long, value_delimiter = ',')]
+    open: Vec<u32>,
 }
 
 #[derive(Args)]
@@ -191,6 +202,7 @@ pub(crate) fn run(runtime: &tokio::runtime::Runtime) -> Result<i32> {
     reject_diff_arguments_before_subcommand(&matches);
     let args = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
     match &args.command {
+        Some(Command::Pprint(args)) => return run_pprint(args),
         Some(Command::Config(config)) => return run_config(config),
         Some(Command::Debug(debug)) => {
             crate::run_debug(debug.mode(), &Config::default().compile()?);
@@ -785,4 +797,16 @@ fn launch_tui(args: &[OsString], comparison: bool) -> Result<i32> {
     let result = command.status().map(|status| status.code().unwrap_or(2));
 
     result.map_err(|error| format!("Could not launch terminal frontend: {error}.").into())
+}
+
+fn run_pprint(args: &PprintArgs) -> Result<i32> {
+    let input: Box<dyn io::BufRead> = match &args.input {
+        Some(path) if path != Path::new("-") => {
+            Box::new(io::BufReader::new(std::fs::File::open(path)?))
+        }
+        _ => Box::new(io::stdin().lock()),
+    };
+    crate::pprint::run(input, &mut io::stdout().lock(), &args.open)
+        .map_err(|error| format!("{error:#}"))?;
+    Ok(0)
 }

@@ -137,7 +137,7 @@ fn every_setting_is_dropped_at_its_default_and_kept_otherwise() {
         if let Some(value) = other(node) {
             let path = dir.path().join("other.toml");
             match store::set(&path, key, &text(&value)) {
-                Ok(()) => {
+                Ok(_) => {
                     assert_eq!(
                         file_keys(&path),
                         BTreeSet::from(["version".to_owned(), key.clone()]),

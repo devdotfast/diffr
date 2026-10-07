@@ -159,7 +159,27 @@ enum ConfigCommand {
         reveal: bool,
     },
     /// Write one key to the global configuration file
-    Set { key: String, value: String },
+    Set {
+        #[arg(required_unless_present = "stdin", conflicts_with = "stdin")]
+        key: Option<String>,
+        #[arg(
+            requires = "key",
+            required_unless_present = "stdin",
+            conflicts_with = "stdin"
+        )]
+        value: Option<String>,
+        /// Read a typed partial configuration as JSON from stdin
+        #[arg(long)]
+        stdin: bool,
+        /// Print a JSON result, including errors
+        #[arg(long)]
+        json: bool,
+    },
+    /// Convert the v1 settings supported by Whiteboard to config version 2
+    Migrate {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub(crate) fn run(runtime: &tokio::runtime::Runtime) -> Result<i32> {
@@ -644,8 +664,33 @@ fn run_config(config: &ConfigArgs) -> Result<i32> {
                 )?;
             }
         }
-        Some(ConfigCommand::Set { key, value }) => {
-            config::store::set(&config::global_path()?, key, value)?;
+        Some(ConfigCommand::Set {
+            key,
+            value,
+            stdin,
+            json,
+        }) => {
+            let result = (|| -> Result<serde_json::Value> {
+                let path = config::global_path()?;
+                let changed = if *stdin {
+                    let patch: serde_json::Value = serde_json::from_reader(io::stdin().lock())?;
+                    config::store::patch(&path, &patch)?
+                } else {
+                    config::store::set(
+                        &path,
+                        key.as_deref().expect("clap requires key"),
+                        value.as_deref().expect("clap requires value"),
+                    )?
+                };
+                Ok(serde_json::json!({ "changed": changed }))
+            })();
+            return config_result(&mut stdout, result, *json);
+        }
+        Some(ConfigCommand::Migrate { json }) => {
+            let result = config::global_path()
+                .and_then(|path| config::migrate::migrate(&path))
+                .map(|migration| serde_json::to_value(migration).expect("migration serializes"));
+            return config_result(&mut stdout, result.map_err(Into::into), *json);
         }
         None => {
             let mut frontend = vec![OsString::from("--settings")];
@@ -656,6 +701,35 @@ fn run_config(config: &ConfigArgs) -> Result<i32> {
         }
     }
     Ok(0)
+}
+
+fn config_result(
+    stdout: &mut impl Write,
+    result: Result<serde_json::Value>,
+    json: bool,
+) -> Result<i32> {
+    match result {
+        Ok(value) => {
+            if json {
+                serde_json::to_writer(stdout.by_ref(), &value)?;
+                stdout.write_all(b"\n")?;
+            }
+            Ok(0)
+        }
+        Err(error) if json => {
+            let message = error.to_string();
+            let file = config::global_path().ok();
+            let failure = serde_json::json!({ "error": {
+                "message": message,
+                "path": file,
+                "repair_prompt": format!("diffr could not update my config. The original file was kept.\nConfig file: {}\nProblem: {message}\nRead the config, fix the reported problem, and retry the command. Preserve my settings, custom prompts, and credentials. Do not print credentials or reset the config.", file.as_ref().map(|path| path.display().to_string()).unwrap_or_default())
+            }});
+            serde_json::to_writer(stdout.by_ref(), &failure)?;
+            stdout.write_all(b"\n")?;
+            Ok(2)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// `comparison` passes the arguments after `--` as the comparison to open;

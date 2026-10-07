@@ -48,7 +48,7 @@ sequenceDiagram
             E->>E: Parse with tree-sitter, diff ASTs (difftastic)
         end
         E-->>D: Aligned regions and folds
-        loop Each shape plugin, in plugins.order
+        loop Each shape plugin, in plugins.shape.order
             D->>S: visit(cursor, pre | post), once per region
             S->>D: cursor edits: cut, join, link, collapse, label
         end
@@ -100,3 +100,29 @@ impl GuestPlugin for MyPlugin {
 export_shape!(MyPlugin);
 ```
 
+## Configuration format 2
+
+```toml
+version = 2
+
+[plugins.shape]
+order = ["bundled.deleted-bodies", "bundled.summarize", "bundled.test-bodies", "bundled.removed-runs", "bundled.context"]
+
+[plugins.shape.bundled.context]
+lines = 8
+
+[plugins.shape.bundled.summarize]
+enabled = true
+provider = "openai"
+model = "my-model"
+system_prompt = "Keep my custom summary instruction."
+
+[plugins.classify.bundled]
+hide = ["generated", "vendored"]
+hide_deleted = true
+```
+
+```sh
+diffr config set plugins.shape.bundled.context.lines 8
+diffr config set plugins.classify.bundled.hide_deleted false
+```

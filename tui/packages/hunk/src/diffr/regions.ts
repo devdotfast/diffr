@@ -214,8 +214,10 @@ export const foldableLeaf = (leaf: Leaf) => leaf.collapsed || leaf.label !== "";
 /**
  * The chevron each source line carries, one map per side. An open fold puts one on the first
  * syntax opener (or its first covered line without syntax). Collapsed syntax bodies join
- * opener and closer; other collapsed folds have a standalone band. Folds can start on one line — the fold
- * the context plugin wraps around its first member — and the outermost wins.
+ * opener and closer; other collapsed folds have a standalone band. Folds can start on one line —
+ * a statement and the body it opens, or the fold the context plugin wraps around its first
+ * member. A scope opened on the line wins, so the chevron folds the same scope its rail and
+ * brackets show; otherwise the outermost wins.
  */
 export function foldHeaders(
   folds: Fold[],
@@ -235,7 +237,8 @@ export function foldHeaders(
     byLine.set(header, [...(byLine.get(header) ?? []), fold]);
   }
   for (const [line, sharing] of byLine) {
-    const fold = [...sharing].sort((a, b) => b.lastHidden - a.lastHidden)[0];
+    const scopes = sharing.filter((fold) => fold.syntax?.start.line === line);
+    const fold = [...(scopes.length ? scopes : sharing)].sort((a, b) => b.lastHidden - a.lastHidden)[0];
     headers.set(line, { id: fold.foldStateId, label: fold.label, collapsed: false,
       tint: foldTint(fold.id, fold.side, paired) });
   }

@@ -1,8 +1,9 @@
 /** Paint measured Hunk-style code cells; source identity and viewport geometry stay outside React. */
 import { memo } from "react";
-import { StyledText, parseColor } from "@opentui/core";
+import { StyledText, parseColor, type MouseEvent } from "@opentui/core";
 import type {
   RenderSpan,
+  ScopeFocus,
   SplitLineCell,
   UnifiedLineCell,
 } from "./diffRowModel";
@@ -19,20 +20,35 @@ function color(value: string) {
   }
   return c;
 }
-function styled(spans: RenderSpan[], theme: Palette, bg: string, activeFold?: number) {
+/** The focused scope's rail and brackets take the accent; armed, the rail thickens and the
+ * brackets get the bracket-match box. */
+function styled(spans: RenderSpan[], theme: Palette, bg: string, focus?: ScopeFocus) {
   return new StyledText(
-    spans.map((span) => ({
-      __isChunk: true as const,
-      text: span.text,
-      fg: color(span.guide !== undefined && span.guide === activeFold ? theme.accent : span.fg ?? theme.fg),
-      bg: color(span.bg ?? bg),
-    })),
+    spans.map((span) => {
+      const rail = span.guide !== undefined && span.guide === focus?.id;
+      const brace = span.brace !== undefined && span.brace === focus?.id;
+      return {
+        __isChunk: true as const,
+        text: rail && focus!.armed ? span.text.replace(/│/g, "┃") : span.text,
+        fg: color(rail || brace ? theme.accent : span.fg ?? theme.fg),
+        bg: color(brace && focus!.armed ? theme.focusBrace : span.bg ?? bg),
+      };
+    }),
   );
 }
-/** VS Code's showFoldingControls "always": expandable rows keep their chevron visible. */
 function chevron(fold: RowFold | undefined) {
   if (!fold) return " ";
   return fold.collapsed ? "▸" : "▾";
+}
+/** The rail under a terminal column of a row's spans, if any. */
+function railAt(spans: RenderSpan[], column: number): number | undefined {
+  let at = 0;
+  for (const span of spans) {
+    const width = measureTextWidth(span.text);
+    if (column < at + width) return span.guide;
+    at += width;
+  }
+  return undefined;
 }
 export const CodeRowView = memo(function CodeRowView({
   measured,
@@ -43,7 +59,7 @@ export const CodeRowView = memo(function CodeRowView({
   onSelect,
   onExtend,
   onFold,
-  activeFold,
+  focus,
   onHover,
 }: {
   measured: MeasuredRow;
@@ -53,9 +69,9 @@ export const CodeRowView = memo(function CodeRowView({
   selectedSide?: "left" | "right";
   onSelect: (side: "left" | "right") => void;
   onExtend: () => void;
-  activeFold?: number;
-  onHover: (id: number | undefined) => void;
-  onFold: (fold: RowFold, recursive: boolean) => void;
+  focus?: ScopeFocus;
+  onHover: (focus: ScopeFocus | undefined) => void;
+  onFold: (id: number, recursive: boolean) => void;
 }) {
   const row = measured.row;
   function cell(
@@ -66,6 +82,7 @@ export const CodeRowView = memo(function CodeRowView({
     unified = false,
   ) {
     const fold = value.fold;
+    const washed = focus?.armed && value.body?.includes(focus.id);
     const bg =
       selectedSide === side
         ? theme.highlight
@@ -73,7 +90,7 @@ export const CodeRowView = memo(function CodeRowView({
             ? theme.addition
             : value.kind === "deletion"
               ? theme.deletion
-              : theme.bg;
+              : washed ? theme.focusWash : theme.bg;
     // Row colours carry addition and deletion, so the gutter holds numbers and the chevron only.
     const digits = geometry.gutter - 4;
     const number = (n: number | undefined) => `${visualLine ? "" : (n ?? "")}`.padStart(digits);
@@ -89,6 +106,23 @@ export const CodeRowView = memo(function CodeRowView({
     const painted = value.band && rest > 0
       ? [...spans, {text: (value.fold ? "  " + "┄".repeat(rest) : " ".repeat(rest)).slice(0, rest),
           fg: theme.guide, bg: foldBackground(theme, value.band)}] : spans;
+    // What the pointer is on. A rail or the chevron arms its scope, so a click folds it; anywhere
+    // else on the row reads the innermost scope around the line.
+    const chevronColumn = numbers.length, codeColumn = numbers.length + 2;
+    const rail = (event: MouseEvent) => {
+      const column = event.x - (event.currentTarget?.x ?? 0);
+      return column >= codeColumn ? railAt(painted, column - codeColumn) : undefined;
+    };
+    const target = (event: MouseEvent): ScopeFocus | undefined => {
+      const column = event.x - (event.currentTarget?.x ?? 0);
+      const id = column === chevronColumn && fold && !fold.collapsed && !visualLine ? fold.id : rail(event);
+      if (id !== undefined) return { id, armed: true };
+      return value.scope === undefined ? undefined : { id: value.scope, armed: false };
+    };
+    // Open chevrons rest faint so they don't compete with the code; a collapsed one stays
+    // legible, since it is the way back in, and the focused scope's lights up.
+    const chevronFg = fold && !fold.collapsed && fold.id === focus?.id ? theme.accent
+      : fold?.collapsed ? theme.muted : theme.guide;
     return (
       <box
         width={width}
@@ -96,9 +130,17 @@ export const CodeRowView = memo(function CodeRowView({
         flexDirection="row"
         backgroundColor={bg}
         onMouseDown={(event) => {
-          if (event.button === 0) onSelect(side);
+          if (event.button !== 0) return;
+          if (rail(event) !== undefined) event.stopPropagation();
+          else onSelect(side);
         }}
-        onMouseMove={() => { onExtend(); onHover(fold?.id ?? spans.findLast(s => s.guide !== undefined)?.guide); }}
+        onMouseUp={(event) => {
+          const id = event.button === 0 ? rail(event) : undefined;
+          if (id === undefined) return;
+          event.stopPropagation();
+          onFold(id, event.modifiers.alt);
+        }}
+        onMouseMove={(event) => { onExtend(); onHover(target(event)); }}
         onMouseOut={() => onHover(undefined)}
       >
         <text width={numbers.length} height={1} fg={theme.muted} selectable={false}>
@@ -107,7 +149,7 @@ export const CodeRowView = memo(function CodeRowView({
         <text
           width={1}
           height={1}
-          fg={theme.muted}
+          fg={chevronFg}
           selectable={false}
           onMouseDown={(event) => {
             if (fold && !visualLine) event.stopPropagation();
@@ -115,7 +157,7 @@ export const CodeRowView = memo(function CodeRowView({
           onMouseUp={(event) => {
             if (fold && !visualLine && event.button === 0) {
               event.stopPropagation();
-              onFold(fold, event.modifiers.alt);
+              onFold(fold.id, event.modifiers.alt);
             }
           }}
         >
@@ -129,13 +171,13 @@ export const CodeRowView = memo(function CodeRowView({
           height={1}
           onMouseDown={event => { if (fold?.collapsed) event.stopPropagation(); }}
           onMouseUp={event => {
-            if (fold?.collapsed && event.button === 0) { event.stopPropagation(); onFold(fold, event.modifiers.alt); }
+            if (fold?.collapsed && event.button === 0) { event.stopPropagation(); onFold(fold.id, event.modifiers.alt); }
           }}
           content={styled(
             selectedSide === side ? painted.map((s) => ({ ...s, bg })) : painted,
             theme,
             bg,
-            activeFold,
+            focus,
           )}
           selectable={false}
         />

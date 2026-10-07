@@ -16,6 +16,7 @@ import { buildFileTree, flattenFileTree, parentDirectories, lineCounts } from ".
 import { matchesKey } from "./lib/keys";
 import { resizeSidebarWidth } from "./lib/sidebar";
 import { CodeRowView } from "./diff/CodeRowView";
+import type { ScopeFocus } from "./diff/diffRowModel";
 import {
   rowsForFile,
   type Layout,
@@ -29,7 +30,7 @@ import {
   type SourceSelection,
 } from "../diffr/selection";
 import { filePath, fileVisibility, type DiffFile, type TextDiff } from "../diffr/wire";
-import { defaultCollapsed, foldIds, gapIds, nestedIds, sourceLines, type RowFold } from "../diffr/regions";
+import { defaultCollapsed, foldIds, gapIds, nestedIds, sourceLines } from "../diffr/regions";
 import { placeholderRows } from "../diffr/rows";
 import { add, blockBar, comparisonLabel, zero, type LineCounts } from "../diffr/counts";
 import type { DiffStore } from "../diffr/store";
@@ -55,7 +56,7 @@ export function App({
     [theme, setTheme] = useState<Palette>(themes.initial);
   const [position, setPosition] = useState<ViewPosition | null>(null);
   const [horizontal, setHorizontal] = useState(0);
-  const [hoveredFold, setHoveredFold] = useState<{file: number; id: number} | null>(null);
+  const [hoveredFold, setHoveredFold] = useState<{file: number; focus: ScopeFocus} | null>(null);
   const [spinner, setSpinner] = useState(0);
   useEffect(() => {
     if (snapshot.complete) return;
@@ -168,18 +169,18 @@ export function App({
       return new Map(old).set(fileIndex, next);
     });
   // Recursive commands (Alt-click, zC, zO, zA) include every fold nested inside.
-  const setFold = (fileIndex: number, fold: RowFold, collapse: boolean | "toggle", recursive: boolean) => {
+  const setFold = (fileIndex: number, id: number, collapse: boolean | "toggle", recursive: boolean) => {
     const diff = files[fileIndex]?.diff;
     if (diff?.type !== "text") throw new Error(`File ${fileIndex} has no folds`);
-    setFolds(fileIndex, diff, recursive ? [fold.id, ...nestedIds(diff, fold.id)] : [fold.id], collapse);
+    setFolds(fileIndex, diff, recursive ? [id, ...nestedIds(diff, id)] : [id], collapse);
   };
   // `c`: reveal every context gap, or hide them again.
   const toggleContext = () => {
     const opened = textDiffs.some(({ index, diff }) => gapIds(diff).some((id) => !foldsOf(index, diff).has(id)));
     textDiffs.forEach(({ index, diff }) => setFolds(index, diff, gapIds(diff), opened));
   };
-  const toggleFold = (fileIndex: number, fold: RowFold, recursive: boolean) =>
-    setFold(fileIndex, fold, "toggle", recursive);
+  const toggleFold = (fileIndex: number, id: number, recursive: boolean) =>
+    setFold(fileIndex, id, "toggle", recursive);
   const navigateFold = (direction: number) => {
     const headers = geometry.rows.filter((r) => rowFold(r.row));
     const target =
@@ -199,9 +200,9 @@ export function App({
     if (!current || !fold) return;
     const recursive = command === command.toUpperCase();
     const letter = command.toLowerCase();
-    if (letter === "a") toggleFold(current.fileIndex, fold, recursive);
-    else if (letter === "o") setFold(current.fileIndex, fold, false, recursive);
-    else if (letter === "c") setFold(current.fileIndex, fold, true, recursive);
+    if (letter === "a") toggleFold(current.fileIndex, fold.id, recursive);
+    else if (letter === "o") setFold(current.fileIndex, fold.id, false, recursive);
+    else if (letter === "c") setFold(current.fileIndex, fold.id, true, recursive);
   };
   const foldAll = (collapse: boolean) =>
     textDiffs.forEach(({ index, diff }) => setFolds(index, diff, foldIds(diff), collapse));
@@ -379,9 +380,10 @@ export function App({
               if (dragging.current)
                 setSelection((s) => (s ? { ...s, end: row.key } : s));
             }}
-            activeFold={hoveredFold?.file === row.fileIndex ? hoveredFold.id : undefined}
-            onHover={id => setHoveredFold(old => old?.file === row.fileIndex && old.id === id ? old : id === undefined ? null : {file: row.fileIndex, id})}
-            onFold={(fold, recursive) => toggleFold(row.fileIndex, fold, recursive)}
+            focus={hoveredFold?.file === row.fileIndex ? hoveredFold.focus : undefined}
+            onHover={focus => setHoveredFold(old => old?.file === row.fileIndex && old.focus.id === focus?.id
+              && old.focus.armed === focus.armed ? old : focus === undefined ? null : {file: row.fileIndex, focus})}
+            onFold={(id, recursive) => toggleFold(row.fileIndex, id, recursive)}
           />,
         );
     }

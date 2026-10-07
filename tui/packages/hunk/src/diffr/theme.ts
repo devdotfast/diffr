@@ -42,6 +42,10 @@ export interface Palette {
   /** VS Code's editor.foldPlaceholderForeground. */
   foldPlaceholder: string;
   guide: string;
+  /** The body of a scope about to fold, while the pointer is on its rail or chevron. */
+  focusWash: string;
+  /** VS Code's bracket-match box, on the brackets of a scope about to fold. */
+  focusBrace: string;
   /** Foreground for a tree-sitter capture such as `keyword.return`; undefined when the theme has no scope for it. */
   syntax: (capture: string) => string | undefined;
 }
@@ -130,6 +134,7 @@ export function paletteFromHelix(theme: HelixTheme): Palette {
   // Derived rather than read from ui.statusline, which themes paint for other jobs: onedark's
   // matches its cursorline, solarized_light's is the colour of its text.
   const fileHeader = mix(bg, fg, isLight ? 0.12 : 0.16);
+  const accent = scopeFg(theme, "function") ?? scopeFg(theme, "ui.text.focus") ?? fg;
   return {
     name: theme.name,
     isLight,
@@ -147,9 +152,11 @@ export function paletteFromHelix(theme: HelixTheme): Palette {
     deleteWord: mix(bg, minus, 0.28),
     addedText: plus,
     removedText: minus,
-    accent: scopeFg(theme, "function") ?? scopeFg(theme, "ui.text.focus") ?? fg,
+    accent,
     foldPlaceholder: mix(muted, fg, 0.45),
     guide: scopeFg(theme, "ui.virtual.indent-guide") ?? mix(bg, fg, 0.22),
+    focusWash: mix(bg, accent, 0.08),
+    focusBrace: mix(bg, accent, 0.3),
     syntax: (capture) => scopeFg(theme, capture),
   };
 }

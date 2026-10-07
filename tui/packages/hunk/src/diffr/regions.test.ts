@@ -305,3 +305,12 @@ test("a group is one row that stands for every collapsed region under it", () =>
     .toMatchObject({ id: 20, collapsed: false });
   expect(gapIds(file.diff)).toEqual([]);
 });
+test("a scope opened on a line takes its chevron from a statement fold starting there", () => {
+  const base = { side: 1 as const, label: "", tags: [], collapsed: false, nested: [], parentColumn: 0 };
+  const statement = { ...base, id: 1, foldStateId: 1, startLine: 4, lastHidden: 20 };
+  const scope = { ...base, id: 2, foldStateId: 2, startLine: 5, lastHidden: 19,
+    syntax: { start: { line: 4, column: 30 }, end: { line: 20, column: 0 } } };
+  expect(foldHeaders([statement, scope], [], new Set(), new Set()).get(4)?.id).toBe(2);
+  // Without a scope on the line, the outermost fold keeps it.
+  expect(foldHeaders([statement, { ...scope, syntax: undefined }], [], new Set(), new Set()).get(4)?.id).toBe(1);
+});

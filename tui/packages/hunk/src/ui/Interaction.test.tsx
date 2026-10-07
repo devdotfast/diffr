@@ -66,7 +66,7 @@ test("Paper folds stay under the mouse, pair both sides, accent guides, and surv
   try {
     await act(async () => { await t.renderOnce(); });
     const y = row("if event.open"), x = frame().split("\n")[y].indexOf("▾");
-    const accents = () => t.captureSpans().lines.flatMap(l => l.spans).filter(s => s.text.includes("│") && rgbToHex(s.fg).toLowerCase() === dark.accent.toLowerCase()).length;
+    const accents = () => t.captureSpans().lines.flatMap(l => l.spans).filter(s => /[│┃]/.test(s.text) && rgbToHex(s.fg).toLowerCase() === dark.accent.toLowerCase()).length;
     expect(accents()).toBe(0);
     await act(async () => { await t.mockMouse.moveTo(x, y); await t.renderOnce(); });
     await t.waitFor(() => accents() > 0);
@@ -94,6 +94,26 @@ test("Paper folds stay under the mouse, pair both sides, accent guides, and surv
     });
     await t.waitForFrame(f => f.includes("open(true)"));
     expect(frame()).toContain("open(true)");
+  } finally { await act(async () => { t.renderer.destroy(); }); }
+});
+test("pointing at a rail arms that scope, even an outer one, and clicking the rail folds it", async () => {
+  const store = new DiffStore(), file = createGuideDiffFile();
+  store.accept(startFor([file])); store.accept(file); store.accept({type:"complete", succeeded:1, failed:0});
+  const t = await testRender(<App store={store} themes={themes} onQuit={() => {}} />, {width:170, height:25});
+  const frame = () => t.captureCharFrame();
+  try {
+    await act(async () => { await t.renderOnce(); });
+    // `open(true)` sits inside impl, fn handle and if; its row crosses all three rails.
+    const y = frame().split("\n").findIndex(l => l.includes("open(true)"));
+    const row = frame().split("\n")[y], code = row.indexOf("│", row.indexOf(" 4 ") + 3);
+    const handleRail = row.indexOf("│", code + 1);
+    await act(async () => { await t.mockMouse.moveTo(handleRail, y); await t.renderOnce(); });
+    await act(async () => { await t.renderOnce(); });
+    // Armed, the fn handle rail thickens; the if rail inside it stays thin.
+    expect(frame().split("\n")[y].indexOf("┃")).toBe(handleRail);
+    await act(async () => { await t.mockMouse.click(handleRail, y); await t.renderOnce(); });
+    await t.waitForFrame(f => f.includes("fn handle(&self) { ⋯ 2 lines · 1 line changed }"));
+    expect(frame()).not.toContain("open(true)");
   } finally { await act(async () => { t.renderer.destroy(); }); }
 });
 test("closing a scrolled file and reopening it starts at its header and first source line", async () => {

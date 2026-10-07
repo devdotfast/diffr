@@ -1,6 +1,7 @@
 mod support;
 
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 use support::get_base_command;
 
 use assert_cmd::prelude::*;
@@ -191,8 +192,6 @@ fn debug_needs_exactly_one_action() {
 
 #[test]
 fn config_migration_and_typed_batch_set() {
-    use std::io::Write;
-    use std::process::Stdio;
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("diffr/config.toml");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -257,4 +256,92 @@ fn config_migration_and_typed_batch_set() {
     }
     assert!(original.contains("My prompt"));
     assert!(std::fs::read_to_string(file).unwrap().contains("My prompt"));
+}
+
+#[test]
+fn pprint_reads_a_file_or_stdin_without_a_frontend() {
+    let work = tempfile::tempdir().unwrap();
+    let config = work.path().join("config/diffr");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(
+        config.join("config.toml"),
+        "[plugins.shape]\norder = ['bundled.context']\n",
+    )
+    .unwrap();
+    let mut diff = get_base_command();
+    let output = diff
+        .env("XDG_CONFIG_HOME", work.path().join("config"))
+        .args([
+            "--format",
+            "ndjson",
+            "--no-index",
+            "sample_files/simple_1.js",
+            "sample_files/simple_2.js",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let input = work.path().join("diff.ndjson");
+    std::fs::write(&input, &output.stdout).unwrap();
+    let printer = || {
+        let mut cmd = get_base_command();
+        cmd.env("DIFFR_TUI_ENTRY", "missing-tui-entry")
+            .env("DIFFR_BUN", "missing-bun");
+        cmd.arg("pprint");
+        cmd
+    };
+    let printed = printer().arg(&input).output().unwrap();
+    assert!(
+        printed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&printed.stderr)
+    );
+    let text = String::from_utf8(printed.stdout.clone()).unwrap();
+    assert!(
+        text.contains("sample_files/simple_1.js → sample_files/simple_2.js"),
+        "{text}"
+    );
+    assert!(text.contains("base → head"), "{text}");
+    assert!(!text.contains('\u{1b}'));
+    let mut stdin = printer()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    stdin
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&output.stdout)
+        .unwrap();
+    let stdin = stdin.wait_with_output().unwrap();
+    assert!(
+        stdin.status.success(),
+        "{}",
+        String::from_utf8_lossy(&stdin.stderr)
+    );
+    assert_eq!(stdin.stdout, printed.stdout);
+    printer()
+        .arg(&input)
+        .args(["--open", "4294967295"])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("unknown fold states"));
+    std::fs::write(
+        &input,
+        output.stdout.split(|byte| *byte == b'\n').next().unwrap(),
+    )
+    .unwrap();
+    printer()
+        .arg(&input)
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("incomplete diff stream"));
 }

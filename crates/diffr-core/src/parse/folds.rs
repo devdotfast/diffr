@@ -233,7 +233,6 @@ fn depth(node: tree_sitter::Node<'_>) -> usize {
 /// Rust `Self { … }` tail expression and the `{ … }` field list inside it.
 /// The merged fold keeps the innermost node's range, indent and syntax (the
 /// deepest among equal ranges), plus every fold's tags and relations.
-/// Relations that named an absorbed fold name the merged fold.
 /// A fold with no whole line merges with nothing.
 fn merge_by_lines(
     mut folds: Vec<(usize, usize, FoldMetadata)>,
@@ -255,7 +254,6 @@ fn merge_by_lines(
     });
     let mut merged: DftHashMap<usize, FoldMetadata> = DftHashMap::default();
     let mut owners: DftHashMap<(usize, usize), usize> = DftHashMap::default();
-    let mut absorbed: DftHashMap<SourceRange, (usize, usize)> = DftHashMap::default();
     for (id, _, metadata) in folds {
         let span = line_span(&region(&metadata), lines);
         if span.0 == span.1 {
@@ -277,7 +275,6 @@ fn merge_by_lines(
         } else {
             (owner, held, metadata)
         };
-        absorbed.insert(region(&lost), span);
         kept.tags.extend(lost.tags);
         kept.tags.sort();
         kept.tags.dedup();
@@ -288,17 +285,6 @@ fn merge_by_lines(
         }
         owners.insert(span, id);
         merged.insert(id, kept);
-    }
-    let survivors: DftHashMap<(usize, usize), SourceRange> = owners
-        .iter()
-        .map(|(span, id)| (*span, region(&merged[id])))
-        .collect();
-    for metadata in merged.values_mut() {
-        for target in &mut metadata.relations {
-            if let Some(span) = absorbed.get(target) {
-                *target = survivors[span];
-            }
-        }
     }
     merged
 }

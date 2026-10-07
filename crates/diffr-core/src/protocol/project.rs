@@ -527,7 +527,7 @@ fn tree(
     }
     let mut root: Vec<Region> = Vec::new();
     let mut stack: Vec<Open<'_>> = Vec::new();
-    // Each fold's `fold_state_id`, keyed by its syntax range.
+    // Each fold's `fold_state_id`, keyed by its line span.
     let mut states = DftHashMap::default();
     let close = |stack: &mut Vec<Open<'_>>, root: &mut Vec<Region>| {
         let open = stack.pop().expect("closing an open fold");
@@ -571,7 +571,7 @@ fn tree(
         match item {
             Item::Fold(fold) => {
                 let fold_ids = ids.fold(fold.fold);
-                states.insert(fold.fold.range, fold_ids.1);
+                states.insert(fold.lines, fold_ids.1);
                 stack.push(Open {
                     fold,
                     ids: fold_ids,
@@ -597,12 +597,11 @@ fn tree(
     let links = folds
         .iter()
         .flat_map(|fold| {
-            let from = states[&fold.fold.range];
+            let from = states[&fold.lines];
             let states = &states;
-            fold.fold
-                .relations
-                .iter()
-                .filter_map(move |range| Some((from, *states.get(range)?)))
+            fold.fold.relations.iter().filter_map(move |range| {
+                Some((from, *states.get(&folds::line_span(range, lines))?))
+            })
         })
         .collect();
     (root, links)

@@ -59,3 +59,14 @@ test("a scope runs from its opener to its closer: each line knows its innermost 
   // The chevron on an opener's line folds that scope, the one its rail and brackets show.
   expect(at(3).fold?.id).toBe(30);
 });
+test("a fold diffr left unlabelled says how many lines it hides, inline or as its own row", () => {
+  const file = createGuideDiffFile();
+  if (file.diff.type !== "text") throw new Error();
+  const other = file.diff.rhs!.root.children[1].children.find(r => r.fold_state_id === 40)!;
+  other.visibility = {collapsed: true, label: ""};
+  const gap = file.diff.rhs!.root.children[1].children[1].children[1].children[1];
+  gap.visibility = {collapsed: true, label: ""};
+  const rows = rowsForFile(file, 0, "split", dark, defaultCollapsed(file.diff));
+  expect(sourceText(rows.find(r => r.right?.fold?.id === 40)!.right)).toBe("│   fn other() { ⋯ 2 lines }");
+  expect(sourceText(rows.find(r => r.right?.fold?.id === 5)!.right)).toBe("│   │   │   ⋯ 2 lines");
+});

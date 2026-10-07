@@ -260,7 +260,6 @@ fn a_fold_whose_matched_partner_holds_changes_stays_open() {
         id,
         fold_state_id: id,
         range: range(start, end),
-        relations: Vec::new(),
         tags: vec![],
         visibility: Visibility::default(),
         node: Node::Leaf {
@@ -285,7 +284,6 @@ fn a_fold_whose_matched_partner_holds_changes_stays_open() {
         id,
         fold_state_id: state,
         range: child.range,
-        relations: Vec::new(),
         tags: vec![],
         visibility: Visibility::default(),
         node: Node::Fold {

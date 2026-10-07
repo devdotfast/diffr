@@ -48,15 +48,8 @@ impl GuestPlugin for DeletedBodies {
             && count >= self.options.min_lines
             && cursor.is_one_sided(region.id)?
         {
-            let docstring = cursor
-                .related(region.id, "documentation")?
-                .into_iter()
-                .next();
             cursor.set_collapsed(region.id, true)?;
             cursor.set_label(region.id, Some(&format!("{count} lines removed")))?;
-            if let Some(docstring) = docstring {
-                cursor.link(&[region.id, docstring])?;
-            }
         }
         Ok(true)
     }

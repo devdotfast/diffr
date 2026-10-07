@@ -56,13 +56,10 @@ impl GuestPlugin for TestBodies {
             {
                 return Ok(true);
             }
-            let (default, docstring) = if data.tags.iter().any(|tag| tag == MODULE) {
-                ("test module", None)
+            let default = if data.tags.iter().any(|tag| tag == MODULE) {
+                "test module"
             } else if data.tags.iter().any(|tag| tag == TEST) {
-                (
-                    "test body",
-                    cursor.related(data.id, "documentation")?.into_iter().next(),
-                )
+                "test body"
             } else {
                 return Ok(true);
             };
@@ -73,9 +70,6 @@ impl GuestPlugin for TestBodies {
             };
             cursor.set_collapsed(data.id, true)?;
             cursor.set_label(data.id, Some(&label))?;
-            if let Some(docstring) = docstring {
-                cursor.link(&[data.id, docstring])?;
-            }
         }
         Ok(true)
     }

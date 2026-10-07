@@ -372,16 +372,6 @@ impl Cursor {
         Ok(changes)
     }
 
-    /// Related regions explicitly associated by query captures.
-    pub fn related(&self, id: u32, name: &str) -> Result<Vec<u32>, MoveError> {
-        Ok(region_of(&self.sides, id)?
-            .relations
-            .iter()
-            .filter(|(kind, _)| kind == name)
-            .map(|(_, id)| *id)
-            .collect())
-    }
-
     /// Opposite-side leaf with the same alignment; folds and unmatched leaves return None.
     pub fn paired_leaf(&self, id: u32) -> Result<Option<u32>, MoveError> {
         let Some(alignment) = region_of(&self.sides, id)?.alignment_id() else {
@@ -592,7 +582,6 @@ impl Cursor {
                     id,
                     fold_state_id,
                     range,
-                    relations: Vec::new(),
                     tags: Vec::new(),
                     visibility: Visibility::default(),
                     node: Node::Fold {
@@ -876,7 +865,6 @@ fn split(leaf: Region, offset: u32, id: u32, alignment_id: u32, fold_state_id: u
             id,
             fold_state_id,
             range,
-            relations: leaf.relations.clone(),
             tags: leaf.tags.clone(),
             visibility: leaf.visibility.clone(),
             node: Node::Leaf {

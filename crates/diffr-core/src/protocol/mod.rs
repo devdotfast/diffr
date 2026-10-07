@@ -242,8 +242,6 @@ pub struct Region {
     /// Plugin moves address it.
     pub id: u32,
     pub fold_state_id: u32,
-    #[serde(skip)]
-    pub relations: Vec<(String, u32)>,
     #[serde(flatten)]
     pub range: SourceRange,
     /// On folds, the tags the fold queries set, written `<plugin>:<name>`
@@ -269,7 +267,6 @@ impl Region {
                 start,
                 end: children.last().map_or(start, |last| last.range.end),
             },
-            relations: Vec::new(),
             tags: Vec::new(),
             visibility: Visibility::default(),
             node: Node::Fold {
@@ -422,7 +419,6 @@ mod tests {
                 start: pos(start, 0),
                 end: pos(end, 0),
             },
-            relations: Vec::new(),
             tags: vec![],
             visibility: Visibility::default(),
             node: Node::Leaf {
@@ -455,7 +451,6 @@ mod tests {
                             start: pos(0, 0),
                             end: pos(3, 0),
                         },
-                        relations: Vec::new(),
                         tags: vec!["deleted-bodies:function".to_owned()],
                         visibility: Visibility::default(),
                         node: Node::Fold {

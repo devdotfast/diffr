@@ -22,7 +22,7 @@
 //! the second of a pair takes the next `alignment_id`; the second takes its
 //! counterpart's. A region's `fold_state_id` is its own `id`, except that the
 //! second of a paired leaf or a matched fold takes its counterpart's
-//! `fold_state_id`. Leaves are split wherever a
+//! `fold_state_id`, and the two ends of a query link share one (see `link`). Leaves are split wherever a
 //! fold starts or ends so that every fold's children tile its line span
 //! exactly, and a split on one side of a paired leaf is mirrored on the
 //! other so paired leaves stay equal in length. Nothing starts collapsed:
@@ -219,7 +219,7 @@ fn regions(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> (Region, Region
     let (lhs_leaves, rhs_leaves) = split_runs(&runs, &lhs_splits, &rhs_splits);
 
     let mut ids = Ids::new(aligned_folds(&runs, &lhs_folds, &rhs_folds));
-    let lhs = tree(
+    let (mut lhs, lhs_links) = tree(
         &lhs_folds,
         &lhs_leaves,
         &result.lhs_positions,
@@ -227,7 +227,7 @@ fn regions(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> (Region, Region
         &lhs_lines,
         &mut ids,
     );
-    let rhs = tree(
+    let (mut rhs, rhs_links) = tree(
         &rhs_folds,
         &rhs_leaves,
         &result.rhs_positions,
@@ -235,10 +235,47 @@ fn regions(result: &DiffResult, lhs_src: &str, rhs_src: &str) -> (Region, Region
         &rhs_lines,
         &mut ids,
     );
+    link(
+        [&mut lhs[..], &mut rhs[..]],
+        lhs_links.into_iter().chain(rhs_links),
+    );
     (
         Region::root(ids.fresh_id(), lhs),
         Region::root(ids.fresh_id(), rhs),
     )
+}
+
+/// Give the two ends of each query link (`@related.from` and the region it
+/// names) one `fold_state_id`, so a docstring opens, closes and counts as
+/// changed with its code. A state spans both sides, so both are rewritten.
+fn link(sides: [&mut [Region]; 2], links: impl IntoIterator<Item = (u32, u32)>) {
+    fn walk(regions: &mut [Region], visit: &mut impl FnMut(&mut Region)) {
+        for region in regions {
+            visit(region);
+            if let Node::Fold { children, .. } = &mut region.node {
+                walk(children, visit);
+            }
+        }
+    }
+    fn find(merged: &DftHashMap<u32, u32>, mut state: u32) -> u32 {
+        while let Some(&next) = merged.get(&state) {
+            state = next;
+        }
+        state
+    }
+    // Each link folds the higher state into the lower.
+    let mut merged = DftHashMap::default();
+    for (from, to) in links {
+        let (a, b) = (find(&merged, from), find(&merged, to));
+        if a != b {
+            merged.insert(a.max(b), a.min(b));
+        }
+    }
+    for side in sides {
+        walk(side, &mut |region| {
+            region.fold_state_id = find(&merged, region.fold_state_id);
+        });
+    }
 }
 
 /// Folds the matcher left unpaired that the line alignment pairs: a left and
@@ -464,7 +501,8 @@ impl Item<'_> {
 }
 
 /// Nest folds and leaves by containment on line spans and number them in
-/// document order, outer before inner.
+/// document order, outer before inner. Also returns the side's query links as
+/// `fold_state_id` pairs.
 fn tree(
     folds: &[SideFold<'_>],
     leaves: &[Leaf],
@@ -472,7 +510,7 @@ fn tree(
     novel: &BTreeSet<usize>,
     lines: &[&str],
     ids: &mut Ids,
-) -> Vec<Region> {
+) -> (Vec<Region>, Vec<(u32, u32)>) {
     let mut items: Vec<Item<'_>> = folds
         .iter()
         .map(Item::Fold)
@@ -489,14 +527,15 @@ fn tree(
     }
     let mut root: Vec<Region> = Vec::new();
     let mut stack: Vec<Open<'_>> = Vec::new();
+    // Each fold's `fold_state_id`, keyed by its syntax range.
+    let mut states = DftHashMap::default();
     let close = |stack: &mut Vec<Open<'_>>, root: &mut Vec<Region>| {
         let open = stack.pop().expect("closing an open fold");
         let fold = open.fold.fold;
         // The wire range is the hull of the children, which tile whole
         // lines, since nothing narrower than a line can be hidden.
-        let (Some(first), Some(last)) = (open.children.first(), open.children.last()) else {
-            return;
-        };
+        let (first, last) = (open.children.first(), open.children.last());
+        let (first, last) = first.zip(last).expect("leaves tile every fold's span");
         let range = SourceRange {
             start: first.range.start,
             end: last.range.end,
@@ -505,7 +544,6 @@ fn tree(
             id: open.ids.0,
             fold_state_id: open.ids.1,
             range,
-            relations: Vec::new(),
             tags: fold.tags.clone(),
             visibility: Visibility {
                 collapsed: false,
@@ -533,6 +571,7 @@ fn tree(
         match item {
             Item::Fold(fold) => {
                 let fold_ids = ids.fold(fold.fold);
+                states.insert(fold.fold.range, fold_ids.1);
                 stack.push(Open {
                     fold,
                     ids: fold_ids,
@@ -554,49 +593,19 @@ fn tree(
     while !stack.is_empty() {
         close(&mut stack, &mut root);
     }
-    fn all(regions: &[Region], out: &mut Vec<(u32, SourceRange)>) {
-        for region in regions {
-            if let Node::Fold { children, .. } = &region.node {
-                out.push((region.id, region.range));
-                all(children, out);
-            }
-        }
-    }
-    fn attach(regions: &mut [Region], relations: &[(u32, String, u32)]) {
-        for region in regions {
-            region.relations = relations
+    // side_folds drops targets with no whole-line span; drop their links too.
+    let links = folds
+        .iter()
+        .flat_map(|fold| {
+            let from = states[&fold.fold.range];
+            let states = &states;
+            fold.fold
+                .relations
                 .iter()
-                .filter(|(id, _, _)| *id == region.id)
-                .map(|(_, name, target)| (name.clone(), *target))
-                .collect();
-            if let Node::Fold { children, .. } = &mut region.node {
-                attach(children, relations);
-            }
-        }
-    }
-    let mut regions = Vec::new();
-    all(&root, &mut regions);
-    let mut relations = Vec::new();
-    for fold in folds {
-        let owner = regions.iter().find(|(_, range)| {
-            range.start.line as usize == fold.lines.0 && range.end.line as usize == fold.lines.1
-        });
-        let Some((owner, _)) = owner else { continue };
-        for (name, range) in &fold.fold.relations {
-            let start = range.start.line.as_usize() as u32;
-            let end = range.end.line.as_usize() as u32 + u32::from(range.end.byte_column > 0);
-            if let Some((target, _)) = regions
-                .iter()
-                .find(|(_, span)| span.start.line == start && span.end.line == end)
-            {
-                if owner != target {
-                    relations.push((*owner, name.clone(), *target));
-                }
-            }
-        }
-    }
-    attach(&mut root, &relations);
-    root
+                .filter_map(move |range| Some((from, *states.get(range)?)))
+        })
+        .collect();
+    (root, links)
 }
 
 fn leaf_region(
@@ -661,7 +670,6 @@ fn leaf_region(
                 column: 0,
             },
         },
-        relations: Vec::new(),
         tags: Vec::new(),
         visibility: Visibility::default(),
         node: Node::Leaf {
@@ -731,6 +739,41 @@ mod tests {
                 sizes: (lhs.len() as u64, rhs.len() as u64),
             },
         )
+    }
+
+    #[test]
+    fn links_skip_inline_targets_without_whole_lines() {
+        let params = crate::config::try_with_queries(&[(
+            "rust",
+            "(block (let_declaration value: (array_expression) @related.values)) @fold @related.from\n(array_expression) @fold",
+        )])
+        .unwrap();
+        for (array, linked) in [
+            ("[1, 2]", vec![(1, 4)]),
+            ("[\n        1, 2\n    ]", vec![(1, 6), (2, 3)]),
+        ] {
+            let text = format!("fn f() {{\n    let values = {array};\n    consume(values);\n}}\n");
+            let result = DiffResult::from_sources_with_params("a.rs", "", &text, &params);
+            let diff = diff(
+                &result,
+                Inputs {
+                    file: &refs(false, true),
+                    sizes: (0, text.len() as u64),
+                },
+            );
+            let regions = all(sources(&diff).1.unwrap().root.children());
+            let block = regions
+                .iter()
+                .find(|region| matches!(region.node, Node::Fold { .. }))
+                .unwrap()
+                .fold_state_id;
+            let shared: Vec<_> = regions
+                .iter()
+                .filter(|region| region.fold_state_id == block)
+                .map(|region| region.range.lines_spanned())
+                .collect();
+            assert_eq!(shared, linked, "{array}");
+        }
     }
 
     fn sources(diff: &Diff) -> (Option<&Source>, Option<&Source>) {

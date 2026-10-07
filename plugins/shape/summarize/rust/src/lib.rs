@@ -16,6 +16,7 @@ pub use provider::{Details, Provider};
 /// test body.
 const FUNCTION: &str = "summarize:function";
 const TEST: &str = "summarize:test";
+const DOCSTRING: &str = "summarize:docstring";
 
 /// The plugin's options, as `plugins/summarize/plugin.toml` declares them.
 #[derive(Clone, Debug, Deserialize)]
@@ -210,8 +211,7 @@ impl GuestPlugin for Summarize {
             return Ok(false);
         }
         cursor.set_collapsed(data.id, true)?;
-        let docstring = cursor.related(data.id, "documentation")?.into_iter().next();
-        let Some(docstring) = docstring else {
+        let Some(docstring) = docstring(cursor, data.id)? else {
             cursor.set_label(data.id, Some(&pseudocode))?;
             return Ok(false);
         };
@@ -222,9 +222,22 @@ impl GuestPlugin for Summarize {
             .ok_or_else(|| format!("empty docstring region {docstring}"))?
             .trim();
         cursor.set_label(data.id, Some(&format!("{first}\n{pseudocode}")))?;
-        cursor.link(&[data.id, docstring])?;
         Ok(false)
     }
+}
+
+/// The `summarize:docstring` region on `id`'s side that shares its fold state.
+fn docstring(cursor: &Cursor, id: u32) -> Result<Option<u32>, String> {
+    let side = cursor.get(id)?.side;
+    for region in cursor.linked_regions(id)? {
+        let RegionView {
+            side: other, data, ..
+        } = cursor.get(region)?;
+        if other == side && data.tags.iter().any(|tag| tag == DOCSTRING) {
+            return Ok(Some(region));
+        }
+    }
+    Ok(None)
 }
 
 impl Summarize {

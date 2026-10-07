@@ -21,7 +21,6 @@ fn leaf(id: u32, alignment: u32, start: u32, end: u32, changed: &[u32]) -> Regio
         id,
         fold_state_id: id,
         range: range(start, end),
-        relations: Vec::new(),
         tags: vec![],
         visibility: Visibility::default(),
         node: Node::Leaf {
@@ -47,7 +46,6 @@ fn fold(id: u32, collapsed: bool, children: Vec<Region>) -> Region {
             start: children[0].range.start,
             end: children[children.len() - 1].range.end,
         },
-        relations: Vec::new(),
         tags: vec![],
         visibility: Visibility {
             collapsed,

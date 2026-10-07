@@ -2,10 +2,10 @@
 //!
 //! A fold is a region of a file, not a syntax node: two captures that cover
 //! the same lines — from one query, or from two plugins' queries — are one
-//! fold whose tags are the union of theirs (see [`merge_by_lines`]). The
-//! merged fold sits on the innermost node that produced it, the one whose
-//! extent really is that region, so it takes that node's `syntax_id` and its
-//! pairing, and alignment follows the node the matcher paired.
+//! fold whose tags are the union of theirs (see [`merge_by_lines`]). The merged
+//! fold is owned by the innermost node that produced it, the one whose
+//! extent really is that region, and carries that node's `syntax_id` and its
+//! pairing, so alignment follows the node the matcher paired.
 use super::query::node_range;
 use crate::config::query::AnnotationQuery;
 use crate::diff::changes::{ChangeKind, ChangeMap};
@@ -19,7 +19,7 @@ use tree_sitter::{QueryCursor, Tree};
 
 #[derive(Debug)]
 pub struct Fold {
-    pub(crate) relations: Vec<(String, SourceRange)>,
+    pub(crate) relations: Vec<SourceRange>,
     pub(crate) tags: Vec<String>,
     /// Source on this side; may span multiple syntax nodes.
     pub(crate) range: SourceRange,
@@ -69,7 +69,7 @@ pub struct Conflict {
 /// hull of a quantified run such as `(comment)+ @fold`.
 /// Captures of the same node merge their tags when their ranges agree; when
 /// they disagree the result is a [`Conflict`]. Captures of different nodes
-/// over the same lines then merge too (see [`merge_by_lines`]).
+/// over the same lines merge (see [`merge_by_lines`]).
 pub(crate) fn classify(
     tree: &Tree,
     src: &str,
@@ -93,36 +93,32 @@ pub(crate) fn classify(
                 .filter(move |capture| query.capture_names()[capture.index as usize] == name)
         };
         for source in named("related.from") {
-            let mut targets: std::collections::BTreeMap<&str, SourceRange> =
-                std::collections::BTreeMap::new();
+            // The target is the hull of every other `@related.*` capture.
+            let mut target: Option<SourceRange> = None;
             for capture in matched.captures {
                 let name = query.capture_names()[capture.index as usize];
-                let Some(name) = name.strip_prefix("related.").filter(|name| *name != "from")
-                else {
+                if !name.starts_with("related.") || name == "related.from" {
                     continue;
-                };
+                }
                 let range = node_range(capture.node);
-                targets
-                    .entry(name)
-                    .and_modify(|span| {
-                        if (range.start.line, range.start.byte_column)
-                            < (span.start.line, span.start.byte_column)
-                        {
-                            span.start = range.start;
-                        }
-                        if (range.end.line, range.end.byte_column)
-                            > (span.end.line, span.end.byte_column)
-                        {
-                            span.end = range.end;
-                        }
-                    })
-                    .or_insert(range);
+                let at = |position: &SourcePosition| (position.line, position.byte_column);
+                target = Some(match target {
+                    None => range,
+                    Some(hull) => SourceRange {
+                        start: if at(&range.start) < at(&hull.start) {
+                            range.start
+                        } else {
+                            hull.start
+                        },
+                        end: if at(&range.end) > at(&hull.end) {
+                            range.end
+                        } else {
+                            hull.end
+                        },
+                    },
+                });
             }
-            relations.extend(
-                targets
-                    .into_iter()
-                    .map(|(name, range)| (source.node.id(), name.to_owned(), range)),
-            );
+            relations.extend(target.map(|range| (source.node.id(), range)));
         }
         let folds: Vec<_> = named("fold").collect();
         let Some(first) = folds.iter().min_by_key(|capture| capture.node.start_byte()) else {
@@ -206,10 +202,10 @@ pub(crate) fn classify(
             }
         }
     }
-    for (id, name, range) in relations {
+    for (id, range) in relations {
         if let Some((metadata, _, _)) = kinds.get_mut(&id) {
-            if !metadata.relations.contains(&(name.clone(), range)) {
-                metadata.relations.push((name, range));
+            if !metadata.relations.contains(&range) {
+                metadata.relations.push(range);
             }
         }
     }
@@ -233,17 +229,12 @@ fn depth(node: tree_sitter::Node<'_>) -> usize {
     depth
 }
 
-/// Merge the folds of nodes that cover the same whole lines into one.
-///
-/// A reader collapses lines, not nodes, so two folds over the same lines are
-/// one region, such as a Rust `Self { … }` as a function's tail expression
-/// and the `{ … }` field list inside it. (Two ranges on the *same* node are
-/// a [`Conflict`] instead.) Walking in preorder, a fold inside the one
-/// already holding its lines takes them over: the merged fold sits on the
-/// innermost node, and among equal ranges on the deepest. It keeps that node's own range,
-/// indent and syntax, with the tags and relations of every fold it absorbed.
-/// A relation that named an absorbed fold's range names the merged fold's.
-/// A fold on a single line hides nothing and merges with nothing.
+/// Merge folds of different nodes that cover the same whole lines, such as a
+/// Rust `Self { … }` tail expression and the `{ … }` field list inside it.
+/// The merged fold keeps the innermost node's range, indent and syntax (the
+/// deepest among equal ranges), plus every fold's tags and relations.
+/// Relations that named an absorbed fold name the merged fold.
+/// A fold with no whole line merges with nothing.
 fn merge_by_lines(
     mut folds: Vec<(usize, usize, FoldMetadata)>,
     lines: &[&str],
@@ -279,7 +270,8 @@ fn merge_by_lines(
         let held = merged.remove(&owner).expect("an owner holds its fold");
         let inner = region(&metadata);
         let outer = region(&held);
-        let takes_over = at(&inner.start) >= at(&outer.start) && at(&inner.end) <= at(&outer.end);
+        // Sorted by start, so the incoming fold never starts first.
+        let takes_over = at(&inner.end) <= at(&outer.end);
         let (id, mut kept, lost) = if takes_over {
             (id, metadata, held)
         } else {
@@ -302,7 +294,7 @@ fn merge_by_lines(
         .map(|(span, id)| (*span, region(&merged[id])))
         .collect();
     for metadata in merged.values_mut() {
-        for (_, target) in &mut metadata.relations {
+        for target in &mut metadata.relations {
             if let Some(span) = absorbed.get(target) {
                 *target = survivors[span];
             }
@@ -402,8 +394,8 @@ pub(crate) fn line_span(range: &SourceRange, lines: &[&str]) -> (usize, usize) {
 /// line, such as a collection whose closer sits on the line that opens the
 /// next body (`for x in [ … ] {`). The rule: the earlier fold gives the
 /// shared line to the later one, so its span ends where the later fold
-/// starts. An empty span hides nothing and is
-/// dropped (`None`). Output is in input order.
+/// starts. An empty span hides nothing and is dropped (`None`). Output is in
+/// input order.
 pub(crate) fn nested_spans(spans: &[(usize, usize)]) -> Vec<Option<(usize, usize)>> {
     let mut order: Vec<usize> = (0..spans.len()).collect();
     order.sort_by_key(|&index| (spans[index].0, std::cmp::Reverse(spans[index].1)));
@@ -587,14 +579,14 @@ mod tests {
         assert_eq!(
             nested_spans(&spans),
             vec![Some((0, 5)), Some((5, 9)), Some((7, 8))],
-            "the earlier fold ends where the later starts; one-line annotations survive"
+            "the earlier fold ends where the later starts; one-line spans stay"
         );
         // Clipping cascades through every open ancestor that would cross.
         assert_eq!(
             nested_spans(&[(0, 10), (2, 6), (4, 8)]),
             vec![Some((0, 10)), Some((2, 4)), Some((4, 8))]
         );
-        // A clipped one-line annotation remains available to consumers.
+        // A span clipped to one line stays.
         assert_eq!(
             nested_spans(&[(3, 5), (4, 9)]),
             vec![Some((3, 4)), Some((4, 9))]

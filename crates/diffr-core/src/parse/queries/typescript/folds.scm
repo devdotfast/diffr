@@ -1,4 +1,4 @@
-; inherits: javascript.scm
+; inherits: ../javascript/folds.scm
 ; TypeScript adds type declarations to the JavaScript structure: an
 ; interface, an object type and an enum fold their bodies like a block.
 [

@@ -1,4 +1,4 @@
-; inherits: builtin:shared/queries/javascript.scm, builtin:shared/queries/javascript-docstrings.scm
+; inherits: builtin:core/queries/javascript/folds.scm, builtin:core/queries/javascript/docstrings.scm
 ((function_declaration body: (statement_block "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold)
   (#set! tag "deleted-bodies:function"))
 ((generator_function_declaration body: (statement_block "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold)

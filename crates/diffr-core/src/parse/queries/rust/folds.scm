@@ -20,3 +20,19 @@
   (string_literal)
   (raw_string_literal)
 ] @fold
+
+((arguments "(" @fold.open . (_) @fold.indent ")" @fold.close) @fold
+  (#match? @fold "\\n"))
+
+((parenthesized_expression "(" @fold.open . (_) @fold.indent ")" @fold.close) @fold (#match? @fold "\\n"))
+
+(use_list "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold
+
+[
+ (token_tree "(" @fold.open . (_) @fold.indent ")" @fold.close)
+ (token_tree "{" @fold.open . (_) @fold.indent "}" @fold.close)
+ (token_tree "[" @fold.open . (_) @fold.indent "]" @fold.close)
+] @fold
+
+(enum_variant_list "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold
+(ordered_field_declaration_list "(" @fold.open . (_) @fold.indent ")" @fold.close) @fold

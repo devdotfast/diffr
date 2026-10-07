@@ -3,10 +3,9 @@
 //! title, options schema), queries and a compiled `plugin.wasm`. These assets
 //! are embedded here, so `builtin:<plugin>/<path>` names
 //! `plugins/shape/<plugin>/<path>`. `plugins/shape/shared/` is not a plugin:
-//! it holds the query files every bundled plugin imports, as
-//! `builtin:shared/queries/<language>.scm`, and the docstrings the plugins
-//! that collapse function bodies import, as
-//! `builtin:shared/queries/<language>-docstrings.scm`. The one bundled
+//! it holds the test queries, as `builtin:shared/queries/<language>-tests.scm`.
+//! Language fold and docstring queries live in `src/parse/queries/<language>/`,
+//! as `builtin:core/queries/<language>/<file>.scm`. The one bundled
 //! classifier is `plugins/classify/`.
 use super::config::Manifest;
 use std::sync::OnceLock;
@@ -21,7 +20,7 @@ pub fn component(name: &str) -> Option<&'static [u8]> {
         .map(|(_, bytes)| *bytes)
 }
 
-/// An embedded file by its normalized path under `plugins/`.
+/// An embedded file by its normalized resource path.
 pub(crate) fn file(path: &str) -> Option<&'static str> {
     FILES
         .iter()
@@ -86,6 +85,25 @@ mod tests {
                     let file = query.file_name().unwrap().to_str().unwrap();
                     on_disk.insert(format!("{name}/queries/{file}"));
                 }
+            }
+        }
+        let language_queries = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/parse/queries");
+        for language in std::fs::read_dir(language_queries).unwrap() {
+            let language = language.unwrap().path();
+            if !language.is_dir() {
+                continue;
+            }
+            for query in std::fs::read_dir(&language).unwrap() {
+                let query = query.unwrap().path();
+                if !query
+                    .extension()
+                    .is_some_and(|extension| extension == "scm")
+                {
+                    continue;
+                }
+                let language = language.file_name().unwrap().to_str().unwrap();
+                let file = query.file_name().unwrap().to_str().unwrap();
+                on_disk.insert(format!("core/queries/{language}/{file}"));
             }
         }
         let embedded: BTreeSet<String> = FILES.iter().map(|(path, _)| (*path).to_owned()).collect();

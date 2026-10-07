@@ -22,7 +22,7 @@ typescript = "queries/javascript.scm"
 ```
 
 ```scheme
-; inherits: builtin:shared/queries/rust.scm
+; inherits: builtin:core/queries/rust/folds.scm
 ((function_item body: (block "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold)
   (#set! tag "deleted-bodies:function"))
 ```
@@ -43,7 +43,7 @@ the lines it holds whole: code before it on the line it opens on, or after it
 on the line it closes on, belongs to the leaf beside it, so collapsing a fold
 hides its lines and nothing else. These are direct
 Tree-sitter coordinates; labels and comments before the opening brace stay visible.
-With both delimiter captures, they must be ordered and contained in the fold node.
+Both delimiters must be ordered and contained within the captured nodes.
 A `@fold.open` without `@fold.close` hides from the opening node's end to the end
 of the fold node; the opening node may precede the fold node, so
 `(function_definition ":" @fold.open body: (block . (_) @fold.indent) @fold)` folds a Python body
@@ -54,11 +54,11 @@ line offsets, and no `#offset!` or `#make-range!` directives.
 
 Every `@fold` capture in one match forms one fold, attached to the first
 captured node: a quantified run such as `((comment)+ @fold . (function_item))`
-folds as one region over the hull of the run. Delimiter captures apply only to
-a match with a single `@fold`.
+folds as one region over the hull of the run. A `@fold.open` without
+`@fold.close` applies only to a match with a single `@fold`.
 
 `#set! tag "<plugin>:<name>"` supplies metadata for one plugin. The prefix
-must name a plugin in `plugins.order`; `compile()` rejects any other tag. Dots
+must name a bundled or configured plugin; `compile()` rejects any other tag. Dots
 in the name have no special meaning. Rules selecting the same node and range
 accumulate sorted, unique tags, whichever files they came from. A node whose
 rules select different ranges is a query conflict: the file is not diffed, and
@@ -84,7 +84,7 @@ are different regions: one fold per node still holds, and the scope nests
 around the body.
 
 ```scheme
-; inherits: builtin:shared/queries/rust.scm
+; inherits: builtin:core/queries/rust/folds.scm
 ((function_item) @fold
   (#set! tag "context:scope"))
 ```

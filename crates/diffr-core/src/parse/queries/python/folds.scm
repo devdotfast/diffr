@@ -36,3 +36,10 @@
   .
   (_))
 (string) @fold
+
+((argument_list "(" @fold.open . (_) @fold.indent ")" @fold.close) @fold
+  (#match? @fold "\\n"))
+
+((parenthesized_expression "(" @fold.open . (_) @fold.indent ")" @fold.close) @fold (#match? @fold "\\n"))
+
+(import_from_statement module_name: (_) @fold "(" @fold.open . (_) @fold.indent ")" @fold @fold.close)

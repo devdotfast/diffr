@@ -260,16 +260,17 @@ fn maximum_context_width_matches_file_sized_context() {
 
 #[test]
 fn every_structural_language_has_context_goldens() {
-    let inventory: serde_json::Value =
-        serde_json::from_str(include_str!("fixtures/context-contracts/index.json")).unwrap();
-    let covered: BTreeSet<_> = inventory["cases"]
-        .as_array()
+    let fixtures =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/context-contracts");
+    let covered: BTreeSet<_> = std::fs::read_dir(fixtures)
         .unwrap()
-        .iter()
-        .map(|case| match case["language"].as_str().unwrap() {
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+        .map(|path| path.file_stem().unwrap().to_str().unwrap().to_owned())
+        .map(|language| match language.as_str() {
             "jsx" => "javascriptjsx".to_owned(),
             "tsx" => "typescripttsx".to_owned(),
-            language => language.to_owned(),
+            _ => language,
         })
         .collect();
     let supported = Language::iter()

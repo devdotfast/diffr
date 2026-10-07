@@ -1,13 +1,14 @@
 # Context contracts
 
-Each language file contains the source pair, diff action and expected visible
-rows. `index.json` maps cases to the reviewed decisions.
+Each language's Rust test file contains source pairs, diff actions, expected
+visible rows, and comments naming the reviewed contracts. Larger source pairs
+and their expected output live alongside the test file.
 
 ```sh
 cargo test --test context_contracts
 ```
 
-Assertions use `diffr pprint` with one context line and stable relative file paths.
+Assertions use `diffr pprint` with stable relative file paths.
 Expected output includes file headers, base/head line numbers, fold IDs and the footer.
 
 `RunStartingAt` and `BodyOf` use one-based lines in the after source.

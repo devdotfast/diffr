@@ -325,7 +325,8 @@ mod folds {
         // A function whose body is one `match`: the block the shared query
         // folds and the `match` the context query folds cover the same
         // lines, so they are one fold. It is the `match`'s, the innermost
-        // node whose extent that region is, and it carries both tags.
+        // node whose extent that region is, and it carries both tags and
+        // the block's braces, since the `match` has no opener of its own.
         let src =
             "fn f(x: u32) -> u32 {\n    match x {\n        1 => 2,\n        _ => 3,\n    }\n}\n";
         let params = crate::config::Config::from_toml("")
@@ -348,6 +349,11 @@ mod folds {
             same_lines[0].tags.iter().any(|tag| tag == "context:scope"),
             "{:?}",
             same_lines[0].tags
+        );
+        let syntax = same_lines[0].syntax.expect("the block's opener and closer");
+        assert_eq!(
+            text(src, &syntax),
+            "\n    match x {\n        1 => 2,\n        _ => 3,\n    }\n"
         );
     }
 

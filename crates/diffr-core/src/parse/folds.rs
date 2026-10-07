@@ -232,7 +232,10 @@ fn depth(node: tree_sitter::Node<'_>) -> usize {
 /// Merge folds of different nodes that cover the same whole lines, such as a
 /// Rust `Self { … }` tail expression and the `{ … }` field list inside it.
 /// The merged fold keeps the innermost node's range, indent and syntax (the
-/// deepest among equal ranges), plus every fold's tags and relations.
+/// deepest among equal ranges), plus every fold's tags and relations. When
+/// the innermost node has no opener, as a lone statement in a block has none,
+/// the fold keeps the opener and closer of the node it merged: they delimit
+/// the same lines, so frontends still find the brackets and the rail.
 /// A fold with no whole line merges with nothing.
 fn merge_by_lines(
     mut folds: Vec<(usize, usize, FoldMetadata)>,
@@ -275,6 +278,7 @@ fn merge_by_lines(
         } else {
             (owner, held, metadata)
         };
+        kept.syntax = kept.syntax.or(lost.syntax);
         kept.tags.extend(lost.tags);
         kept.tags.sort();
         kept.tags.dedup();

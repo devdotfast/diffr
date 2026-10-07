@@ -115,6 +115,7 @@ fn the_enclosing_header_stays_open_above_a_deep_change() {
     let config = Config::default();
     let queries = config
         .plugins
+        .shape
         .queries()
         .unwrap()
         .into_iter()

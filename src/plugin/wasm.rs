@@ -432,7 +432,6 @@ fn cat_file(repo: &gix::Repository, object: &str) -> anyhow::Result<Vec<u8>> {
 /// every worker.
 struct Component {
     name: Arc<str>,
-    /// How configuration names it, such as `bundled.context`.
     reference: String,
     pre: DiffrPluginPre<State>,
     /// JSON for the plugin's constructor.
@@ -488,10 +487,11 @@ impl Pipeline {
         let linker = linker(&engine)?;
         let plugins = config
             .plugins
+            .shape
             .enabled()
-            .map(|(reference, entry)| {
-                compile(&engine, &linker, reference, entry)
-                    .with_context(|| format!("plugins.{reference}"))
+            .map(|(name, entry)| {
+                compile(&engine, &linker, name, entry)
+                    .with_context(|| format!("plugins.shape.{name}"))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
         let plugins = Arc::new(plugins);
@@ -603,18 +603,15 @@ pub(super) fn link(
 fn compile(
     engine: &Engine,
     linker: &Linker<State>,
-    reference: &str,
+    name: &str,
     entry: &Entry,
 ) -> anyhow::Result<Component> {
     let pre = DiffrPluginPre::new(link(engine, linker, &entry.folder().component())?)
         .map_err(anyhow::Error::from)
         .context("not a shape plugin: it must export diffr:plugin/api")?;
-    let name = reference
-        .split_once('.')
-        .map_or(reference, |(_, name)| name);
     Ok(Component {
-        name: name.into(),
-        reference: reference.to_owned(),
+        name: entry.folder().name().into(),
+        reference: name.to_owned(),
         pre,
         options: Value::Object(entry.options.clone()).to_string(),
     })
@@ -692,7 +689,7 @@ impl Worker {
                         .call_constructor(accessor, component.options.clone())
                         .await?
                         .map_err(anyhow::Error::msg)
-                        .with_context(|| format!("plugins.{}", component.reference))?;
+                        .with_context(|| format!("plugins.shape.{}", component.reference))?;
                     instances.push(Instance {
                         name: component.name.clone(),
                         exports,

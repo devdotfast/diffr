@@ -80,7 +80,7 @@ struct Cli {
     /// Detect renames, which is the default
     #[arg(short = 'M', long, conflicts_with = "no_renames")]
     find_renames: bool,
-    /// Unchanged lines kept around each change; defaults to plugins.bundled.context.lines
+    /// Unchanged lines kept around each change; defaults to plugins.shape.bundled.context.lines
     #[arg(short = 'U', long)]
     unified: Option<u32>,
     /// Write the event stream to stdout instead of opening the terminal UI
@@ -599,7 +599,7 @@ impl Cli {
     fn config(&self) -> Result<Config> {
         let mut config = Config::load()?;
         if let Some(unified) = self.unified {
-            if let Some(entry) = config.plugins.entries.get_mut("bundled.context") {
+            if let Some(entry) = config.plugins.shape.entries.get_mut("bundled.context") {
                 entry
                     .options
                     .insert("lines".into(), serde_json::Value::from(unified));

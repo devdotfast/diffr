@@ -34,9 +34,9 @@ if [ -n "$mock" ]; then
   server=$!
   mkdir -p "$work/config/diffr"
   cat > "$work/config/diffr/config.toml" <<TOML
-version = 1
+version = 2
 
-[plugins.bundled.summarize]
+[plugins.shape.bundled.summarize]
 enabled = true
 api_key = "mock"
 endpoint = "http://127.0.0.1:$port"

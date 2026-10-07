@@ -31,12 +31,12 @@ impl Classifier {
         let pre = DiffrClassifierPre::new(link(
             &engine,
             &linker,
-            &config.classifier.folder().component(),
+            &config.plugins.classify.folder().component(),
         )?)
         .map_err(anyhow::Error::from)
         .context("not a classifier: it must export diffr:plugin/classify")
         .context("classifier")?;
-        let options = Value::Object(config.classifier.options.clone()).to_string();
+        let options = Value::Object(config.plugins.classify.options.clone()).to_string();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;

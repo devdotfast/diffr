@@ -125,7 +125,10 @@ async fn run_case(outcome: &'static str) -> Result<()> {
         plugin.join("plugin.toml"),
         "name='probe'\ntitle='Probe'\n[options.endpoint]\ntype='string'\ntitle='Endpoint'\n",
     )?;
-    let config = format!("[plugins]\norder=['external.probe']\n[plugins.external.probe]\npath={:?}\nendpoint={endpoint:?}\n", plugin.to_string_lossy());
+    let config = format!(
+        "[plugins.shape]\norder=['probe']\n[plugins.shape.probe]\npath={:?}\nendpoint={endpoint:?}\n",
+        plugin.to_string_lossy()
+    );
     std::fs::write(config_home.join("diffr/config.toml"), config)?;
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_diffr"))
         .args(["--repo"])
@@ -245,7 +248,7 @@ fn two_workers_compute_two_files_at_once() -> Result<()> {
     std::fs::write(
         config_home.join("diffr/config.toml"),
         format!(
-            "[plugins]\norder=['external.probe']\n[plugins.external.probe]\npath={:?}\nendpoint='http://unused'\nspin_ms=1000\n",
+            "[plugins.shape]\norder=['probe']\n[plugins.shape.probe]\npath={:?}\nendpoint='http://unused'\nspin_ms=1000\n",
             plugin.to_string_lossy()
         ),
     )?;

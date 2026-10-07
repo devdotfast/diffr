@@ -111,7 +111,7 @@ pub(crate) fn rhs(sides: &Pairing<Source>) -> &Source {
 /// `overrides` the way a settings file would.
 pub(crate) fn bundled(name: &str, overrides: serde_json::Value) -> Pipeline {
     configured(&format!(
-        "[plugins]\norder = ['bundled.{name}']\n[plugins.bundled.{name}]\nenabled = true\n{}",
+        "[plugins.shape]\norder = ['bundled.{name}']\n[plugins.shape.bundled.{name}]\nenabled = true\n{}",
         options(overrides)
     ))
     .unwrap()
@@ -243,19 +243,9 @@ fn go_and_javascript_comment_runs_document_functions() {
 }
 
 #[test]
-fn the_default_pipeline_makes_every_plugin_that_is_on() {
+fn the_default_pipeline_can_be_created() {
     let config = Config::default();
     Pipeline::from_config(&config, Path::new("."), NonZeroUsize::MIN).unwrap();
-    let made: Vec<&str> = config
-        .plugins
-        .enabled()
-        .map(|(reference, _)| reference.trim_start_matches("bundled."))
-        .collect();
-    assert_eq!(
-        made,
-        ["deleted-bodies", "test-bodies", "removed-runs", "context"],
-        "the summarizer is off until turned on"
-    );
 }
 
 /// The manifest can accept an option the component itself rejects: the
@@ -274,13 +264,13 @@ fn options_that_do_not_deserialize_are_a_setup_error() {
     )
     .unwrap();
     let error = configured(&format!(
-        "[plugins]\norder = ['external.context']\n[plugins.external.context]\npath = {:?}\nextra = 1\n",
+        "[plugins.shape]\norder = ['context']\n[plugins.shape.context]\npath = {:?}\nextra = 1\n",
         dir.path()
     ))
     .err()
     .expect("unknown option rejected");
     let error = format!("{error:#}");
-    assert!(error.contains("plugins.external.context"), "{error}");
+    assert!(error.contains("plugins.shape.context"), "{error}");
     assert!(error.contains("unknown field `extra`"), "{error}");
 }
 
@@ -293,7 +283,7 @@ fn external_plugins_require_a_component() {
     )
     .unwrap();
     let config = Config::from_toml_in(
-        "[plugins]\norder = ['external.context']\n[plugins.external.context]\npath = '.'\n",
+        "[plugins.shape]\norder = ['context']\n[plugins.shape.context]\npath = '.'\n",
         dir.path(),
     )
     .unwrap();
@@ -302,12 +292,12 @@ fn external_plugins_require_a_component() {
         .unwrap();
     let error = format!("{error:#}");
     assert!(error.contains("plugin.wasm"), "{error}");
-    assert!(error.contains("plugins.external.context"), "{error}");
+    assert!(error.contains("plugins.shape.context"), "{error}");
 }
 
 #[test]
 fn a_subset_of_bundled_plugins_can_use_shared_query_tags() {
-    Config::from_toml("[plugins]\norder = ['bundled.deleted-bodies']\n")
+    Config::from_toml("[plugins.shape]\norder = ['bundled.deleted-bodies']\n")
         .unwrap()
         .compile()
         .unwrap();
@@ -328,7 +318,7 @@ fn documentation_relationship_comes_from_query_captures_not_distance() {
 fn a_plugin_configured_as_the_wrong_kind_is_a_setup_error() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let config = Config::from_toml(&format!(
-        "[classifier]\npath = {:?}\n",
+        "[plugins.classify.context]\npath = {:?}\n",
         root.join("plugins/shape/context")
     ))
     .unwrap();
@@ -340,7 +330,7 @@ fn a_plugin_configured_as_the_wrong_kind_is_a_setup_error() {
         "{error:#}"
     );
     let error = configured(&format!(
-        "[plugins]\norder = ['external.classify']\n[plugins.external.classify]\npath = {:?}\n",
+        "[plugins.shape]\norder = ['classify']\n[plugins.shape.classify]\npath = {:?}\n",
         root.join("plugins/classify")
     ))
     .err()

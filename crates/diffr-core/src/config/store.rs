@@ -16,7 +16,7 @@ pub fn show(config: &Config, reveal: bool) -> serde_json::Value {
 pub fn redacted(config: &Config, reveal: bool) -> Config {
     let mut shown = config.clone();
     if !reveal {
-        for entry in shown.plugins.entries.values_mut() {
+        for entry in shown.plugins.shape.entries.values_mut() {
             if let Some(key) = entry
                 .options
                 .get_mut("api_key")
@@ -67,21 +67,21 @@ fn reset(
     existing: &str,
     directory: &Path,
 ) -> Result<(), ConfigError> {
-    let ["plugins", namespace, name, field] = key.split('.').collect::<Vec<_>>()[..] else {
+    let segments: Vec<_> = key.split('.').collect();
+    let Some(("shape", name, field)) = plugin_setting(&segments) else {
         return Ok(());
     };
     let config = Config::from_toml_in(existing, directory)?;
-    let Some(entry) = config.plugins.entries.get(&format!("{namespace}.{name}")) else {
+    let Some(entry) = config.plugins.shape.entries.get(&name) else {
         return Ok(());
     };
     if entry.options.get(field) == serde_json::to_value(value).ok().as_ref() {
         return Ok(());
     }
     for option in entry.folder().manifest.reset_by(field) {
-        super::prune::remove(
-            document.as_table_mut(),
-            &["plugins", namespace, name, option],
-        );
+        let mut path = segments[..segments.len() - 1].to_vec();
+        path.push(option);
+        super::prune::remove(document.as_table_mut(), &path);
     }
     Ok(())
 }
@@ -118,20 +118,30 @@ fn write(path: &Path, document: toml_edit::DocumentMut) -> Result<(), ConfigErro
 /// (in `directory`) points it at; `path` is diffr's, and a string.
 fn setting_schema(key: &str, existing: &str, directory: &Path) -> Result<Value, ConfigError> {
     let unknown = || ConfigError(format!("{key}: unknown key"));
-    if let ["plugins", namespace, name, field] = key.split('.').collect::<Vec<_>>().as_slice() {
-        if *field == PATH {
+    let config = Config::from_toml_in(existing, directory)?;
+    let segments: Vec<_> = key.split('.').collect();
+    if let Some((namespace, name, field)) = plugin_setting(&segments) {
+        let (manifest, custom) = match namespace {
+            "shape" => {
+                let entry = config
+                    .plugins
+                    .shape
+                    .entries
+                    .get(&name)
+                    .ok_or_else(unknown)?;
+                (&entry.folder().manifest, !name.starts_with("bundled."))
+            }
+            "classify" if config.plugins.classify.name == name && field != "enabled" => (
+                &config.plugins.classify.folder().manifest,
+                name != "bundled",
+            ),
+            _ => return Err(unknown()),
+        };
+        if field == PATH && custom {
             return Ok(json!({"type": "string"}));
         }
-        let config = Config::from_toml_in(existing, directory)?;
-        let manifest = &config
-            .plugins
-            .entries
-            .get(&format!("{namespace}.{name}"))
-            .ok_or_else(unknown)?
-            .folder()
-            .manifest;
         return manifest.settings_schema()["properties"]
-            .get(*field)
+            .get(field)
             .cloned()
             .ok_or_else(unknown);
     }
@@ -224,6 +234,18 @@ fn typed_value(key: &str, schema: &Value, text: &str) -> Result<toml::Value, Con
     })
 }
 
+fn plugin_setting<'a>(parts: &'a [&str]) -> Option<(&'a str, String, &'a str)> {
+    match parts {
+        ["plugins", "shape", "bundled", name, field] => {
+            Some(("shape", format!("bundled.{name}"), field))
+        }
+        ["plugins", namespace @ ("shape" | "classify"), name, field] => {
+            Some((namespace, (*name).to_owned(), field))
+        }
+        _ => None,
+    }
+}
+
 fn assign(
     document: &mut toml_edit::DocumentMut,
     key: &str,
@@ -299,64 +321,129 @@ mod tests {
     fn plugin_keys_are_written_under_their_quoted_names() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        set(&path, "plugins.bundled.deleted-bodies.min_lines", "30").unwrap();
-        set(&path, "plugins.bundled.summarize.api_key", "secret").unwrap();
+        set(
+            &path,
+            "plugins.shape.bundled.deleted-bodies.min_lines",
+            "30",
+        )
+        .unwrap();
+        set(&path, "plugins.shape.bundled.summarize.api_key", "secret").unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         let config = Config::from_toml(&text).unwrap();
         assert_eq!(
-            config.plugins.entries["bundled.deleted-bodies"].options["min_lines"],
+            config.plugins.shape.entries["bundled.deleted-bodies"].options["min_lines"],
             30
         );
-        assert!(set(&path, "plugins.bundled.deleted-bodies.typo", "1").is_err());
-        assert!(set(&path, "plugins.bundled.deleted-bodies.min_lines", "-1").is_err());
-        assert!(set(&path, "plugins.order", "[\"group\"]").is_err());
+        assert!(set(&path, "plugins.shape.bundled.deleted-bodies.typo", "1").is_err());
+        assert!(set(
+            &path,
+            "plugins.shape.bundled.deleted-bodies.min_lines",
+            "-1"
+        )
+        .is_err());
+        assert!(set(&path, "plugins.shape.order", "[\"group\"]").is_err());
         let error = |key: &str, value: &str| set(&path, key, value).unwrap_err().to_string();
         assert_eq!(
-            error("plugins.bundled.context.enabled", "yes"),
-            "plugins.bundled.context.enabled: expected true or false, got \"yes\""
+            error("plugins.shape.bundled.context.enabled", "yes"),
+            "plugins.shape.bundled.context.enabled: expected true or false, got \"yes\""
         );
-        assert!(error("plugins.order", "context")
-            .starts_with("plugins.order: expected a TOML array such as [\"a\", \"b\"]"));
+        assert!(error("plugins.shape.order", "context")
+            .starts_with("plugins.shape.order: expected a TOML array such as [\"a\", \"b\"]"));
         assert_eq!(
-            error("plugins.bundled.context.lines", "many"),
-            "plugins.bundled.context.lines: expected an integer, got \"many\""
-        );
-        assert_eq!(
-            error("plugins.bundled.summarize.provider", "mistral"),
-            "plugins.bundled.summarize.provider: expected one of \"gemini\", \"openai\", \"anthropic\", got \"mistral\""
+            error("plugins.shape.bundled.context.lines", "many"),
+            "plugins.shape.bundled.context.lines: expected an integer, got \"many\""
         );
         assert_eq!(
-            error("plugins.external.mine.enabled", "true"),
-            "plugins.external.mine.enabled: unknown key"
+            error("plugins.shape.bundled.summarize.provider", "mistral"),
+            "plugins.shape.bundled.summarize.provider: expected one of \"gemini\", \"openai\", \"anthropic\", got \"mistral\""
         );
-        set(&path, "plugins.bundled.context.enabled", "false").unwrap();
+        assert_eq!(
+            error("plugins.shape.mine.enabled", "true"),
+            "plugins.shape.mine.enabled: unknown key"
+        );
+        set(&path, "plugins.shape.bundled.context.enabled", "false").unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert_eq!(
-            Config::from_toml(&text).unwrap().plugins.entries["bundled.context"].enabled,
+            Config::from_toml(&text).unwrap().plugins.shape.entries["bundled.context"].enabled,
             Some(false)
         );
         let shown = show(&config, false);
         assert_eq!(
-            shown["plugins"]["bundled"]["summarize"]["api_key"],
+            shown["plugins"]["shape"]["bundled"]["summarize"]["api_key"],
             "<redacted>"
         );
         assert_eq!(
-            show(&config, true)["plugins"]["bundled"]["summarize"]["api_key"],
+            show(&config, true)["plugins"]["shape"]["bundled"]["summarize"]["api_key"],
             "secret"
         );
         assert_eq!(
-            shown["plugins"]["bundled"]["deleted-bodies"],
+            shown["plugins"]["shape"]["bundled"]["deleted-bodies"],
             serde_json::json!({"enabled": true, "min_lines": 30})
         );
-        assert_eq!(
-            shown["plugins"]["bundled"]["summarize"]["system_prompt"],
-            crate::plugin::builtin::manifest("summarize")
-                .unwrap()
-                .options["system_prompt"]["default"]
-        );
         let text = toml::to_string_pretty(&redacted(&config, false)).unwrap();
-        assert!(text.contains("[plugins.bundled.summarize]"), "{text}");
+        assert!(text.contains("[plugins.shape.bundled.summarize]"), "{text}");
         assert!(text.contains("system_prompt = "), "{text}");
+    }
+
+    #[test]
+    fn classifier_settings_use_the_selected_manifests_types() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("plugin.toml"),
+            "name = 'custom'\ntitle = 'Custom classifier'\n[options.depth]\ntype = 'integer'\ntitle = 'Depth'\ndefault = 2\n",
+        ).unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[plugins.classify.custom]\npath = '.'\n").unwrap();
+        set(&path, "plugins.classify.custom.depth", "5").unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        let config = Config::from_toml_in(&saved, dir.path()).unwrap();
+        assert_eq!(config.plugins.classify.options["depth"], 5);
+        assert!(set(&path, "plugins.classify.custom.depth", "many").is_err());
+        assert!(set(&path, "plugins.classify.custom.enabled", "false").is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+    }
+
+    #[test]
+    fn a_custom_name_with_spaces_keeps_its_identity_when_edited() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("plugin.toml"),
+            "name = 'my context'\ntitle = 'Custom'\n[options.depth]\ntype = 'integer'\ntitle = 'Depth'\ndefault = 2\n").unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[plugins.shape]\norder = ['my context']\n[plugins.shape.\"my context\"]\npath = '.'\n",
+        )
+        .unwrap();
+        set(&path, "plugins.shape.my context.depth", "5").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let config = Config::from_toml_in(&text, dir.path()).unwrap();
+        assert_eq!(
+            config.plugins.shape.entries["my context"].options["depth"],
+            5
+        );
+        assert_eq!(config.plugins.shape.queries().unwrap()[0].0, "my context");
+        set(&path, "plugins.shape.my context.depth", "2").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("depth"), "{text}");
+        let config = Config::from_toml_in(&text, dir.path()).unwrap();
+        assert_eq!(
+            config.plugins.shape.entries["my context"].options["depth"],
+            2
+        );
+    }
+
+    #[test]
+    fn an_old_format_is_reported_before_its_keys_and_left_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let old = "version = 1\n[plugins.bundled.context]\nlines = 8\n";
+        std::fs::write(&path, old).unwrap();
+        let error = set(&path, "plugins.bundled.context.lines", "9").unwrap_err();
+        assert!(
+            error.to_string().contains("unsupported config version 1"),
+            "{error}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), old);
     }
 
     #[test]
@@ -370,28 +457,28 @@ mod tests {
         )
         .unwrap();
         let path = dir.path().join("config.toml");
-        let order = "order = ['bundled.context', 'bundled.deleted-bodies', 'bundled.test-bodies', 'bundled.removed-runs', 'bundled.summarize', 'external.mine']";
+        let order = "order = ['bundled.context', 'bundled.deleted-bodies', 'bundled.test-bodies', 'bundled.removed-runs', 'bundled.summarize', 'mine']";
         std::fs::write(
             &path,
-            format!("[plugins]\n{order}\n[plugins.external.mine]\npath = 'plugins/mine'\n"),
+            format!("[plugins.shape]\n{order}\n[plugins.shape.mine]\npath = 'plugins/mine'\n"),
         )
         .unwrap();
-        set(&path, "plugins.external.mine.depth", "3").unwrap();
-        set(&path, "plugins.external.mine.enabled", "false").unwrap();
-        set(&path, "plugins.external.mine.path", "plugins/mine").unwrap();
+        set(&path, "plugins.shape.mine.depth", "3").unwrap();
+        set(&path, "plugins.shape.mine.enabled", "false").unwrap();
+        set(&path, "plugins.shape.mine.path", "plugins/mine").unwrap();
         let error = |key: &str, value: &str| set(&path, key, value).unwrap_err().to_string();
         assert_eq!(
-            error("plugins.external.mine.depth", "deep"),
-            "plugins.external.mine.depth: expected an integer, got \"deep\""
+            error("plugins.shape.mine.depth", "deep"),
+            "plugins.shape.mine.depth: expected an integer, got \"deep\""
         );
         assert_eq!(
-            error("plugins.external.mine.typo", "1"),
-            "plugins.external.mine.typo: unknown key"
+            error("plugins.shape.mine.typo", "1"),
+            "plugins.shape.mine.typo: unknown key"
         );
         let text = std::fs::read_to_string(&path).unwrap();
         let config = Config::from_toml_in(&text, dir.path()).unwrap();
-        assert_eq!(config.plugins.entries["external.mine"].options["depth"], 3);
-        assert_eq!(config.plugins.entries["external.mine"].enabled, Some(false));
+        assert_eq!(config.plugins.shape.entries["mine"].options["depth"], 3);
+        assert_eq!(config.plugins.shape.entries["mine"].enabled, Some(false));
     }
 
     #[test]
@@ -493,61 +580,53 @@ mod sparse_tests {
         let path = dir.path().join("config.toml");
         set(&path, "diff.graph_limit", "42").unwrap();
         let raw = read_toml(&path);
-        assert_eq!(raw["version"].as_integer(), Some(1));
+        assert_eq!(raw["version"].as_integer(), Some(2));
         assert_eq!(raw["diff"]["graph_limit"].as_integer(), Some(42));
         assert!(raw.get("plugins").is_none(), "{raw}");
         let text = std::fs::read_to_string(&path).unwrap();
         std::fs::write(&path, format!("# personal config\n{text}")).unwrap();
-        set(&path, "plugins.bundled.context.lines", "8").unwrap();
-        set(&path, "plugins.bundled.summarize.api_key", "").unwrap();
+        set(&path, "plugins.shape.bundled.context.lines", "8").unwrap();
+        set(&path, "plugins.shape.bundled.summarize.api_key", "").unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.starts_with("# personal config\n"), "{text}");
         let raw = read_toml(&path);
         assert_eq!(
-            raw["plugins"]["bundled"]["context"]["lines"].as_integer(),
+            raw["plugins"]["shape"]["bundled"]["context"]["lines"].as_integer(),
             Some(8)
         );
         // An empty key is not the same as no key, so it stays.
         assert_eq!(
-            raw["plugins"]["bundled"]["summarize"]["api_key"].as_str(),
+            raw["plugins"]["shape"]["bundled"]["summarize"]["api_key"].as_str(),
             Some("")
         );
         // Setting a default removes the key.
-        set(&path, "plugins.bundled.context.lines", "3").unwrap();
+        set(&path, "plugins.shape.bundled.context.lines", "3").unwrap();
         let raw = read_toml(&path);
-        assert!(raw["plugins"]["bundled"].get("context").is_none(), "{raw}");
+        assert!(
+            raw["plugins"]["shape"]["bundled"].get("context").is_none(),
+            "{raw}"
+        );
         assert_eq!(Config::from_toml(&text).unwrap().diff.graph_limit, 42);
     }
 
     #[test]
-    fn a_materialized_file_becomes_sparse_and_forgets_an_old_default_prompt() {
+    fn a_materialized_file_becomes_sparse() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        // What earlier versions wrote on the first edit: every default, and
-        // the default prompt of the time.
+        // What earlier versions wrote on the first edit: every default.
         let mut old = toml::Value::try_from(Config::default()).unwrap();
-        let summarize = old["plugins"]["bundled"]["summarize"]
+        let summarize = old["plugins"]["shape"]["bundled"]["summarize"]
             .as_table_mut()
             .unwrap();
-        summarize.insert("system_prompt".into(), LEGACY.into());
         summarize.insert("api_key".into(), "secret".into());
-        old["plugins"]["bundled"]["context"]
+        old["plugins"]["shape"]["bundled"]["context"]
             .as_table_mut()
             .unwrap()
             .insert("lines".into(), 8.into());
         std::fs::write(&path, toml::to_string(&old).unwrap()).unwrap();
-        let loaded = Config::from_toml(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(
-            loaded.plugins.entries["bundled.summarize"].options["system_prompt"],
-            Config::default().plugins.entries["bundled.summarize"].options["system_prompt"],
-            "an old default prompt reads as the current default"
-        );
         set(&path, "diff.graph_limit", "42").unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !text.contains("[plugins]\n") && !text.contains("[plugins.bundled]\n"),
-            "{text}"
-        );
+        assert!(!text.contains("[plugins.shape]\n"), "{text}");
         let raw = read_toml(&path);
         let mut keys = Vec::new();
         fn walk(value: &toml::Value, prefix: String, keys: &mut Vec<String>) {
@@ -565,8 +644,8 @@ mod sparse_tests {
             keys,
             [
                 "diff.graph_limit",
-                "plugins.bundled.context.lines",
-                "plugins.bundled.summarize.api_key",
+                "plugins.shape.bundled.context.lines",
+                "plugins.shape.bundled.summarize.api_key",
                 "version",
             ]
         );
@@ -578,7 +657,7 @@ mod sparse_tests {
         let path = dir.path().join("config.toml");
         std::fs::write(
             &path,
-            "# my settings\n[plugins] # note\n[plugins.bundled.context]\n# lines = 10 later\nenabled = true\nlines = 8\n",
+            "# my settings\n[plugins.shape] # note\n[plugins.shape.bundled.context]\n# lines = 10 later\nenabled = true\nlines = 8\n",
         )
         .unwrap();
         set(&path, "diff.graph_limit", "42").unwrap();
@@ -594,7 +673,7 @@ mod sparse_tests {
         let path = dir.path().join("config.toml");
         std::fs::write(
             &path,
-            "[classifier]\nhide = [\n  # keep generated code out\n  \"generated\",\n  \"vendored\",\n  \"test\", # tests too\n]\n",
+            "[plugins.classify.bundled]\nhide = [\n  # keep generated code out\n  \"generated\",\n  \"vendored\",\n  \"test\", # tests too\n]\n",
         )
         .unwrap();
         set(&path, "diff.graph_limit", "42").unwrap();
@@ -611,31 +690,36 @@ mod sparse_tests {
         // Earlier versions wrote every table with its own header.
         std::fs::write(
             &path,
-            "version = 1\n\n[plugins]\n\n[plugins.bundled]\n\n[plugins.bundled.context]\nlines = 3\n",
+            "version = 2\n\n[plugins.shape]\n[plugins.shape.bundled.context]\nlines = 3\n",
         )
         .unwrap();
         set(&path, "diff.graph_limit", "42").unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(!text.contains("plugins"), "{text}");
+        assert!(!text.contains("shape"), "{text}");
     }
 
     #[test]
     fn a_model_equal_to_its_providers_default_is_dropped() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        set(&path, "plugins.bundled.summarize.provider", "openai").unwrap();
-        set(&path, "plugins.bundled.summarize.model", "gpt-6-luna").unwrap();
+        set(&path, "plugins.shape.bundled.summarize.provider", "openai").unwrap();
+        set(&path, "plugins.shape.bundled.summarize.model", "gpt-6-luna").unwrap();
         let raw = read_toml(&path);
         assert!(
-            raw["plugins"]["bundled"]["summarize"]
+            raw["plugins"]["shape"]["bundled"]["summarize"]
                 .get("model")
                 .is_none(),
             "{raw}"
         );
-        set(&path, "plugins.bundled.summarize.model", "gemini-3.8-flash").unwrap();
+        set(
+            &path,
+            "plugins.shape.bundled.summarize.model",
+            "gemini-3.8-flash",
+        )
+        .unwrap();
         let raw = read_toml(&path);
         assert_eq!(
-            raw["plugins"]["bundled"]["summarize"]["model"].as_str(),
+            raw["plugins"]["shape"]["bundled"]["summarize"]["model"].as_str(),
             Some("gemini-3.8-flash")
         );
     }
@@ -645,7 +729,12 @@ mod sparse_tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         let summarize = |key: &str, value: &str| {
-            set(&path, &format!("plugins.bundled.summarize.{key}"), value).unwrap()
+            set(
+                &path,
+                &format!("plugins.shape.bundled.summarize.{key}"),
+                value,
+            )
+            .unwrap()
         };
         summarize("provider", "anthropic");
         summarize("api_key", "anthropic-key");
@@ -657,12 +746,14 @@ mod sparse_tests {
         summarize("provider", "anthropic");
         let raw = read_toml(&path);
         assert_eq!(
-            raw["plugins"]["bundled"]["summarize"]["api_key"].as_str(),
+            raw["plugins"]["shape"]["bundled"]["summarize"]["api_key"].as_str(),
             Some("anthropic-key")
         );
         summarize("provider", "gemini");
         let raw = read_toml(&path);
-        let entry = raw["plugins"]["bundled"]["summarize"].as_table().unwrap();
+        let entry = raw["plugins"]["shape"]["bundled"]["summarize"]
+            .as_table()
+            .unwrap();
         let mut keys: Vec<&str> = entry.keys().map(String::as_str).collect();
         keys.sort_unstable();
         // Gemini is the default provider, so it is pruned too.
@@ -675,16 +766,14 @@ mod sparse_tests {
         let path = dir.path().join("config.toml");
         std::fs::write(
             &path,
-            "# just context\n[plugins]\norder = ['bundled.context']\n",
+            "# just context\n[plugins.shape]\norder = ['bundled.context']\n",
         )
         .unwrap();
         set(&path, "diff.graph_limit", "42").unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         let config = Config::from_toml(&text).unwrap();
-        assert_eq!(config.plugins.entries.len(), 1);
-        assert!(text.contains("# just context\n[plugins]"), "{text}");
-        assert!(!text.contains("bundled.deleted-bodies"));
+        assert_eq!(config.plugins.shape.entries.len(), 1);
+        assert!(text.contains("# just context\n[plugins.shape]"), "{text}");
+        assert!(!text.contains("deleted-bodies"));
     }
-
-    const LEGACY: &str = "For each listed fold, rewrite that function body as short pseudocode. Keep the names. No prose, no comments, no code fences. Use as few lines as possible: about one pseudocode line per five source lines, and never more than a third of the body's lines. When a fold lists a doc, also set \"summary\" to one sentence copied verbatim from that doc; otherwise leave it empty. Answer with a JSON array of {\"id\", \"summary\", \"pseudocode\"} objects, one per fold.";
 }

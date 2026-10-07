@@ -8,11 +8,11 @@
 //! `title` and an `x-group` that settings screens show in place of the
 //! dotted key. Lists are in the schema marked `"x-settings": false`: a
 //! settings screen edits scalars and leaves those to the file and `diffr
-//! config set`. The `plugins` part of the schema comes from each plugin's
+//! config set`. The `plugins.shape` part of the schema comes from each plugin's
 //! `plugin.toml`, with lists and tables marked the same way. `config set`
 //! keeps only what differs from the defaults (see [`prune`]).
 //!
-//! `[plugins]` configures the plugins that shape regions after diffing (see
+//! `[plugins.shape]` configures the plugins that shape regions after diffing (see
 //! [`crate::plugin`]). Compiling assembles, per language, one query from the
 //! query files of every enabled plugin (see [`crate::plugin::queries`]): its
 //! `@fold` captures decide which folds exist, and its tags what they are.
@@ -23,7 +23,7 @@ pub mod store;
 use crate::hash::DftHashMap;
 use crate::options::DiffOptions;
 use crate::parse::{guess_language::Language, tree_sitter_parser};
-use crate::plugin::config::{ClassifierConfig, PluginsConfig};
+use crate::plugin::config::PluginsConfig;
 use crate::plugin::queries::{self, Queries};
 use query::AnnotationQuery;
 use schemars::JsonSchema;
@@ -33,7 +33,7 @@ use std::sync::{Arc, OnceLock};
 use strum::IntoEnumIterator;
 
 pub(crate) const DEFAULT_CONFIG: &str = include_str!("config/default.toml");
-const CONFIG_VERSION: u32 = 1;
+const CONFIG_VERSION: u32 = 2;
 fn config_version() -> u32 {
     CONFIG_VERSION
 }
@@ -41,21 +41,14 @@ fn config_version() -> u32 {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    /// Configuration format version. Unknown versions require a newer diffr.
+    /// Configuration format version.
     #[serde(default = "config_version")]
-    #[schemars(extend("x-settings" = false))]
+    #[schemars(extend("x-settings" = false, "const" = CONFIG_VERSION))]
     pub(crate) version: u32,
-    /// The plugins that decide what starts collapsed, hidden, linked or
-    /// grouped, and the fold queries they own. Its schema comes from each
-    /// plugin's `plugin.toml`; see [`PluginsConfig::schema`].
+    /// The shape and classifier plugins, with settings from their manifests.
     #[schemars(skip)]
     #[serde(default)]
     pub plugins: PluginsConfig,
-    /// The one plugin that tags files before diffing; see
-    /// [`ClassifierConfig::schema`].
-    #[schemars(skip)]
-    #[serde(default)]
-    pub classifier: ClassifierConfig,
     /// Colors for the terminal frontend.
     #[serde(default)]
     pub(crate) theme: ThemeConfig,
@@ -217,24 +210,30 @@ impl Config {
     /// Parse the text of a file in `directory`. Errors lead with the dotted
     /// path of the key they concern, such as `diff.typo`.
     pub fn from_toml_in(source: &str, directory: &Path) -> Result<Self, ConfigError> {
-        let source = prune::forget_legacy(source);
-        let mut config: Self = serde_path_to_error::deserialize(toml::Deserializer::new(&source))
-            .map_err(|error| {
-            let path = error.path().to_string();
-            let message = error.inner().to_string();
-            ConfigError(match path.as_str() {
-                "." => message,
-                _ => format!("{path}: {message}"),
-            })
-        })?;
-        if config.version != CONFIG_VERSION {
+        #[derive(Deserialize)]
+        struct Version {
+            #[serde(default = "config_version")]
+            version: u32,
+        }
+        let version: Version =
+            toml::from_str(source).map_err(|error| ConfigError(error.to_string()))?;
+        if version.version != CONFIG_VERSION {
             return Err(ConfigError(format!(
                 "unsupported config version {}; expected {CONFIG_VERSION}",
-                config.version
+                version.version
             )));
         }
-        config.plugins.resolve(directory)?;
-        config.classifier.resolve(directory)?;
+        let mut config: Self = serde_path_to_error::deserialize(toml::Deserializer::new(source))
+            .map_err(|error| {
+                let path = error.path().to_string();
+                let message = error.inner().to_string();
+                ConfigError(match path.as_str() {
+                    "." => message,
+                    _ => format!("{path}: {message}"),
+                })
+            })?;
+        config.plugins.shape.resolve(directory)?;
+        config.plugins.classify.resolve(directory)?;
         Ok(config)
     }
 
@@ -253,7 +252,6 @@ impl Config {
             .as_object_mut()
             .expect("the schema has properties");
         properties.insert("plugins".to_owned(), PluginsConfig::schema());
-        properties.insert("classifier".to_owned(), ClassifierConfig::schema());
         properties.extend(rest);
         schema
     }
@@ -261,11 +259,11 @@ impl Config {
     /// Compile the query files the enabled plugins' manifests declare. No
     /// plugin runs to supply them.
     pub fn compile(&self) -> Result<Params, ConfigError> {
-        self.compile_queries(self.plugins.queries()?)
+        self.compile_queries(self.plugins.shape.queries()?)
     }
 
     /// Compile with `queries`, the enabled plugins' query files in
-    /// `plugins.order`.
+    /// `plugins.shape.order`.
     pub fn compile_queries(&self, queries: Vec<(String, Queries)>) -> Result<Params, ConfigError> {
         let mut languages: DftHashMap<_, _> = Language::iter()
             .map(|language| (language, OnceLock::new()))
@@ -276,7 +274,7 @@ impl Config {
                 .ok_or_else(|| ConfigError(format!("unknown language: {name}")))?;
             let parser = tree_sitter_parser::from_language(language);
             let query = AnnotationQuery::compile(&parser.language, &sources)?;
-            check_tags(&query, &self.plugins.order)?;
+            check_tags(&query, &self.plugins.shape.order)?;
             languages.insert(
                 language,
                 OnceLock::from(Arc::new(LanguageParams {
@@ -301,9 +299,7 @@ fn check_tags(query: &AnnotationQuery, order: &[String]) -> Result<(), ConfigErr
             let owned = tag.split_once(':').is_some_and(|(plugin, name)| {
                 !name.is_empty()
                     && (crate::plugin::builtin::manifest(plugin).is_some()
-                        || order.iter().any(|own| {
-                            own.split_once('.').map_or(own.as_str(), |(_, name)| name) == plugin
-                        }))
+                        || order.iter().any(|own| own == plugin))
             });
             if !owned {
                 return Err(ConfigError(format!(
@@ -512,10 +508,12 @@ fn with_queries(queries: &[(&str, &str)]) -> Params {
 /// over them.
 #[cfg(test)]
 pub(crate) fn body_params() -> Params {
-    Config::from_toml("[plugins.bundled.context]\nenabled = false\n[plugins.bundled.summarize]\nenabled = true\napi_key = 'test'\n")
-        .expect("a valid configuration")
-        .compile()
-        .expect("the bundled queries compile")
+    Config::from_toml(
+        "[plugins.shape.bundled.context]\nenabled = false\n[plugins.shape.bundled.summarize]\nenabled = true\napi_key = 'test'\n",
+    )
+    .expect("a valid configuration")
+    .compile()
+    .expect("the bundled queries compile")
 }
 
 #[cfg(test)]
@@ -792,7 +790,7 @@ mod format_tests {
         let defaults = Config::default();
         let text = toml::to_string_pretty(&defaults).unwrap();
         let restored = Config::from_toml(&text).unwrap();
-        assert_eq!(defaults.version, 1);
+        assert_eq!(defaults.version, 2);
         assert_eq!(
             serde_json::to_value(defaults).unwrap(),
             serde_json::to_value(restored).unwrap()
@@ -800,15 +798,13 @@ mod format_tests {
     }
 
     #[test]
-    fn unsupported_versions_are_rejected_and_explicit_lists_stay_small() {
-        assert!(Config::from_toml("version = 2")
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("unsupported config version 2"));
-        let config =
-            Config::from_toml("version = 1\n[plugins]\norder = ['bundled.context']\n").unwrap();
-        assert_eq!(config.plugins.entries.len(), 1);
-        assert!(config.plugins.entries.contains_key("bundled.context"));
+    fn unsupported_versions_are_rejected_before_their_keys() {
+        assert!(
+            Config::from_toml("version = 1\n[plugins.bundled.context]\nenabled = false")
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("unsupported config version 1; expected 2")
+        );
     }
 }

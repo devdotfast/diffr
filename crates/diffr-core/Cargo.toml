@@ -122,6 +122,7 @@ serde_path_to_error = "0.1.20"
 schemars = { version = "1.2.2", features = ["preserve_order"] }
 dirs = "5"
 toml_edit = "0.25.15"
+tempfile = "3.27.0"
 jsonschema = { version = "0.56.0", default-features = false }
 # The plugin contract's records, generated from the SDK's WIT without a
 # component runtime.

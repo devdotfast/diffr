@@ -17,6 +17,7 @@
 //! query files of every enabled plugin (see [`crate::plugin::queries`]): its
 //! `@fold` captures decide which folds exist, and its tags what they are.
 //! Every tag a query sets must be written `<plugin>:<name>`.
+pub mod migrate;
 pub(crate) mod prune;
 pub(crate) mod query;
 pub mod store;
@@ -226,7 +227,7 @@ impl Config {
         let mut config: Self = serde_path_to_error::deserialize(toml::Deserializer::new(source))
             .map_err(|error| {
                 let path = error.path().to_string();
-                let message = error.inner().to_string();
+                let message = error.inner().message().to_owned();
                 ConfigError(match path.as_str() {
                     "." => message,
                     _ => format!("{path}: {message}"),

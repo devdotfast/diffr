@@ -34,20 +34,146 @@ pub fn redacted(config: &Config, reveal: bool) -> Config {
 /// [`typed_value`]), then the whole file is validated, before anything
 /// touches the disk: unknown keys, text that is not the key's type, and
 /// values the configuration rejects are errors.
-pub fn set(path: &Path, key: &str, value: &str) -> Result<(), ConfigError> {
+pub fn set(path: &Path, key: &str, value: &str) -> Result<bool, ConfigError> {
     if key.is_empty() || key.split('.').any(str::is_empty) {
         return Err(ConfigError(format!("invalid key {key:?}")));
     }
-    let existing = read(path)?;
-    let directory = directory_of(path);
-    let typed = typed_value(key, &setting_schema(key, &existing, directory)?, value)?;
-    let mut document: toml_edit::DocumentMut = existing
-        .parse()
-        .map_err(|error| ConfigError(format!("{}: {error}", path.display())))?;
-    reset(&mut document, key, &typed, &existing, directory)?;
-    assign(&mut document, key, &typed)?;
+    edit(path, |existing, directory| {
+        let typed = typed_value(key, &setting_schema(key, existing, directory)?, value)?;
+        let parts: Vec<_> = key.split('.').collect();
+        apply(existing, directory, &[(parts, typed)])
+    })
+}
+
+/// Apply a typed partial configuration. Resets run against the old values
+/// before any patch values are assigned, so a new provider and its key can
+/// be saved together. Omitted fields are retained; null is not a TOML value.
+pub fn patch(path: &Path, patch: &Value) -> Result<bool, ConfigError> {
+    let table = patch
+        .as_object()
+        .ok_or_else(|| ConfigError("config patch must be an object".into()))?;
+    let mut entries = Vec::new();
+    flatten(table, &mut Vec::new(), &mut entries)?;
+    edit(path, |existing, directory| {
+        let entries: Vec<_> = entries
+            .iter()
+            .map(|(parts, value)| (parts.iter().map(String::as_str).collect(), value.clone()))
+            .collect();
+        let candidate = apply(existing, directory, &entries)?;
+        let before = Config::from_toml_in(existing, directory)?;
+        let after = Config::from_toml_in(&candidate.to_string(), directory)?;
+        if show(&before, true) == show(&after, true) {
+            parse(existing)
+        } else {
+            Ok(candidate)
+        }
+    })
+}
+
+fn flatten(
+    table: &serde_json::Map<String, Value>,
+    path: &mut Vec<String>,
+    entries: &mut Vec<(Vec<String>, toml::Value)>,
+) -> Result<(), ConfigError> {
+    for (key, value) in table {
+        if key.is_empty() {
+            return Err(ConfigError("config patch contains an empty key".into()));
+        }
+        path.push(key.clone());
+        let parts: Vec<_> = path.iter().map(String::as_str).collect();
+        if let Some(table) = value.as_object().filter(|_| {
+            plugin_setting(&parts).is_none()
+                || matches!(parts.as_slice(), ["plugins", "shape", "bundled", _])
+        }) {
+            if table.is_empty() {
+                return Err(ConfigError(format!(
+                    "{}: empty patch table",
+                    path.join(".")
+                )));
+            }
+            flatten(table, path, entries)?;
+        } else {
+            let value = toml::Value::try_from(value)
+                .map_err(|_| ConfigError(format!("{}: not a TOML value", path.join("."))))?;
+            entries.push((path.clone(), value));
+        }
+        path.pop();
+    }
+    Ok(())
+}
+
+fn apply(
+    existing: &str,
+    directory: &Path,
+    entries: &[(Vec<&str>, toml::Value)],
+) -> Result<toml_edit::DocumentMut, ConfigError> {
+    let mut document = parse(existing)?;
+    for (parts, value) in entries {
+        reset(&mut document, parts, value, existing, directory)?;
+    }
+    for (parts, value) in entries {
+        assign_parts(&mut document, parts, value)?;
+    }
     prune(&mut document, directory)?;
-    write(path, document)
+    Ok(document)
+}
+
+pub(super) fn parse(source: &str) -> Result<toml_edit::DocumentMut, ConfigError> {
+    source.parse::<toml_edit::DocumentMut>().map_err(|error| {
+        // TOML's Display includes the source line, which may contain a key.
+        let line = error.span().map(|span| {
+            source.as_bytes()[..span.start]
+                .iter()
+                .filter(|byte| **byte == b'\n')
+                .count()
+                + 1
+        });
+        ConfigError(match line {
+            Some(line) => format!("invalid TOML at line {line}: {}", error.message()),
+            None => format!("invalid TOML: {}", error.message()),
+        })
+    })
+}
+
+/// Serialize native writers with a file lock, and reject outside edits made
+/// while the candidate was being built. The candidate is validated in memory.
+pub(super) fn edit(
+    path: &Path,
+    convert: impl FnOnce(&str, &Path) -> Result<toml_edit::DocumentMut, ConfigError>,
+) -> Result<bool, ConfigError> {
+    let parent = directory_of(path);
+    std::fs::create_dir_all(parent)
+        .map_err(|error| ConfigError(format!("{}: {error}", parent.display())))?;
+    let path = if path.exists() {
+        std::fs::canonicalize(path)
+    } else {
+        std::fs::canonicalize(parent)
+            .map(|parent| parent.join(path.file_name().expect("config filename")))
+    }
+    .map_err(|error| ConfigError(format!("{}: {error}", path.display())))?;
+    let lock_path = path.with_extension("toml.lock");
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|error| ConfigError(format!("{}: {error}", lock_path.display())))?;
+    lock.lock()
+        .map_err(|error| ConfigError(format!("{}: {error}", lock_path.display())))?;
+    let existing = read(&path)?;
+    let document = convert(&existing, directory_of(&path))?;
+    let candidate = document.to_string();
+    if candidate == existing {
+        return Ok(false);
+    }
+    if read(&path)? != existing {
+        return Err(ConfigError(
+            "config changed while preparing the update; retry".into(),
+        ));
+    }
+    write(&path, document)?;
+    Ok(true)
 }
 
 fn read(path: &Path) -> Result<String, ConfigError> {
@@ -62,13 +188,12 @@ fn read(path: &Path) -> Result<String, ConfigError> {
 /// belong to it: a provider's key, endpoint and model go with the provider.
 fn reset(
     document: &mut toml_edit::DocumentMut,
-    key: &str,
+    segments: &[&str],
     value: &toml::Value,
     existing: &str,
     directory: &Path,
 ) -> Result<(), ConfigError> {
-    let segments: Vec<_> = key.split('.').collect();
-    let Some(("shape", name, field)) = plugin_setting(&segments) else {
+    let Some(("shape", name, field)) = plugin_setting(segments) else {
         return Ok(());
     };
     let config = Config::from_toml_in(existing, directory)?;
@@ -104,12 +229,17 @@ fn prune(document: &mut toml_edit::DocumentMut, directory: &Path) -> Result<(), 
 }
 
 fn write(path: &Path, document: toml_edit::DocumentMut) -> Result<(), ConfigError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| ConfigError(format!("{}: {error}", parent.display())))?;
-    }
-    std::fs::write(path, document.to_string())
-        .map_err(|error| ConfigError(format!("{}: {error}", path.display())))
+    use std::io::Write;
+    let mut temporary = tempfile::NamedTempFile::new_in(directory_of(path))
+        .map_err(|error| ConfigError(format!("{}: {error}", path.display())))?;
+    temporary
+        .write_all(document.to_string().as_bytes())
+        .and_then(|_| temporary.as_file().sync_all())
+        .map_err(|error| ConfigError(format!("{}: {error}", path.display())))?;
+    temporary
+        .persist(path)
+        .map_err(|error| ConfigError(format!("{}: {}", path.display(), error.error)))?;
+    Ok(())
 }
 
 /// The JSON Schema of the setting at the dotted `key`, as `diffr config
@@ -246,24 +376,27 @@ fn plugin_setting<'a>(parts: &'a [&str]) -> Option<(&'a str, String, &'a str)> {
     }
 }
 
-fn assign(
+fn assign_parts(
     document: &mut toml_edit::DocumentMut,
-    key: &str,
+    parts: &[&str],
     value: &toml::Value,
 ) -> Result<(), ConfigError> {
-    let mut segments = key.split('.').peekable();
+    insert(document, parts, toml_edit::Item::Value(edit_value(value)?))
+}
+
+pub(super) fn insert(
+    document: &mut toml_edit::DocumentMut,
+    parts: &[&str],
+    value: toml_edit::Item,
+) -> Result<(), ConfigError> {
+    let (last, parents) = parts
+        .split_last()
+        .ok_or_else(|| ConfigError("empty config key".into()))?;
     let mut item = document.as_item_mut();
-    while let Some(segment) = segments.next() {
-        if segments.peek().is_none() {
-            match item.as_table_like_mut() {
-                Some(table) => table.insert(segment, toml_edit::Item::Value(edit_value(value)?)),
-                None => return Err(ConfigError(format!("{key}: parent is not a table"))),
-            };
-            return Ok(());
-        }
+    for segment in parents {
         let table = item
             .as_table_like_mut()
-            .ok_or_else(|| ConfigError(format!("{key}: parent is not a table")))?;
+            .ok_or_else(|| ConfigError(format!("{}: parent is not a table", parts.join("."))))?;
         if !table.contains_key(segment) {
             let mut nested = toml_edit::Table::new();
             nested.set_implicit(true);
@@ -271,7 +404,10 @@ fn assign(
         }
         item = table.get_mut(segment).expect("just inserted");
     }
-    Err(ConfigError(format!("invalid key {key:?}")))
+    item.as_table_like_mut()
+        .ok_or_else(|| ConfigError(format!("{}: parent is not a table", parts.join("."))))?
+        .insert(last, value);
+    Ok(())
 }
 
 fn edit_value(value: &toml::Value) -> Result<toml_edit::Value, ConfigError> {
@@ -287,7 +423,14 @@ fn edit_value(value: &toml::Value) -> Result<toml_edit::Value, ConfigError> {
             }
             toml_edit::Value::Array(array)
         }
-        toml::Value::Table(_) | toml::Value::Datetime(_) => {
+        toml::Value::Table(table) => {
+            let mut result = toml_edit::InlineTable::new();
+            for (key, value) in table {
+                result.insert(key, edit_value(value)?);
+            }
+            toml_edit::Value::InlineTable(result)
+        }
+        toml::Value::Datetime(_) => {
             return Err(ConfigError(
                 "config set takes a scalar or array value".into(),
             ));
@@ -775,5 +918,75 @@ mod sparse_tests {
         assert_eq!(config.plugins.shape.entries.len(), 1);
         assert!(text.contains("# just context\n[plugins.shape]"), "{text}");
         assert!(!text.contains("deleted-bodies"));
+    }
+}
+
+#[cfg(test)]
+mod patch_tests {
+    use super::*;
+
+    #[test]
+    fn provider_reset_precedes_explicit_batch_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "version = 2\n[plugins.shape.bundled.summarize]\nprovider = 'gemini'\napi_key = 'old-key'\nmodel = 'old-model'\nendpoint = 'old-endpoint'\n").unwrap();
+        patch(&path, &json!({"plugins": {"shape": {"bundled": {"summarize": {"enabled": true, "provider": "openai", "api_key": "new-key", "model": "new-model"}}}}})).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let values = show(&Config::from_toml(&text).unwrap(), true);
+        let summary = &values["plugins"]["shape"]["bundled"]["summarize"];
+        assert_eq!(summary["api_key"], "new-key");
+        assert_eq!(summary["model"], "new-model");
+        assert_eq!(summary["enabled"], true);
+        assert!(!text.contains("old-endpoint"));
+    }
+
+    #[test]
+    fn a_rejected_batch_saves_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = "version = 2\n[plugins.shape.bundled.context]\nlines = 8 # saved value\n";
+        std::fs::write(&path, original).unwrap();
+        for patch_value in [
+            json!({"plugins": {"shape": {"bundled": {"summarize": {"api_key": "private-key"}, "context": {"lines": -1}}}}}),
+            json!({"diff": {"graph_limit": "wrong-type"}}),
+            json!({"diff": {"unknown": true}}),
+            json!({"diff": {"graph_limit": null}}),
+        ] {
+            assert!(patch(&path, &patch_value).is_err());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        }
+    }
+}
+
+#[cfg(test)]
+mod concurrent_writes {
+    use super::*;
+
+    #[test]
+    fn separate_writers_keep_both_updates() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "version = 2\n").unwrap();
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            for patch_value in [
+                json!({"diff": {"graph_limit": 1234}}),
+                json!({"plugins": {"shape": {"bundled": {"context": {"lines": 17}}}}}),
+            ] {
+                let path = &path;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    patch(path, &patch_value).unwrap();
+                });
+            }
+        });
+        let text = std::fs::read_to_string(&path).unwrap();
+        let values = show(&Config::from_toml(&text).unwrap(), false);
+        assert_eq!(values["diff"]["graph_limit"], 1234);
+        assert_eq!(
+            values["plugins"]["shape"]["bundled"]["context"]["lines"],
+            17
+        );
     }
 }

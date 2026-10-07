@@ -188,3 +188,73 @@ fn debug_needs_exactly_one_action() {
         .code(2)
         .stderr(predicate::str::contains("cannot be used with"));
 }
+
+#[test]
+fn config_migration_and_typed_batch_set() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("diffr/config.toml");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(
+        &file,
+        "version = 1\n[plugins.bundled.summarize]\ninstances = 3\nsystem_prompt = 'My prompt'\n",
+    )
+    .unwrap();
+    let mut command = get_base_command();
+    command
+        .env("XDG_CONFIG_HOME", dir.path())
+        .args(["config", "migrate", "--json"]);
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["changed"], true);
+    assert!(result["dropped"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("plugins.bundled.summarize.instances")));
+
+    let original = std::fs::read_to_string(&file).unwrap();
+    for (patch, success) in [
+        (
+            r#"{"plugins":{"shape":{"bundled":{"summarize":{"provider":"openai","api_key":"new-key","model":"new-model"}}}}}"#,
+            true,
+        ),
+        (
+            r#"{"plugins":{"shape":{"bundled":{"context":{"lines":-1},"summarize":{"api_key":"private-key"}}}}}"#,
+            false,
+        ),
+    ] {
+        let before = std::fs::read_to_string(&file).unwrap();
+        let mut command = get_base_command();
+        let mut child = command
+            .env("XDG_CONFIG_HOME", dir.path())
+            .args(["config", "set", "--stdin", "--json"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(patch.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(output.status.success(), success);
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("private-key"));
+        if success {
+            assert_eq!(result["changed"], true);
+        } else {
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+            assert!(result["error"]["repair_prompt"].is_string());
+        }
+    }
+    assert!(original.contains("My prompt"));
+    assert!(std::fs::read_to_string(file).unwrap().contains("My prompt"));
+}

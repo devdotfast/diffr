@@ -146,7 +146,7 @@ fn resolve_key(config: &Options, custom_endpoint: bool) -> Key {
         return Key::NotRequired;
     }
     eprintln!(
-        "summarize: off for this run: no API key: set plugins.bundled.summarize.api_key, or {} in the environment, or turn the summarizer off with plugins.bundled.summarize.enabled = false",
+        "summarize: off for this run: no API key: set plugins.shape.bundled.summarize.api_key, or {} in the environment, or turn the summarizer off with plugins.shape.bundled.summarize.enabled = false",
         variables.join(" or ")
     );
     Key::Missing

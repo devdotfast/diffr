@@ -16,7 +16,7 @@ fn project_with(
     options: DiffOptions,
 ) -> (FileChange, Pairing<protocol::Source>) {
     let params =
-        Config::from_toml("[plugins.bundled.summarize]\nenabled = true\napi_key = 'test'\n")
+        Config::from_toml("[plugins.shape.bundled.summarize]\nenabled = true\napi_key = 'test'\n")
             .unwrap()
             .compile()
             .unwrap();

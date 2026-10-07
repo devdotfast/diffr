@@ -197,7 +197,7 @@ fn bundled_and_external_components_produce_identical_files() {
     );
     let head = fixture.commit("head\n");
 
-    let options = "[plugins.bundled.deleted-bodies]\nmin_lines = 3\n[plugins.bundled.test-bodies]\nmin_lines = 2\n";
+    let options = "[plugins.shape.bundled.deleted-bodies]\nmin_lines = 3\n[plugins.shape.bundled.test-bodies]\nmin_lines = 2\n";
     let bundled = fixture.config("bundled", options);
     let plugin = |name: &str| {
         root()
@@ -210,7 +210,7 @@ fn bundled_and_external_components_produce_identical_files() {
     let wasm = fixture.config(
         "wasm",
         &format!(
-            "[classifier]\npath = {:?}\n[plugins]\norder = ['external.deleted-bodies', 'external.test-bodies', 'external.removed-runs', 'external.context']\n[plugins.external.context]\npath = {:?}\n[plugins.external.deleted-bodies]\npath = {:?}\nmin_lines = 3\n[plugins.external.test-bodies]\npath = {:?}\nmin_lines = 2\n[plugins.external.removed-runs]\npath = {:?}\n",
+            "[plugins.classify.classify]\npath = {:?}\n[plugins.shape]\norder = ['deleted-bodies', 'test-bodies', 'removed-runs', 'context']\n[plugins.shape.context]\npath = {:?}\n[plugins.shape.deleted-bodies]\npath = {:?}\nmin_lines = 3\n[plugins.shape.test-bodies]\npath = {:?}\nmin_lines = 2\n[plugins.shape.removed-runs]\npath = {:?}\n",
             root().join("plugins/classify").display().to_string(),
             plugin("context"),
             plugin("deleted-bodies"),

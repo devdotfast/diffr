@@ -75,7 +75,11 @@ fn a_summarizer_without_a_key_still_diffs() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("diffr/config.toml");
     std::fs::create_dir_all(config.parent().unwrap()).unwrap();
-    std::fs::write(&config, "[plugins.bundled.summarize]\nenabled = true\n").unwrap();
+    std::fs::write(
+        &config,
+        "[plugins.shape.bundled.summarize]\nenabled = true\n",
+    )
+    .unwrap();
     let mut cmd = get_base_command();
 
     cmd.args([

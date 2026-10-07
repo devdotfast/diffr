@@ -26,7 +26,7 @@ pub(crate) fn prune(document: &mut DocumentMut, resolve: impl Fn(&str) -> Option
 }
 
 /// Leave out the uncommented header of a table that only holds tables, such
-/// as `[plugins]` above `[plugins.bundled.context]`.
+/// as `[plugins.shape]` above `[plugins.shape.bundled.context]`.
 fn hide_headers(table: &mut toml_edit::Table) {
     let only_tables = table.iter().all(|(_, item)| item.is_table());
     if only_tables && !table.is_empty() && !commented(table.decor()) {

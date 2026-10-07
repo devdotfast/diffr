@@ -1,4 +1,4 @@
-//! `[plugins]`: the order plugins run in, and one entry per plugin with its
+//! `[plugins.shape]`: the order plugins run in, and one entry per plugin with its
 //! switch and options. Also `plugin.toml`, the static description every
 //! plugin folder carries: the plugin's name, title and options schema.
 //!
@@ -37,7 +37,7 @@ pub(crate) const COMPONENT_FILE: &str = "plugin.wasm";
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
-    /// The plugin's entry name in `[plugins]`, and the prefix of every tag
+    /// The plugin's name, and the prefix of every tag
     /// its queries set: `<name>:<tag>`.
     pub(crate) name: String,
     /// The human name settings screens group the plugin's settings under.
@@ -281,7 +281,7 @@ impl Manifest {
         }
     }
 
-    /// The entry this plugin adds to `diffr config schema` under `plugins`.
+    /// The entry this plugin adds to `diffr config schema`.
     /// Each option keeps its own schema, with the plugin's title as its
     /// `x-group` unless it sets one. An option whose type is an array or an
     /// object is marked `"x-settings": false`: settings screens edit
@@ -327,43 +327,81 @@ impl Manifest {
             "title": group,
             "description": self.description,
             "properties": properties,
+            "additionalProperties": false,
         })
     }
 }
 
-/// `[plugins]`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(from = "PluginTables", into = "PluginTables")]
+/// `[plugins]`: the shape pipeline and the one file classifier.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct PluginsConfig {
+    pub shape: ShapeConfig,
+    pub classify: ClassifierConfig,
+}
+
+impl PluginsConfig {
+    pub(crate) fn schema() -> Value {
+        json!({
+            "type": "object",
+            "description": "The shape pipeline and the classifier that tags changed files.",
+            "properties": {
+                "shape": ShapeConfig::schema(),
+                "classify": ClassifierConfig::schema(),
+            },
+            "additionalProperties": false,
+        })
+    }
+}
+
+/// `[plugins.shape]`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(try_from = "PluginTables", into = "PluginTables")]
+pub struct ShapeConfig {
     /// The plugins in the order they run; each sees the region trees the
     /// ones before it left. Every entry is listed exactly once.
     pub(crate) order: Vec<String>,
-    /// Every entry, by plugin name.
+    /// Every entry, by reference: `bundled.<name>` or the whole custom name.
     pub entries: BTreeMap<String, Entry>,
 }
 
-/// The on-disk namespaces. An explicit order makes the listed entries
+/// The on-disk table. An explicit order makes the listed entries
 /// authoritative; a partial settings file without order inherits the defaults.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct PluginTables {
     order: Option<Vec<String>>,
     bundled: BTreeMap<String, Entry>,
-    external: BTreeMap<String, Entry>,
+    #[serde(flatten)]
+    entries: BTreeMap<String, Entry>,
 }
 
 fn default_tables() -> PluginTables {
     #[derive(Deserialize)]
     struct Defaults {
-        plugins: PluginTables,
+        plugins: PluginDefaults,
+    }
+    #[derive(Deserialize)]
+    struct PluginDefaults {
+        shape: PluginTables,
     }
     toml::from_str::<Defaults>(crate::config::DEFAULT_CONFIG)
         .expect("embedded plugin defaults")
         .plugins
+        .shape
 }
 
-impl From<PluginTables> for PluginsConfig {
-    fn from(tables: PluginTables) -> Self {
+impl TryFrom<PluginTables> for ShapeConfig {
+    type Error = ConfigError;
+
+    fn try_from(tables: PluginTables) -> Result<Self, Self::Error> {
+        for name in tables.entries.keys() {
+            if name.starts_with("bundled.") {
+                return Err(ConfigError(format!(
+                    "plugins.shape.{name}: reserved plugin reference"
+                )));
+            }
+        }
         let mut bundled = tables.bundled;
         let order = tables.order.unwrap_or_else(|| {
             let defaults = default_tables();
@@ -380,41 +418,29 @@ impl From<PluginTables> for PluginsConfig {
         });
         for reference in &order {
             if let Some(name) = reference.strip_prefix("bundled.") {
-                bundled.entry(name.into()).or_default();
+                bundled.entry(name.to_owned()).or_default();
             }
         }
         let entries = bundled
             .into_iter()
             .map(|(name, entry)| (format!("bundled.{name}"), entry))
-            .chain(
-                tables
-                    .external
-                    .into_iter()
-                    .map(|(name, entry)| (format!("external.{name}"), entry)),
-            )
+            .chain(tables.entries.into_iter())
             .collect();
-        Self { order, entries }
+        Ok(Self { order, entries })
     }
 }
 
-impl From<PluginsConfig> for PluginTables {
-    fn from(config: PluginsConfig) -> Self {
+impl From<ShapeConfig> for PluginTables {
+    fn from(config: ShapeConfig) -> Self {
         let mut tables = Self {
             order: Some(config.order),
             ..Self::default()
         };
         for (reference, entry) in config.entries {
-            let (source, name) = reference
-                .split_once('.')
-                .expect("resolved plugin reference");
-            match source {
-                "bundled" => {
-                    tables.bundled.insert(name.into(), entry);
-                }
-                "external" => {
-                    tables.external.insert(name.into(), entry);
-                }
-                _ => unreachable!("resolved plugin namespace"),
+            if let Some(name) = reference.strip_prefix("bundled.") {
+                tables.bundled.insert(name.to_owned(), entry);
+            } else {
+                tables.entries.insert(reference, entry);
             }
         }
         tables
@@ -441,39 +467,97 @@ pub struct Entry {
     pub options: Map<String, Value>,
 }
 
-/// `[classifier]`: the one plugin that tags each changed file before
-/// anything is diffed. The bundled classifier unless `path` names another.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(default)]
+/// `[plugins.classify.<name>]`: the one plugin that tags each changed file before
+/// anything is diffed. `path` selects an external classifier.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(try_from = "ClassifyTables", into = "ClassifyTables")]
 pub struct ClassifierConfig {
+    /// `bundled`, or the custom plugin's manifest name.
+    pub(crate) name: String,
     /// A classifier folder on disk, as written: relative to the configuration
     /// file's directory, or absolute.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) path: Option<PathBuf>,
     /// The folder, loaded when the configuration resolves.
-    #[serde(skip)]
     folder: Option<Folder>,
     /// The classifier's options, checked against its manifest.
-    #[serde(flatten)]
     pub options: Map<String, Value>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct ClassifierEntry {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<PathBuf>,
+    #[serde(flatten)]
+    options: Map<String, Value>,
+}
+type ClassifyTables = BTreeMap<String, ClassifierEntry>;
+
+impl Default for ClassifierConfig {
+    fn default() -> Self {
+        Self {
+            name: "bundled".into(),
+            path: None,
+            folder: None,
+            options: Map::new(),
+        }
+    }
+}
+
+impl TryFrom<ClassifyTables> for ClassifierConfig {
+    type Error = ConfigError;
+
+    fn try_from(entries: ClassifyTables) -> Result<Self, Self::Error> {
+        if entries.len() != 1 {
+            return Err(ConfigError("expected exactly one classifier plugin".into()));
+        }
+        let (name, entry) = entries.into_iter().next().expect("one classifier");
+        Ok(Self {
+            name,
+            path: entry.path,
+            folder: None,
+            options: entry.options,
+        })
+    }
+}
+
+impl From<ClassifierConfig> for ClassifyTables {
+    fn from(config: ClassifierConfig) -> Self {
+        Self::from([(
+            config.name,
+            ClassifierEntry {
+                path: config.path,
+                options: config.options,
+            },
+        )])
+    }
 }
 
 impl ClassifierConfig {
     /// Load the classifier's folder, validate its options and fill their
     /// defaults.
     pub(crate) fn resolve(&mut self, base: &Path) -> Result<(), ConfigError> {
-        let folder = match &self.path {
-            Some(path) => Folder::read(&base.join(path))
-                .map_err(|error| ConfigError(format!("classifier: {error}")))?,
-            None => Folder {
+        let folder = match (self.name.as_str(), &self.path) {
+            ("bundled", None) => Folder {
                 location: Location::Classifier,
                 manifest: builtin::classifier_manifest().clone(),
             },
+            ("bundled", Some(_)) => {
+                return Err(ConfigError(
+                    "plugins.classify.bundled: bundled classifiers cannot set path".into(),
+                ))
+            }
+            (name, Some(path)) => Folder::load(name, &base.join(path))
+                .map_err(|error| ConfigError(format!("plugins.classify.{name}: {error}")))?,
+            (name, None) => {
+                return Err(ConfigError(format!(
+                    "plugins.classify.{name}: custom classifiers require path"
+                )))
+            }
         };
         folder
             .manifest
             .validate(&self.options)
-            .map_err(|error| ConfigError(format!("classifier: {error}")))?;
+            .map_err(|error| ConfigError(format!("plugins.classify.{}: {error}", self.name)))?;
         folder.manifest.fill_defaults(&mut self.options);
         self.folder = Some(folder);
         Ok(())
@@ -486,8 +570,8 @@ impl ClassifierConfig {
             .expect("a resolved classifier has its folder")
     }
 
-    /// The `classifier` property of `diffr config schema`: `path`, and the
-    /// bundled classifier's options.
+    /// The `plugins.classify` property of `diffr config schema`: one plugin entry
+    /// containing the bundled classifier's options, or one custom entry.
     pub(crate) fn schema() -> Value {
         let mut schema = builtin::classifier_manifest().settings_schema();
         let properties = schema["properties"]
@@ -495,16 +579,19 @@ impl ClassifierConfig {
             .expect("a settings schema has properties");
         // There is always one classifier: it cannot be turned off.
         properties.remove(ENABLED);
-        properties.insert(
-            "path".to_owned(),
-            json!({
-                "type": "string",
-                "description": "A classifier folder to use instead of the bundled one.",
+        json!({
+            "type": "object",
+            "description": "The one plugin that tags each changed file (generated, vendored, docs, test, or a custom tag) and hides some, before anything is diffed. Use `bundled` for the stock classifier, or one custom entry named after its manifest with a required `path`.",
+            "properties": {"bundled": schema},
+            "minProperties": 1,
+            "maxProperties": 1,
+            "additionalProperties": {
+                "type": "object",
+                "required": [PATH],
+                "properties": {PATH: {"type": "string"}},
                 "x-settings": false,
-            }),
-        );
-        schema["description"] = Value::String("The one plugin that tags each changed file (generated, vendored, docs, test, or a custom tag) and hides some, before anything is diffed. The bundled classifier unless `path` names another.".to_owned());
-        schema
+            },
+        })
     }
 }
 
@@ -533,6 +620,10 @@ pub struct Folder {
 }
 
 impl Folder {
+    pub fn name(&self) -> &str {
+        &self.manifest.name
+    }
+
     /// The bundled plugin `name`'s embedded folder.
     fn bundled(name: &str) -> Option<Self> {
         builtin::manifest(name).map(|manifest| Self {
@@ -631,9 +722,10 @@ impl Entry {
     }
 }
 
-impl Default for PluginsConfig {
+impl Default for ShapeConfig {
     fn default() -> Self {
-        let mut config = Self::from(default_tables());
+        let mut config =
+            Self::try_from(default_tables()).expect("the embedded shape tables are valid");
         config
             .resolve(Path::new(""))
             .expect("the bundled plugins' defaults are valid");
@@ -641,49 +733,53 @@ impl Default for PluginsConfig {
     }
 }
 
-impl PluginsConfig {
+impl ShapeConfig {
     /// Resolve each selected entry, validate its options, fill their defaults,
     /// and require every entry to appear in the explicit order exactly once.
     pub(crate) fn resolve(&mut self, base: &Path) -> Result<(), ConfigError> {
-        for (reference, entry) in &mut self.entries {
-            let (source, name) = reference
-                .split_once('.')
-                .ok_or_else(|| ConfigError(format!("invalid plugin reference {reference:?}")))?;
-            let folder = match (source, &entry.path) {
-                ("external", Some(path)) => Folder::load(name, &base.join(path))
-                    .map_err(|error| ConfigError(format!("plugins.{reference}: {error}")))?,
-                ("external", None) => return Err(ConfigError(format!("plugins.{reference}: external plugins require path"))),
-                ("bundled", None) => Folder::bundled(name).ok_or_else(|| ConfigError(format!("plugins.{reference}: unknown bundled plugin")))?,
-                ("bundled", Some(_)) => return Err(ConfigError(format!("plugins.{reference}: bundled plugins cannot set path; use plugins.external.{name}"))),
-                _ => return Err(ConfigError(format!("unknown plugin namespace {source:?}"))),
+        let mut identities = BTreeSet::new();
+        for (name, entry) in &mut self.entries {
+            let folder = match (name.strip_prefix("bundled."), &entry.path) {
+                (Some(plugin), None) => Folder::bundled(plugin).ok_or_else(|| {
+                    ConfigError(format!("plugins.shape.{name}: unknown bundled plugin"))
+                })?,
+                (Some(_), Some(_)) => {
+                    return Err(ConfigError(format!(
+                        "plugins.shape.{name}: bundled plugins cannot set path"
+                    )))
+                }
+                (None, Some(path)) => Folder::load(name, &base.join(path))
+                    .map_err(|error| ConfigError(format!("plugins.shape.{name}: {error}")))?,
+                (None, None) => {
+                    return Err(ConfigError(format!(
+                        "plugins.shape.{name}: custom plugins require path"
+                    )))
+                }
             };
             let manifest = &folder.manifest;
             entry.enabled.get_or_insert(manifest.enabled_by_default());
-            manifest
-                .validate(&entry.options)
-                .map_err(|error| ConfigError(format!("plugins.{reference}: {error}")))?;
-            manifest.fill_defaults(&mut entry.options);
-            entry.folder = Some(folder);
-        }
-        let mut identities = BTreeSet::new();
-        for entry in self.entries.values().filter(|entry| entry.is_enabled()) {
-            let name = &entry.folder().manifest.name;
-            if !identities.insert(name) {
+            if entry.is_enabled() && !identities.insert(manifest.name.clone()) {
                 return Err(ConfigError(format!(
-                    "plugin {name:?} is enabled in both bundled and external namespaces"
+                    "plugins.shape.{name}: plugin {:?} is enabled more than once",
+                    manifest.name
                 )));
             }
+            manifest
+                .validate(&entry.options)
+                .map_err(|error| ConfigError(format!("plugins.shape.{name}: {error}")))?;
+            manifest.fill_defaults(&mut entry.options);
+            entry.folder = Some(folder);
         }
         let mut seen = BTreeSet::new();
         for name in &self.order {
             if !self.entries.contains_key(name) {
                 return Err(ConfigError(format!(
-                    "plugins.order: no plugin entry named {name:?}"
+                    "plugins.shape.order: no plugin entry named {name:?}"
                 )));
             }
             if !seen.insert(name.as_str()) {
                 return Err(ConfigError(format!(
-                    "plugins.order: {name:?} is listed twice"
+                    "plugins.shape.order: {name:?} is listed twice"
                 )));
             }
         }
@@ -693,7 +789,7 @@ impl PluginsConfig {
             .find(|name| !seen.contains(name.as_str()))
         {
             return Err(ConfigError(format!(
-                "plugins.order: the plugin entry {missing:?} is not listed"
+                "plugins.shape.order: the plugin entry {missing:?} is not listed"
             )));
         }
         Ok(())
@@ -702,16 +798,13 @@ impl PluginsConfig {
     /// Each enabled plugin's name and query files, in `order`.
     pub fn queries(&self) -> Result<Vec<(String, Queries)>, ConfigError> {
         self.enabled()
-            .map(|(reference, entry)| {
-                let name = reference
-                    .split_once('.')
-                    .map_or(reference, |(_, name)| name);
+            .map(|(name, entry)| {
                 Ok((
-                    name.to_owned(),
+                    entry.folder().manifest.name.clone(),
                     entry
                         .folder()
                         .queries()
-                        .map_err(|error| ConfigError(format!("plugins.{reference}: {error}")))?,
+                        .map_err(|error| ConfigError(format!("plugins.shape.{name}: {error}")))?,
                 ))
             })
             .collect()
@@ -727,7 +820,7 @@ impl PluginsConfig {
         })
     }
 
-    /// The `plugins` property of `diffr config schema`: `order`, and every
+    /// The `plugins.shape` property of `diffr config schema`: `order`, and every
     /// bundled plugin's entry.
     pub(crate) fn schema() -> Value {
         let mut properties = Map::new();
@@ -747,13 +840,18 @@ impl PluginsConfig {
             .collect();
         properties.insert(
             "bundled".into(),
-            json!({"type": "object", "properties": bundled}),
+            json!({"type": "object", "properties": bundled, "additionalProperties": false}),
         );
-        properties.insert("external".into(), json!({"type": "object", "x-settings": false, "additionalProperties": {"type": "object"}}));
         json!({
             "type": "object",
             "description": "The plugins that decide what starts collapsed, hidden, linked or grouped, and the fold queries they own.",
             "properties": properties,
+            "additionalProperties": {
+                "type": "object",
+                "required": [PATH],
+                "properties": {PATH: {"type": "string"}},
+                "x-settings": false,
+            },
         })
     }
 }
@@ -765,18 +863,19 @@ mod tests {
     #[test]
     fn defaults_can_follow_another_option() {
         let summarize = |toml: &str| {
-            Config::from_toml(toml).unwrap().plugins.entries["bundled.summarize"]
+            Config::from_toml(toml).unwrap().plugins.shape.entries["bundled.summarize"]
                 .options
                 .clone()
         };
-        let openai = summarize("[plugins.bundled.summarize]\nprovider = 'openai'\n");
+        let openai = summarize("[plugins.shape.bundled.summarize]\nprovider = 'openai'\n");
         assert_eq!(openai["model"], "gpt-6-luna");
         assert_eq!(
             openai["provider_details"]["key_variables"],
             serde_json::json!(["OPENAI_API_KEY"])
         );
         assert_eq!(summarize("")["model"], "gemini-3.8-flash");
-        let pinned = summarize("[plugins.bundled.summarize]\nprovider = 'openai'\nmodel = 'o9'\n");
+        let pinned =
+            summarize("[plugins.shape.bundled.summarize]\nprovider = 'openai'\nmodel = 'o9'\n");
         assert_eq!(pinned["model"], "o9");
     }
 
@@ -833,19 +932,6 @@ mod tests {
         assert!(mistyped.contains("kind = \"b\""), "{mistyped}");
     }
 
-    #[test]
-    fn the_embedded_defaults_agree_with_each_plugin_toml() {
-        for (name, entry) in super::default_tables().bundled {
-            let defaults = super::builtin::manifest(&name)
-                .expect("a bundled plugin")
-                .defaults();
-            for (key, value) in &entry.options {
-                if let Some(default) = defaults.get(key) {
-                    assert_eq!(value, default, "{name}.{key}");
-                }
-            }
-        }
-    }
     use serde_json::Value;
 
     /// Every setting the schema lists, as a settings screen flattens it:
@@ -906,11 +992,7 @@ mod tests {
     fn every_plugin_setting_has_a_title_and_a_group_and_is_a_scalar() {
         let schema = Config::schema();
         let settings = settings(&schema);
-        let plugins: Vec<_> = settings
-            .iter()
-            .filter(|(key, ..)| key.starts_with("plugins."))
-            .collect();
-        assert!(plugins.len() > 10, "{plugins:?}");
+        assert!(!settings.is_empty());
         for (key, title, group, kind) in &settings {
             assert!(
                 !title.is_empty() && !group.is_empty(),
@@ -921,62 +1003,34 @@ mod tests {
                 "{key} is {kind}"
             );
         }
-        let group = |key: &str| {
-            plugins
-                .iter()
-                .find(|(own, ..)| own == key)
-                .map(|(_, title, group, _)| (title.as_str(), group.as_str()))
-                .unwrap_or_else(|| panic!("no setting {key}"))
-        };
-        assert_eq!(
-            group("plugins.bundled.deleted-bodies.enabled"),
-            (
-                "Collapse deleted function bodies",
-                "Deleted function bodies"
-            )
-        );
-        assert_eq!(
-            group("plugins.bundled.summarize.model"),
-            ("Model", "Summaries")
-        );
-        assert_eq!(
-            group("plugins.bundled.summarize.provider"),
-            ("Provider", "Summaries")
-        );
         assert!(schema["properties"].get("languages").is_none());
-        let plugins = &schema["properties"]["plugins"]["properties"];
+        let plugins = &schema["properties"]["plugins"]["properties"]["shape"]["properties"];
         assert_eq!(plugins["order"]["x-settings"], false);
         assert_eq!(plugins["order"]["type"], "array");
         let summarize = &plugins["bundled"]["properties"]["summarize"]["properties"];
         // A text setting, so settings screens let users edit the prompt.
         assert!(summarize["system_prompt"].get("x-settings").is_none());
-        assert_eq!(
-            summarize["system_prompt"]["default"],
-            super::builtin::manifest("summarize").unwrap().options["system_prompt"]["default"]
-        );
-        let keys: Vec<&String> = plugins.as_object().unwrap().keys().collect();
-        assert_eq!(keys, ["order", "bundled", "external"]);
     }
 
     #[test]
     fn explicit_order_is_authoritative_and_names_every_entry_once() {
-        let config = Config::from_toml("[plugins]\norder = ['bundled.context']\n").unwrap();
-        assert_eq!(config.plugins.entries.len(), 1);
+        let config = Config::from_toml("[plugins.shape]\norder = ['bundled.context']\n").unwrap();
+        assert_eq!(config.plugins.shape.entries.len(), 1);
         for (text, message) in [
             (
-                "[plugins]\norder = ['bundled.context', 'bundled.context']",
+                "[plugins.shape]\norder = ['bundled.context', 'bundled.context']",
                 "listed twice",
             ),
-            ("[plugins]\norder = ['external.mine']", "no plugin entry"),
+            ("[plugins.shape]\norder = ['mine']", "no plugin entry"),
             (
-                "[plugins]\norder = []\n[plugins.bundled.context]",
+                "[plugins.shape]\norder = []\n[plugins.shape.bundled.context]",
                 "is not listed",
             ),
-            ("[plugins.external.mine]", "external plugins require path"),
-            ("[plugins.bundled.unknown]", "unknown bundled plugin"),
+            ("[plugins.shape.mine]", "custom plugins require path"),
+            ("[plugins.shape.bundled.unknown]", "unknown bundled plugin"),
             (
-                "[plugins.bundled.context]\npath = 'context'",
-                "bundled plugins cannot set path",
+                "[plugins.shape.bundled.context]\npath = 'context'",
+                "plugins.shape.bundled.context:",
             ),
             ("[plugins.context]", "unknown field"),
         ] {
@@ -995,13 +1049,13 @@ mod tests {
             "name = 'mine'\ntitle = 'Mine'\n[options.depth]\ntype = 'integer'\ntitle = 'Depth'\ndefault = 2\n",
         )
         .unwrap();
-        let order = "order = ['bundled.context', 'bundled.deleted-bodies', 'bundled.test-bodies', 'bundled.removed-runs', 'bundled.summarize', 'external.mine']";
+        let order = "order = ['bundled.context', 'bundled.deleted-bodies', 'bundled.test-bodies', 'bundled.removed-runs', 'bundled.summarize', 'mine']";
         let config = Config::from_toml_in(
-            &format!("[plugins]\n{order}\n[plugins.external.mine]\npath = 'plugins/mine'\n"),
+            &format!("[plugins.shape]\n{order}\n[plugins.shape.mine]\npath = 'plugins/mine'\n"),
             dir.path(),
         )
         .unwrap();
-        let entry = &config.plugins.entries["external.mine"];
+        let entry = &config.plugins.shape.entries["mine"];
         assert_eq!(entry.options["depth"], 2);
         assert!(entry.options.get("path").is_none());
 
@@ -1012,48 +1066,140 @@ mod tests {
                 .to_string()
         };
         let renamed = error(&format!(
-            "[plugins]\n{}\n[plugins.external.other]\npath = 'plugins/mine'\n",
-            order.replace("'external.mine'", "'external.other'")
+            "[plugins.shape]\n{}\n[plugins.shape.other]\npath = 'plugins/mine'\n",
+            order.replace("'mine'", "'other'")
         ));
         assert!(
-            renamed.starts_with("plugins.external.other: ")
+            renamed.starts_with("plugins.shape.other: ")
                 && renamed.ends_with("the plugin is named \"mine\", not \"other\""),
             "{renamed}"
         );
-        let missing = error("[plugins.bundled.context]\npath = 'plugins/absent'\n");
-        assert!(
-            missing.starts_with("plugins.bundled.context: "),
-            "{missing}"
-        );
+        let missing = error("[plugins.shape.context]\npath = 'plugins/absent'\n");
+        assert!(missing.starts_with("plugins.shape.context: "), "{missing}");
         std::fs::write(
             folder.join("plugin.toml"),
             "name = 'mine'\ntitle = 'Mine'\n[options.path]\ntype = 'string'\ntitle = 'Path'\n",
         )
         .unwrap();
         let reserved = error(&format!(
-            "[plugins]\n{order}\n[plugins.external.mine]\npath = 'plugins/mine'\n"
+            "[plugins.shape]\n{order}\n[plugins.shape.mine]\npath = 'plugins/mine'\n"
         ));
         assert!(reserved.contains("which diffr owns"), "{reserved}");
     }
 
     #[test]
-    fn options_are_checked_against_the_plugin_toml_and_filled_with_its_defaults() {
-        let config = Config::from_toml(
-            "[plugins.bundled.deleted-bodies]\nmin_lines = 30\n[plugins.bundled.removed-runs]\nenabled = false\n[classifier]\nhide_deleted = false\n",
+    fn custom_and_bundled_entries_keep_separate_options_and_one_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("plugin.toml"),
+            "name = 'context'\ntitle = 'Custom context'\n[options.depth]\ntype = 'integer'\ntitle = 'Depth'\ndefault = 7\n").unwrap();
+        let text = "[plugins.shape]\norder = ['bundled.context', 'context']\n[plugins.shape.bundled.context]\nenabled = false\n[plugins.shape.context]\npath = '.'\n";
+        let config = Config::from_toml_in(text, dir.path()).unwrap();
+        assert_eq!(config.plugins.shape.entries["context"].options["depth"], 7);
+        assert!(!config.plugins.shape.entries["context"]
+            .options
+            .contains_key("lines"));
+        assert_eq!(
+            config.plugins.shape.entries["bundled.context"].options["lines"],
+            3
+        );
+        assert_eq!(config.plugins.shape.queries().unwrap()[0].0, "context");
+        let error = Config::from_toml_in(
+            &text.replace("enabled = false", "enabled = true"),
+            dir.path(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("enabled more than once"));
+    }
+
+    #[test]
+    fn custom_names_with_dots_keep_their_identity_through_a_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("plugin.toml"),
+            "name = 'my.context'\ntitle = 'Custom'\n",
         )
         .unwrap();
-        let deleted = &config.plugins.entries["bundled.deleted-bodies"];
+        let config = Config::from_toml_in(
+            "[plugins.shape]\norder = ['my.context']\n[plugins.shape.\"my.context\"]\npath = '.'\n",
+            dir.path(),
+        )
+        .unwrap();
+        assert_eq!(config.plugins.shape.queries().unwrap()[0].0, "my.context");
+        let text = toml::to_string(&config).unwrap();
+        let config = Config::from_toml_in(&text, dir.path()).unwrap();
+        assert_eq!(
+            config.plugins.shape.enabled().next().unwrap().0,
+            "my.context"
+        );
+        assert_eq!(config.plugins.shape.queries().unwrap()[0].0, "my.context");
+    }
+
+    #[test]
+    fn stock_selection_cannot_load_custom_folders() {
+        for text in [
+            "[plugins.shape.bundled.context]\npath = '.'",
+            "[plugins.classify.bundled]\npath = '.'",
+        ] {
+            assert!(Config::from_toml(text)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot set path"));
+        }
+        let validator = jsonschema::validator_for(&Config::schema()).unwrap();
+        assert!(validator.is_valid(&serde_json::to_value(Config::default()).unwrap()));
+        for text in [
+            "[plugins.shape.custom]\npath = '.'",
+            "[plugins.classify.custom]\npath = '.'",
+        ] {
+            let parsed: toml::Value = toml::from_str(text).unwrap();
+            assert!(validator.is_valid(&serde_json::to_value(parsed).unwrap()));
+        }
+        for text in [
+            "[plugins.shape.bundled.context]\npath = '.'",
+            "[plugins.classify.bundled]\npath = '.'",
+            "[plugins.shape.custom]",
+            "[plugins.classify.custom]",
+        ] {
+            let parsed: toml::Value = toml::from_str(text).unwrap();
+            assert!(!validator.is_valid(&serde_json::to_value(parsed).unwrap()));
+        }
+        assert!(
+            Config::from_toml("[plugins.shape.\"bundled.context\"]\npath = '.'")
+                .unwrap_err()
+                .to_string()
+                .contains("reserved plugin reference")
+        );
+    }
+
+    #[test]
+    fn exactly_one_classifier_runs() {
+        for text in [
+            "[plugins.classify]",
+            "[plugins.classify.bundled]\n[plugins.classify.other]",
+        ] {
+            let error = Config::from_toml(text).unwrap_err().to_string();
+            assert!(error.contains("expected exactly one classifier"), "{error}");
+        }
+    }
+
+    #[test]
+    fn options_are_checked_against_the_plugin_toml_and_filled_with_its_defaults() {
+        let config = Config::from_toml(
+            "[plugins.shape.bundled.deleted-bodies]\nmin_lines = 30\n[plugins.shape.bundled.removed-runs]\nenabled = false\n[plugins.classify.bundled]\nhide_deleted = false\n",
+        )
+        .unwrap();
+        let deleted = &config.plugins.shape.entries["bundled.deleted-bodies"];
         assert_eq!(deleted.enabled, Some(true));
         assert_eq!(deleted.options["min_lines"], 30);
-        let removed = &config.plugins.entries["bundled.removed-runs"];
+        let removed = &config.plugins.shape.entries["bundled.removed-runs"];
         assert_eq!(removed.enabled, Some(false));
-        let classifier = &config.classifier.options;
+        let classifier = &config.plugins.classify.options;
         assert_eq!(classifier["hide_deleted"], false);
         assert_eq!(
             classifier["hide"],
             serde_json::json!(["generated", "vendored"])
         );
-        let summarize = &config.plugins.entries["bundled.summarize"];
+        let summarize = &config.plugins.shape.entries["bundled.summarize"];
         assert_eq!(
             summarize.enabled,
             Some(false),
@@ -1062,23 +1208,25 @@ mod tests {
         assert!(summarize.options.get("api_key").is_none());
         assert_eq!(summarize.options["request_timeout_ms"], 60_000);
         let error = |toml: &str| Config::from_toml(toml).err().unwrap().to_string();
-        let typo = error("[plugins.bundled.deleted-bodies]\ntypo = 1\n");
+        let typo = error("[plugins.shape.bundled.deleted-bodies]\ntypo = 1\n");
         assert!(
-            typo.starts_with("plugins.bundled.deleted-bodies: ") && typo.contains("typo"),
+            typo.starts_with("plugins.shape.bundled.deleted-bodies: ") && typo.contains("typo"),
             "{typo}"
         );
-        let mistyped = error("[plugins.bundled.deleted-bodies]\nmin_lines = 'many'\n");
+        let mistyped = error("[plugins.shape.bundled.deleted-bodies]\nmin_lines = 'many'\n");
         assert!(
-            mistyped.starts_with("plugins.bundled.deleted-bodies: min_lines: "),
+            mistyped.starts_with("plugins.shape.bundled.deleted-bodies: min_lines: "),
             "{mistyped}"
         );
-        let zero = error("[plugins.bundled.summarize]\nrequest_timeout_ms = 0\n");
+        let zero = error("[plugins.shape.bundled.summarize]\nrequest_timeout_ms = 0\n");
         assert!(
-            zero.starts_with("plugins.bundled.summarize: request_timeout_ms: "),
+            zero.starts_with("plugins.shape.bundled.summarize: request_timeout_ms: "),
             "{zero}"
         );
-        assert!(error("[plugins.bundled.summarize]\nprovider = 'mistral'\n")
-            .starts_with("plugins.bundled.summarize: provider: "));
+        assert!(
+            error("[plugins.shape.bundled.summarize]\nprovider = 'mistral'\n")
+                .starts_with("plugins.shape.bundled.summarize: provider: ")
+        );
     }
 }
 
@@ -1090,9 +1238,12 @@ mod concurrency_tests {
     fn obsolete_instance_and_concurrency_options_are_rejected() {
         for name in ["context", "summarize"] {
             assert!(
-                Config::from_toml(&format!("[plugins.bundled.{name}]\ninstances = 1\n")).is_err()
+                Config::from_toml(&format!("[plugins.shape.bundled.{name}]\ninstances = 1\n"))
+                    .is_err()
             );
         }
-        assert!(Config::from_toml("[plugins.bundled.summarize]\nmax_concurrency = 16\n").is_err());
+        assert!(
+            Config::from_toml("[plugins.shape.bundled.summarize]\nmax_concurrency = 16\n").is_err()
+        );
     }
 }

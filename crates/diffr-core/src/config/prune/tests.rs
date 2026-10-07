@@ -34,8 +34,7 @@ fn settings() -> Vec<(String, Value)> {
     walk(&root, &root, "", &mut out);
     out.retain(|(key, node)| {
         key != "version"
-            && !key.starts_with("plugins.external")
-            && key != "classifier.path"
+            && !key.ends_with(".path")
             && node.get("type").and_then(Value::as_str) != Some("object")
     });
     out

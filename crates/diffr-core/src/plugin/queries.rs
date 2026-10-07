@@ -254,7 +254,7 @@ mod tests {
     #[test]
     fn every_bundled_query_resolves_and_compiles() {
         let config = Config::default();
-        let assembled = assemble(&config.plugins.queries().unwrap()).unwrap();
+        let assembled = assemble(&config.plugins.shape.queries().unwrap()).unwrap();
         assert_eq!(
             assembled.keys().map(String::as_str).collect::<Vec<_>>(),
             [
@@ -288,8 +288,8 @@ mod tests {
     #[test]
     fn disabled_plugins_contribute_no_queries() {
         let config =
-            Config::from_toml("[plugins.bundled.deleted-bodies]\nenabled = false\n").unwrap();
-        let assembled = assemble(&config.plugins.queries().unwrap()).unwrap();
+            Config::from_toml("[plugins.shape.bundled.deleted-bodies]\nenabled = false\n").unwrap();
+        let assembled = assemble(&config.plugins.shape.queries().unwrap()).unwrap();
         assert!(!assembled["rust"]
             .iter()
             .any(|s| s.name.contains("deleted-bodies")));

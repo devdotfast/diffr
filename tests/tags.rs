@@ -407,7 +407,7 @@ fn hidden_files_are_diffed_by_line_and_shown_behind_their_reason() {
     assert_eq!(visibility_of(&defaults, "src/a.rs"), None);
     assert_eq!(fallback_of(&defaults, "src/a.rs"), None);
 
-    fixture.config("[classifier]\nhide = []\nhide_deleted = false\n");
+    fixture.config("[plugins.classify.bundled]\nhide = []\nhide_deleted = false\n");
     let shown = records(&fixture.run(&base, &head));
     for path in ["vendor/lib/a.rs", "tests/a.rs", "src/gone.rs"] {
         assert_eq!(visibility_of(&shown, path), None, "{path}");

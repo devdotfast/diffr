@@ -284,7 +284,7 @@ fn aligned_folds(
 fn side_folds<'a>(side: &'a [Fold], lines: &[&str]) -> Vec<SideFold<'a>> {
     let spans: Vec<(usize, usize)> = side
         .iter()
-        .map(|fold| folds::line_span(fold, lines))
+        .map(|fold| folds::line_span(&fold.range, lines))
         .collect();
     side.iter()
         .zip(folds::nested_spans(&spans))
@@ -977,7 +977,7 @@ mod tests {
         for fold in &result.lhs_folds {
             // A fold covers its body: its region starts after the line the
             // `{` opens on.
-            let line = folds::line_span(fold, &lhs_lines).0 as u32;
+            let line = folds::line_span(&fold.range, &lhs_lines).0 as u32;
             let (id, state) = (lhs_folds[&line], lhs_states[&line]);
             let matcher_paired = matches!(fold.match_kind, FoldMatch::Matched { .. });
             assert_eq!(

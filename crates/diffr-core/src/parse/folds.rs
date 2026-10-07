@@ -2,10 +2,10 @@
 //!
 //! A fold is a region of a file, not a syntax node: two captures that cover
 //! the same lines — from one query, or from two plugins' queries — are one
-//! fold whose tags are the union of theirs (see [`merge_spans`]). The merged
-//! fold is owned by the innermost node that produced it, the one whose
-//! extent really is that region, and carries that node's `syntax_id` and its
-//! pairing, so alignment follows the node the matcher paired.
+//! fold whose tags are the union of theirs (see [`merge_by_lines`]). The
+//! merged fold sits on the innermost node that produced it, the one whose
+//! extent really is that region, so it takes that node's `syntax_id` and its
+//! pairing, and alignment follows the node the matcher paired.
 use super::query::node_range;
 use crate::config::query::AnnotationQuery;
 use crate::diff::changes::{ChangeKind, ChangeMap};
@@ -68,13 +68,15 @@ pub struct Conflict {
 /// `@fold.close`, the text from `@fold.open` to the end of the node, or the
 /// hull of a quantified run such as `(comment)+ @fold`.
 /// Captures of the same node merge their tags when their ranges agree; when
-/// they disagree the result is a [`Conflict`].
+/// they disagree the result is a [`Conflict`]. Captures of different nodes
+/// over the same lines then merge too (see [`merge_by_lines`]).
 pub(crate) fn classify(
     tree: &Tree,
     src: &str,
     compiled: Option<&AnnotationQuery>,
 ) -> Result<DftHashMap<usize, FoldMetadata>, Conflict> {
-    let mut kinds: DftHashMap<usize, (FoldMetadata, usize)> = DftHashMap::default();
+    // Per node: its fold, the query source that made it, and its depth.
+    let mut kinds: DftHashMap<usize, (FoldMetadata, usize, usize)> = DftHashMap::default();
     let Some(compiled) = compiled else {
         return Ok(DftHashMap::default());
     };
@@ -180,10 +182,11 @@ pub(crate) fn classify(
                         syntax,
                     },
                     pattern.source,
+                    depth(first.node),
                 ));
             }
             Entry::Occupied(mut entry) => {
-                let (metadata, source) = entry.get_mut();
+                let (metadata, source, _) = entry.get_mut();
                 if metadata.range_override != Some(region) || metadata.indent != indent {
                     let mut sources = [
                         compiled.sources[*source].clone(),
@@ -204,16 +207,108 @@ pub(crate) fn classify(
         }
     }
     for (id, name, range) in relations {
-        if let Some((metadata, _)) = kinds.get_mut(&id) {
+        if let Some((metadata, _, _)) = kinds.get_mut(&id) {
             if !metadata.relations.contains(&(name.clone(), range)) {
                 metadata.relations.push((name, range));
             }
         }
     }
-    Ok(kinds
-        .into_iter()
-        .map(|(id, (metadata, _))| (id, metadata))
-        .collect())
+    let lines: Vec<&str> = src.split_terminator('\n').collect();
+    Ok(merge_by_lines(
+        kinds
+            .into_iter()
+            .map(|(id, (metadata, _, depth))| (id, depth, metadata))
+            .collect(),
+        &lines,
+    ))
+}
+
+fn depth(node: tree_sitter::Node<'_>) -> usize {
+    let mut depth = 0;
+    let mut at = node;
+    while let Some(parent) = at.parent() {
+        depth += 1;
+        at = parent;
+    }
+    depth
+}
+
+/// Merge the folds of nodes that cover the same whole lines into one.
+///
+/// A reader collapses lines, not nodes, so two folds over the same lines are
+/// one region, such as a Rust `Self { … }` as a function's tail expression
+/// and the `{ … }` field list inside it. (Two ranges on the *same* node are
+/// a [`Conflict`] instead.) Walking in preorder, a fold inside the one
+/// already holding its lines takes them over: the merged fold sits on the
+/// innermost node, and among equal ranges on the deepest. It keeps that node's own range,
+/// indent and syntax, with the tags and relations of every fold it absorbed.
+/// A relation that named an absorbed fold's range names the merged fold's.
+/// A fold on a single line hides nothing and merges with nothing.
+fn merge_by_lines(
+    mut folds: Vec<(usize, usize, FoldMetadata)>,
+    lines: &[&str],
+) -> DftHashMap<usize, FoldMetadata> {
+    let region = |metadata: &FoldMetadata| {
+        metadata
+            .range_override
+            .expect("classify gives every fold its range")
+    };
+    let at = |position: &SourcePosition| (position.line.as_usize(), position.byte_column);
+    folds.sort_by_key(|(_, depth, metadata)| {
+        let region = region(metadata);
+        (
+            at(&region.start),
+            std::cmp::Reverse(at(&region.end)),
+            *depth,
+        )
+    });
+    let mut merged: DftHashMap<usize, FoldMetadata> = DftHashMap::default();
+    let mut owners: DftHashMap<(usize, usize), usize> = DftHashMap::default();
+    let mut absorbed: DftHashMap<SourceRange, (usize, usize)> = DftHashMap::default();
+    for (id, _, metadata) in folds {
+        let span = line_span(&region(&metadata), lines);
+        if span.0 == span.1 {
+            merged.insert(id, metadata);
+            continue;
+        }
+        let Some(&owner) = owners.get(&span) else {
+            owners.insert(span, id);
+            merged.insert(id, metadata);
+            continue;
+        };
+        let held = merged.remove(&owner).expect("an owner holds its fold");
+        let inner = region(&metadata);
+        let outer = region(&held);
+        let takes_over = at(&inner.start) >= at(&outer.start) && at(&inner.end) <= at(&outer.end);
+        let (id, mut kept, lost) = if takes_over {
+            (id, metadata, held)
+        } else {
+            (owner, held, metadata)
+        };
+        absorbed.insert(region(&lost), span);
+        kept.tags.extend(lost.tags);
+        kept.tags.sort();
+        kept.tags.dedup();
+        for relation in lost.relations {
+            if !kept.relations.contains(&relation) {
+                kept.relations.push(relation);
+            }
+        }
+        owners.insert(span, id);
+        merged.insert(id, kept);
+    }
+    let survivors: DftHashMap<(usize, usize), SourceRange> = owners
+        .iter()
+        .map(|(span, id)| (*span, region(&merged[id])))
+        .collect();
+    for metadata in merged.values_mut() {
+        for (_, target) in &mut metadata.relations {
+            if let Some(span) = absorbed.get(target) {
+                *target = survivors[span];
+            }
+        }
+    }
+    merged
 }
 
 /// Lists already retain the two edges of their interior, even without delimiters.
@@ -278,9 +373,8 @@ fn range(node: &Syntax<'_>, metadata: &FoldMetadata) -> Option<SourceRange> {
 /// a fold closes on is inside it only when nothing but whitespace follows
 /// the close, so `] {`, which ends a collection and opens the body after it,
 /// is in neither fold.
-pub(crate) fn line_span(fold: &Fold, lines: &[&str]) -> (usize, usize) {
+pub(crate) fn line_span(range: &SourceRange, lines: &[&str]) -> (usize, usize) {
     let line_count = lines.len();
-    let range = &fold.range;
     let first = range.start.line.as_usize();
     // Code before the fold opens on its first line, or after it closes on
     // its last, is code the fold does not cover: the line stays outside.
@@ -429,61 +523,6 @@ pub(crate) fn project(node: &Syntax<'_>, partner: Option<&Syntax<'_>>) -> Option
         // not what to say in its place.
         placeholder: String::new(),
     })
-}
-
-/// Fold the folds of one side that cover the same lines into one.
-///
-/// Two captures — one query's, or two plugins' — can fold the same region
-/// of the file from different syntax nodes, such as a Rust `Self { … }` as
-/// a function's tail expression and the `{ … }` field list inside it. That
-/// is one fold: its tags are the union of theirs, sorted and deduplicated.
-/// (Two ranges on the *same* node are a query conflict instead, and the
-/// file is not diffed; see [`classify`].)
-///
-/// The merged fold is owned by the innermost node that produced it — the
-/// one whose range lies inside the others', and among equal ranges the one
-/// the preorder walk reached last. It keeps that node's `syntax_id` and its
-/// pairing, so alignment follows the node whose extent is the fold's
-/// region. `folds` is in preorder and stays in it, each merged fold where
-/// its outermost contributor stood.
-///
-/// One-line regions remain addressable for syntax relationships and tags.
-/// Plugins decide whether collapsing them saves enough space.
-pub(crate) fn merge_spans(folds: &mut Vec<Fold>, lines: &[&str]) {
-    let inside = |inner: &SourceRange, outer: &SourceRange| {
-        let at = |position: &SourcePosition| (position.line.as_usize(), position.byte_column);
-        at(&inner.start) >= at(&outer.start) && at(&inner.end) <= at(&outer.end)
-    };
-    let mut kept: Vec<Fold> = Vec::with_capacity(folds.len());
-    let mut by_span: DftHashMap<(usize, usize), usize> = DftHashMap::default();
-    for fold in folds.drain(..) {
-        let span = line_span(&fold, lines);
-        if span.1 == span.0 {
-            kept.push(fold);
-            continue;
-        }
-        match by_span.entry(span) {
-            Entry::Vacant(entry) => {
-                entry.insert(kept.len());
-                kept.push(fold);
-            }
-            Entry::Occupied(entry) => {
-                let merged = &mut kept[*entry.get()];
-                if inside(&fold.range, &merged.range) {
-                    merged.range = fold.range;
-                    merged.indent = fold.indent;
-                    merged.syntax = fold.syntax;
-                    merged.syntax_id = fold.syntax_id;
-                    merged.match_kind = fold.match_kind;
-                }
-                merged.relations.extend(fold.relations);
-                merged.tags.extend(fold.tags);
-                merged.tags.sort();
-                merged.tags.dedup();
-            }
-        }
-    }
-    *folds = kept;
 }
 
 #[cfg(test)]

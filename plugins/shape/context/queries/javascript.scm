@@ -1,8 +1,8 @@
-; inherits: builtin:shared/queries/javascript.scm
+; inherits: builtin:core/queries/javascript/folds.scm
 ; The scopes whose first and last line stay visible above and below a change
 ; inside them. A scope is the whole construct, not its body: its first line is
 ; the line its signature starts on, however many lines that signature runs to,
-; and its last is the line that closes it. The body fold the shared query
+; and its last is the line that closes it. The body fold the core query
 ; gives the construct covers only the body, so it nests inside the scope and
 ; starts a line later.
 ; An exported declaration is matched on its export, below, so the scope
@@ -14,24 +14,6 @@
   [(function_declaration) (generator_function_declaration) (class_declaration)] @fold
   (#set! tag "context:scope"))
 ((method_definition) @fold
-  (#set! tag "context:scope"))
-; An arrow function is a scope whether its body is a block or an expression.
-((arrow_function) @fold
-  (#set! tag "context:scope"))
-; A binding is a scope when its value is a block of its own: an array, an
-; object, a function or a call taking one. A statement that passes a callback
-; is the callback's scope. Both share its header and closer.
-([
-  (lexical_declaration (variable_declarator value: [
-    (array) (object) (arrow_function) (function_expression)
-    (call_expression arguments: (arguments [(arrow_function) (function_expression)]))]))
-  (variable_declaration (variable_declarator value: [
-    (array) (object) (arrow_function) (function_expression)
-    (call_expression arguments: (arguments [(arrow_function) (function_expression)]))]))
-] @fold
-  (#set! tag "context:scope"))
-((expression_statement
-  (call_expression arguments: (arguments (arrow_function)))) @fold
   (#set! tag "context:scope"))
 ((for_statement) @fold
   (#set! tag "context:scope"))
@@ -48,15 +30,6 @@
   (class_declaration)
 ]) @fold (#set! tag "context:scope"))
 
-; Keep the complete function header up to the body, including destructured
-; parameters and multiline return types.
-([
-  (function_declaration body: (statement_block "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold)
-  (generator_function_declaration body: (statement_block "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold)
-  (method_definition body: (statement_block "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold)
-  (arrow_function body: (statement_block "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold)
-] (#set! tag "context:body"))
-
 ; Blocks with a closing line of their own: a change inside keeps it.
 ((if_statement) @fold
   (#set! tag "context:scope"))
@@ -69,9 +42,36 @@
 ((for_in_statement) @fold
   (#set! tag "context:scope"))
 
-; A comment run reads as the header of the code below it, so it stays open
-; when a row of unchanged code opens.
-((comment)+ @fold
-  .
-  (_)
-  (#set! tag "context:comment"))
+([
+  (statement_block "{" @fold.open . (_) @fold.indent "}" @fold.close)
+  (class_body "{" @fold.open . (_) @fold.indent "}" @fold.close)
+  (switch_body "{" @fold.open . (_) @fold.indent "}" @fold.close)] @fold (#set! tag "context:body"))
+([
+  (object "{" @fold.open . (_) @fold.indent "}" @fold.close)
+  (array "[" @fold.open . (_) @fold.indent "]" @fold.close)] @fold (#set! tag "context:body"))
+
+((arguments "(" @fold.open . (_) @fold.indent ")" @fold.close) @fold
+  (#match? @fold "\\n") (#set! tag "context:body"))
+
+([(export_statement)
+  (new_expression) (function_expression) (throw_statement)] @fold
+ (#set! tag "context:scope"))
+([(if_statement) (try_statement) (switch_statement)] @fold (#set! tag "context:branches"))
+([(catch_clause) (finally_clause) (else_clause) (switch_case) (switch_default)] @fold
+ (#set! tag "context:scope") (#set! tag "context:clause"))
+
+((parenthesized_expression "(" @fold.open . (_) @fold.indent ")" @fold.close) @fold (#match? @fold "\\n") (#set! tag "context:body"))
+
+((named_imports "{" @fold.open . (_) @fold.indent "}" @fold.close) @fold (#set! tag "context:body"))
+((import_statement) @fold (#set! tag "context:scope"))
+
+([(switch_case) (switch_default)] @fold (#set! tag "context:open-ended"))
+(switch_case ":" @fold . (_) @fold @fold.indent (_)* @fold (#set! tag "context:body"))
+(switch_default ":" @fold . (_) @fold @fold.indent (_)* @fold (#set! tag "context:body"))
+(else_clause (if_statement) @fold (#set! tag "context:clause"))
+
+((expression_statement) @fold (#set! tag "context:scope"))
+
+(program [(lexical_declaration) (variable_declaration)] @fold (#set! tag "context:scope"))
+(statement_block [(lexical_declaration) (variable_declaration)] @fold (#set! tag "context:scope"))
+

@@ -164,6 +164,10 @@ export function rowsForFile(
     return result;
   };
   const tintOf = (region: Leaf | Fold) => foldTint(region.id, region.side, paired[region.side]);
+  // What a collapsed region says it hides: diffr's label, else how many lines it covers, so a
+  // fold no plugin labelled still reads `{ ⋯ 3 lines }` rather than a bare `{ ⋯ }`.
+  const labelOf = (region: Leaf | Fold) => region.label
+    || lineCount("lastHidden" in region ? region.lastHidden - region.startLine + 1 : region.endLine - region.startLine);
   const alignments = leaves.map(side => new Set(side.map(leaf => leaf.alignmentId)));
   const isChanged = (leaf: Leaf, line: number) =>
     leaf.changed.has(line) || !alignments[leaf.side ? 0 : 1].has(leaf.alignmentId);
@@ -180,7 +184,7 @@ export function rowsForFile(
       for (let line = Math.max(leaf.startLine, region.startLine); line <= Math.min(leaf.endLine - 1, last); line++)
         if (isChanged(leaf, line)) count++;
     if (!count && !inside.some(leaf => spanned.has(leaf.alignmentId))) return { tint, note: "" };
-    return { tint: "modified", note: count ? ` · ${count} line${count === 1 ? "" : "s"} changed` : "" };
+    return { tint: "modified", note: count ? ` · ${lineCount(count)} changed` : "" };
   };
   const placeholder = (text: string, tint: FoldTint): RenderSpan =>
     ({ text, fg: theme.foldPlaceholder, bg: foldBackground(theme, tint) });
@@ -203,10 +207,10 @@ export function rowsForFile(
       const { start, end } = folded.syntax;
       const closer = texts[side][end.line]!;
       const suffix = lineSpans(closer, syntax[side].get(end.line) ?? [], [], side ? "right" : "left", theme);
-      const label = folded.label.replace(/\n/g, " · ");
+      const label = labelOf(folded).replace(/\n/g, " · ");
       const { tint, note } = collapsedTint(folded);
       spans = [...sliceSpansWindow(spans, 0, byteColumn(texts[side][line]!, start.column)).spans,
-        placeholder(` ⋯${label ? " " + label : ""}${note} `, tint),
+        placeholder(` ⋯ ${label}${note} `, tint),
         ...sliceSpansWindow(suffix, byteColumn(closer, end.column), Infinity).spans];
       fold = { id: folded.foldStateId, label: folded.label, collapsed: true, tint };
     }
@@ -245,7 +249,7 @@ export function rowsForFile(
       return { header, labels: rest.map(text => ({ ...header, foldLabel: true, spans: lead(`> ${text}`), fold: undefined })) };
     }
     const header = { kind: "context" as const, sign: " ", band: tint,
-      spans: lead(`⋯${region.label && !multiline ? " " + region.label : ""}${note}`),
+      spans: lead(`⋯${multiline ? "" : " " + labelOf(region)}${note}`),
       fold: { id: region.foldStateId, label: region.label, collapsed: true, tint }, ...scopeOf(region.side, region.startLine) };
     const labels = multiline
       ? region.label.split("\n").map(text => ({ ...header, foldLabel: true, spans: lead(text), fold: undefined }))
@@ -349,6 +353,7 @@ function markHunks(rows: ViewerRow[]): ViewerRow[] {
   }
   return rows;
 }
+const lineCount = (count: number) => `${count} line${count === 1 ? "" : "s"}`;
 /** Tag the one cell at a terminal column as a scope's bracket. */
 function markBrace(spans: RenderSpan[], column: number, id: number): RenderSpan[] {
   const at = sliceSpansWindow(spans, column, 1).spans;

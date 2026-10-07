@@ -374,7 +374,7 @@ mod tests {
 
     #[test]
     fn language_without_annotation_rules_keeps_structural_diffing() {
-        let params = Params::default();
+        let params = with_queries(&[]);
         let result = DiffResult::from_sources_with_params(
             "a.c",
             "int run() { return 1; }",

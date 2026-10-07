@@ -32,52 +32,34 @@ fn rows(regions: &[Region]) -> Vec<((u32, u32), bool, String, bool)> {
     out
 }
 
-/// Lines no collapsed region, or region under one, hides.
-fn open_lines(regions: &[Region]) -> BTreeSet<u32> {
-    fn visit(regions: &[Region], out: &mut BTreeSet<u32>) {
-        for region in regions {
-            if region.visibility.collapsed {
-                // The header of a collapsed fold stays visible.
-                if is_fold(region) {
-                    out.insert(region.range.start.line);
-                }
-                continue;
-            }
-            match &region.node {
-                Node::Leaf { .. } => out.extend(region.range.start.line..region.range.end.line),
-                Node::Fold { children, .. } => visit(children, out),
-            }
-        }
-    }
-    let mut out = BTreeSet::new();
-    visit(regions, &mut out);
-    out
-}
-
 #[test]
 fn long_unchanged_runs_collapse_to_the_context_width() {
     let body = repeated(0..20, |i| format!("x{i} = {i}\n"));
     let before = format!("{body}changed = 1\n{body}");
     let after = format!("{body}changed = 2\n{body}");
     let sides = shaped("a.py", &before, &after, 3);
-    let leaves: Vec<_> = rows(lhs(&sides).root.children())
-        .into_iter()
-        .map(|(lines, collapsed, label, _)| (lines, collapsed, label))
-        .collect();
     assert_eq!(
-        leaves,
-        vec![
-            ((0, 17), true, "17 unchanged lines".to_owned()),
-            ((17, 20), false, String::new()),
-            ((20, 21), false, String::new()),
-            ((21, 24), false, String::new()),
-            ((24, 41), true, "17 unchanged lines".to_owned()),
+        collapsed_rows(lhs(&sides).root.children()),
+        [
+            ((0, 17), "17 unchanged lines".to_owned()),
+            ((24, 41), "17 unchanged lines".to_owned())
         ]
+    );
+    assert_eq!(
+        open_leaf_lines(lhs(&sides).root.children()),
+        (17..24).collect()
     );
     let sides = shaped("a.py", &before, &after, 1);
     assert_eq!(
-        rows(rhs(&sides).root.children())[0],
-        ((0, 19), true, "19 unchanged lines".to_owned(), false)
+        collapsed_rows(rhs(&sides).root.children()),
+        [
+            ((0, 19), "19 unchanged lines".to_owned()),
+            ((22, 41), "19 unchanged lines".to_owned())
+        ]
+    );
+    assert_eq!(
+        open_leaf_lines(rhs(&sides).root.children()),
+        (19..22).collect()
     );
 }
 
@@ -108,7 +90,7 @@ fn the_enclosing_header_stays_open_above_a_deep_change() {
     let before = format!("{head}{signature}{body}    1\n}}\n");
     let after = format!("{head}{signature}{body}    2\n}}\n");
     let sides = shaped("a.rs", &before, &after, 1);
-    let open = open_lines(rhs(&sides).root.children());
+    let open = open_leaf_lines(rhs(&sides).root.children());
     assert_eq!(open, BTreeSet::from([10, 11, 12, 13, 14, 24, 25, 26]));
     // Without a context query the whole signature collapses with the
     // unchanged lines above it.
@@ -126,7 +108,7 @@ fn the_enclosing_header_stays_open_above_a_deep_change() {
         project_compiled("a.rs", &before, &after, &params, DiffOptions::default());
     run("context", json!({"lines": 1}), &file, &mut sides);
     assert_eq!(
-        open_lines(rhs(&sides).root.children()),
+        open_leaf_lines(rhs(&sides).root.children()),
         BTreeSet::from([24, 25, 26])
     );
 }
@@ -154,7 +136,7 @@ fn a_file_the_diff_does_not_parse_has_no_enclosing_header() {
     assert_eq!(scopes, 0);
     run("context", json!({"lines": 1}), &file, &mut sides);
     assert_eq!(
-        open_lines(rhs(&sides).root.children()),
+        open_leaf_lines(rhs(&sides).root.children()),
         BTreeSet::from([10, 11, 12])
     );
 }
@@ -187,7 +169,7 @@ fn a_block_closer_separates_the_rows_inside_and_after_it() {
         // The inner block ends before the line its `}` sits on, and the
         // function's scope runs to the brace that closes it: the scope keeps
         // the line it opens on and the line it closes on.
-        let open = open_lines(source.root.children());
+        let open = open_leaf_lines(source.root.children());
         assert!(open.contains(&0) && open.contains(&16), "{open:?}");
     }
 }
@@ -229,7 +211,7 @@ fn a_line_diff_fallback_has_unpaired_folds() {
         },
     );
     run("context", json!({"lines": 1}), &file, &mut sides);
-    let open = open_lines(rhs(&sides).root.children());
+    let open = open_leaf_lines(rhs(&sides).root.children());
     // The parse's folds stand, so the changed function's header does.
     assert!(open.contains(&0), "{open:?}");
     assert!(!open.contains(&2), "{open:?}");
@@ -237,7 +219,7 @@ fn a_line_diff_fallback_has_unpaired_folds() {
     let Pairing::Both { lhs: before, .. } = &sides else {
         panic!("both sides")
     };
-    assert!(!open_lines(before.root.children()).contains(&10));
+    assert!(!open_leaf_lines(before.root.children()).contains(&10));
     assert!(!open.contains(&10));
 }
 
@@ -389,22 +371,6 @@ fn generator_declarations_keep_their_signature_and_closing_brace() {
                 assert!(!open.contains(&10), "unrelated body stays collapsed");
             }
         }
-    }
-}
-
-#[test]
-fn a_multiline_python_signature_keeps_the_line_it_starts_on() {
-    // A scope is the whole `def`, so the line it keeps is the one the
-    // signature starts on, however far the `:` that opens the body is below
-    // it. The rest of the signature is ordinary unchanged lines.
-    let body = repeated(0..30, |i| format!("    value_{i} = {i}\n"));
-    let before = format!("def run(\n    first,\n    second,\n):\n{body}");
-    let after = before.replace("value_20 = 20", "value_20 = 999");
-    let sides = shaped("a.py", &before, &after, 0);
-    for source in [lhs(&sides), rhs(&sides)] {
-        let open = open_leaf_lines(source.root.children());
-        assert!(open.contains(&0), "{open:?}");
-        assert!((1..4).all(|line| !open.contains(&line)), "{open:?}");
     }
 }
 

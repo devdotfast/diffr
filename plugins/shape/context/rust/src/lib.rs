@@ -90,13 +90,16 @@ impl Context {
             };
             let start = cursor.get(first)?.data;
             let lines = cursor.get(last)?.data.range.end.line - start.range.start.line;
-            if lines < MIN_GAP || (run.len() == 1 && start.visibility.collapsed) {
+            if lines < MIN_GAP
+                || (run.len() == 1
+                    && (start.visibility.collapsed || cursor.display(first)?.collapsed > 0))
+            {
                 continue;
             }
             let mut row = first;
             if run.len() > 1 {
-                let mut ids = run.clone();
-                if let Some(peers) = cursor.matching_siblings(&run)? {
+                let mut ids = run;
+                if let Some(peers) = cursor.matching_siblings(&ids)? {
                     let mut hidden = true;
                     for &peer in &peers {
                         hidden &= self.hidden(cursor, peer)?;
@@ -124,16 +127,29 @@ impl Context {
     /// Whether a region hides in its neighbours' row: a leaf with no kept
     /// line, or an item no change lies within `lines` of, on either side.
     fn hidden(&self, cursor: &Cursor, id: u32) -> Result<bool, String> {
-        if matches!(cursor.get(id)?.data.kind, Kind::Leaf(_)) {
+        let data = cursor.get(id)?.data;
+        if matches!(data.kind, Kind::Leaf(_)) {
             return Ok(self.kept(cursor, id)?.is_empty());
         }
         if !self.item(cursor, id)? {
             return Ok(false);
         }
+        // A clause of a changed branch statement stays open with its siblings.
+        if tagged(&data, "context:clause") {
+            let branches = cursor
+                .ancestors(id)?
+                .into_iter()
+                .find(|ancestor| tagged(ancestor, "context:branches"));
+            if let Some(branches) = branches {
+                if changed(cursor, branches.id)? {
+                    return Ok(false);
+                }
+            }
+        }
         for region in cursor.linked_regions(id)? {
             let RegionView { side, data, .. } = cursor.get(region)?;
             let start = data.range.start.line.saturating_sub(self.options.lines);
-            let end = data.range.end.line + self.options.lines;
+            let end = data.range.end.line.saturating_add(self.options.lines);
             for leaf in cursor.leaves(side, start, end) {
                 if changed(cursor, leaf)? {
                     return Ok(false);
@@ -152,7 +168,7 @@ impl Context {
         let Some(parent) = data.parent else {
             return Ok(false);
         };
-        if in_header(cursor, id)? || changed(cursor, id)? {
+        if keep_region(cursor, id)? || changed(cursor, id)? {
             return Ok(false);
         }
         if tagged(&data, "context:body")
@@ -172,40 +188,67 @@ impl Context {
     /// The lines of a leaf that stay visible, its own and those its paired
     /// leaf keeps on the other side.
     fn kept(&self, cursor: &Cursor, id: u32) -> Result<BTreeSet<u32>, String> {
-        let data = cursor.get(id)?.data;
-        let mut kept = self.kept_on_side(cursor, id)?;
-        if let Some(peer) = cursor.paired_leaf(id)? {
-            let peer_start = cursor.get(peer)?.data.range.start.line;
-            let shift = |line: u32| line - peer_start + data.range.start.line;
-            kept.extend(self.kept_on_side(cursor, peer)?.into_iter().map(shift));
-        }
-        Ok(kept)
-    }
-
-    /// Kept lines of a leaf from its own side: all of a changed leaf, the
-    /// lines within `lines` of a changed leaf, and the first and last line
-    /// of every changed scope around it.
-    fn kept_on_side(&self, cursor: &Cursor, id: u32) -> Result<BTreeSet<u32>, String> {
-        let RegionView { side, data, .. } = cursor.get(id)?;
-        let lines = data.range.start.line..data.range.end.line;
-        if changed(cursor, id)? || in_header(cursor, id)? {
-            return Ok(lines.collect());
-        }
+        let start = cursor.get(id)?.data.range.start.line;
+        let radius = self.options.lines;
         let mut kept = BTreeSet::new();
-        let window = lines.start.saturating_sub(self.options.lines)..lines.end + self.options.lines;
-        for leaf in cursor.leaves(side, window.start, window.end) {
-            if changed(cursor, leaf)? {
-                let near = cursor.get(leaf)?.data.range;
-                let start = near.start.line.saturating_sub(self.options.lines);
-                let end = near.end.line + self.options.lines;
-                kept.extend(start.max(lines.start)..end.min(lines.end));
+        for region in std::iter::once(id).chain(cursor.paired_leaf(id)?) {
+            let RegionView { side, data, .. } = cursor.get(region)?;
+            let lines = data.range.start.line..data.range.end.line;
+            // Clip to this leaf, then translate the other side's lines into ours.
+            let mut keep = |range: std::ops::Range<u32>| {
+                kept.extend(
+                    (range.start.max(lines.start)..range.end.min(lines.end))
+                        .map(|line| line - lines.start + start),
+                );
+            };
+            let parent_kept = match data.parent {
+                Some(parent) => keep_region(cursor, parent)?,
+                None => false,
+            };
+            if keep_region(cursor, region)? || parent_kept {
+                keep(lines.clone());
+                continue;
             }
-        }
-        for scope in cursor.ancestors(id)? {
-            if tagged(&scope, "context:scope") && changed(cursor, scope.id)? {
-                for line in [scope.range.start.line, scope.range.end.line - 1] {
-                    if lines.contains(&line) {
-                        kept.insert(line);
+            let window = lines.start.saturating_sub(radius)..lines.end.saturating_add(radius);
+            for leaf in cursor.leaves(side, window.start, window.end) {
+                let leaf = cursor.get(leaf)?.data;
+                let Kind::Leaf(spans) = leaf.kind else {
+                    return Err(format!("leaves() returned the non-leaf {}", leaf.id));
+                };
+                if cursor.paired_leaf(leaf.id)?.is_none() {
+                    keep(
+                        leaf.range.start.line.saturating_sub(radius)
+                            ..leaf.range.end.line.saturating_add(radius),
+                    );
+                } else {
+                    for span in spans.changed {
+                        let end = span.line.saturating_add(radius).saturating_add(1);
+                        keep(span.line.saturating_sub(radius)..end);
+                    }
+                }
+            }
+            for scope in cursor.ancestors(region)? {
+                let is_scope = tagged(&scope, "context:scope");
+                let is_branches = tagged(&scope, "context:branches");
+                if !(is_scope || is_branches) || !changed(cursor, scope.id)? {
+                    continue;
+                }
+                if is_branches {
+                    for child in cursor.get(scope.id)?.children {
+                        let body = cursor.get(child)?.data;
+                        if tagged(&body, "context:body") {
+                            for line in
+                                [body.range.start.line.saturating_sub(1), body.range.end.line]
+                            {
+                                keep(line..line.saturating_add(1));
+                            }
+                        }
+                    }
+                }
+                if is_scope {
+                    keep(scope.range.start.line..scope.range.start.line + 1);
+                    if !tagged(&scope, "context:open-ended") {
+                        keep(scope.range.end.line - 1..scope.range.end.line);
                     }
                 }
             }
@@ -214,17 +257,42 @@ impl Context {
     }
 }
 
+/// Whether a region always shows: a `context:keep` region, or a header or
+/// `context:relevant` region of a changed scope.
+fn keep_region(cursor: &Cursor, id: u32) -> Result<bool, String> {
+    let data = cursor.get(id)?.data;
+    if tagged(&data, "context:keep") {
+        return Ok(true);
+    }
+    let relevant = tagged(&data, "context:relevant");
+    for scope in cursor.ancestors(id)? {
+        if !tagged(&scope, "context:scope") {
+            continue;
+        }
+        if relevant {
+            return changed(cursor, scope.id);
+        }
+        for child in cursor.get(scope.id)?.children {
+            let body = cursor.get(child)?.data;
+            if tagged(&body, "context:body") {
+                return Ok(
+                    data.range.end.line <= body.range.start.line && changed(cursor, scope.id)?
+                );
+            }
+        }
+        return Ok(false);
+    }
+    Ok(false)
+}
+
 /// How an unchanged fold looks: an outline. A scope keeps its signature and
 /// closer and folds its body; any other fold folds whole. Every fold inside
-/// is folded the same way, so opening one shows the next level. A comment
-/// stays open: it names the code below it. A fold holding a region another
-/// plugin collapsed stays open, so that summary shows.
+/// is folded the same way, so opening one shows the next level. A fold
+/// holding a region another plugin collapsed stays open, so that summary
+/// shows.
 fn outline(cursor: &Cursor, id: u32) -> Result<(), String> {
     let data = cursor.get(id)?.data;
-    if !data.visibility.collapsed
-        && !tagged(&data, "context:comment")
-        && cursor.display(id)?.collapsed == 0
-    {
+    if !data.visibility.collapsed && cursor.display(id)?.collapsed == 0 {
         // A scope's body is its `context:body` child, else its last fold child.
         let mut body = None;
         if tagged(&data, "context:scope") {
@@ -239,16 +307,19 @@ fn outline(cursor: &Cursor, id: u32) -> Result<(), String> {
                 }
             }
         }
-        match body {
-            Some(body) => collapse(cursor, body, |region| {
-                let range = cursor.get(region)?.data.range;
-                Ok(format!("{} lines", range.end.line - range.start.line))
-            })?,
-            None => collapse(cursor, id, |region| {
-                let text = cursor.text(region)?;
-                let head = text.lines().next().unwrap_or_default().trim();
-                Ok(format!("{head} … {} lines", text.lines().count()))
-            })?,
+        let range = cursor.get(body.unwrap_or(id))?.data.range;
+        if range.end.line - range.start.line >= MIN_GAP {
+            match body {
+                Some(body) => collapse(cursor, body, |region| {
+                    let range = cursor.get(region)?.data.range;
+                    Ok(format!("{} lines", range.end.line - range.start.line))
+                })?,
+                None => collapse(cursor, id, |region| {
+                    let text = cursor.text(region)?;
+                    let head = text.lines().next().unwrap_or_default().trim();
+                    Ok(format!("{head} … {} lines", text.lines().count()))
+                })?,
+            }
         }
     }
     for child in cursor.get(id)?.children {
@@ -257,25 +328,6 @@ fn outline(cursor: &Cursor, id: u32) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-/// Whether a region sits above the `context:body` of a changed scope: its
-/// signature, attributes or doc comment.
-fn in_header(cursor: &Cursor, id: u32) -> Result<bool, String> {
-    let Some(parent) = cursor.get(id)?.data.parent else {
-        return Ok(false);
-    };
-    let scope = cursor.get(parent)?;
-    if !tagged(&scope.data, "context:scope") || !changed(cursor, parent)? {
-        return Ok(false);
-    }
-    for child in scope.children {
-        let data = cursor.get(child)?.data;
-        if tagged(&data, "context:body") {
-            return Ok(cursor.get(id)?.data.range.end.line <= data.range.start.line);
-        }
-    }
-    Ok(false)
 }
 
 /// Changed bytes or unpaired leaves anywhere in this region's fold state,

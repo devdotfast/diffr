@@ -126,11 +126,14 @@ pub(crate) fn classify(
         let Some(first) = folds.iter().min_by_key(|capture| capture.node.start_byte()) else {
             continue;
         };
+        let last = folds
+            .iter()
+            .max_by_key(|capture| capture.node.end_byte())
+            .expect("a fold capture");
         let region = match (named("fold.open").last(), named("fold.close").last()) {
             (Some(open), Some(close))
-                if folds.len() == 1
-                    && open.node.start_byte() >= first.node.start_byte()
-                    && close.node.end_byte() <= first.node.end_byte()
+                if open.node.start_byte() >= first.node.start_byte()
+                    && close.node.end_byte() <= last.node.end_byte()
                     && open.node.end_byte() <= close.node.start_byte() =>
             {
                 SourceRange {
@@ -149,16 +152,10 @@ pub(crate) fn classify(
                     end: node_range(first.node).end,
                 }
             }
-            (None, None) => {
-                let last = folds
-                    .iter()
-                    .max_by_key(|capture| capture.node.end_byte())
-                    .expect("a fold capture");
-                SourceRange {
-                    start: node_range(first.node).start,
-                    end: node_range(last.node).end,
-                }
-            }
+            (None, None) => SourceRange {
+                start: node_range(first.node).start,
+                end: node_range(last.node).end,
+            },
             _ => continue,
         };
         if region.start == region.end {
@@ -311,7 +308,7 @@ pub(crate) fn line_span(fold: &Fold, lines: &[&str]) -> (usize, usize) {
 /// line, such as a collection whose closer sits on the line that opens the
 /// next body (`for x in [ … ] {`). The rule: the earlier fold gives the
 /// shared line to the later one, so its span ends where the later fold
-/// starts. A span left with fewer than two lines hides nothing and is
+/// starts. An empty span hides nothing and is
 /// dropped (`None`). Output is in input order.
 pub(crate) fn nested_spans(spans: &[(usize, usize)]) -> Vec<Option<(usize, usize)>> {
     let mut order: Vec<usize> = (0..spans.len()).collect();
@@ -343,7 +340,7 @@ pub(crate) fn nested_spans(spans: &[(usize, usize)]) -> Vec<Option<(usize, usize
         open.push(index);
     }
     for span in &mut out {
-        if span.is_some_and(|(start, end)| end - start < 2) {
+        if span.is_some_and(|(start, end)| end == start) {
             *span = None;
         }
     }
@@ -450,9 +447,8 @@ pub(crate) fn project(node: &Syntax<'_>, partner: Option<&Syntax<'_>>) -> Option
 /// region. `folds` is in preorder and stays in it, each merged fold where
 /// its outermost contributor stood.
 ///
-/// Only folds that hide something merge: a fold of fewer than two lines is
-/// no region (see `nested_spans`), and two of them covering one line are
-/// two byte ranges the reader never sees.
+/// One-line regions remain addressable for syntax relationships and tags.
+/// Plugins decide whether collapsing them saves enough space.
 pub(crate) fn merge_spans(folds: &mut Vec<Fold>, lines: &[&str]) {
     let inside = |inner: &SourceRange, outer: &SourceRange| {
         let at = |position: &SourcePosition| (position.line.as_usize(), position.byte_column);
@@ -462,7 +458,7 @@ pub(crate) fn merge_spans(folds: &mut Vec<Fold>, lines: &[&str]) {
     let mut by_span: DftHashMap<(usize, usize), usize> = DftHashMap::default();
     for fold in folds.drain(..) {
         let span = line_span(&fold, lines);
-        if span.1 - span.0 < 2 {
+        if span.1 == span.0 {
             kept.push(fold);
             continue;
         }
@@ -551,16 +547,19 @@ mod tests {
         let spans = [(0, 6), (5, 9), (7, 8)];
         assert_eq!(
             nested_spans(&spans),
-            vec![Some((0, 5)), Some((5, 9)), None],
-            "the earlier fold ends where the later starts; one-line spans go"
+            vec![Some((0, 5)), Some((5, 9)), Some((7, 8))],
+            "the earlier fold ends where the later starts; one-line annotations survive"
         );
         // Clipping cascades through every open ancestor that would cross.
         assert_eq!(
             nested_spans(&[(0, 10), (2, 6), (4, 8)]),
             vec![Some((0, 10)), Some((2, 4)), Some((4, 8))]
         );
-        // An ancestor that is clipped down to its header line disappears.
-        assert_eq!(nested_spans(&[(3, 5), (4, 9)]), vec![None, Some((4, 9))]);
+        // A clipped one-line annotation remains available to consumers.
+        assert_eq!(
+            nested_spans(&[(3, 5), (4, 9)]),
+            vec![Some((3, 4)), Some((4, 9))]
+        );
         // Nested and disjoint spans are untouched, whatever their input order.
         assert_eq!(
             nested_spans(&[(5, 9), (0, 4), (1, 3)]),

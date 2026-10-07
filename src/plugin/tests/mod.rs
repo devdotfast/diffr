@@ -189,10 +189,10 @@ fn rust_doc_and_line_comments_above_a_function_are_its_docstring() {
             (1, None),
             (10, Some((5, 7))),
             (18, Some((14, 16))),
-            (24, None),
+            (24, Some((22, 23))),
             (32, Some((28, 31)))
         ],
-        "a one-line docstring is not a region"
+        "one-line docstrings remain addressable for relationships"
     );
 }
 

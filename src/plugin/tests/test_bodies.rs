@@ -2,12 +2,12 @@ use super::*;
 
 const TEST: &str = "test-bodies:test";
 
-/// Every fold: whether it is a test body, whether it starts collapsed, and
+/// Every multiline fold: whether it is a test body, whether it starts collapsed, and
 /// its label.
 fn folds(source: &Source) -> Vec<(bool, bool, String)> {
     let mut folds = Vec::new();
     walk(source.root.children(), &mut |region| {
-        if is_fold(region) {
+        if is_fold(region) && region.range.end.line - region.range.start.line > 1 {
             folds.push((
                 has_tag(region, TEST),
                 region.visibility.collapsed,

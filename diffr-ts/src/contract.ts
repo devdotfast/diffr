@@ -158,42 +158,10 @@ export const StructuralVisibilitySchema: z.ZodType<StructuralVisibility> =
     }),
   );
 
-/** Structural changed lines, independent of presentation and fold state. */
-export type StructuralChanges = {
-  base: [number, number][];
-  head: [number, number][];
-};
-
-const structuralRangesSchema = z
-  .array(z.tuple([structuralU32, structuralU32]))
-  .refine(
-    (ranges) =>
-      ranges.every(
-        ([start, end], index) =>
-          start < end && (index === 0 || ranges[index - 1][1] < start),
-      ),
-    "Expected sorted, coalesced, nonempty half-open ranges",
-  );
-
-export const StructuralChangesSchema: z.ZodType<StructuralChanges> = z.object({
-  base: structuralRangesSchema,
-  head: structuralRangesSchema,
-});
-
-export function structuralChangeCounts(
-  changes: StructuralChanges,
-): StructuralLineCounts {
-  const count = (ranges: [number, number][]) =>
-    ranges.reduce((sum, [start, end]) => sum + end - start, 0);
-
-  return { added: count(changes.head), removed: count(changes.base) };
-}
-
 export type StructuralDiff =
   | ({
       type: "text";
       stats: StructuralStats;
-      structural_changes: StructuralChanges;
     } & StructuralPairing<StructuralSource>)
   | ({ type: "binary" } & StructuralPairing<StructuralBinaryRef>);
 
@@ -203,7 +171,6 @@ export const StructuralDiffSchema: z.ZodType<StructuralDiff> = z.lazy(() =>
       .object({
         type: z.literal("text"),
         stats: StructuralStatsSchema,
-        structural_changes: StructuralChangesSchema,
       })
       .and(structuralPairingSchema(StructuralSourceSchema)),
     z

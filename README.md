@@ -1,6 +1,6 @@
 # diffr
 
-> diffr is experimental and in alpha. API breakages are possible at any time, although we will do our best to warn you of them.
+> This repo has moved! latest diffr happenings are in the whiteboard monorepo. https://github.com/devdotfast/whiteboard/tree/main/diffr :)
 
 diffr is a Rust-based structural diffing (AST-aware) library. It is also packaged as a CLI with a built-in TUI, and it has a WASM plugin system for extensibility. 
 

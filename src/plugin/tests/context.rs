@@ -246,6 +246,8 @@ fn a_fold_whose_matched_partner_holds_changes_stays_open() {
         visibility: Visibility::default(),
         node: Node::Leaf {
             alignment_id: alignment,
+            pair: None,
+            search_highlights: Vec::new(),
             changed: (start..end)
                 .filter(|_| changed)
                 .map(|line| Span {
@@ -581,4 +583,47 @@ fn a_changed_binding_keeps_its_closer_between_two_rows() {
         ]
     );
     assert!(open_leaf_lines(regions).contains(&14));
+}
+
+/// Put a search hit on `line` of a side.
+fn highlight(source: &mut Source, line: u32) {
+    fn visit(region: &mut Region, line: u32) {
+        let lines = region.range.lines();
+        match &mut region.node {
+            Node::Leaf {
+                search_highlights, ..
+            } if lines.contains(&line) => search_highlights.push(Span {
+                line,
+                start_column: 0,
+                end_column: 1,
+            }),
+            Node::Leaf { .. } => {}
+            Node::Fold { children, .. } => children.iter_mut().for_each(|child| visit(child, line)),
+        }
+    }
+    visit(&mut source.root, line);
+}
+
+/// Context around a hit on the new side's `line`.
+fn shaped_around_hit(before: &str, after: &str, line: u32, lines: u32) -> Pairing<Source> {
+    let (file, mut sides) = project("a.rs", before, after);
+    let Pairing::Both { rhs, .. } = &mut sides else {
+        panic!("both sides");
+    };
+    highlight(rhs, line);
+    run("context", json!({ "lines": lines }), &file, &mut sides);
+    sides
+}
+
+#[test]
+fn near_a_hit_a_one_line_change_folds_but_a_one_line_gap_does_not() {
+    let before = "fn visitor() {\n    let a = 1;\n    let b = 2;\n    search_token();\n    let c = 3;\n    let d = 4;\n    let e = 5;\n    finish();\n}\nconst OTHER: u32 = 1;\n";
+    let after = before.replace("OTHER: u32 = 1", "OTHER: u32 = 2");
+    let sides = shaped_around_hit(before, &after, 3, 1);
+    for source in [lhs(&sides), rhs(&sides)] {
+        assert_eq!(
+            open_leaf_lines(source.root.children()),
+            BTreeSet::from([0, 1, 2, 3, 4, 8])
+        );
+    }
 }

@@ -35,6 +35,7 @@ pub enum Kind {
     Leaf {
         alignment_id: u32,
         changed: Vec<Span>,
+        search_highlights: Vec<Span>,
     },
     Fold,
 }
@@ -80,6 +81,8 @@ pub enum MoveError {
 pub struct Cursor {
     pub file: FileChange,
     pub sides: Pairing<Source>,
+    /// Whether any leaf holds a search hit; plugins never add one.
+    hits: bool,
     /// The region the cursor is on: the one the current callback visits.
     pub id: u32,
     /// IDs from here up were made during the current walk, which skips them.
@@ -106,9 +109,11 @@ impl Cursor {
                 }
             });
         }
+        let hits = sides.sides().iter().any(|source| holds_hit(&source.root));
         Ok(Self {
             file,
             sides,
+            hits,
             id: first,
             limit: next_region_id,
             next_region_id,
@@ -364,6 +369,7 @@ impl Cursor {
             if let Node::Leaf {
                 alignment_id,
                 changed,
+                ..
             } = &region.node
             {
                 changes |= !changed.is_empty() || !alignments.contains(alignment_id);
@@ -492,23 +498,47 @@ impl Cursor {
             .collect::<Result<Vec<_>, MoveError>>()?;
         let piece_alignment = *next_alignment_id;
         *next_alignment_id += 1;
-        let mut state = None;
+        // Both tails' ids first, so each can name the other as its pair.
+        let piece_ids: Vec<Option<u32>> = paths
+            .iter()
+            .map(|path| {
+                path.as_ref().map(|_| {
+                    let id = *next_region_id;
+                    *next_region_id += 1;
+                    id
+                })
+            })
+            .collect();
+        let piece_state = piece_ids.iter().flatten().next().copied();
         let has_lhs = sides.lhs().is_some();
         let (mut lhs, mut rhs) = (None, None);
         for (tree_side, (tree, path)) in trees(sides).into_iter().zip(paths).enumerate() {
-            let Some(path) = path else { continue };
+            let (Some(path), Some(piece_id), Some(piece_state)) =
+                (path, piece_ids[tree_side], piece_state)
+            else {
+                continue;
+            };
+            let partner =
+                piece_ids
+                    .iter()
+                    .enumerate()
+                    .find_map(|(other, id)| if other == tree_side { None } else { *id });
             let (index, parent) = path.split_last().expect("a path is never empty");
             let list = siblings(tree, parent);
-            let piece_id = *next_region_id;
-            *next_region_id += 1;
             if tree_side == 0 && has_lhs {
                 lhs = Some(piece_id);
             } else {
                 rhs = Some(piece_id);
             }
-            let piece_state = *state.get_or_insert(piece_id);
             let leaf = list.remove(*index);
-            let pieces = split(leaf, offset, piece_id, piece_alignment, piece_state);
+            let pieces = split(
+                leaf,
+                offset,
+                piece_id,
+                piece_alignment,
+                piece_state,
+                partner,
+            );
             list.splice(*index..*index, pieces);
         }
         Ok(region_ids(lhs, rhs))
@@ -595,7 +625,8 @@ impl Cursor {
         Ok(region_ids(lhs, rhs))
     }
 
-    /// Merge the fold states of `ids` into the first's; all collapse if any was.
+    /// Merge the fold states of `ids` into the first's; all collapse if any
+    /// was, unless a member holds a search hit.
     pub fn link(&mut self, ids: &[u32]) -> Result<(), MoveError> {
         let sides = &mut self.sides;
         check_regions(ids, Grouping::Link)?;
@@ -608,6 +639,7 @@ impl Cursor {
             .iter()
             .map(|id| Ok(region_of(sides, *id)?.fold_state_id))
             .collect::<Result<BTreeSet<u32>, MoveError>>()?;
+        collapsed &= !highlighted_states(sides, &states);
         for tree in trees(sides) {
             walk_mut(tree, &mut |region| {
                 if states.contains(&region.fold_state_id) {
@@ -619,9 +651,10 @@ impl Cursor {
         Ok(())
     }
 
-    /// Set the shared collapsed state.
+    /// Set the shared collapsed state; a search hit stays open.
     pub fn set_collapsed(&mut self, region: u32, collapsed: bool) -> Result<(), MoveError> {
         let state = region_of(&self.sides, region)?.fold_state_id;
+        let collapsed = collapsed && !highlighted_states(&self.sides, &BTreeSet::from([state]));
         for tree in trees(&mut self.sides) {
             walk_mut(tree, &mut |region| {
                 if region.fold_state_id == state {
@@ -630,6 +663,14 @@ impl Cursor {
             });
         }
         Ok(())
+    }
+
+    pub fn has_search_highlights(&self, id: u32) -> Result<bool, MoveError> {
+        let state = region_of(&self.sides, id)?.fold_state_id;
+        if !self.hits || self.top_level().contains(&id) {
+            return Ok(self.hits);
+        }
+        Ok(highlighted_states(&self.sides, &BTreeSet::from([state])))
     }
 
     /// Set or clear a region's label.
@@ -673,9 +714,12 @@ fn view(region: &Region, parent: Option<u32>, side: Side, children: Vec<u32>) ->
             Node::Leaf {
                 alignment_id,
                 changed,
+                search_highlights,
+                ..
             } => Kind::Leaf {
                 alignment_id: *alignment_id,
                 changed: changed.clone(),
+                search_highlights: search_highlights.clone(),
             },
             Node::Fold { .. } => Kind::Fold,
         },
@@ -849,17 +893,31 @@ fn find_mut(regions: &mut [Region], id: u32) -> Option<&mut Region> {
     None
 }
 
-/// A leaf split at relative line `offset`. The second piece takes `id`,
-/// `alignment_id` and `fold_state_id`.
-fn split(leaf: Region, offset: u32, id: u32, alignment_id: u32, fold_state_id: u32) -> [Region; 2] {
-    let Node::Leaf { changed, .. } = &leaf.node else {
+/// A leaf split at relative line `offset`. The first piece keeps the leaf's
+/// identity and pair; the second takes `id`, `alignment_id`,
+/// `fold_state_id` and `pair`, the other side's new tail.
+fn split(
+    leaf: Region,
+    offset: u32,
+    id: u32,
+    alignment_id: u32,
+    fold_state_id: u32,
+    pair: Option<u32>,
+) -> [Region; 2] {
+    let Node::Leaf {
+        changed,
+        search_highlights,
+        pair: head_pair,
+        ..
+    } = &leaf.node
+    else {
         unreachable!("only leaves are cut");
     };
     let boundary = SourcePos {
         line: leaf.range.start.line + offset,
         column: 0,
     };
-    let piece = |range: SourceRange, id: u32, alignment_id: u32, fold_state_id: u32| {
+    let piece = |range: SourceRange, id: u32, alignment_id: u32, fold_state_id: u32, pair| {
         let lines = range.lines();
         Region {
             id,
@@ -869,6 +927,12 @@ fn split(leaf: Region, offset: u32, id: u32, alignment_id: u32, fold_state_id: u
             visibility: leaf.visibility.clone(),
             node: Node::Leaf {
                 alignment_id,
+                pair,
+                search_highlights: search_highlights
+                    .iter()
+                    .copied()
+                    .filter(|span| lines.contains(&span.line))
+                    .collect(),
                 changed: changed
                     .iter()
                     .copied()
@@ -885,6 +949,7 @@ fn split(leaf: Region, offset: u32, id: u32, alignment_id: u32, fold_state_id: u
         leaf.id,
         leaf.alignment_id().expect("a leaf"),
         leaf.fold_state_id,
+        *head_pair,
     );
     let tail = piece(
         SourceRange {
@@ -894,6 +959,7 @@ fn split(leaf: Region, offset: u32, id: u32, alignment_id: u32, fold_state_id: u
         id,
         alignment_id,
         fold_state_id,
+        pair,
     );
     [head, tail]
 }
@@ -926,3 +992,24 @@ mod mutations;
 
 #[cfg(test)]
 mod tests;
+
+/// Whether any region in `states` holds a search hit.
+fn highlighted_states(sides: &Pairing<Source>, states: &BTreeSet<u32>) -> bool {
+    let mut any = false;
+    for source in sides.sides() {
+        walk(std::slice::from_ref(&source.root), &mut |region| {
+            any |= states.contains(&region.fold_state_id) && holds_hit(region);
+        });
+    }
+    any
+}
+
+/// Whether a region or anything under it holds a search hit.
+fn holds_hit(region: &Region) -> bool {
+    match &region.node {
+        Node::Leaf {
+            search_highlights, ..
+        } => !search_highlights.is_empty(),
+        Node::Fold { children, .. } => children.iter().any(holds_hit),
+    }
+}

@@ -53,6 +53,7 @@ impl From<&FileChange> for types::FileEntry {
                 FileStatus::Renamed => types::FileStatus::Renamed,
                 FileStatus::Copied => types::FileStatus::Copied,
                 FileStatus::TypeChanged => types::FileStatus::TypeChanged,
+                FileStatus::Unchanged => types::FileStatus::Unchanged,
             },
             tags: file.tags.clone(),
         }
@@ -101,8 +102,17 @@ impl From<cursor::RegionView> for types::Region {
                 cursor::Kind::Leaf {
                     alignment_id,
                     changed,
+                    search_highlights,
                 } => types::Kind::Leaf(types::Leaf {
                     alignment_id,
+                    search_highlights: search_highlights
+                        .into_iter()
+                        .map(|span| types::Span {
+                            line: span.line,
+                            start_column: span.start_column,
+                            end_column: span.end_column,
+                        })
+                        .collect(),
                     changed: changed
                         .into_iter()
                         .map(|span| types::Span {

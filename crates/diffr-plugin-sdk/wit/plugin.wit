@@ -20,6 +20,7 @@ interface types {
         renamed,
         copied,
         type-changed,
+        unchanged,
     }
 
     /// One side of a git delta, as the manifest names it.
@@ -82,6 +83,7 @@ interface types {
         /// lines up with this one.
         alignment-id: u32,
         changed: list<span>,
+        search-highlights: list<span>,
     }
 
     /// A leaf tiles the file; a fold's range is the hull of its children.
@@ -160,6 +162,8 @@ interface types {
 interface host {
     use types.{file-entry, region-view, side, region, region-ids, row-summary, move-error};
     resource cursor {
+        /// Whether this region's fold state holds a search hit.
+        has-search-highlights: func(id: u32) -> result<bool, move-error>;
         file: func() -> file-entry;
         /// Current node, positioned by the host before each callback.
         id: func() -> u32;

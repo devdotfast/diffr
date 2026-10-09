@@ -46,7 +46,7 @@ impl GuestPlugin for RemovedRuns {
         else {
             return Ok(true);
         };
-        if data.visibility.collapsed {
+        if data.visibility.collapsed || cursor.has_search_highlights(data.id)? {
             return Ok(false);
         }
         if matches!(data.kind, Kind::Fold) {

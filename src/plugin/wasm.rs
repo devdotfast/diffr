@@ -175,6 +175,17 @@ fn next_child(
 }
 
 impl bindings::diffr::plugin::host::HostCursor for State {
+    fn has_search_highlights(
+        &mut self,
+        c: Resource<Cursor>,
+        id: u32,
+    ) -> wasmtime::Result<Result<bool, MoveError>> {
+        Ok(self
+            .table
+            .get(&c)?
+            .has_search_highlights(id)
+            .map_err(Into::into))
+    }
     fn file(&mut self, c: Resource<Cursor>) -> wasmtime::Result<FileEntry> {
         Ok((&self.table.get(&c)?.file).into())
     }

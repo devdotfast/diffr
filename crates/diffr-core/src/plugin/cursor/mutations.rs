@@ -24,7 +24,9 @@ fn leaf(id: u32, alignment: u32, start: u32, end: u32, changed: &[u32]) -> Regio
         tags: vec![],
         visibility: Visibility::default(),
         node: Node::Leaf {
+            search_highlights: vec![],
             alignment_id: alignment,
+            pair: None,
             changed: changed
                 .iter()
                 .map(|&line| Span {
@@ -195,6 +197,16 @@ fn cutting_a_paired_leaf_cuts_both_sides_with_fresh_ids_and_a_shared_alignment()
                 (4, Some(2), 4, 6, 7, false, open()),
             ],
             "target {target}"
+        );
+        // Each new tail names the other side's new tail as its pair.
+        let pair = |region: &Region| match region.node {
+            Node::Leaf { pair, .. } => pair,
+            Node::Fold { .. } => panic!("a leaf"),
+        };
+        let tails = [&lhs.root.children()[2..4], &rhs.root.children()[1..3]];
+        assert_eq!(
+            tails.map(|side| side.iter().map(pair).collect::<Vec<_>>()),
+            [vec![Some(103), Some(105)], vec![Some(102), Some(104)],]
         );
         let Node::Leaf { changed, .. } = &lhs.root.children()[3].node else {
             panic!("a leaf");
@@ -388,4 +400,41 @@ fn moves_that_cannot_be_carried_out_are_errors() {
             ids: vec![1, 1]
         })
     );
+}
+
+#[test]
+fn cuts_keep_highlights_on_their_piece_and_linked_states_keep_matches_open() {
+    let mut left = leaf(1, 1, 0, 6, &[]);
+    let Node::Leaf {
+        search_highlights, ..
+    } = &mut left.node
+    else {
+        unreachable!()
+    };
+    search_highlights.push(Span {
+        line: 4,
+        start_column: 0,
+        end_column: 1,
+    });
+    let mut state = both(vec![left], vec![in_state(leaf(2, 1, 0, 6, &[]), 1)]);
+    let RegionIds::Both(left_tail, right_tail) = state.cut(1, 3).unwrap() else {
+        unreachable!()
+    };
+    assert!(!state.has_search_highlights(1).unwrap());
+    assert!(state.has_search_highlights(left_tail).unwrap());
+    assert!(state.has_search_highlights(right_tail).unwrap());
+    state.set_collapsed(1, true).unwrap();
+    state.set_collapsed(right_tail, true).unwrap();
+    let (lhs, _) = sides_of(&state);
+    assert!(lhs.root.children()[0].visibility.collapsed);
+    assert!(!lhs.root.children()[1].visibility.collapsed);
+    state.link(&[1, left_tail]).unwrap();
+    state.set_collapsed(2, true).unwrap();
+    for source in state.sides.sides() {
+        assert!(source
+            .root
+            .children()
+            .iter()
+            .all(|region| !region.visibility.collapsed));
+    }
 }

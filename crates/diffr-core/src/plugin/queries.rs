@@ -18,7 +18,7 @@ pub struct PluginQuery {
 }
 
 /// The query files one plugin declares.
-pub(crate) type Queries = Vec<PluginQuery>;
+pub type Queries = Vec<PluginQuery>;
 
 const BUILTIN_PREFIX: &str = "builtin:";
 
@@ -190,6 +190,24 @@ impl Assembly {
         self.included.insert(location);
         Ok(())
     }
+}
+
+/// Query sources per language, imports included.
+pub fn sources(
+    plugins: &[(String, Queries)],
+) -> Result<BTreeMap<String, Vec<(String, String)>>, ConfigError> {
+    Ok(assemble(plugins)?
+        .into_iter()
+        .map(|(language, sources)| {
+            (
+                language,
+                sources
+                    .into_iter()
+                    .map(|source| (source.name, source.text))
+                    .collect(),
+            )
+        })
+        .collect())
 }
 
 /// Assemble in plugin order, with imports before their first importer.

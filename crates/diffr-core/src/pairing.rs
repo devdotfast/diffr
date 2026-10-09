@@ -16,7 +16,7 @@ pub enum Pairing<T> {
 
 impl<T> Pairing<T> {
     /// The same sides, each value transformed by `f`.
-    pub(crate) fn map<U>(self, mut f: impl FnMut(T) -> U) -> Pairing<U> {
+    pub fn map<U>(self, mut f: impl FnMut(T) -> U) -> Pairing<U> {
         match self {
             Self::Both { lhs, rhs } => Pairing::Both {
                 lhs: f(lhs),
@@ -42,7 +42,7 @@ impl<T> Pairing<T> {
     }
 
     /// Every side that exists, lhs first.
-    pub(crate) fn sides(&self) -> Vec<&T> {
+    pub fn sides(&self) -> Vec<&T> {
         match self {
             Self::Both { lhs, rhs } => vec![lhs, rhs],
             Self::LeftOnly { lhs } => vec![lhs],
@@ -52,6 +52,7 @@ impl<T> Pairing<T> {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PairingRepr<T> {
     #[serde(skip_serializing_if = "Option::is_none")]
     lhs: Option<T>,

@@ -15,7 +15,7 @@ use crate::parse::syntax::{self, init_next_prev};
 use crate::parse::tree_sitter_parser as tsp;
 use crate::summary::{DiffResult, FallbackCause, FileContent, FileFormat, Highlight};
 use humansize::{format_size, FormatSizeOptions, BINARY};
-use std::{env, fmt, path::Path};
+use std::{env, fmt, num::NonZeroU32, path::Path};
 use typed_arena::Arena;
 
 /// The fallback reason for a file diffed by line because of what it is.
@@ -96,6 +96,51 @@ impl DiffResult {
         options: &DiffOptions,
     ) -> Result<Self, QueryConflict> {
         diff_file_content(params, path, lhs, rhs, options, &[])
+    }
+    /// Like `from_sources_with_options`, but also parses identical sources so
+    /// search can show their folds.
+    pub fn from_sources_with_context(
+        path: &str,
+        lhs: &str,
+        rhs: &str,
+        params: &Params,
+        options: &DiffOptions,
+    ) -> Result<Self, QueryConflict> {
+        let mut diff = Self::from_sources_with_options(path, lhs, rhs, params, options)?;
+        if lhs == rhs && options.by_line.is_none() && lhs.len() <= options.byte_limit {
+            if let Some(language) = guess(Path::new(path), lhs, &[]) {
+                let config = params.language(language);
+                let tree = tsp::to_tree(lhs, config.parser);
+                let arena = Arena::new();
+                let (nodes, _) =
+                    tsp::to_syntax(&tree, lhs, &arena, config, false).map_err(|conflict| {
+                        QueryConflict {
+                            path: path.to_owned(),
+                            side: Side::Left,
+                            conflict,
+                        }
+                    })?;
+                folds::unmatched(&nodes, &mut diff.lhs_folds);
+                let count = diff.lhs_folds.len();
+                for (i, fold) in diff.lhs_folds.iter_mut().enumerate() {
+                    let lhs = NonZeroU32::new(i as u32 + 1).unwrap();
+                    let rhs = NonZeroU32::new((count + i) as u32 + 1).unwrap();
+                    fold.syntax_id = lhs;
+                    fold.match_kind = folds::FoldMatch::Matched { opposite: rhs };
+                    diff.rhs_folds.push(folds::Fold {
+                        tags: fold.tags.clone(),
+                        relations: fold.relations.clone(),
+                        range: fold.range,
+                        indent: fold.indent,
+                        syntax: fold.syntax,
+                        syntax_id: rhs,
+                        match_kind: folds::FoldMatch::Matched { opposite: lhs },
+                        placeholder: String::new(),
+                    });
+                }
+            }
+        }
+        Ok(diff)
     }
 }
 pub fn diff_file_content(

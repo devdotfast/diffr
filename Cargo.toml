@@ -27,6 +27,8 @@ include = [
 
 [dependencies]
 diffr-core = { path = "crates/diffr-core", version = "0.1.16" }
+sha2 = "0.10"
+tempfile = "3.27.0"
 gix = { version = "0.88", default-features = false, features = ["parallel", "revision", "status", "blob-diff", "attributes", "sha1"] }
 clap = { version = "4.0.0", features = ["cargo", "derive", "env", "wrap_help", "string"] }
 typed-arena = "2.0.2"

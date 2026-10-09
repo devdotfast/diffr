@@ -12,7 +12,7 @@ pub(crate) mod wasm;
 pub(crate) use classify::Classifier;
 #[cfg(test)]
 pub(crate) use diffr_core::plugin::builtin;
-pub(crate) use diffr_core::plugin::{config, cursor, MutationFailed};
+pub(crate) use diffr_core::plugin::{config, cursor, queries, MutationFailed};
 pub(crate) use wasm::Pipeline;
 
 #[cfg(test)]

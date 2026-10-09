@@ -4,6 +4,7 @@ use crate::git::{self, Comparison, FileParams, Operand, Result};
 use crate::options::DebugArgs;
 use crate::plugin::{Classifier, Pipeline};
 use crate::run;
+use crate::search::command as search;
 use clap::{
     error::ErrorKind, parser::ValueSource, ArgGroup, ArgMatches, Args, CommandFactory,
     FromArgMatches, Parser, Subcommand, ValueEnum,
@@ -126,6 +127,8 @@ enum Format {
 enum Command {
     /// Print saved NDJSON without a repository or terminal frontend
     Pprint(PprintArgs),
+    /// Shape Git-grep hits from stdin as diffs, or pretty-print the results
+    Search(search::SearchCommand),
     /// Show, edit, or open the settings screen for diffr's configuration
     Config(ConfigArgs),
     #[command(
@@ -193,6 +196,13 @@ enum ConfigCommand {
     },
 }
 
+/// A search command's exit code, with its error chain as the message.
+fn exit(result: anyhow::Result<()>) -> Result<i32> {
+    result
+        .map(|()| 0)
+        .map_err(|error| format!("{error:#}").into())
+}
+
 pub(crate) fn run(runtime: &tokio::runtime::Runtime) -> Result<i32> {
     let frontend_args: Vec<OsString> = std::env::args_os().skip(1).collect();
     // Git treats an argument before `--` as a revision even when a file shares
@@ -203,6 +213,7 @@ pub(crate) fn run(runtime: &tokio::runtime::Runtime) -> Result<i32> {
     let args = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
     match &args.command {
         Some(Command::Pprint(args)) => return run_pprint(args),
+        Some(Command::Search(command)) => return exit(search::run(command, runtime)),
         Some(Command::Config(config)) => return run_config(config),
         Some(Command::Debug(debug)) => {
             crate::run_debug(debug.mode(), &Config::default().compile()?);

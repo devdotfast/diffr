@@ -360,7 +360,7 @@ impl PluginsConfig {
 pub struct ShapeConfig {
     /// The plugins in the order they run; each sees the region trees the
     /// ones before it left. Every entry is listed exactly once.
-    pub(crate) order: Vec<String>,
+    pub order: Vec<String>,
     /// Every entry, by reference: `bundled.<name>` or the whole custom name.
     pub entries: BTreeMap<String, Entry>,
 }
@@ -736,7 +736,7 @@ impl Default for ShapeConfig {
 impl ShapeConfig {
     /// Resolve each selected entry, validate its options, fill their defaults,
     /// and require every entry to appear in the explicit order exactly once.
-    pub(crate) fn resolve(&mut self, base: &Path) -> Result<(), ConfigError> {
+    pub fn resolve(&mut self, base: &Path) -> Result<(), ConfigError> {
         let mut identities = BTreeSet::new();
         for (name, entry) in &mut self.entries {
             let folder = match (name.strip_prefix("bundled."), &entry.path) {
